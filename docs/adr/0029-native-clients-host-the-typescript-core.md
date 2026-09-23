@@ -3,7 +3,13 @@
 Date: 2026-09-21 (decision 2026-09-22)
 Status: Accepted
 
-## Context
+**Current direction:** complete native Android and iOS clients on one shared TypeScript core. See the [execution roadmap](../development/native-mobile-migration.md) and [workflow parity checklist](../development/native-mobile-parity.md) for implementation order and release gates. The maintainer decision below supersedes the original proposal; the experiments remain evidence with their recorded limitations.
+
+## Historical proposal and experiments (2026-09-21–22)
+
+The Context, original proposal, and gates below record the investigation in chronological order. Statements about work not yet attempted describe that stage, not the current decision.
+
+### Context
 
 ADR 0028 covers native surfaces that run while the app is closed: a durable queue file, then a headless JavaScript run that takes seconds. That path cannot serve a screen.
 
@@ -24,7 +30,7 @@ What is known about the core today, measured on 2026-09-21:
 
 Nothing in this ADR has been built or measured.
 
-## Decision
+### Original proposal
 
 Propose option 2 as the first architecture to test for native clients. Option 1 stays closed unless Gate 1 below fails for a reason that only a native engine can fix.
 
@@ -199,14 +205,14 @@ Work order:
 1. Put the pilot on a clean foundation: drop the obsolete regex shim (fixed in `da57df2ef`), and move the two leaked rules (stored-date construction with its midday default; the allowed statuses and priorities) back into the core, where Kotlin only presents them.
 2. Windowed host API: lightweight row summaries, section counts, a result revision and paged retrieval, with membership and ordering in the core and the full task fetched for the editor. One task owns this contract; Android and iOS implement the same definitions.
 3. Merge responsiveness, as its own reviewed task: one authoritative store and persistence owner; acceptance is responsive interaction with correct results, including edits that arrive while work is outstanding (the pilot's edit test did not record whether a merge was running at submission, so that guarantee must be established in the scheduling patch), honest handling of failed writes, and the response a person sees.
-4. iOS: a runnable SwiftUI Inbox on JavaScriptCore in the simulator, separate bundle id, generated data, isolated storage, the same contract and fixtures, Apple host services in Swift, the runtime off the main thread (JavaScriptCore serializes access within one virtual machine, so it does not remove the merge stall by itself), and production sorting and date behavior validated instead of the collation stand-in. Simulator numbers are simulator numbers; physical-iPhone checks come before any responsiveness claim.
+4. iOS: a runnable SwiftUI Inbox on JavaScriptCore on disposable simulators using the existing bundle id, generated data, isolated simulator storage and test sync destinations, the same contract and fixtures, Apple host services in Swift, the runtime off the main thread (JavaScriptCore serializes access within one virtual machine, so it does not remove the merge stall by itself), and production sorting and date behavior validated instead of the collation stand-in. Simulator numbers are simulator numbers; physical-iPhone checks come before any responsiveness claim.
 
-Apple hardware: an M4 Mac mini (16 GB, 256 GB) was bought on 2026-09-22, so the "no Apple hardware" limit in the Non-goals below no longer applies to building and inspecting; a physical iPhone is still needed for device validation. Not in scope: Rust, a macOS desktop rewrite, a Watch rewrite, further engine comparisons.
+Apple hardware: an M4 Mac mini (16 GB, 256 GB) was bought on 2026-09-22 for building and inspecting; a physical iPhone is still needed for device validation. No new store app record is required. A separate Apple development identity is optional when side-by-side physical-device installs are needed. Not in scope: Rust, a macOS desktop rewrite, a Watch rewrite, further engine comparisons.
 
 ## Non-goals
 
-This ADR does not decide to migrate. It does not choose the Android engine, did not cover iOS work at the time (no Apple hardware was available; see the Decision), and does not change the React Native app, which stays the production client. The public discussion of a native direction waits for Gate 2 numbers.
+No Rust core rewrite, macOS desktop rewrite, new sync format, or replacement store listings. Reuse the existing native integrations and Watch functionality where practical. The React Native clients remain production implementations until their respective native replacements meet the roadmap's release criteria. Milestones assess implementation and release readiness; they do not reopen the migration decision without a concrete architectural blocker.
 
 ## Consequences
 
-If Gate 1 passes, the project gets native presentation with one authoritative core, shared translations, and no second merge engine, and the same boundary can be reproduced in Swift later. The costs are a JS engine inside the native app, a set of native ports to write and keep correct, a query and notification API to design and version, and a boundary that every screen interaction crosses. Making the core boot in a plain engine with a known host API list is useful even if the native client is never built. If Gate 1 fails, the project holds concrete numbers for the larger Rust decision instead of an expectation.
+The project will maintain native presentation and platform IO around one authoritative TypeScript core. Costs include the embedded runtime, tested native ports, a versioned query/command contract, and temporary maintenance of both mobile implementations. Upgrade compatibility, physical-device behavior, and mixed-client sync must be demonstrated independently on each platform. The [execution roadmap](../development/native-mobile-migration.md) defines rollout and legacy retirement separately from this architectural acceptance.
