@@ -280,6 +280,9 @@ export const daOverrides: Record<string, string> = {
     'task.cancelRecurringSeries': 'Annuller tilbagevendende serier',
     'task.cancelled': 'Annulleret',
     'task.cancelFailed': 'Opgaven kunne ikke annulleres',
+    'task.skipOccurrence': 'Spring denne gentagelse over',
+    'task.skipOccurrenceFailed': 'Denne gentagelse kunne ikke springes over',
+    'task.skipOccurrenceSaveFirst': 'Gem eller kassér ændringer af status og gentagelse, før du springer over.',
     'projects.cancel': 'Annuller projekt',
     'projects.cancelConfirmTitle': 'Vil du annullere projektet?',
     'projects.cancelConfirmBody':

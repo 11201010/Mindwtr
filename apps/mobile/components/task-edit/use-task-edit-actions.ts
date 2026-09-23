@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import { Alert, Share } from 'react-native';
 import {
     formatAIErrorAlertBody,
+    canSkipRecurringTaskOccurrence,
     Task,
     TaskStatus,
     TimeEstimate,
@@ -61,6 +62,7 @@ type TaskEditActionsParams = {
     prioritiesEnabled: boolean;
     projectContext?: Record<string, unknown> | null;
     resetTaskChecklist: (taskId: string) => Promise<StoreActionResult>;
+    skipRecurringTaskOccurrence: (taskId: string) => Promise<StoreActionResult>;
     restoreTask: (taskId: string) => Promise<StoreActionResult>;
     setAiModal: React.Dispatch<React.SetStateAction<AIResponseModalState>>;
     setChecklist: SetTaskEditDraftValue<Task['checklist']>;
@@ -96,6 +98,7 @@ export function useTaskEditActions({
     prioritiesEnabled,
     projectContext,
     resetTaskChecklist,
+    skipRecurringTaskOccurrence,
     restoreTask,
     setAiModal,
     setChecklist,
@@ -343,6 +346,22 @@ export function useTaskEditActions({
         await draftLifecycle.cancel();
     }, [canMutate, draftLifecycle, task]);
 
+    const handleSkipOccurrence = useCallback(async () => {
+        if (!task || !canMutate()) return;
+        if (draftLifecycle.hasPendingChanges()) {
+            if (!canSkipRecurringTaskOccurrence({ ...task, ...mergedTask })) {
+                showTaskWriteError(tFallback(t, 'task.skipOccurrenceSaveFirst', 'Save or discard status and recurrence changes before skipping.'));
+                return;
+            }
+            if (!await draftLifecycle.save()) return;
+        }
+        const skipped = await runStoreAction(
+            () => skipRecurringTaskOccurrence(task.id),
+            'Failed to skip recurring occurrence',
+        );
+        if (skipped) onClose();
+    }, [canMutate, draftLifecycle, mergedTask, onClose, runStoreAction, showTaskWriteError, skipRecurringTaskOccurrence, t, task]);
+
     const handleConvertToReference = useCallback(() => {
         if (!canMutate()) return;
         void draftLifecycle.convertToReference();
@@ -532,6 +551,7 @@ export function useTaskEditActions({
         handleConvertToReference,
         handleConvertToSection,
         handleCancelTask,
+        handleSkipOccurrence,
         handleDeleteTask,
         handleDone,
         handleDuplicateTask,

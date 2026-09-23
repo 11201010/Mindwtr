@@ -449,6 +449,17 @@ export function hasRecurrenceRule(value: Task['recurrence']): boolean {
     return getRecurrenceRule(value) !== null;
 }
 
+/** A fixed recurrence needs a date to have an occurrence that can be skipped. */
+export function canSkipRecurringTaskOccurrence(task: Task): boolean {
+    const anchorField = getRecurrenceScheduleAnchorField(task);
+    return !task.deletedAt
+        && !task.purgedAt
+        && isTaskActionable(task)
+        && getRecurrenceRule(task.recurrence) !== null
+        && getRecurrenceStrategy(task.recurrence) === 'strict'
+        && Boolean(anchorField && safeParseDate(task[anchorField]));
+}
+
 function getRecurrenceRule(value: Task['recurrence']): RecurrenceRule | null {
     if (!value) return null;
     if (typeof value === 'string') {
@@ -1697,7 +1708,8 @@ export function expandCalendarRecurringTaskSetInRange(
 export function createNextRecurringTask(
     task: Task,
     completedAtIso: string,
-    previousStatus: TaskStatus
+    previousStatus: TaskStatus,
+    options?: { advanceOne?: boolean },
 ): Task | null {
     const rule = getRecurrenceRule(task.recurrence);
     if (!rule) return null;
@@ -1741,6 +1753,7 @@ export function createNextRecurringTask(
         : {};
     if (
         strategy === 'strict'
+        && !options?.advanceOne
         && anchorField === 'dueDate'
         && task.startTime
         && rebuiltFields.startTime

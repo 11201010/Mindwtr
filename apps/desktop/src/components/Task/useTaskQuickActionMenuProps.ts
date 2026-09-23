@@ -1,5 +1,6 @@
 import { createElement, useCallback, useMemo } from 'react';
 import {
+    canSkipRecurringTaskOccurrence,
     createBulkOrganizeProject,
     DEFAULT_PROJECT_COLOR,
     isProjectedRecurringTask,
@@ -216,7 +217,28 @@ export function useTaskQuickActionMenuProps(
 
     const cancelAction = useMemo(() => {
         if (readOnly || !isTaskActionable(task) || isProjectedRecurringTask(task)) return [];
-        return [{
+        return [
+            ...(canSkipRecurringTaskOccurrence(task) ? [{
+                id: 'skip-recurring-occurrence',
+                label: tFallback(t, 'task.skipOccurrence', 'Skip this occurrence'),
+                onSelect: async () => {
+                    try {
+                        const result = await useTaskStore.getState().skipRecurringTaskOccurrence(task.id);
+                        if (!result.success) {
+                            useUiStore.getState().showToast(
+                                result.error || tFallback(t, 'task.skipOccurrenceFailed', 'Failed to skip occurrence'),
+                                'error',
+                            );
+                        }
+                    } catch (error) {
+                        reportError('Failed to skip recurring occurrence', error);
+                        useUiStore.getState().showToast(
+                            tFallback(t, 'task.skipOccurrenceFailed', 'Failed to skip occurrence'),
+                            'error',
+                        );
+                    }
+                },
+            }] : []), {
             id: 'cancel-task',
             label: task.recurrence
                 ? tFallback(t, 'task.cancelRecurringSeries', 'Cancel recurring series')

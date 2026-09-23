@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
 import { MoreHorizontal, X } from 'lucide-react-native';
+import { tFallback } from '@mindwtr/core';
 
 import { AppPressable } from '../app-pressable';
 
@@ -15,6 +16,7 @@ type TaskEditHeaderProps = {
   onDuplicate: () => void;
   onPromoteToProject?: () => void;
   onCancelTask?: () => void;
+  onSkipOccurrence?: () => void;
   cancelTaskLabel?: string;
   onDelete: () => void;
   onConvertToAction?: () => void;
@@ -31,6 +33,7 @@ export function TaskEditHeader({
   onDuplicate,
   onPromoteToProject,
   onCancelTask,
+  onSkipOccurrence,
   cancelTaskLabel,
   onDelete,
   onConvertToAction,
@@ -44,6 +47,7 @@ export function TaskEditHeader({
   const reducedMotion = useReducedMotion();
   const [menuVisible, setMenuVisible] = useState(false);
   const createProjectFromTaskLabel = t('task.createProjectFromTask');
+  const skipOccurrenceLabel = tFallback(t, 'task.skipOccurrence', 'Skip this occurrence');
   const moreLabel = t('common.more');
   const closeLabel = t('common.close');
   // "Save", not "Done": the button commits the draft, and "Done" reads as the
@@ -167,6 +171,19 @@ export function TaskEditHeader({
                   <Text style={[styles.menuItemText, { color: tc.text }]}>{t('task.convertToSection')}</Text>
                 </AppPressable>
               )}
+              {onSkipOccurrence ? (
+                <AppPressable
+                  style={styles.menuItem}
+                  accessibilityRole="button"
+                  accessibilityLabel={skipOccurrenceLabel}
+                  onPress={() => {
+                    setMenuVisible(false);
+                    onSkipOccurrence();
+                  }}
+                >
+                  <Text style={[styles.menuItemText, { color: tc.text }]}>{skipOccurrenceLabel}</Text>
+                </AppPressable>
+              ) : null}
               {onCancelTask && cancelTaskLabel ? (
                 <AppPressable
                   style={styles.menuItem}

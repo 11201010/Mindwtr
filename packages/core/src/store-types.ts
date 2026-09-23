@@ -85,6 +85,8 @@ export interface TaskStore {
     updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>;
     /** Archive a task as cancelled without completing it */
     cancelTask: (id: string) => Promise<StoreActionResult>;
+    /** Skip one fixed-schedule occurrence without recording completion */
+    skipRecurringTaskOccurrence: (id: string) => Promise<StoreActionResult>;
     /** Soft-delete a task */
     deleteTask: (id: string) => Promise<StoreActionResult>;
     /** Restore a soft-deleted task */

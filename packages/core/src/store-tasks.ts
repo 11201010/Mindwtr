@@ -38,7 +38,7 @@ import {
 } from './task-status';
 import { beginNotifyProfile, endNotifyProfile, type NotifyProfile } from './store-notify-profiler';
 import { generateUUID as uuidv4 } from './uuid';
-import { normalizeRecurrenceForLoad } from './recurrence';
+import { canSkipRecurringTaskOccurrence, createNextRecurringTask, normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRepeatReminderMinutes } from './schedule-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import {
@@ -176,6 +176,7 @@ type TaskActions = Pick<
     | 'addTasks'
     | 'updateTask'
     | 'cancelTask'
+    | 'skipRecurringTaskOccurrence'
     | 'deleteTask'
     | 'restoreTask'
     | 'restoreTasks'
@@ -870,6 +871,62 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }
             logTaskProjectReactivationSaved(incrementalPersistence.reactivatedProjectIds.length);
         }
+        return actionOk();
+    },
+
+    /** Archive one occurrence and durably create the next without a completion. */
+    skipRecurringTaskOccurrence: async (id: string) => {
+        const task = get()._tasksById.get(id);
+        if (!task || !canSkipRecurringTaskOccurrence(task)) {
+            const message = 'Only an active fixed-schedule recurring task can be skipped';
+            set({ error: message });
+            return actionFail(message);
+        }
+        const now = new Date().toISOString();
+        const changeAt = Date.now();
+        set((state) => {
+            const currentTask = state._tasksById.get(id)!;
+            const deviceState = ensureDeviceId(state.settings);
+            const { updatedTask } = applyTaskUpdates(currentTask, {
+                status: 'archived',
+                cancelledAt: now,
+                rev: nextRevision(currentTask.rev),
+                revBy: deviceState.deviceId,
+            }, now);
+            const nextTask = stampNewRecurringFollowUp(
+                createNextRecurringTask(currentTask, now, currentTask.status, { advanceOne: true }),
+                deviceState.deviceId,
+                getTaskOrder(currentTask),
+                (projectId) => getNextProjectOrder(projectId, state._allTasks),
+            );
+            const followUp = findExistingRecurringFollowUp(state._allTasks, nextTask, id)
+                ? null
+                : nextTask;
+            const updatedTasks = replaceEntityInArray(state._allTasks, id, updatedTask);
+            const tasks = followUp ? [...updatedTasks, followUp] : updatedTasks;
+            persist(set, debouncedSave, state, {
+                tasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                _allTasks: tasks,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
+        });
+        try {
+            await flushPendingSave();
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const message = `Failed to save skipped occurrence: ${detail}`;
+            set({ error: message });
+            return actionFail(message);
+        }
+        logInfo('Recurring occurrence skipped', {
+            scope: 'store',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.3/skip-recurring-occurrence' },
+        });
         return actionOk();
     },
 

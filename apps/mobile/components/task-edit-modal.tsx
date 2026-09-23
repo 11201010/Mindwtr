@@ -20,6 +20,7 @@ import { Task,
     resolveTaskViewSection,
     resolveFeatureFlags,
     isProjectedRecurringTask,
+    canSkipRecurringTaskOccurrence,
     isTaskActionable,
     setTaskViewSectionId,
     shallow,
@@ -185,6 +186,7 @@ function TaskEditModalInner({
         promoteTaskToProject,
         convertTaskToSection,
         resetTaskChecklist,
+        skipRecurringTaskOccurrence,
         addProject,
         addSection,
         addArea,
@@ -210,6 +212,7 @@ function TaskEditModalInner({
             promoteTaskToProject: state.promoteTaskToProject,
             convertTaskToSection: state.convertTaskToSection,
             resetTaskChecklist: state.resetTaskChecklist,
+            skipRecurringTaskOccurrence: state.skipRecurringTaskOccurrence,
             addProject: state.addProject,
             addSection: state.addSection,
             addArea: state.addArea,
@@ -833,6 +836,7 @@ function TaskEditModalInner({
         handleAttemptClose,
         handleConvertToSection,
         handleCancelTask,
+        handleSkipOccurrence,
         handleDeleteTask,
         handleDone,
         handleDuplicateTask,
@@ -858,6 +862,7 @@ function TaskEditModalInner({
         prioritiesEnabled,
         projectContext,
         resetTaskChecklist,
+        skipRecurringTaskOccurrence,
         restoreTask,
         setAiModal,
         setChecklist,
@@ -1132,6 +1137,9 @@ function TaskEditModalInner({
                         onPromoteToProject={handlePromoteTaskToProject}
                         onCancelTask={task && isTaskActionable(task) && !isProjectedRecurringTask(task)
                             ? handleCancelTask
+                            : undefined}
+                        onSkipOccurrence={task && !readOnly && !isProjectedRecurringTask(task) && canSkipRecurringTaskOccurrence(task)
+                            ? handleSkipOccurrence
                             : undefined}
                         cancelTaskLabel={task?.recurrence
                             ? tFallback(t, 'task.cancelRecurringSeries', 'Cancel recurring series')
