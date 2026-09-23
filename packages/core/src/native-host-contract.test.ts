@@ -8,6 +8,10 @@ import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isTaskActionable } from './task-status';
 import { splitTodayTasksByStartTime } from './task-utils';
+import { getEnglishI18nValue, getTranslator } from './i18n';
+import { getTranslationsSync } from './i18n/i18n-loader';
+import { resolveLanguageFromLocale } from './i18n/i18n-storage';
+import { zhHans } from './i18n/locales/zh-Hans';
 import type { Project, Task } from './types';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
@@ -65,6 +69,57 @@ describe('native host contract', () => {
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         return host;
     };
+
+    it('resolves stored and system languages like mobile and loads strings before returning', async () => {
+        const host = createNativeHostContract();
+        expect(host.getStrings({ keys: ['common.save'] })).toEqual({
+            ok: true, value: { language: 'en', strings: { 'common.save': 'Save' }, missing: [] },
+        });
+        for (const [storedLanguage, systemLocale, expected] of [
+            ['zh', 'ja-JP', 'zh'],
+            ['unsupported', 'ja-JP', 'ja'],
+            [null, 'ja-JP', 'ja'],
+            [null, 'zh-TW', 'zh-Hant'],
+            [null, 'fr-FR', 'en'],
+            [null, null, 'en'],
+        ] as const) {
+            expect(await host.setLanguage({ storedLanguage, systemLocale }))
+                .toEqual({ ok: true, value: { language: expected } });
+            if (expected === 'zh') {
+                expect(host.getStrings({ keys: ['common.save'] })).toEqual({
+                    ok: true, value: { language: 'zh', strings: { 'common.save': '保存' }, missing: [] },
+                });
+            }
+            if (systemLocale === 'fr-FR') expect(expected).toBe(resolveLanguageFromLocale(systemLocale));
+        }
+    });
+
+    it('falls back to English, reports missing keys, and validates string requests', async () => {
+        const host = createNativeHostContract();
+        expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: null })).toMatchObject({ ok: true });
+        const fallbackKey = 'common.save';
+        const zh = getTranslationsSync('zh');
+        const saved = zh[fallbackKey];
+        delete zh[fallbackKey];
+        try {
+            expect(host.getStrings({ keys: [fallbackKey, 'not.a.real.key'] })).toEqual({
+                ok: true,
+                value: {
+                    language: 'zh',
+                    strings: { [fallbackKey]: getEnglishI18nValue(fallbackKey) },
+                    missing: ['not.a.real.key'],
+                },
+            });
+        } finally {
+            zh[fallbackKey] = saved;
+        }
+        for (const input of [null, {}, { keys: 'common.save' }, { keys: [1] }, { keys: Array(501).fill('common.save') }]) {
+            expect(host.getStrings(input as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        for (const input of [null, {}, { storedLanguage: 1, systemLocale: null }, { storedLanguage: null, systemLocale: 1 }]) {
+            expect(await host.setLanguage(input as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+    });
 
     it('pages deterministic visible Inbox rows and rejects a stale revision after order or membership changes', async () => {
         const host = createNativeHostContract();
@@ -647,7 +702,7 @@ describe('native host contract', () => {
             prioritiesEnabled: resolveFeatureFlags(state.settings).priorities,
             sortOrder: undefined,
         });
-        const direct = focusDerivation.buildFocusTaskSections(lists, () => undefined);
+        const direct = focusDerivation.buildFocusTaskSections(lists, getTranslator('en'));
         const scheduleByStartTime = splitTodayTasksByStartTime(lists.schedule, now);
         expect(result.value.sections.map(({ key, title, total, rows }) => ({ key, title, total, ids: rows.map(({ id }) => id) })))
             .toEqual(direct.map(({ key, title, items }) => ({
@@ -658,7 +713,7 @@ describe('native host contract', () => {
             { key: 'focus', title: "Today's Focus" },
             { key: 'schedule', title: 'Today' },
             { key: 'reviewDue', title: 'Review Due' },
-            { key: 'next', title: 'Next actions' },
+            { key: 'next', title: 'Next Actions' },
             { key: 'upcoming', title: 'Upcoming' },
         ]);
         const visibleIds = result.value.sections.flatMap(({ rows }) => rows.map(({ id }) => id));
@@ -676,6 +731,32 @@ describe('native host contract', () => {
             .toEqual([true, true, true, true]);
         expect(result.value.sections.filter(({ key }) => key !== 'upcoming').flatMap(({ rows }) => rows.map(({ revealDate }) => revealDate)))
             .toEqual(Array(visibleIds.length - 1).fill(null));
+    });
+
+    it('translates Focus titles and invalidates the English revision after a language change', async () => {
+        const now = new Date(2026, 8, 23, 10);
+        const host = await activateWith([
+            task('starred', '2026-09-01T00:00:00.000Z', { status: 'next', isFocusedToday: true }),
+            task('upcoming', '2026-09-01T00:00:00.000Z', { status: 'next', startTime: formatLocalDate(new Date(2026, 8, 24)) }),
+        ]);
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(now);
+        const english = host.getFocus({ limit: 10 });
+        if (!english.ok) throw new Error('English Focus query failed');
+        expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: null }))
+            .toEqual({ ok: true, value: { language: 'zh' } });
+        const chinese = host.getFocus({ limit: 10 });
+        if (!chinese.ok) throw new Error('Chinese Focus query failed');
+        expect(chinese.value.sections.map(({ key, title }) => ({ key, title }))).toEqual([
+            { key: 'focus', title: zhHans['agenda.todaysFocus'] },
+            { key: 'schedule', title: zhHans['focus.schedule'] },
+            { key: 'reviewDue', title: zhHans['agenda.reviewDue'] },
+            { key: 'next', title: zhHans['focus.nextActions'] },
+            { key: 'upcoming', title: zhHans['agenda.upcoming'] },
+        ]);
+        expect(chinese.value.revision).not.toBe(english.value.revision);
+        expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: english.value.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
     it('follows core ordering with priorities enabled and disabled', async () => {

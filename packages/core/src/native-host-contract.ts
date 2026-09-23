@@ -9,6 +9,11 @@ import { buildFocusPools, buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveF
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isTaskActionable } from './task-status';
+import { getEnglishI18nValue, getTranslator } from './i18n';
+import { isSupportedLanguage } from './i18n/i18n-constants';
+import { loadTranslations } from './i18n/i18n-loader';
+import { resolveLanguageFromLocale } from './i18n/i18n-storage';
+import type { Language } from './i18n/i18n-types';
 import type { Project, Task, TaskPriority, TaskStatus } from './types';
 import { generateUUID } from './uuid';
 
@@ -113,6 +118,8 @@ const normalizeEditorValue = (field: keyof NativeEditableFields, value: unknown)
 /** One instance per serial native JS host. All reads and commands use the shared store. */
 export function createNativeHostContract() {
     const processId = generateUUID();
+    let language: Language = 'en';
+    let translate = getTranslator(language);
     let readyAdapter: StorageAdapter | null = null;
     let generation = 0;
     let lastTasks = useTaskStore.getState()._allTasks;
@@ -163,7 +170,7 @@ export function createNativeHostContract() {
             settingsGeneration += 1;
             lastSettings = settings;
         }
-        return `${storeRevision}:${settingsGeneration}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}`;
+        return `${storeRevision}:${settingsGeneration}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}:${language}`;
     };
 
     const focusSections = (currentRevision: string, now: Date): FocusTaskSection[] => {
@@ -184,7 +191,10 @@ export function createNativeHostContract() {
             });
             const schedule = splitTodayTasksByStartTime(lists.schedule, now);
             cachedLaterTodayIds = new Set(schedule.laterToday.map((task) => task.id));
-            cachedFocusSections = buildFocusTaskSections(lists, () => undefined).map((section) => (
+            cachedFocusSections = buildFocusTaskSections(lists, (key) => {
+                const value = translate(key);
+                return value === key ? undefined : value;
+            }).map((section) => (
                 section.key === 'schedule'
                     ? { ...section, items: [...schedule.ready, ...schedule.laterToday] }
                     : section
@@ -221,6 +231,39 @@ export function createNativeHostContract() {
 
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
+
+        async setLanguage(input: { storedLanguage: string | null; systemLocale: string | null }): Promise<NativeHostResult<{ language: Language }>> {
+            if (!input || (input.storedLanguage !== null && typeof input.storedLanguage !== 'string')
+                || (input.systemLocale !== null && typeof input.systemLocale !== 'string')) {
+                return fail('INVALID_INPUT', 'Stored language and system locale must be strings or null');
+            }
+            const nextLanguage = isSupportedLanguage(input.storedLanguage)
+                ? input.storedLanguage
+                : resolveLanguageFromLocale(input.systemLocale);
+            try {
+                await loadTranslations('en');
+                await loadTranslations(nextLanguage);
+                language = nextLanguage;
+                translate = getTranslator(language);
+                return { ok: true, value: { language } };
+            } catch (error) {
+                return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        },
+
+        getStrings(input: { keys: string[] }): NativeHostResult<{ language: Language; strings: Record<string, string>; missing: string[] }> {
+            if (!input || !Array.isArray(input.keys) || input.keys.length > 500
+                || input.keys.some((key) => typeof key !== 'string')) {
+                return fail('INVALID_INPUT', 'Up to 500 string keys are required');
+            }
+            const strings: Record<string, string> = {};
+            const missing: string[] = [];
+            for (const key of input.keys) {
+                if (getEnglishI18nValue(key) === undefined) missing.push(key);
+                else strings[key] = translate(key);
+            }
+            return { ok: true, value: { language, strings, missing } };
+        },
 
         /** Call only after the host validates its adapter and any required recovery checkpoint. */
         async activate(input: { writeSafetyReady: boolean }): Promise<NativeHostResult<null>> {
