@@ -88,7 +88,12 @@ class SqliteBridge(databaseFile: File) {
             it.clearBindings()
         }
 
+    /** Debug-only fault: set solely by CoreHost's `BuildConfig.DEBUG`-gated hook. */
+    @Volatile var failCommits = false
+
     fun run(sql: String, paramsJson: String) {
+        // The core's adapter then runs ROLLBACK, as after a real commit failure.
+        if (failCommits && sql == "COMMIT") throw IllegalStateException("Injected commit failure")
         val statement = statementFor(sql)
         bind(statement, JSONArray(paramsJson))
         // A statement that returns no rows still needs one step to execute.

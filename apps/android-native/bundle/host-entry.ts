@@ -10,9 +10,9 @@ import {
 } from '@mindwtr/core';
 
 type NativeBridge = {
-    sqlRun(sql: string, params: string): void;
+    sqlRun(sql: string, params: string): string | null;
     sqlAll(sql: string, params: string): string;
-    sqlExec(sql: string): void;
+    sqlExec(sql: string): string | null;
     nowMs(): number;
     randomBytes(length: number): string;
     log(line: string): void;
@@ -25,14 +25,22 @@ const native = (): NativeBridge => {
     return bridge;
 };
 
+// Kotlin returns a storage exception as a marked string (see CoreHost.guarded):
+// a Java exception thrown across the QuickJS JNI boundary aborts the process.
+const NATIVE_ERROR = '!MindwtrNativeError:';
+const checked = <T,>(value: T): T => {
+    if (typeof value === 'string' && value.startsWith(NATIVE_ERROR)) throw new Error(value.slice(NATIVE_ERROR.length));
+    return value;
+};
+
 const sqlite: SqliteClient = {
-    run: async (sql, params) => { native().sqlRun(sql, JSON.stringify(params ?? [])); },
+    run: async (sql, params) => { checked(native().sqlRun(sql, JSON.stringify(params ?? []))); },
     all: async <T,>(sql: string, params?: unknown[]): Promise<T[]> =>
-        JSON.parse(native().sqlAll(sql, JSON.stringify(params ?? []))) as T[],
+        JSON.parse(checked(native().sqlAll(sql, JSON.stringify(params ?? [])))) as T[],
     get: async <T,>(sql: string, params?: unknown[]): Promise<T | undefined> =>
-        (JSON.parse(native().sqlAll(sql, JSON.stringify(params ?? []))) as T[])[0],
+        (JSON.parse(checked(native().sqlAll(sql, JSON.stringify(params ?? [])))) as T[])[0],
     exec: async (sql) => {
-        for (const statement of splitSqlStatements(sql)) native().sqlExec(statement);
+        for (const statement of splitSqlStatements(sql)) checked(native().sqlExec(statement));
     },
 };
 

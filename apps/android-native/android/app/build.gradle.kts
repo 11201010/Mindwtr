@@ -16,7 +16,8 @@ android {
         versionName = "native-dev"
     }
 
-    buildFeatures { compose = true }
+    // BuildConfig.DEBUG gates the lifecycle check's fault hooks.
+    buildFeatures { compose = true; buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

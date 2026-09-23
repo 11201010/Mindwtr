@@ -2,14 +2,17 @@ package tech.dongdongbh.mindwtr.pilot.core
 
 import android.util.Log
 import com.whl.quickjs.android.QuickJSLoader
+import com.whl.quickjs.wrapper.JSCallFunction
 import com.whl.quickjs.wrapper.JSFunction
 import com.whl.quickjs.wrapper.JSObject
 import com.whl.quickjs.wrapper.QuickJSContext
 import org.json.JSONArray
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.pilot.BuildConfig
 import java.io.File
 import java.security.SecureRandom
 import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -17,6 +20,17 @@ import java.util.concurrent.Future
 class CoreHost(private val databaseFile: File) {
     companion object {
         const val TAG = "MindwtrNativeDev"
+        /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
+        private const val NATIVE_ERROR = "!MindwtrNativeError:"
+
+        /**
+         * A Kotlin exception must not cross the QuickJS JNI boundary: the
+         * wrapper keeps calling JNI with it pending and the process aborts.
+         * Return it as a marked string; host-entry.ts throws it inside JS.
+         */
+        private fun guarded(work: (Array<out Any?>) -> Any?) = JSCallFunction { args ->
+            try { work(args) } catch (error: Throwable) { NATIVE_ERROR + (error.message ?: error.javaClass.simpleName) }
+        }
         init { QuickJSLoader.init() }
     }
 
@@ -39,7 +53,8 @@ class CoreHost(private val databaseFile: File) {
             check(shutdown == null) { "Core host is closed" }
             executor.submit(Callable { work() })
         }
-        return task.get()
+        // Rethrow the engine's own exception: callers match "SAVE_FAILED" on its message.
+        return try { task.get() } catch (failure: ExecutionException) { throw failure.cause ?: failure }
     }
 
     private fun call(method: String, vararg args: Any?): Any? = onEngine {
@@ -56,18 +71,19 @@ class CoreHost(private val databaseFile: File) {
             sqlite = database
             database.ensureRecoveryCheckpoint()
             val bridge = engine.createNewJSObject()
-            bridge.setProperty("sqlRun") { args -> database.run(args[0] as String, args[1] as String); null }
-            bridge.setProperty("sqlAll") { args -> database.all(args[0] as String, args[1] as String) }
-            bridge.setProperty("sqlExec") { args -> database.exec(args[0] as String); null }
-            bridge.setProperty("nowMs") { _ -> (System.nanoTime() - startedAt) / 1e6 }
-            bridge.setProperty("randomBytes") { args ->
+            bridge.setProperty("sqlRun", guarded { args -> database.run(args[0] as String, args[1] as String); null })
+            bridge.setProperty("sqlAll", guarded { args -> database.all(args[0] as String, args[1] as String) })
+            bridge.setProperty("sqlExec", guarded { args -> database.exec(args[0] as String); null })
+            bridge.setProperty("nowMs", guarded { _ -> (System.nanoTime() - startedAt) / 1e6 })
+            bridge.setProperty("randomBytes", guarded { args ->
                 val length = (args[0] as Number).toInt()
                 require(length in 0..65_536) { "Invalid random byte count" }
                 JSONArray().also { out ->
                     ByteArray(length).also(random::nextBytes).forEach { out.put(it.toInt() and 0xff) }
                 }.toString()
-            }
-            bridge.setProperty("log") { args -> Log.i(TAG, args[0] as String); null }
+            })
+            // A diagnostic line must never fail the caller: coerce and swallow.
+            bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
             callAsync("boot")
@@ -85,7 +101,30 @@ class CoreHost(private val databaseFile: File) {
 
     fun completeTask(id: String): JSONObject = callAsync("complete", id)
 
+    /**
+     * Debug-build fault injection for `scripts/check-lifecycle-device.sh`.
+     * Read once per task command, on the engine thread. Release builds return
+     * "" before reading anything, so no property can reach them.
+     */
+    private fun debugFault(name: String): String {
+        if (!BuildConfig.DEBUG) return ""
+        return runCatching {
+            val process = ProcessBuilder("getprop", "debug.mindwtr.native.$name").start()
+            process.inputStream.bufferedReader().use { it.readText().trim() }.also { process.waitFor() }
+        }.getOrDefault("")
+    }
+
+    private fun debugDelay(name: String) {
+        val ms = debugFault(name).toLongOrNull() ?: return
+        if (ms > 0) Thread.sleep(minOf(ms, 60_000L))
+    }
+
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
+        val command = method == "create" || method == "complete"
+        if (command) {
+            checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
+            debugDelay("delay_before_ms")
+        }
         val id = call(method, *args) as String
         val engine = checkNotNull(context)
         val pump = engine.globalObject.getJSFunction("__pumpTimers")
@@ -96,6 +135,7 @@ class CoreHost(private val databaseFile: File) {
             val answer = call("poll", id) as String?
             if (answer != null) {
                 val result = JSONObject(answer)
+                if (command) debugDelay("delay_after_ms")
                 if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
                 return@onEngine result.getJSONObject("value")
             }

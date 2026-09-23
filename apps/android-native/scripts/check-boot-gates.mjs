@@ -19,15 +19,50 @@ assert.match(sqliteBridge, /PRAGMA synchronous = FULL/);
 assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\)[\s\S]*?syncDirectory/);
 assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('engine.evaluate(bundle'));
 assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot")'));
-const activity = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/MainActivity.kt'), 'utf8');
+const source = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot', name), 'utf8');
+const activity = source('MainActivity.kt');
+const model = source('InboxViewModel.kt');
+const owner = source('ProcessCoreHost.kt');
 assert.match(activity, /enabled = !busy && failedAction == null,[\s\S]*?modifier = Modifier\.weight\(1f\)/);
-assert.match(activity, /submittedTitle != null && value != submittedTitle[\s\S]*?captureId = UUID\.randomUUID\(\)\.toString\(\)/);
-assert.match(activity, /val id = captureId\s+submittedTitle = title/);
+assert.match(model, /submittedTitle != null && value != submittedTitle\) setCapture\(value, UUID\.randomUUID\(\)\.toString\(\), null\)/);
+assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = title\)/);
 assert.match(activity, /onClick = \{ refresh\(\) \}, enabled = writable && !busy && failedAction == null/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("create", captureId, draft\)/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
 assert.match(activity, /contentDescription = "Complete \$\{task\.title\}"/);
-assert.match(activity, /action != null \|\| failure\.message\?\.startsWith\("SAVE_FAILED"\) == true/);
+assert.match(model, /action != null \|\| failure\.message\?\.startsWith\("SAVE_FAILED"\) == true/);
+// Only the capture draft survives process death; a restored unchanged draft reuses its capture UUID.
+for (const field of ['draft', 'captureId', 'submittedTitle']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
+// One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
+for (const file of [activity, model]) {
+    assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
+}
+const kotlinFiles = [activity, model, owner, coreHost, sqliteBridge];
+assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
+assert.match(owner, /val runtime = CoreHost\(File\(app\.filesDir, "mindwtr-native-dev\.db"\)\)/);
+assert.equal(owner.match(/close\(\)/g).length, 1);
+assert.match(owner, /catch \(failure: Throwable\) \{\s*runCatching \{ runtime\.close\(\) \}/);
+assert.match(activity, /model\.attach\(\)/);
+// A failed command's exact retry outlives its screen inside this process only.
+assert.match(model, /val failed = if \(action != null[\s\S]*?ProcessCoreHost\.recordFailure\([\s\S]*?ui \{/);
+assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ host = runtime; restore\(pending\) \}/g).length, 2);
+assert.match(model, /runtime\.createInboxTask\(title, id\)\s+acknowledged\(action\)/);
+assert.match(model, /runtime\.completeTask\(id\)\s+acknowledged\(action\)/);
+assert.equal(model.match(/clearFailure/g).length, 1);
+assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db)/);
+assert.match(model, /ProcessCoreHost\.get\(/);
+// Storage exceptions never cross the QuickJS JNI boundary.
+const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
+assert.equal(bridgeCallbacks.length, 6);
+for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
+assert.match(coreHost, /setProperty\("log", guarded \{ args -> runCatching \{/);
+assert.match(coreHost, /try \{ work\(args\) \} catch \(error: Throwable\) \{ NATIVE_ERROR \+/);
+// Fault hooks exist only behind BuildConfig.DEBUG.
+assert.equal(coreHost.match(/getprop/g).length, 1);
+assert.match(coreHost, /private fun debugFault\(name: String\): String \{\s*if \(!BuildConfig\.DEBUG\) return ""/);
+assert.equal(coreHost.match(/failCommits =/g).length, 1);
+assert.match(coreHost, /failCommits = debugFault\("fail_commit"\) == "1"/);
+assert.equal([activity, model, owner].join('\n').match(/failCommits|debugFault|getprop/g), null);
 
 const fakeCore = `
 export class SqliteAdapter {
@@ -115,4 +150,11 @@ const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
 assert.equal(blockedRefresh.ok, false);
 assert.match(blockedRefresh.error, /SAVE_FAILED/);
 assert.equal(ready.queryCount, queriesBeforeFailure);
+const brokenStorage = makeState(0);
+brokenStorage.__mindwtrNative.sqlAll = () => '!MindwtrNativeError:disk I/O error';
+const brokenBoot = await poll(brokenStorage, brokenStorage.MindwtrHost.boot());
+assert.equal(brokenBoot.ok, false);
+assert.match(brokenBoot.error, /disk I\/O error/);
+assert.equal(brokenStorage.activationCount, 0);
+console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
 console.log('Boot gates, second-read failure, failed-save refresh, and diagnostic acknowledgment passed');
