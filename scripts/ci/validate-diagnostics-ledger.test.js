@@ -45,6 +45,15 @@ function collectCodeSlugs({ file, source }) {
       }
     }
   }
+  // Native Android diagnostics likewise put the field in the first string of
+  // an android.util.Log info/warn call; unused string constants do not count.
+  if (file.endsWith(".kt")) {
+    for (const message of source.matchAll(/\bLog\.(?:i|w)\([^,()]+,\s*"((?:\\[\s\S]|[^"\\])*)"/g)) {
+      for (const match of message[1].matchAll(/\breleaseCheck=([\w./-]+)/g)) {
+        sites.push({ file, slug: match[1] });
+      }
+    }
+  }
   return sites;
 }
 
@@ -119,6 +128,19 @@ describe("release diagnostics ledger", () => {
     ` })).toEqual([
       { file, slug: "v1.3.0/native-capture" },
       { file, slug: "v1.3.0/native-retry" },
+    ]);
+  });
+
+  it("resolves native Android diagnostic fields only inside Log calls", () => {
+    const file = "apps/android-native/android/app/src/main/java/Example.kt";
+    expect(collectCodeSlugs({ file, source: `
+      const val UNUSED = "releaseCheck=v1.3.0/unused-android"
+      Log.i(TAG, "Host reused releaseCheck=v1.3.0/android-reuse " +
+          "reason=\$reason")
+      Log.w(CoreHost.TAG, "Guard blocked releaseCheck=v1.3.0/android-guard outcome=blocked")
+    ` })).toEqual([
+      { file, slug: "v1.3.0/android-reuse" },
+      { file, slug: "v1.3.0/android-guard" },
     ]);
   });
 
