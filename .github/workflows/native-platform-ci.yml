@@ -18,6 +18,7 @@ on:
       - "scripts/build-macos-widget.sh"
       - "scripts/ci/test-build-macos-widget.sh"
       - "apps/mobile/modules/**/android/**"
+      - "apps/android-native/**"
       - "apps/mobile/modules/**/expo-module.config.json"
       - "apps/mobile/ios-app-intents/**"
       - "apps/mobile/widgets-ios/**"
@@ -47,6 +48,7 @@ on:
       - "apps/mobile/app.json"
       - "apps/mobile/package.json"
       - "packages/core/src/**"
+      - "packages/core/package.json"
       - "scripts/check-synced-field-parity.ts"
       - "scripts/ci/setup-android-sdk.sh"
       - "scripts/ci/setup-ruby.sh"
@@ -68,6 +70,7 @@ on:
       - "scripts/build-macos-widget.sh"
       - "scripts/ci/test-build-macos-widget.sh"
       - "apps/mobile/modules/**/android/**"
+      - "apps/android-native/**"
       - "apps/mobile/modules/**/expo-module.config.json"
       - "apps/mobile/ios-app-intents/**"
       - "apps/mobile/widgets-ios/**"
@@ -97,6 +100,7 @@ on:
       - "apps/mobile/app.json"
       - "apps/mobile/package.json"
       - "packages/core/src/**"
+      - "packages/core/package.json"
       - "scripts/check-synced-field-parity.ts"
       - "scripts/ci/setup-android-sdk.sh"
       - "scripts/ci/setup-ruby.sh"
@@ -153,6 +157,7 @@ jobs:
       ios_matrix: ${{ steps.routing.outputs.matrix }}
       macmini: ${{ steps.routing.outputs.macmini }}
       android: ${{ steps.filter.outputs.android }}
+      android_client: ${{ steps.filter.outputs.android_client }}
       ios: ${{ steps.filter.outputs.ios }}
       macos: ${{ steps.filter.outputs.macos }}
       windows: ${{ steps.filter.outputs.windows }}
@@ -218,6 +223,9 @@ jobs:
                 enabled=true
               fi
               echo "$platform=$enabled" >> "$GITHUB_OUTPUT"
+              if [ "$platform" = android ]; then
+                echo "android_client=$enabled" >> "$GITHUB_OUTPUT"
+              fi
             done
             exit 0
           fi
@@ -228,6 +236,7 @@ jobs:
           git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/native-changed-paths.txt"
 
           android=false
+          android_client=false
           ios=false
           macos=false
           windows=false
@@ -248,6 +257,11 @@ jobs:
                 ;;
             esac
             case "$path" in
+              apps/android-native/*|packages/core/src/*|packages/core/package.json|scripts/ci/setup-android-sdk.sh|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+                android_client=true
+                ;;
+            esac
+            case "$path" in
               apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/modules/ios-siri-actions/*|apps/mobile/modules/apple-foundation-models/Package.swift|apps/mobile/modules/apple-task-search/Package.swift|apps/mobile/modules/apple-task-search/tests/*|apps/mobile/modules/apple-foundation-models/Tests/*|apps/mobile/modules/apple-image-capture/Package.swift|apps/mobile/modules/apple-image-capture/ios/Tests/*|scripts/ci/select-apple-sdk.sh|scripts/ci/probe-apple-sdk.sh|scripts/ci/select-apple-sdk.test.js|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/prepare-apple-cache.sh|scripts/ci/dispatch-macmini.sh|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 ios=true
                 ;;
@@ -255,6 +269,7 @@ jobs:
           done < "$RUNNER_TEMP/native-changed-paths.txt"
 
           echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "android_client=$android_client" >> "$GITHUB_OUTPUT"
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
           echo "macos=$macos" >> "$GITHUB_OUTPUT"
           echo "windows=$windows" >> "$GITHUB_OUTPUT"
@@ -496,6 +511,44 @@ jobs:
       - name: Run Android native recovery and system bar tests
         working-directory: apps/mobile/android
         run: ./gradlew :attachment-file-installer:testDebugUnitTest :sync-file-lock:testDebugUnitTest :android-widget:testDebugUnitTest :system-bars:testDebugUnitTest --no-daemon
+
+  android-client:
+    if: needs.changes.outputs.android_client == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    name: Android Compose client build
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        env:
+          ANDROID_SDK_PACKAGES: "platform-tools platforms;android-36 build-tools;36.0.0"
+        run: bash scripts/ci/setup-android-sdk.sh
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Android Compose client
+        working-directory: apps/android-native/android
+        run: ./gradlew :app:assembleDebug --no-daemon
 
   ios-native:
     if: needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini != 'true'

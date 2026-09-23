@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws everything; the platform theme only needs to stay out of
+         the way and let the window go edge to edge. -->
+    <style name="Theme.NativeDev" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

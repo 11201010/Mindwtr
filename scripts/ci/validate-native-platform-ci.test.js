@@ -15,6 +15,16 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   )?.[1];
 
   expect(workflow).toContain('apps/mobile/modules/**/android/**');
+  expect(workflow.match(/- "apps\/android-native\/\*\*"/g)).toHaveLength(2);
+  expect(workflow.match(/- "packages\/core\/package\.json"/g)).toHaveLength(2);
+  expect(workflow).toContain('android_client: ${{ steps.filter.outputs.android_client }}');
+  expect(workflow).toContain('apps/android-native/*|packages/core/src/*|packages/core/package.json|');
+  const clientJob = parse(workflow).jobs['android-client'];
+  expect(clientJob.if).toContain("needs.changes.outputs.android_client == 'true'");
+  expect(clientJob.steps.find((step) => step.name === 'Build Android Compose client')).toMatchObject({
+    'working-directory': 'apps/android-native/android',
+    run: './gradlew :app:assembleDebug --no-daemon',
+  });
   expect(workflow).toContain('apps/mobile/modules/**/ios/**');
   expect(
     workflow.match(/- "apps\/mobile\/modules\/\*\*\/expo-module\.config\.json"/g),
@@ -440,6 +450,7 @@ test("desktop Rust pull requests check and test the native library on Windows", 
 test("manual native CI selects one platform or all platforms", () => {
   const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
   const platforms = ["ios", "android", "macos", "windows"];
+  const outputs = [...platforms, "android_client"];
   expect(workflow.on.workflow_dispatch.inputs.platform.default).toBe("all");
   const script = workflow.jobs.changes.steps.find((step) => step.id === "filter").run;
   const directory = mkdtempSync(join(tmpdir(), "mindwtr-native-dispatch-"));
@@ -450,8 +461,8 @@ test("manual native CI selects one platform or all platforms", () => {
         env: { ...process.env, EVENT_NAME: "workflow_dispatch", DISPATCH_PLATFORM: selection, GITHUB_OUTPUT: output },
       });
       const actual = Object.fromEntries(readFileSync(output, "utf8").trim().split("\n").map((line) => line.split("=")));
-      expect(actual).toEqual(Object.fromEntries(platforms.map((platform) => [
-        platform, String(selection === "all" || selection === platform),
+      expect(actual).toEqual(Object.fromEntries(outputs.map((platform) => [
+        platform, String(selection === "all" || selection === platform || (platform === "android_client" && selection === "android")),
       ])));
     }
   } finally {
