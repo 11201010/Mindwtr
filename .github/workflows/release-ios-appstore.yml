@@ -130,7 +130,7 @@ concurrency:
 
 jobs:
   ios-appstore:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 90
     outputs:
       app_build_number: ${{ steps.ios-version.outputs.app_build_number }}
@@ -180,46 +180,15 @@ jobs:
           bundle config set --local frozen true
           bundle install --jobs 4 --retry 3
 
-      - name: Select Xcode (iOS 26 SDK required)
+      - name: Select release Xcode 27.0
         run: |
-          set -euo pipefail
-          XCODE_26_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [ -n "${XCODE_26_PATH:-}" ]; then
-            sudo xcode-select -s "$XCODE_26_PATH"
-          else
-            XCODE_FALLBACK_PATH="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-            if [ -n "${XCODE_FALLBACK_PATH:-}" ]; then
-              echo "::warning::No Xcode_26*.app found; falling back to latest available: ${XCODE_FALLBACK_PATH}"
-              sudo xcode-select -s "$XCODE_FALLBACK_PATH"
-            else
-              echo "::warning::No explicit Xcode*.app found; using runner default Xcode."
-            fi
-          fi
-
-          echo "Selected DEVELOPER_DIR: $(xcode-select -p)"
-          xcodebuild -version
-
-          IOS_SDK_VERSION="$(xcodebuild -showsdks | awk '/-sdk iphoneos/{gsub(/iphoneos/, "", $NF); ver=$NF} END{print ver}')"
-          if [ -z "${IOS_SDK_VERSION:-}" ]; then
-            echo "::error::No iPhoneOS SDK found on runner. Current SDKs:"
-            xcodebuild -showsdks
+          # Match the toolchain already validated by the hosted and Mac CI lanes.
+          source scripts/ci/select-apple-sdk.sh 27
+          EXPECTED_XCODE=$'Xcode 27.0\nBuild version 27A266a'
+          if [ "$(xcodebuild -version)" != "$EXPECTED_XCODE" ]; then
+            echo "::error::Release requires Xcode 27.0 (27A266a); review runner/toolchain changes before uploading."
             exit 1
           fi
-
-          IOS_SDK_MAJOR="${IOS_SDK_VERSION%%.*}"
-          if ! [[ "${IOS_SDK_MAJOR}" =~ ^[0-9]+$ ]]; then
-            echo "::error::Unable to parse iPhoneOS SDK version: ${IOS_SDK_VERSION}"
-            xcodebuild -showsdks
-            exit 1
-          fi
-
-          if [ "${IOS_SDK_MAJOR}" -lt 26 ]; then
-            echo "::error::Detected iPhoneOS SDK ${IOS_SDK_VERSION}. App Store Connect requires iOS 26 SDK or later (ITMS-90725)."
-            echo "::error::Install/select Xcode 26+ on the runner before uploading."
-            exit 1
-          fi
-
-          echo "Using iPhoneOS SDK ${IOS_SDK_VERSION}"
 
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0

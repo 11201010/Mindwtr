@@ -191,15 +191,12 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os
-          baseline = dict(lane='xcode26', label='Xcode 26 baseline', runner='macos-15')
-          preview = dict(lane='xcode27', label='Xcode 27 preview validation', runner='xcode-27')
+          apple = dict(lane='xcode27', label='Xcode 27 validation', runner='xcode-27')
           private = os.environ['PRIVATE_MACMINI'] == 'true'
           dispatch = os.environ['USE_MACMINI'] == 'true' and not private
           if private:
-              preview['runner'] = ['self-hosted', 'macOS', 'ARM64', 'mindwtr-apple']
-              lanes = [preview]
-          else:
-              lanes = [baseline] if dispatch else [baseline, preview]
+              apple['runner'] = ['self-hosted', 'macOS', 'ARM64', 'mindwtr-apple']
+          lanes = [apple]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('matrix=' + json.dumps({'include': lanes}) + '\n')
               output.write('macmini=' + str(dispatch).lower() + '\n')
@@ -501,7 +498,7 @@ jobs:
         run: ./gradlew :attachment-file-installer:testDebugUnitTest :sync-file-lock:testDebugUnitTest :android-widget:testDebugUnitTest :system-bars:testDebugUnitTest --no-daemon
 
   ios-native:
-    if: needs.changes.outputs.ios == 'true'
+    if: needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini != 'true'
     needs: changes
     strategy:
       fail-fast: false
@@ -517,6 +514,10 @@ jobs:
           ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
           clean: ${{ github.repository != 'dongdongbh/Mindwtr-native-ci' }}
+
+      - name: Select the requested Apple SDK
+        if: runner.environment != 'self-hosted'
+        run: bash scripts/ci/select-apple-sdk.sh 27
 
       - name: Prepare persistent Apple build caches
         run: bash scripts/ci/prepare-apple-cache.sh
@@ -551,10 +552,6 @@ jobs:
       - name: Capture and validate Xcode 27 environment
         if: matrix.lane == 'xcode27'
         run: bash scripts/ci/collect-ios27-environment.sh "$RUNNER_TEMP/ios27-artifacts"
-
-      - name: Select the requested Apple SDK
-        if: matrix.lane == 'xcode26'
-        run: bash scripts/ci/select-apple-sdk.sh 26
 
       - name: Preflight Apple evaluation SDK APIs
         if: matrix.lane == 'xcode27'
@@ -670,25 +667,13 @@ jobs:
         run: bash scripts/ci/select-ios27-simulator.sh "$RUNNER_TEMP/ios27-artifacts"
 
       - name: Compile Watch app and complications
-        if: matrix.lane == 'xcode26'
         run: |
           xcodebuild \
             -project apps/mobile/ios/Mindwtr.xcodeproj \
             -target MindwtrWatch \
+            -jobs 4 \
             -configuration Debug \
             -sdk watchsimulator \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
-
-      - name: Compile iOS app and native Swift modules
-        if: matrix.lane == 'xcode26'
-        run: |
-          xcodebuild \
-            -workspace apps/mobile/ios/Mindwtr.xcworkspace \
-            -scheme Mindwtr \
-            -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build

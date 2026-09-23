@@ -8,7 +8,7 @@ import { parse } from 'yaml';
 const fixtures = [];
 afterEach(() => fixtures.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })));
 
-function fixture({ installed = ['26.4', '27.0'], sdk = '27.0' } = {}) {
+function fixture({ installed = ['26.4', '27.0'], sdk = '27.0', xcodeVersion = 'Xcode 27.0\nBuild version 27A266a' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'mindwtr-sdk-test-'));
   fixtures.push(root);
   const applications = join(root, 'Applications');
@@ -16,17 +16,18 @@ function fixture({ installed = ['26.4', '27.0'], sdk = '27.0' } = {}) {
   mkdirSync(applications);
   mkdirSync(bin);
   for (const version of installed) mkdirSync(join(applications, `Xcode_${version}.app`, 'Contents', 'Developer'), { recursive: true });
-  writeFileSync(join(bin, 'xcodebuild'), '#!/bin/sh\nprintf "Xcode fixture\\n"\n', { mode: 0o755 });
+  writeFileSync(join(bin, 'xcodebuild'), '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_XCODE_VERSION"\n', { mode: 0o755 });
   writeFileSync(join(bin, 'xcrun'), '#!/bin/sh\nif [ "$1" = "swiftc" ]; then echo "Swift fixture"; else echo "$FIXTURE_SDK"; fi\n', { mode: 0o755 });
   return {
     root,
-    run: (major) => spawnSync('bash', [resolve('scripts/ci/select-apple-sdk.sh'), major], {
+    run: (major, script) => spawnSync('bash', script ? ['-c', script] : [resolve('scripts/ci/select-apple-sdk.sh'), major], {
       encoding: 'utf8',
       env: {
         ...process.env,
         PATH: `${bin}${delimiter}${process.env.PATH}`,
         MINDWTR_XCODE_APPLICATIONS_DIR: applications,
         FIXTURE_SDK: sdk,
+        FIXTURE_XCODE_VERSION: xcodeVersion,
         GITHUB_ENV: join(root, 'env'),
         GITHUB_STEP_SUMMARY: join(root, 'summary'),
       },
@@ -54,7 +55,7 @@ test('a matching application name is insufficient if the SDK is wrong', () => {
   expect(result.stderr).toContain('selected Xcode provides 26.4');
 });
 
-test('ordinary CI continues to select iOS 26 and rejects arbitrary input', () => {
+test('the explicit legacy SDK selector still works and rejects arbitrary input', () => {
   expect(fixture({ sdk: '26.4' }).run('26').status).toBe(0);
   expect(fixture().run('latest').status).not.toBe(0);
   execFileSync('bash', ['-n', 'scripts/ci/select-apple-sdk.sh']);
@@ -70,4 +71,21 @@ test('iOS 27 matrix validation includes an unsigned archive and states its limit
   expect(archive.run).toContain('-configuration Release');
   expect(archive.run).toContain('CODE_SIGNING_ALLOWED=NO');
   expect(steps.find((step) => step.name === 'Record archive validation limits').run).toContain('remain separate validation gates');
+});
+
+// Execute the release preflight, including its toolchain guard: do not merely
+// assert that the YAML contains an Xcode version string.
+test('release preflight accepts the validated Xcode and rejects changed builds or SDKs', () => {
+  const release = parse(readFileSync('.github/workflows/release-ios-appstore.yml', 'utf8'));
+  const job = release.jobs['ios-appstore'];
+  expect(job['runs-on']).toBe('xcode-27');
+  const step = job.steps.find((step) => step.name === 'Select release Xcode 27.0');
+  expect(fixture().run('27', step.run).status).toBe(0);
+  for (const xcodeVersion of ['Xcode 27.1\nBuild version unexpected', 'Xcode 27.0\nBuild version beta']) {
+    const changed = fixture({ xcodeVersion }).run('27', step.run);
+    expect(changed.status).not.toBe(0);
+    expect(changed.stdout).toContain('Release requires Xcode 27.0');
+  }
+  expect(fixture({ sdk: '26.4' }).run('27', step.run).status).not.toBe(0);
+  expect(fixture({ installed: ['26.4'] }).run('27', step.run).status).not.toBe(0);
 });

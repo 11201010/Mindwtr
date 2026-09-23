@@ -74,9 +74,8 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(workflow).toContain("name: iOS Swift compile");
   expect(workflow).toContain("gem install cocoapods --version 1.16.2 --no-document");
   expect(workflow).toMatch(/prebuild \\\n\s+--clean \\\n\s+--platform ios/);
-  expect(iosJob).toContain("-destination 'generic/platform=iOS Simulator'");
   const hostCompile = parse(workflow).jobs["ios-native"].steps
-    .find((step) => step.name === "Compile iOS app and native Swift modules").run;
+    .find((step) => step.name === "Build bundled Release app for the iOS 27 simulator").run;
   expect(hostCompile).not.toContain("-sdk iphonesimulator");
   expect(iosJob).toContain("-target MindwtrWatch");
   expect(iosJob).toContain("-sdk watchsimulator");
@@ -124,7 +123,7 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   );
 });
 
-test("native CI keeps the Xcode 26 baseline and adds isolated Xcode 27 evidence", () => {
+test("native CI uses one Xcode 27 lane and retains Apple validation coverage", () => {
   const workflowText = readFileSync(".github/workflows/native-platform-ci.yml", "utf8");
   const workflow = parse(workflowText);
   const job = workflow.jobs["ios-native"];
@@ -133,7 +132,7 @@ test("native CI keeps the Xcode 26 baseline and adds isolated Xcode 27 evidence"
   );
 
   expect(job.strategy["fail-fast"]).toBe(false);
-  expect(lanes.xcode26.runner).toBe("macos-15");
+  expect(Object.keys(lanes)).toEqual(["xcode27"]);
   expect(lanes.xcode27.runner).toBe("xcode-27");
   expect(workflow.on.push.branches).toContain("fix/ios27-1193");
 
@@ -167,13 +166,10 @@ test("native CI keeps the Xcode 26 baseline and adds isolated Xcode 27 evidence"
     expect(step.if).toBeUndefined();
   }
 
-  for (const stepName of [
-    "Compile Watch app and complications",
-    "Compile iOS app and native Swift modules",
-  ]) {
-    expect(job.steps.find((step) => step.name === stepName)?.if)
-      .toContain("matrix.lane == 'xcode26'");
-  }
+  expect(job.steps.find((step) => step.name === "Compile Watch app and complications").if)
+    .toBeUndefined();
+  expect(job.steps.find((step) => step.name === "Select the requested Apple SDK").run)
+    .toContain("select-apple-sdk.sh 27");
 
   const simulatorBuild = job.steps.find((step) => step.name === "Build bundled Release app for the iOS 27 simulator");
   expect(simulatorBuild.if).toContain("matrix.lane == 'xcode27'");
@@ -505,9 +501,9 @@ function appleRouting(privateRunner, enabled) {
 
 test("Apple routing keeps hosted fallback and isolates the private Mac runner", () => {
   expect(appleRouting(false, false).matrix.include.map((lane) => lane.runner))
-    .toEqual(["macos-15", "xcode-27"]);
+    .toEqual(["xcode-27"]);
   expect(appleRouting(false, true)).toMatchObject({
-    matrix: { include: [{ lane: "xcode26", runner: "macos-15" }] }, macmini: "true",
+    matrix: { include: [{ lane: "xcode27", runner: "xcode-27" }] }, macmini: "true",
   });
   const privateRoute = appleRouting(true, true);
   expect(privateRoute.macmini).toBe("false");
@@ -524,5 +520,7 @@ test("Apple routing keeps hosted fallback and isolates the private Mac runner", 
   expect(guard.run).toBe('git merge-base --is-ancestor "$SOURCE_SHA" origin/main');
   expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(routing));
   expect(workflow.jobs["ios-native"].needs).toBe("changes");
+  expect(workflow.jobs["ios-native"].if).toContain("needs.changes.outputs.macmini != 'true'");
+  expect(workflow.jobs["ios-macmini"].if).toContain("needs.changes.outputs.macmini == 'true'");
   expect(workflow.jobs["ios-macmini"]["runs-on"]).toBe("ubuntu-latest");
 });

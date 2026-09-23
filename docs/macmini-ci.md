@@ -1,8 +1,16 @@
 # Mac mini native CI
 
-`Native Platform CI` keeps Android, desktop, Xcode 26, and all pull requests on
-GitHub-hosted runners. With repository variable `MACMINI_NATIVE_CI=true`, the
-Xcode 27 lane for pushes/manual runs on `main` runs on the Mac mini.
+`Native Platform CI` uses Xcode 27 for iOS and keeps Android, desktop, and all
+pull requests on GitHub-hosted runners. With repository variable
+`MACMINI_NATIVE_CI=true`, the
+Xcode 27 lane for pushes/manual runs on `main` runs on the Mac mini, with no
+duplicate hosted iOS build. Disabling Mac routing uses the hosted Xcode 27 lane.
+
+iOS App Store releases run separately on the hosted `xcode-27` runner and require
+Xcode 27.0 build `27A266a`, the toolchain recorded in the validation runs below.
+A different build fails before signing/upload and requires an explicit toolchain
+update. Xcode 26 is no longer a routine iOS CI or release lane. The Mac remains
+an unsigned validation runner; release signing stays in the hosted release job.
 
 The public Ubuntu job dispatches `native.yml` in the private
 `dongdongbh/Mindwtr-native-ci` repository, waits for its result, and copies its
@@ -37,8 +45,9 @@ The checkout retains `node_modules`; other generated/untracked sources are
 removed before every build. Expo regenerates its native project on every run.
 Xcode uses `-jobs 4`; the single runner serializes heavy jobs.
 
-Every Xcode 27 run retains the native Swift suites, SDK checks, bundled Release
-simulator build, cold/warm link smoke tests, and unsigned device archive. A fresh
+Every Xcode 27 run retains the native Swift suites, SDK checks, Watch simulator
+compile, bundled Release simulator build, cold/warm link smoke tests, and
+unsigned device archive. A fresh
 simulator is created and deleted for each Mac run. These are build checks;
 signing, store distribution, and real-device validation remain separate.
 
