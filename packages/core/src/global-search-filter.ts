@@ -86,6 +86,8 @@ export type ComputeGlobalSearchResultsInput = {
      * `query`, ftsResults are ignored until a matching answer arrives.
      */
     ftsQuery?: string | null;
+    /** Visible result window. RN shows 50; native hosts may request up to 100. */
+    limit?: number;
 };
 
 const buildDueMatcher = (duePreset: DuePreset, weekStart: number) => {
@@ -212,6 +214,7 @@ export const computeGlobalSearchResults = ({
     weekStart,
     ftsResults,
     ftsQuery,
+    limit = 50,
 }: ComputeGlobalSearchResultsInput) => {
     const trimmedQuery = query.trim();
     const hasTaskOnlyFilters = (
@@ -341,11 +344,12 @@ export const computeGlobalSearchResults = ({
     const results = !hasActiveSearch ? [] : [
         ...scopedProjects.map((project) => ({ type: 'project' as const, item: project })),
         ...scopedTasks.map((task) => ({ type: 'task' as const, item: task })),
-    ].slice(0, 50);
+    ].slice(0, limit);
     const isTruncated = totalResults > results.length || sourceLimited;
 
     return {
         totalResults,
+        totalTasks: scopedTasks.length,
         totalResultsLabel: sourceLimited ? `${sourceLimit}+` : String(totalResults),
         results,
         isTruncated,

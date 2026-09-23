@@ -1,0 +1,906 @@
+{
+  "sourceCommit": "12dc7ab0f",
+  "now": "2026-09-23T12:00:00.000Z",
+  "tasks": [
+    {
+      "id": "launch-next",
+      "title": "Launch plan",
+      "status": "next",
+      "tags": [
+        "#client"
+      ],
+      "contexts": [
+        "@office"
+      ],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z",
+      "dueDate": "2026-09-23",
+      "projectId": "project-launch"
+    },
+    {
+      "id": "launch-done",
+      "title": "Launch report",
+      "status": "done",
+      "tags": [
+        "#client"
+      ],
+      "contexts": [],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z",
+      "completedAt": "2026-06-01T12:00:00.000Z"
+    },
+    {
+      "id": "launch-future",
+      "title": "Launch future",
+      "status": "next",
+      "tags": [
+        "#later"
+      ],
+      "contexts": [],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z",
+      "startTime": "2026-10-01"
+    },
+    {
+      "id": "launch-reference",
+      "title": "Launch reference",
+      "status": "reference",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z"
+    },
+    {
+      "id": "launch-office",
+      "title": "Launch office",
+      "status": "next",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z",
+      "location": "Office",
+      "areaId": "area-work"
+    },
+    {
+      "id": "home",
+      "title": "Home errand",
+      "status": "next",
+      "tags": [],
+      "contexts": [
+        "@home"
+      ],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z"
+    }
+  ],
+  "projects": [
+    {
+      "id": "project-launch",
+      "title": "Launch project",
+      "status": "active",
+      "areaId": "area-work",
+      "order": 0,
+      "tagIds": [],
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z"
+    }
+  ],
+  "areas": [
+    {
+      "id": "area-work",
+      "name": "Work",
+      "order": 0,
+      "createdAt": "2026-06-01T12:00:00.000Z",
+      "updatedAt": "2026-06-01T12:00:00.000Z"
+    }
+  ],
+  "optionLabels": [
+    "Any",
+    "Overdue",
+    "Today",
+    "Tomorrow",
+    "This week",
+    "Next week",
+    "No due date",
+    "#client",
+    "#creative",
+    "#focused",
+    "#later",
+    "#lowenergy",
+    "#routine",
+    "@agendas",
+    "@anywhere",
+    "@computer",
+    "@errands",
+    "@home",
+    "@office",
+    "@phone",
+    "@work",
+    "search.includeCompleted",
+    "search.includeReference",
+    "Hide future tasks",
+    "inbox",
+    "next",
+    "waiting",
+    "someday",
+    "done",
+    "reference",
+    "archived",
+    "All",
+    "Projects only",
+    "Tasks only",
+    "Tasks in projects",
+    "common.all Area",
+    "No Area",
+    "Work"
+  ],
+  "cases": {
+    "query": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-future",
+          "title": "Launch future",
+          "status": "next",
+          "tags": [
+            "#later"
+          ],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "startTime": "2026-10-01"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-reference",
+          "title": "Launch reference",
+          "status": "reference",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      }
+    ],
+    "empty": [],
+    "status": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-done",
+          "title": "Launch report",
+          "status": "done",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "completedAt": "2026-06-01T12:00:00.000Z"
+        }
+      }
+    ],
+    "token": [
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      }
+    ],
+    "due": [
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      }
+    ],
+    "scope": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      }
+    ],
+    "area": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      }
+    ],
+    "includeCompleted": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-done",
+          "title": "Launch report",
+          "status": "done",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "completedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-future",
+          "title": "Launch future",
+          "status": "next",
+          "tags": [
+            "#later"
+          ],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "startTime": "2026-10-01"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-reference",
+          "title": "Launch reference",
+          "status": "reference",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      }
+    ],
+    "hideReference": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-future",
+          "title": "Launch future",
+          "status": "next",
+          "tags": [
+            "#later"
+          ],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "startTime": "2026-10-01"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      }
+    ],
+    "location": [
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      }
+    ],
+    "hideFuture": [
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-reference",
+          "title": "Launch reference",
+          "status": "reference",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "home",
+          "title": "Home errand",
+          "status": "next",
+          "tags": [],
+          "contexts": [
+            "@home"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      }
+    ],
+    "noAdapter": [
+      {
+        "type": "project",
+        "item": {
+          "id": "project-launch",
+          "title": "Launch project",
+          "status": "active",
+          "areaId": "area-work",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-next",
+          "title": "Launch plan",
+          "status": "next",
+          "tags": [
+            "#client"
+          ],
+          "contexts": [
+            "@office"
+          ],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "dueDate": "2026-09-23",
+          "projectId": "project-launch"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-future",
+          "title": "Launch future",
+          "status": "next",
+          "tags": [
+            "#later"
+          ],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "startTime": "2026-10-01"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-reference",
+          "title": "Launch reference",
+          "status": "reference",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z"
+        }
+      },
+      {
+        "type": "task",
+        "item": {
+          "id": "launch-office",
+          "title": "Launch office",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-06-01T12:00:00.000Z",
+          "updatedAt": "2026-06-01T12:00:00.000Z",
+          "location": "Office",
+          "areaId": "area-work"
+        }
+      }
+    ]
+  },
+  "extendedCases": {
+    "adapter": {
+      "ids": [
+        "project:project-launch",
+        "task:home",
+        "task:launch-next",
+        "task:launch-future",
+        "task:launch-reference",
+        "task:launch-office"
+      ],
+      "totalResults": 6,
+      "totalResultsLabel": "6",
+      "isTruncated": false,
+      "hiddenCompletedCount": 1,
+      "hasActiveFilters": false
+    },
+    "duePresets": {
+      "any": {
+        "ids": [],
+        "totalResults": 0,
+        "totalResultsLabel": "0",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": false
+      },
+      "overdue": {
+        "ids": [],
+        "totalResults": 0,
+        "totalResultsLabel": "0",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      },
+      "today": {
+        "ids": [
+          "task:launch-next"
+        ],
+        "totalResults": 1,
+        "totalResultsLabel": "1",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      },
+      "tomorrow": {
+        "ids": [],
+        "totalResults": 0,
+        "totalResultsLabel": "0",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      },
+      "this_week": {
+        "ids": [
+          "task:launch-next"
+        ],
+        "totalResults": 1,
+        "totalResultsLabel": "1",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      },
+      "next_week": {
+        "ids": [],
+        "totalResults": 0,
+        "totalResultsLabel": "0",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      },
+      "none": {
+        "ids": [
+          "task:launch-future",
+          "task:launch-reference",
+          "task:launch-office",
+          "task:home"
+        ],
+        "totalResults": 4,
+        "totalResultsLabel": "4",
+        "isTruncated": false,
+        "hiddenCompletedCount": 1,
+        "hasActiveFilters": true
+      }
+    },
+    "scopes": {
+      "all": {
+        "ids": [
+          "project:project-launch",
+          "task:launch-next",
+          "task:launch-future",
+          "task:launch-reference",
+          "task:launch-office"
+        ],
+        "totalResults": 5,
+        "totalResultsLabel": "5",
+        "isTruncated": false,
+        "hiddenCompletedCount": 1,
+        "hasActiveFilters": false
+      },
+      "projects": {
+        "ids": [
+          "project:project-launch"
+        ],
+        "totalResults": 1,
+        "totalResultsLabel": "1",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      },
+      "tasks": {
+        "ids": [
+          "task:launch-next",
+          "task:launch-future",
+          "task:launch-reference",
+          "task:launch-office"
+        ],
+        "totalResults": 4,
+        "totalResultsLabel": "4",
+        "isTruncated": false,
+        "hiddenCompletedCount": 1,
+        "hasActiveFilters": true
+      },
+      "project_tasks": {
+        "ids": [
+          "task:launch-next"
+        ],
+        "totalResults": 1,
+        "totalResultsLabel": "1",
+        "isTruncated": false,
+        "hiddenCompletedCount": 0,
+        "hasActiveFilters": true
+      }
+    },
+    "areaNone": {
+      "ids": [
+        "task:launch-future",
+        "task:launch-reference"
+      ],
+      "totalResults": 2,
+      "totalResultsLabel": "2",
+      "isTruncated": false,
+      "hiddenCompletedCount": 1,
+      "hasActiveFilters": true
+    },
+    "idOperator": {
+      "ids": [
+        "task:launch-done"
+      ],
+      "totalResults": 1,
+      "totalResultsLabel": "1",
+      "isTruncated": false,
+      "hiddenCompletedCount": 0,
+      "hasActiveFilters": false
+    },
+    "statusOperator": {
+      "ids": [],
+      "totalResults": 0,
+      "totalResultsLabel": "0",
+      "isTruncated": false,
+      "hiddenCompletedCount": 1,
+      "hasActiveFilters": false
+    },
+    "allChips": [
+      "Done",
+      "Area: Work",
+      "#client",
+      "Location: Office",
+      "Due date: Today",
+      "Tasks only",
+      "Include completed",
+      "Hide: Reference",
+      "Hide future tasks"
+    ],
+    "dates": {
+      "overdue-date": {
+        "tone": "danger",
+        "label": "Due 2020-01-01"
+      },
+      "done-date": {
+        "tone": "secondary",
+        "label": "Completed 2026-06-01T12:00:00.000Z"
+      },
+      "done-no-date": null,
+      "cancelled-date": {
+        "tone": "secondary",
+        "label": "Cancelled 2026-06-02T12:00:00.000Z"
+      }
+    },
+    "highlights": [
+      {
+        "text": "Launch",
+        "highlighted": true
+      },
+      {
+        "text": " ",
+        "highlighted": false
+      },
+      {
+        "text": "plan",
+        "highlighted": true
+      }
+    ],
+    "overFifty": {
+      "ids": [
+        "bulk-0",
+        "bulk-1",
+        "bulk-2",
+        "bulk-3",
+        "bulk-4",
+        "bulk-5",
+        "bulk-6",
+        "bulk-7",
+        "bulk-8",
+        "bulk-9",
+        "bulk-10",
+        "bulk-11",
+        "bulk-12",
+        "bulk-13",
+        "bulk-14",
+        "bulk-15",
+        "bulk-16",
+        "bulk-17",
+        "bulk-18",
+        "bulk-19",
+        "bulk-20",
+        "bulk-21",
+        "bulk-22",
+        "bulk-23",
+        "bulk-24",
+        "bulk-25",
+        "bulk-26",
+        "bulk-27",
+        "bulk-28",
+        "bulk-29",
+        "bulk-30",
+        "bulk-31",
+        "bulk-32",
+        "bulk-33",
+        "bulk-34",
+        "bulk-35",
+        "bulk-36",
+        "bulk-37",
+        "bulk-38",
+        "bulk-39",
+        "bulk-40",
+        "bulk-41",
+        "bulk-42",
+        "bulk-43",
+        "bulk-44",
+        "bulk-45",
+        "bulk-46",
+        "bulk-47",
+        "bulk-48",
+        "bulk-49"
+      ],
+      "totalResults": 55,
+      "totalResultsLabel": "55",
+      "isTruncated": true
+    }
+  }
+}

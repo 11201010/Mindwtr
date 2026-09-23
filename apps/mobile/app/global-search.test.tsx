@@ -1,5 +1,6 @@
 import React from 'react';
-import { FlatList, Text, TouchableOpacity } from 'react-native';
+import { readFileSync } from 'node:fs';
+import { FlatList, Text, TextInput, TouchableOpacity } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildEntityMap, buildPersonSearchQuery, safeFormatDate, type Task } from '@mindwtr/core';
@@ -164,6 +165,85 @@ describe('SearchScreen task results', () => {
             mountedTrees.splice(0).forEach((tree) => tree.unmount());
         });
         vi.useRealTimers();
+    });
+
+    it('keeps the frozen HEAD global search output', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'));
+        const tasks = [
+            makeTask('launch-next', 'Launch plan', { tags: ['#client'], contexts: ['@office'], dueDate: '2026-09-23', projectId: 'project-launch' }),
+            makeTask('launch-done', 'Launch report', { status: 'done', tags: ['#client'], completedAt: nowIso }),
+            makeTask('launch-future', 'Launch future', { startTime: '2026-10-01', tags: ['#later'] }),
+            makeTask('launch-reference', 'Launch reference', { status: 'reference' }),
+            makeTask('launch-office', 'Launch office', { location: 'Office', areaId: 'area-work' }),
+            makeTask('home', 'Home errand', { contexts: ['@home'] }),
+        ];
+        storeState._allTasks = tasks;
+        storeState.projects = [{ id: 'project-launch', title: 'Launch project', status: 'active', areaId: 'area-work', order: 0, tagIds: [], createdAt: nowIso, updatedAt: nowIso }] as never[];
+        storeState.areas = [{ id: 'area-work', name: 'Work', order: 0, createdAt: nowIso, updatedAt: nowIso }] as never[];
+        routeParams.q = 'Launch';
+        const cases: Record<string, unknown> = {};
+        let optionLabels: string[] = [];
+        const capture = async (name: string, query: string, chip?: string, location?: string) => {
+            routeParams.q = query;
+            let tree!: ReturnType<typeof create>;
+            await act(async () => { tree = trackTree(create(<SearchScreen />)); });
+            if (chip || location) {
+                const open = tree.root.findAllByType(TouchableOpacity).find((node) => node.props.accessibilityLabel === 'Filters');
+                act(() => { open!.props.onPress(); });
+                if (optionLabels.length === 0) optionLabels = tree.root.findAllByType(TouchableOpacity)
+                    .filter((node) => node.props.style?.[0]?.borderRadius === 16 && node.props.style?.[0]?.paddingHorizontal === 10)
+                    .map((node) => String(node.findByType(Text).props.children));
+                if (chip) {
+                    const target = tree.root.findAllByType(TouchableOpacity).find((node) =>
+                        node.findAllByType(Text).some((textNode) => textNode.props.children === chip));
+                    expect(target, chip).toBeDefined();
+                    act(() => { target!.props.onPress(); });
+                }
+                if (location) {
+                    const input = tree.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Location');
+                    expect(input).toBeDefined();
+                    act(() => { input!.props.onChangeText(location); });
+                }
+            }
+            cases[name] = JSON.parse(JSON.stringify(tree.root.findByType(FlatList).props.data));
+            act(() => { tree.unmount(); });
+        };
+        await capture('query', 'Launch');
+        await capture('empty', '');
+        await capture('status', 'Launch', 'done');
+        await capture('token', '', '#client');
+        await capture('due', '', 'Today');
+        await capture('scope', 'Launch', 'Projects only');
+        await capture('area', 'Launch', 'Work');
+        await capture('includeCompleted', 'Launch', 'search.includeCompleted');
+        await capture('hideReference', 'Launch', 'search.includeReference');
+        await capture('location', '', undefined, 'Office');
+        await capture('hideFuture', '', 'Hide future tasks');
+        await capture('noAdapter', 'Launch');
+        const fixture = JSON.parse(readFileSync(
+            new URL('../../../packages/core/src/global-search-model-parity.fixtures.json', import.meta.url).pathname, 'utf8',
+        ));
+        expect(cases).toEqual(fixture.cases);
+        expect(optionLabels).toEqual(fixture.optionLabels);
+    });
+
+    it('keeps the frozen HEAD adapter order after the 200 ms debounce', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'));
+        const fixture = JSON.parse(readFileSync(
+            new URL('../../../packages/core/src/global-search-model-parity.fixtures.json', import.meta.url).pathname, 'utf8',
+        ));
+        storeState._allTasks = fixture.tasks;
+        storeState.projects = fixture.projects;
+        storeState.areas = fixture.areas;
+        storageAdapterState.searchAll = vi.fn(async () => ({ tasks: [fixture.tasks[5], fixture.tasks[0]], projects: [] }));
+        let tree!: ReturnType<typeof create>;
+        await act(async () => { tree = trackTree(create(<SearchScreen />)); });
+        await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); });
+        expect(storageAdapterState.searchAll).toHaveBeenCalledWith('Launch');
+        expect(tree.root.findByType(FlatList).props.data.map((result: any) => `${result.type}:${result.item.id}`))
+            .toEqual(fixture.extendedCases.adapter.ids);
     });
 
     it('opens the task editor when pressing a task search result', () => {

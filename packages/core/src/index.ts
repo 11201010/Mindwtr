@@ -190,6 +190,7 @@ export * from './import-apply';
 export * from './import-diagnostics';
 export * from './import-runner';
 export * from './global-search-filter';
+export * from './global-search-model';
 export * from './calendar-composer';
 export * from './calendar-day-items';
 export * from './calendar-feed';

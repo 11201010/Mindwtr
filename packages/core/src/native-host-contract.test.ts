@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, NATIVE_HOST_EDITOR_FIELDS, NATIVE_HOST_MAX_WINDOW, type NativeEditableFields } from './native-host-contract';
+import { computeGlobalSearchResults } from './global-search-filter';
+import { DEFAULT_GLOBAL_SEARCH_FILTERS, getGlobalSearchFilterOptions } from './global-search-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
@@ -108,6 +110,136 @@ describe('native host contract', () => {
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         return host;
     };
+
+    it('returns the core search order, options and row meta with changing task and settings revisions', async () => {
+        freezeClock();
+        const tasks = [
+            task('launch-next', '2026-09-01T00:00:00.000Z', { title: 'Launch plan', status: 'next', tags: ['#client'] }),
+            task('launch-done', '2026-09-01T00:00:00.000Z', { title: 'Launch report', status: 'done' }),
+            task('home', '2026-09-01T00:00:00.000Z', { title: 'Home errand' }),
+        ];
+        const projects = [project('launch-project', 'active', 0, { title: 'Launch project' })];
+        getData.mockResolvedValue({ tasks, projects, sections: [], areas: [], people: [], settings: { deviceId: 'device-search' } });
+        const searchAll = vi.fn(async () => ({ tasks: [tasks[2], tasks[0]], projects: [] }));
+        setStorageAdapter({ getData, saveData, searchAll } satisfies StorageAdapter);
+        const host = createNativeHostContract();
+        expect(await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 10 }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        const first = await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 10 });
+        expect(first.ok).toBe(true);
+        if (!first.ok) return;
+        const state = useTaskStore.getState();
+        const direct = computeGlobalSearchResults({
+            query: 'Launch', tasks: state._allTasks, projects: state.projects, areas: state.areas,
+            ...DEFAULT_GLOBAL_SEARCH_FILTERS, ftsResults: { tasks: [tasks[2], tasks[0]], projects: [] }, ftsQuery: 'Launch', limit: 10,
+        });
+        expect(first.value.tasks.map(({ id }) => id)).toEqual(direct.results.filter((result) => result.type === 'task').map(({ item }) => item.id));
+        expect(first.value.projects.map(({ id }) => id)).toEqual(direct.results.filter((result) => result.type === 'project').map(({ item }) => item.id));
+        expect(Object.keys(first.value.projects[0]).sort()).toEqual(['areaId', 'cancelledAt', 'id', 'status', 'title', 'titleSegments']);
+        expect(first.value.totalTasks).toBe(direct.totalTasks);
+        expect(first.value.filterOptions).toEqual(getGlobalSearchFilterOptions(state._allTasks, state.areas, getTranslator('en')));
+        expect(first.value.tasks[0].meta).toEqual(expect.objectContaining({ parts: expect.any(Array) }));
+        expect(first.value).toMatchObject({ query: 'Launch', hiddenCompletedCount: 1, hasActiveFilters: false,
+            isTruncated: false, totalResultsLabel: '3', activeChips: [] });
+        expect(first.value.tasks[0]).toMatchObject({ inStore: true, canComplete: true, tap: { kind: 'editor', id: 'home' } });
+        expect(first.value.tasks[1].titleSegments).toEqual(expect.arrayContaining([{ text: 'Launch', highlighted: true }]));
+        expect(searchAll).toHaveBeenCalledWith('Launch');
+        expect((await useTaskStore.getState().updateTask('launch-next', { title: 'Launch revised' })).success).toBe(true);
+        const afterTask = await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 10 });
+        expect(afterTask.ok).toBe(true);
+        if (!afterTask.ok) return;
+        expect(afterTask.value.revision).not.toBe(first.value.revision);
+        await useTaskStore.getState().updateSettings({ weekStart: 'monday' });
+        const afterSettings = await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 10 });
+        expect(afterSettings.ok).toBe(true);
+        if (afterSettings.ok) expect(afterSettings.value.revision).not.toBe(afterTask.value.revision);
+        expect(await host.searchTasks({ query: '', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 10 }))
+            .toMatchObject({ ok: true, value: { tasks: [], projects: [], totalTasks: 0 } });
+        expect(await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 0 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.searchTasks({ query: 'Launch', filters: { ...DEFAULT_GLOBAL_SEARCH_FILTERS, tasks: [] }, limit: 10 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.searchTasks({ query: 'Launch', filters: { ...DEFAULT_GLOBAL_SEARCH_FILTERS, tasks: null }, limit: 10 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.searchTasks({ query: 'Launch', filters: { ...DEFAULT_GLOBAL_SEARCH_FILTERS, selectedTokens: Array(501).fill('#tag') }, limit: 10 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.searchTasks({ query: 'Launch', filters: { ...DEFAULT_GLOBAL_SEARCH_FILTERS, locationQuery: 'x'.repeat(2001) }, limit: 10 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const cut = await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 1 });
+        expect(cut).toMatchObject({ ok: true, value: { tasks: [], projects: [{ id: 'launch-project' }],
+            totalTasks: 2, isTruncated: true, totalResultsLabel: '3' } });
+    });
+
+    it('uses the RN in-memory search fallback when the adapter has no searchAll', async () => {
+        freezeClock();
+        const host = await activateWith([
+            task('match', '2026-09-01T00:00:00.000Z', { title: 'Launch plan' }),
+            task('other', '2026-09-01T00:00:00.000Z', { title: 'Home errand' }),
+        ]);
+        const result = await host.searchTasks({ query: 'Launch', filters: DEFAULT_GLOBAL_SEARCH_FILTERS, limit: 10 });
+        expect(result).toMatchObject({ ok: true, value: { tasks: [{ id: 'match' }], totalTasks: 1, projects: [] } });
+    });
+
+    it('keeps adapter hits absent from the live store without inventing a completion date', async () => {
+        freezeClock();
+        const searchAll = vi.fn(async () => ({
+            tasks: [{ id: 'unloaded', title: 'Launch archive', status: 'done' as const }],
+            projects: [{ id: 'unloaded-project', title: 'Launch project', status: 'active' as const }],
+        }));
+        setStorageAdapter({ getData, saveData, searchAll } satisfies StorageAdapter);
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        const result = await host.searchTasks({
+            query: 'Launch', filters: { ...DEFAULT_GLOBAL_SEARCH_FILTERS, includeCompleted: true }, limit: 10,
+        });
+        expect(result).toMatchObject({ ok: true, value: {
+            projects: [{ id: 'unloaded-project' }], tasks: [{ id: 'unloaded' }], totalTasks: 1,
+        } });
+        if (result.ok) expect(result.value.tasks[0]).toMatchObject({ inStore: false, meta: null,
+            date: null, canComplete: false, tap: { kind: 'list', route: '/done', id: 'unloaded' } });
+    });
+
+    it('saves one search per request, reuses an existing query, and retries a failed save', async () => {
+        freezeClock();
+        getData.mockResolvedValue({ tasks: [], projects: [], sections: [], areas: [], people: [], settings: { deviceId: 'device-search' } });
+        const host = createNativeHostContract();
+        const request = { query: ' Launch ', name: '  Launch shortcut  ', requestId: CAPTURE_ID };
+        expect(await host.saveSearch(request)).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        saveData.mockRejectedValue(new Error('disk full'));
+        const failed = await host.saveSearch(request);
+        expect(failed).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(useTaskStore.getState().settings.savedSearches).toHaveLength(1);
+        saveData.mockResolvedValue(undefined);
+        const retry = await host.saveSearch(request);
+        expect(retry).toMatchObject({ ok: true, value: { existing: false } });
+        if (!retry.ok) return;
+        expect(useTaskStore.getState().settings.savedSearches).toHaveLength(1);
+        expect(useTaskStore.getState().settings.savedSearches?.[0]).toEqual({ id: retry.value.id, name: 'Launch shortcut', query: 'Launch' });
+        expect(await host.saveSearch(request)).toEqual(retry);
+        const calls = saveData.mock.calls.length;
+        expect(await host.saveSearch({ query: 'Launch', requestId: '123e4567-e89b-12d3-a456-426614174001' }))
+            .toEqual({ ok: true, value: { id: retry.value.id, existing: true } });
+        expect(saveData).toHaveBeenCalledTimes(calls);
+        const retryPersistence = useTaskStore.getState().retryPersistence;
+        const retryFailure = vi.fn().mockRejectedValue(new Error('disk full again'));
+        useTaskStore.setState({ persistenceFailure: { message: 'disk full again', failedAt: '2026-09-23T12:00:00.000Z', retrying: false },
+            retryPersistence: retryFailure });
+        expect(await host.saveSearch({ query: 'Launch', requestId: '123e4567-e89b-12d3-a456-426614174002' }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(retryFailure).toHaveBeenCalledOnce();
+        useTaskStore.setState({ retryPersistence });
+        expect(await host.saveSearch({ query: 'Launch', requestId: '123e4567-e89b-12d3-a456-426614174002' }))
+            .toEqual({ ok: true, value: { id: retry.value.id, existing: true } });
+        expect(await host.saveSearch({ query: ' New ', name: '   ', requestId: '123e4567-e89b-12d3-a456-426614174003' }))
+            .toMatchObject({ ok: true, value: { existing: false } });
+        expect(useTaskStore.getState().settings.savedSearches?.[1].name).toBe('New');
+        expect(await host.saveSearch({ query: 'Launch', name: 'Changed', requestId: CAPTURE_ID }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.saveSearch({ query: 'Another', requestId: CAPTURE_ID }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
 
     it('resolves stored and system languages like mobile and loads strings before returning', async () => {
         const host = createNativeHostContract();

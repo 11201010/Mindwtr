@@ -29,6 +29,10 @@ import {
     type TaskEditorSuggestions,
 } from './task-editor-model';
 import { normalizeRelativeStartOffset } from './task-relative-start';
+import { computeGlobalSearchResults, type DuePreset, type GlobalSearchScope } from './global-search-filter';
+import { fetchGlobalSearchAdapterResults, getGlobalSearchActiveChips, getGlobalSearchFilterOptions, getGlobalSearchResultDate, getGlobalSearchTaskListTarget, resolveSavedSearch, GLOBAL_SEARCH_DUE_OPTIONS, GLOBAL_SEARCH_SCOPE_OPTIONS, GLOBAL_SEARCH_STATUS_OPTIONS, type GlobalSearchFilterState } from './global-search-model';
+import type { SearchProjectResult } from './storage';
+import { createSearchHighlighter } from './search-highlight';
 import { createDateFormatter, hasTimeComponent, safeParseDate, type DateFormattingConfig } from './date';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
 import { getProjectRowStatus } from './project-row-meta';
@@ -45,7 +49,7 @@ import {
 } from './focus-sections';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
-import { isTaskActionable } from './task-status';
+import { isTaskActionable, isTaskFinished } from './task-status';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup, type TaskRowMeta, type TaskRowMetaInput } from './task-row-meta';
 import type { ProjectDeadlineBoost } from './task-utils';
 import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
@@ -130,6 +134,29 @@ export type NativeInboxWindow = {
     revision: string;
     total: number;
     rows: NativeInboxRow[];
+};
+export type NativeSearchView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    query: string;
+    tasks: (Omit<NativeTaskRow, 'meta'> & {
+        inStore: boolean;
+        meta: TaskRowMeta | null;
+        date: ReturnType<typeof getGlobalSearchResultDate>;
+        titleSegments: ReturnType<ReturnType<typeof createSearchHighlighter>>;
+        canComplete: boolean;
+        tap: { kind: 'editor'; id: string } | { kind: 'list'; route: string; id: string; projectId: string | null };
+    })[];
+    totalTasks: number;
+    projects: (Pick<SearchProjectResult, 'id' | 'title' | 'status' | 'cancelledAt' | 'areaId'> & {
+        titleSegments: ReturnType<ReturnType<typeof createSearchHighlighter>>;
+    })[];
+    activeChips: ReturnType<typeof getGlobalSearchActiveChips>;
+    hiddenCompletedCount: number;
+    hasActiveFilters: boolean;
+    isTruncated: boolean;
+    totalResultsLabel: string;
+    filterOptions: ReturnType<typeof getGlobalSearchFilterOptions>;
 };
 export type NativeFocusSection = {
     key: FocusTaskSectionKey;
@@ -257,6 +284,23 @@ const hasLoadError = (message: string | null): boolean => (
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
     typeof value === 'object' && value !== null && !Array.isArray(value)
 );
+const GLOBAL_SEARCH_FILTER_KEYS = new Set(['includeCompleted', 'includeReference', 'hideFutureTasks', 'selectedStatuses', 'selectedArea', 'selectedTokens', 'locationQuery', 'duePreset', 'scope']);
+const isGlobalSearchFilterState = (value: unknown): value is GlobalSearchFilterState => (
+    isObjectRecord(value)
+    && Object.keys(value).every((key) => GLOBAL_SEARCH_FILTER_KEYS.has(key))
+    && typeof value.includeCompleted === 'boolean'
+    && typeof value.includeReference === 'boolean'
+    && typeof value.hideFutureTasks === 'boolean'
+    && Array.isArray(value.selectedStatuses)
+    && value.selectedStatuses.every((status) => GLOBAL_SEARCH_STATUS_OPTIONS.includes(status))
+    && typeof value.selectedArea === 'string'
+    && Array.isArray(value.selectedTokens)
+    && value.selectedTokens.length <= 500
+    && value.selectedTokens.every((token) => typeof token === 'string')
+    && (value.locationQuery === undefined || (typeof value.locationQuery === 'string' && value.locationQuery.length <= 2000))
+    && GLOBAL_SEARCH_DUE_OPTIONS.includes(value.duePreset as DuePreset)
+    && GLOBAL_SEARCH_SCOPE_OPTIONS.includes(value.scope as GlobalSearchScope)
+);
 const isValidEditorDate = (value: unknown): value is string => (
     typeof value === 'string'
     && safeParseDate(value) !== null
@@ -352,6 +396,8 @@ export function createNativeHostContract() {
     // object, which ends the entry.
     // ponytail: keeps the 50 most recently saved tasks; an older task's retry falls back to the field comparison.
     const draftSaves = new Map<string, { key: string; task: Task | undefined }>();
+    // ponytail: keep 50 request IDs; an older retry falls back to the saved-query match.
+    const savedSearchRequests = new Map<string, { query: string; name: string; id: string }>();
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -737,6 +783,113 @@ export function createNativeHostContract() {
                     )),
                 },
             };
+        },
+
+        async searchTasks(input: { query: string; filters: GlobalSearchFilterState; limit: number }): Promise<NativeHostResult<NativeSearchView>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.query !== 'string' || input.query.length > 2000
+                || !isGlobalSearchFilterState(input.filters)
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW) {
+                return fail('INVALID_INPUT', 'A query, valid filters, and bounded limit are required');
+            }
+            const adapter = getStorageAdapter();
+            const trimmedQuery = input.query.trim();
+            const ftsResults = await fetchGlobalSearchAdapterResults(trimmedQuery, adapter.searchAll?.bind(adapter));
+            const after = readiness();
+            if (!after.ok) return after;
+            const now = new Date();
+            const state = useTaskStore.getState();
+            const model = computeGlobalSearchResults({
+                query: input.query,
+                tasks: state._allTasks,
+                projects: state.projects,
+                areas: state.areas,
+                weekStart: state.settings.weekStart,
+                includeCompleted: input.filters.includeCompleted,
+                includeReference: input.filters.includeReference,
+                hideFutureTasks: input.filters.hideFutureTasks,
+                selectedStatuses: input.filters.selectedStatuses,
+                selectedArea: input.filters.selectedArea,
+                selectedTokens: input.filters.selectedTokens,
+                locationQuery: input.filters.locationQuery,
+                duePreset: input.filters.duePreset,
+                scope: input.filters.scope,
+                ftsResults,
+                ftsQuery: trimmedQuery,
+                limit: input.limit,
+            });
+            const projectTitles = new Map(state.projects.map((project) => [project.id, project.title]));
+            const highlight = createSearchHighlighter(input.query);
+            const formatDate = createDateFormatter(dateFormatting());
+            return { ok: true, value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision: `${revision()}:${displayRevision(now)}`,
+                query: trimmedQuery,
+                tasks: model.results.filter((result) => result.type === 'task').map(({ item }) => {
+                    const full = state._tasksById.get(item.id);
+                    const inStore = Boolean(full && !full.deletedAt);
+                    const row = inStore && full
+                        ? toNativeTaskRow(full, projectTitles, rowMeta(full, now))
+                        : {
+                            id: item.id, title: item.title, status: item.status,
+                            priority: null, dueDate: null, startTime: null, isFocusedToday: false,
+                            projectTitle: item.projectId ? projectTitles.get(item.projectId) ?? null : null,
+                            hasNotes: false, revealDate: null, revealLabel: null, laterToday: false, meta: null,
+                        };
+                    return { ...row, inStore,
+                        date: getGlobalSearchResultDate(inStore ? full : undefined, translate, formatDate),
+                        titleSegments: highlight(item.title),
+                        canComplete: inStore && !isTaskFinished(item),
+                        tap: inStore ? { kind: 'editor' as const, id: item.id }
+                            : { kind: 'list' as const, id: item.id, ...getGlobalSearchTaskListTarget(item) },
+                    };
+                }),
+                totalTasks: model.totalTasks,
+                projects: model.results.filter((result) => result.type === 'project').map(({ item }) => ({
+                    id: item.id, title: item.title, status: item.status,
+                    cancelledAt: item.cancelledAt, areaId: item.areaId,
+                    titleSegments: highlight(item.title),
+                })),
+                activeChips: getGlobalSearchActiveChips(input.filters, state.areas, translate),
+                hiddenCompletedCount: model.hiddenCompletedCount,
+                hasActiveFilters: model.hasActiveFilters,
+                isTruncated: model.isTruncated,
+                totalResultsLabel: model.totalResultsLabel,
+                filterOptions: getGlobalSearchFilterOptions(state._allTasks, state.areas, translate),
+            } };
+        },
+
+        async saveSearch(input: { query: string; name?: string; requestId: string }): Promise<NativeHostResult<{ id: string; existing: boolean }>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.query !== 'string' || !input.query.trim() || input.query.length > 2000
+                || (input.name !== undefined && typeof input.name !== 'string')
+                || typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'A non-blank query and request UUID are required');
+            }
+            const trimmedQuery = input.query.trim();
+            const name = input.name?.trim() || trimmedQuery;
+            const previous = savedSearchRequests.get(input.requestId);
+            if (previous && (previous.query !== trimmedQuery || previous.name !== name)) return fail('INVALID_INPUT', 'Request ID already belongs to another search');
+            const state = useTaskStore.getState();
+            const savedSearches = state.settings.savedSearches || [];
+            const resolved = resolveSavedSearch(savedSearches, trimmedQuery, name, previous?.id ?? generateUUID());
+            try {
+                if (!resolved.existing) {
+                    savedSearchRequests.set(input.requestId, { query: trimmedQuery, name, id: resolved.search.id });
+                    if (savedSearchRequests.size > 50) savedSearchRequests.delete(savedSearchRequests.keys().next().value!);
+                    await state.updateSettings({ savedSearches: [...savedSearches, resolved.search] });
+                } else if (useTaskStore.getState().persistenceFailure) {
+                    await useTaskStore.getState().retryPersistence();
+                }
+                const saved = await save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: { id: resolved.search.id, existing: !previous && resolved.existing } };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
+            }
         },
 
         getFocus(input: { limit: number }): NativeHostResult<NativeFocusView> {
