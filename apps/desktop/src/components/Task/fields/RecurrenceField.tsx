@@ -83,6 +83,7 @@ export function RecurrenceField({
             interval: parsedRecurrenceRRule.interval,
             byDay: parsedRecurrenceRRule.byDay,
             byMonthDay: parsedRecurrenceRRule.byMonthDay,
+            bySetPos: parsedRecurrenceRRule.bySetPos,
             count: parsedRecurrenceRRule.count,
             completedOccurrences,
             until: parsedRecurrenceRRule.until,

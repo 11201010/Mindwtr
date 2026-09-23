@@ -128,7 +128,9 @@ export function TaskEditCustomRecurrenceModal({
                                 <Text style={getStatusTextStyle(customMode === 'nth')}>
                                     {t('recurrence.onNthWeekday')
                                         .replace('{ordinal}', t(`recurrence.ordinal.${getOrdinalTranslationKey(customOrdinal)}`))
-                                        .replace('{weekday}', recurrenceWeekdayLabels[customWeekday] ?? customWeekday)}
+                                        .replace('{weekday}', customWeekday === 'WEEKDAY'
+                                            ? t('recurrence.weekdayMonFri')
+                                            : recurrenceWeekdayLabels[customWeekday] ?? customWeekday)}
                                 </Text>
                             </TouchableOpacity>
                         </View>
@@ -154,7 +156,7 @@ export function TaskEditCustomRecurrenceModal({
                                         );
                                     })}
                                 </View>
-                                <View style={[styles.weekdayRow, { marginTop: 10 }]}>
+                                <View style={[styles.weekdayRow, { marginTop: 10, flexWrap: 'wrap' }]}>
                                     {recurrenceWeekdayButtons.map((day) => {
                                         const active = customWeekday === day.key;
                                         return (
@@ -173,6 +175,22 @@ export function TaskEditCustomRecurrenceModal({
                                             </TouchableOpacity>
                                         );
                                     })}
+                                    <TouchableOpacity
+                                        accessibilityRole="button"
+                                        accessibilityState={{ selected: customWeekday === 'WEEKDAY' }}
+                                        style={[
+                                            styles.weekdayButton,
+                                            {
+                                                borderColor: customWeekday === 'WEEKDAY' ? tc.tint : tc.border,
+                                                backgroundColor: customWeekday === 'WEEKDAY' ? tc.tint : tc.cardBg,
+                                            },
+                                        ]}
+                                        onPress={() => setCustomWeekday('WEEKDAY')}
+                                    >
+                                        <Text style={[styles.weekdayButtonText, { color: customWeekday === 'WEEKDAY' ? tc.onTint : tc.text }]}>
+                                            {t('recurrence.weekdayMonFri')}
+                                        </Text>
+                                    </TouchableOpacity>
                                 </View>
                             </>
                         )}

@@ -355,6 +355,14 @@ describe('task editor schedule parity with the mobile editor', () => {
         expect(custom).toEqual(snapshot.custom);
     });
 
+    it('round-trips the last weekday through the shared custom monthly editor', () => {
+        const rrule = 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1';
+        const state = getTaskEditorMonthlyCustom(rrule, new Date(2026, 0, 30));
+        expect(state).toMatchObject({ mode: 'nth', ordinal: '-1', weekday: 'WEEKDAY' });
+        expect(buildTaskEditorMonthlyCustomRRule(rrule, state))
+            .toBe('FREQ=MONTHLY;BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1');
+    });
+
     it('parses custom estimates and time spent the same way', () => {
         for (const [key, [value, text]] of Object.entries(snapshot.estimates)) {
             const [taskId, step, typed, blur] = key.split('|');

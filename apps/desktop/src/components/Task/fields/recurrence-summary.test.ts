@@ -16,6 +16,7 @@ const labels: Record<string, string> = {
     'recurrence.onDayOfMonth': 'Day {day}',
     'recurrence.lastDayOfMonth': 'Last day of the month',
     'recurrence.onNthWeekday': 'The {ordinal} {weekday}',
+    'recurrence.weekdayMonFri': 'Weekday (Mon–Fri)',
     'recurrence.ordinal.first': 'first',
     'recurrence.ordinal.last': 'last',
     'recurrence.endsLabel': 'Ends',
@@ -63,6 +64,11 @@ describe('formatRecurrenceSummary', () => {
     it('names the ordinal weekday of a monthly BYDAY rule', () => {
         expect(summarize({ rule: 'monthly', strategy: 'strict', byDay: ['-1FR'] }))
             .toBe('Monthly · The last Friday · Ends: Never');
+    });
+
+    it('names the last Mon–Fri date without listing five weekdays', () => {
+        expect(summarize({ rule: 'monthly', strategy: 'strict', byDay: ['MO', 'TU', 'WE', 'TH', 'FR'], bySetPos: -1 }))
+            .toBe('Monthly · The last Weekday (Mon–Fri) · Ends: Never');
     });
 
     it('shows the end date of an UNTIL rule', () => {

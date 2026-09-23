@@ -505,6 +505,7 @@ export const zhHant: Record<string, string> = {
         'recurrence.lastDay': '最後一天',
         'recurrence.lastDayOfMonth': '每月最後一天',
         'recurrence.onNthWeekday': '{ordinal}{weekday}',
+        'recurrence.weekdayMonFri': '週一至週五',
         'recurrence.ordinal.first': '第一',
         'recurrence.ordinal.second': '第二',
         'recurrence.ordinal.third': '第三',

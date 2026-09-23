@@ -10,6 +10,8 @@ import { Task,
     type RecurrenceByDay,
     type TaskStatus,
     buildRRuleString,
+    isMonthlyWeekdaySet,
+    MONTHLY_WEEKDAYS,
     parseRRuleString,
     resolveAutoTextDirection,
     DEFAULT_PROJECT_COLOR,
@@ -599,7 +601,7 @@ function TaskEditModalInner({
     const [customInterval, setCustomInterval] = useState(1);
     const [customMode, setCustomMode] = useState<'date' | 'nth' | 'lastDay'>('date');
     const [customOrdinal, setCustomOrdinal] = useState<'1' | '2' | '3' | '4' | '-1'>('1');
-    const [customWeekday, setCustomWeekday] = useState<RecurrenceWeekday>(monthlyWeekdayCode);
+    const [customWeekday, setCustomWeekday] = useState<RecurrenceWeekday | 'WEEKDAY'>(monthlyWeekdayCode);
     const [customMonthDays, setCustomMonthDays] = useState<number[]>([monthlyAnchorDate.getDate()]);
     const [waitingAssignmentModalVisible, setWaitingAssignmentModalVisible] = useState(false);
     const [waitingAssignmentInput, setWaitingAssignmentInput] = useState('');
@@ -627,7 +629,7 @@ function TaskEditModalInner({
         const interval = parsed.interval && parsed.interval > 0 ? parsed.interval : 1;
         let mode: 'date' | 'nth' | 'lastDay' = 'date';
         let ordinal: '1' | '2' | '3' | '4' | '-1' = '1';
-        let weekday: RecurrenceWeekday = monthlyWeekdayCode;
+        let weekday: RecurrenceWeekday | 'WEEKDAY' = monthlyWeekdayCode;
         const monthDays = (parsed.byMonthDay ?? []).filter((day) => day === -1 || (day >= 1 && day <= 31));
         if (monthDays.length === 1 && monthDays[0] === -1) {
             mode = 'lastDay';
@@ -636,7 +638,11 @@ function TaskEditModalInner({
             setCustomMonthDays(monthDays);
         }
         const token = parsed.byDay?.find((day) => /^(-1|1|2|3|4)/.test(String(day)));
-        if (token) {
+        if (isMonthlyWeekdaySet(parsed.byDay) && [-1, 1, 2, 3, 4].includes(parsed.bySetPos ?? 0)) {
+            mode = 'nth';
+            ordinal = String(parsed.bySetPos) as typeof ordinal;
+            weekday = 'WEEKDAY';
+        } else if (token) {
             const match = String(token).match(/^(-1|1|2|3|4)?(SU|MO|TU|WE|TH|FR|SA)$/);
             if (match) {
                 mode = 'nth';
@@ -662,7 +668,12 @@ function TaskEditModalInner({
         const safeMonthDays = customMonthDays.length > 0 ? customMonthDays : [1];
         const ends = { count: parsed.count, until: parsed.until };
         const rrule = customMode === 'nth'
-            ? buildRRuleString('monthly', [`${customOrdinal}${customWeekday}` as RecurrenceByDay], safeInterval, ends)
+            ? buildRRuleString('monthly', customWeekday === 'WEEKDAY'
+                ? MONTHLY_WEEKDAYS
+                : [`${customOrdinal}${customWeekday}` as RecurrenceByDay], safeInterval, {
+                ...ends,
+                bySetPos: customWeekday === 'WEEKDAY' ? Number(customOrdinal) : undefined,
+            })
             : buildRRuleString('monthly', undefined, safeInterval, {
                 ...ends,
                 byMonthDay: customMode === 'lastDay' ? [-1] : safeMonthDays,

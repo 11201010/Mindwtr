@@ -26,16 +26,22 @@ const renderModal = (
     customMonthDays: number[],
     toggleCustomMonthDay = vi.fn(),
     setCustomInterval = vi.fn(),
+    options: {
+        customMode?: 'date' | 'nth' | 'lastDay';
+        customOrdinal?: '1' | '2' | '3' | '4' | '-1';
+        customWeekday?: string;
+        setCustomWeekday?: (value: string) => void;
+    } = {},
 ) => {
     let tree!: renderer.ReactTestRenderer;
     act(() => {
         tree = renderer.create(
             <TaskEditCustomRecurrenceModal
                 customInterval={1}
-                customMode="date"
+                customMode={options.customMode ?? 'date'}
                 customMonthDays={customMonthDays}
-                customOrdinal="1"
-                customWeekday="MO"
+                customOrdinal={options.customOrdinal ?? '1'}
+                customWeekday={options.customWeekday ?? 'MO'}
                 onClose={vi.fn()}
                 onSave={vi.fn()}
                 recurrenceWeekdayButtons={[{ key: 'MO', label: 'Mån' }]}
@@ -44,12 +50,14 @@ const renderModal = (
                 setCustomMode={vi.fn()}
                 toggleCustomMonthDay={toggleCustomMonthDay}
                 setCustomOrdinal={vi.fn()}
-                setCustomWeekday={vi.fn()}
+                setCustomWeekday={options.setCustomWeekday ?? vi.fn()}
                 styles={styles}
                 t={(key) => key === 'recurrence.lastDay'
                     ? 'Sista dagen'
                     : key === 'recurrence.lastDayOfMonth'
                         ? 'Sista dagen i månaden'
+                        : key === 'recurrence.weekdayMonFri'
+                            ? 'Weekday (Mon–Fri)'
                         : key}
                 tc={tc}
                 visible
@@ -103,6 +111,17 @@ const findModalButton = (tree: renderer.ReactTestRenderer, label: string) => tre
     .find((node) => node.findAllByType(Text).some((text) => text.props.children === label));
 
 describe('TaskEditCustomRecurrenceModal', () => {
+    it('offers Mon–Fri in the existing ordinal weekday choices', () => {
+        const setCustomWeekday = vi.fn();
+        const tree = renderModal([15], vi.fn(), vi.fn(), {
+            customMode: 'nth', customOrdinal: '-1', customWeekday: 'WEEKDAY', setCustomWeekday,
+        });
+        const weekday = findModalButton(tree, 'Weekday (Mon–Fri)');
+        expect(weekday?.props.accessibilityState).toEqual({ selected: true });
+        act(() => weekday?.props.onPress());
+        expect(setCustomWeekday).toHaveBeenCalledWith('WEEKDAY');
+    });
+
     it('lets the monthly interval be cleared before entering a new digit', () => {
         const setCustomInterval = vi.fn();
         const tree = renderModal([15], vi.fn(), setCustomInterval);

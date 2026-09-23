@@ -449,7 +449,7 @@ const isMonthlyCustom = (value: unknown): value is TaskEditorMonthlyCustom => (
     && Number.isSafeInteger(value.interval) && (value.interval as number) >= 1 && (value.interval as number) <= 999
     && isOneOf(['date', 'nth', 'lastDay'])(value.mode)
     && isOneOf(['1', '2', '3', '4', '-1'])(value.ordinal)
-    && isOneOf(WEEKDAY_ORDER)(value.weekday)
+    && (isOneOf(WEEKDAY_ORDER)(value.weekday) || value.weekday === 'WEEKDAY')
     && Array.isArray(value.monthDays) && value.monthDays.length <= 32
     && value.monthDays.every((day) => Number.isSafeInteger(day) && (day === -1 || (day >= 1 && day <= 31)))
 );

@@ -278,9 +278,11 @@ const getRecurrenceSeriesShape = (value: Task['recurrence']): string | null => {
     const normalized = normalizeRecurrenceForLoad(value);
     if (!normalized) return null;
     const { seriesId: _seriesId, rrule, ...shape } = normalized;
+    const parsed = rrule ? parseRRuleString(rrule) : undefined;
     return JSON.stringify({
         ...shape,
-        interval: rrule ? parseRRuleString(rrule).interval : undefined,
+        interval: parsed?.interval,
+        bySetPos: parsed?.bySetPos,
     });
 };
 

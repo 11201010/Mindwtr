@@ -13,12 +13,12 @@ type TaskItemRecurrenceModalProps = {
     customInterval: number;
     customMode: 'date' | 'nth' | 'lastDay';
     customOrdinal: '1' | '2' | '3' | '4' | '-1';
-    customWeekday: RecurrenceWeekday;
+    customWeekday: RecurrenceWeekday | 'WEEKDAY';
     customMonthDays: number[];
     onIntervalChange: (value: number) => void;
     onModeChange: (value: 'date' | 'nth' | 'lastDay') => void;
     onOrdinalChange: (value: '1' | '2' | '3' | '4' | '-1') => void;
-    onWeekdayChange: (value: RecurrenceWeekday) => void;
+    onWeekdayChange: (value: RecurrenceWeekday | 'WEEKDAY') => void;
     onMonthDayToggle: (value: number) => void;
     onClose: () => void;
     onApply: () => void;
@@ -58,7 +58,9 @@ export function TaskItemRecurrenceModal({
                     ? 'third'
                     : 'fourth';
     const ordinalLabel = t(`recurrence.ordinal.${ordinalKey}`);
-    const weekdayLabel = weekdayLabels[customWeekday] ?? customWeekday;
+    const weekdayLabel = customWeekday === 'WEEKDAY'
+        ? t('recurrence.weekdayMonFri')
+        : weekdayLabels[customWeekday] ?? customWeekday;
     const lastDayLabel = resolveText('recurrence.lastDay', 'Last day');
     const lastDayOfMonthLabel = resolveText('recurrence.lastDayOfMonth', 'Last day of the month');
     const numberedMonthDays = customMonthDays.filter((day) => day !== -1);
@@ -156,7 +158,7 @@ export function TaskItemRecurrenceModal({
                             <select
                                 id={weekdaySelectId}
                                 value={customWeekday}
-                                onChange={(event) => onWeekdayChange(event.target.value as RecurrenceWeekday)}
+                                onChange={(event) => onWeekdayChange(event.target.value as RecurrenceWeekday | 'WEEKDAY')}
                                 className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
                             >
                                 {weekdayOrder.map((day) => (
@@ -164,6 +166,7 @@ export function TaskItemRecurrenceModal({
                                         {weekdayLabels[day] ?? day}
                                     </option>
                                 ))}
+                                <option value="WEEKDAY">{t('recurrence.weekdayMonFri')}</option>
                             </select>
                         </div>
                     )}

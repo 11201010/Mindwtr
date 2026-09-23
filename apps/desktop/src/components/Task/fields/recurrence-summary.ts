@@ -2,6 +2,7 @@ import {
     formatI18nTemplate,
     formatRecurrenceCountLabel,
     getLocalizedWeekdayLabels,
+    isMonthlyWeekdaySet,
     safeFormatDate,
     type RecurrenceByDay,
     type RecurrenceRule,
@@ -37,6 +38,7 @@ export type RecurrenceSummaryInput = {
     interval?: number;
     byDay?: RecurrenceByDay[];
     byMonthDay?: number[];
+    bySetPos?: number;
     count?: number;
     completedOccurrences?: number;
     until?: string;
@@ -62,18 +64,26 @@ export function formatRecurrenceSummary(
     const longWeekdays = getLocalizedWeekdayLabels(language, 'long');
     const parsedByDay = (input.byDay ?? []).map(splitByDay);
     const ordinalDays = parsedByDay.filter((day) => day.ordinal);
+    const weekdayPosition = input.bySetPos && isMonthlyWeekdaySet(input.byDay)
+        ? ORDINAL_LABEL_KEY[String(input.bySetPos)]
+        : undefined;
 
     let frequency = interval > 1
         ? `${t('recurrence.repeatEvery')} ${interval} ${t(RULE_UNIT_KEY[input.rule])}`
         : t(RULE_LABEL_KEY[input.rule]);
-    if (parsedByDay.length > 0 && ordinalDays.length === 0) {
+    if (parsedByDay.length > 0 && ordinalDays.length === 0 && !weekdayPosition) {
         const days = parsedByDay.map((day) => shortWeekdays[day.weekday] ?? day.weekday).join(', ');
         frequency = `${frequency} ${formatI18nTemplate(t('recurrence.summaryOnDays'), { days })}`;
     }
 
     const segments = [frequency];
 
-    if (ordinalDays.length > 0) {
+    if (weekdayPosition) {
+        segments.push(formatI18nTemplate(t('recurrence.onNthWeekday'), {
+            ordinal: t(weekdayPosition),
+            weekday: t('recurrence.weekdayMonFri'),
+        }));
+    } else if (ordinalDays.length > 0) {
         segments.push(ordinalDays.map((day) => formatI18nTemplate(t('recurrence.onNthWeekday'), {
             ordinal: t(ORDINAL_LABEL_KEY[day.ordinal ?? ''] ?? ''),
             weekday: longWeekdays[day.weekday] ?? day.weekday,

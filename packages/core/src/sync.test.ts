@@ -159,6 +159,26 @@ describe('Sync Logic', () => {
             expect(second.stats.tasks.conflicts).toBe(0);
         });
 
+        it('shows that an older peer can replace the positioned monthly rule', () => {
+            const positioned = {
+                ...createMockTask('recurring-task', '2026-07-19T12:00:00.000Z'),
+                recurrence: { rule: 'monthly', seriesId: 'series-a', rrule: 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1' },
+                rev: 5,
+                revBy: 'new-client',
+            } satisfies Task;
+            const olderPeer = {
+                ...createMockTask('recurring-task', '2026-07-19T12:01:00.000Z'),
+                recurrence: { rule: 'monthly', rrule: 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR' },
+                rev: 6,
+                revBy: 'old-client',
+            } satisfies Task;
+            const merged = mergeAppData(mockAppData([positioned]), mockAppData([olderPeer]));
+            expect(merged.tasks[0].recurrence).toMatchObject({
+                seriesId: 'series-a',
+                rrule: 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;X-MINDWTR-SERIES-ID=series-a',
+            });
+        });
+
         it('does not graft series identity onto an equal-revision divergent recurrence', () => {
             const updatedAt = '2026-07-19T12:00:00.000Z';
             const currentTask = {

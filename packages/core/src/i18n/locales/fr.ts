@@ -436,6 +436,7 @@ export const frOverrides: Record<string, string> = {
         'recurrence.onNthWeekday': 'Le {ordinal} {weekday}',
         'recurrence.ordinalSelectLabel': 'Rang',
         'recurrence.weekdaySelectLabel': 'Jour de la semaine',
+        'recurrence.weekdayMonFri': 'Jour de semaine (lun.–ven.)',
         'recurrence.ordinal.first': 'Premier',
         'recurrence.ordinal.second': 'Deuxième',
         'recurrence.ordinal.third': 'Troisième',

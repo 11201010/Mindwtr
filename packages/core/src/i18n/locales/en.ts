@@ -500,6 +500,7 @@ export const en: Record<string, string> = {
         'recurrence.lastDay': 'Last day',
         'recurrence.lastDayOfMonth': 'Last day of the month',
         'recurrence.onNthWeekday': 'The {ordinal} {weekday}',
+        'recurrence.weekdayMonFri': 'Weekday (Mon–Fri)',
         'recurrence.ordinalSelectLabel': 'Recurrence ordinal',
         'recurrence.weekdaySelectLabel': 'Recurrence weekday',
         'recurrence.ordinal.first': 'First',

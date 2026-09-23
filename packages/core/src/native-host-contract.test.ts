@@ -1696,6 +1696,9 @@ describe('native host contract', () => {
                 expect(monthly.draft).toMatchObject({ recurrence: 'monthly', recurrenceRRule: 'FREQ=MONTHLY;INTERVAL=2;BYDAY=-1FR;COUNT=5' });
                 expect(monthly.layout.recurrence.monthlyPattern).toBe('custom');
                 expect(monthly.fields.recurrence.monthlyCustom).toMatchObject({ mode: 'nth', ordinal: '-1', weekday: 'FR', interval: 2 });
+                const lastWeekday = recurrence({ kind: 'monthlyCustom', custom: { interval: 1, mode: 'nth', ordinal: '-1', weekday: 'WEEKDAY', monthDays: [28] } });
+                expect(lastWeekday.draft.recurrenceRRule).toBe('FREQ=MONTHLY;BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1;COUNT=5');
+                expect(lastWeekday.fields.recurrence.monthlyCustom).toMatchObject({ mode: 'nth', ordinal: '-1', weekday: 'WEEKDAY' });
             });
 
             it('offers quick dates, the date issue, reminder intervals, and parses estimates and time spent', async () => {

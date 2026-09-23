@@ -13,6 +13,7 @@ const baseProps = {
         'recurrence.onLabel': 'On',
         'recurrence.onDayOfMonth': 'Day {day}',
         'recurrence.onNthWeekday': 'The {ordinal} {weekday}',
+        'recurrence.weekdayMonFri': 'Weekday (Mon–Fri)',
         'recurrence.lastDay': 'Last day',
         'recurrence.lastDayOfMonth': 'Last day of the month',
         'recurrence.ordinal.first': 'First',
@@ -46,6 +47,18 @@ const baseProps = {
 } satisfies React.ComponentProps<typeof TaskItemRecurrenceModal>;
 
 describe('TaskItemRecurrenceModal', () => {
+    it('offers Mon–Fri in the existing ordinal weekday selector', () => {
+        const onWeekdayChange = vi.fn();
+        render(<TaskItemRecurrenceModal {...baseProps} customMode="nth" customOrdinal="-1"
+            customWeekday="WEEKDAY" onWeekdayChange={onWeekdayChange} />);
+
+        expect(screen.getByRole('button', { name: 'The Last Weekday (Mon–Fri)' })).toBeTruthy();
+        const selector = screen.getByRole('combobox', { name: 'Recurrence weekday' });
+        expect(selector).toHaveValue('WEEKDAY');
+        fireEvent.change(selector, { target: { value: 'MO' } });
+        expect(onWeekdayChange).toHaveBeenCalledWith('MO');
+    });
+
     it('exposes the recurrence editor as an accessible dialog', () => {
         render(<TaskItemRecurrenceModal {...baseProps} />);
 

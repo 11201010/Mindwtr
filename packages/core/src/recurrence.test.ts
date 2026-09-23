@@ -60,7 +60,11 @@ describe('recurrence', () => {
     const t = (key: string) => ({
         'recurrence.daily': 'Daily',
         'recurrence.weekly': 'Weekly',
+        'recurrence.monthly': 'Monthly',
         'recurrence.yearly': 'Yearly',
+        'recurrence.onNthWeekday': 'The {ordinal} {weekday}',
+        'recurrence.ordinal.last': 'Last',
+        'recurrence.weekdayMonFri': 'Weekday (Mon–Fri)',
         'recurrence.repeatEvery': 'Repeat every',
         'recurrence.dayUnit': 'day(s)',
         'recurrence.weekUnit': 'week(s)',
@@ -885,6 +889,64 @@ describe('recurrence', () => {
         const parsed = parseRRuleString(rrule);
         expect(parsed.rule).toBe('monthly');
         expect(parsed.byMonthDay).toEqual([-1]);
+    });
+
+    it('preserves the positioned weekday rule through edits and normalization', () => {
+        const rrule = 'FREQ=MONTHLY;BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1';
+        expect(parseRRuleString(rrule).bySetPos).toBe(-1);
+        expect(editRRuleString(rrule, 'monthly', { interval: 2 }))
+            .toBe('FREQ=MONTHLY;INTERVAL=2;BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1');
+        expect(editRRuleString(rrule, 'monthly', { byMonthDay: [-1], byDay: undefined }))
+            .toBe('FREQ=MONTHLY;BYMONTHDAY=-1');
+        const loaded = normalizeRecurrenceForLoad({ rule: 'monthly', rrule });
+        expect(loaded?.rrule).toBe(rrule);
+        expect(normalizeRecurrenceForLoad(JSON.parse(JSON.stringify(loaded)))).toEqual(loaded);
+        expect(formatRecurrenceLabel({ recurrence: loaded, t }))
+            .toBe('Monthly · The Last Weekday (Mon–Fri)');
+    });
+
+    it.each([
+        ['2026-01-30', '2026-02-27'], // February ends on Saturday.
+        ['2026-02-27', '2026-03-31'], // March ends on Tuesday.
+        ['2026-04-30', '2026-05-29'], // May ends on Sunday.
+        ['2027-01-29', '2027-02-26'], // Non-leap February ends on Sunday.
+        ['2028-02-29', '2028-03-31'], // Leap February ends on Tuesday.
+    ])('advances last-weekday month end from %s to %s', (dueDate, expected) => {
+        const rrule = buildRRuleString('monthly', ['MO', 'TU', 'WE', 'TH', 'FR'], 1, { bySetPos: -1 });
+        const task: Task = {
+            id: 'last-weekday', title: 'Close accounts', status: 'done', tags: [], contexts: [], dueDate,
+            recurrence: { rule: 'monthly', strategy: 'strict', rrule },
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+        const next = createNextRecurringTask(task, `${dueDate}T12:00:00.000Z`, 'done');
+        expect(next?.dueDate).toBe(expected);
+        expect(typeof next?.recurrence === 'object' ? next.recurrence.rrule : undefined).toBe(rrule);
+    });
+
+    it('keeps the time and agrees with the calendar preview', () => {
+        const task: Task = {
+            id: 'last-weekday-time', title: 'Close accounts', status: 'next', tags: [], contexts: [],
+            dueDate: '2026-01-30T09:30:00.000Z', showFutureRecurrence: true,
+            recurrence: { rule: 'monthly', strategy: 'strict',
+                rrule: 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1' },
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+        const next = createNextRecurringTask(task, '2026-01-30T12:00:00.000Z', 'done');
+        const projected = createProjectedRecurringTask(task, '2026-01-30T12:00:00.000Z');
+        expect(next?.dueDate).toBe('2026-02-27T09:30:00.000Z');
+        expect(projected?.dueDate).toBe(next?.dueDate);
+    });
+
+    it('applies the monthly interval after completion', () => {
+        const task: Task = {
+            id: 'last-weekday-fluid', title: 'Close accounts', status: 'done', tags: [], contexts: [],
+            dueDate: '2026-01-30',
+            recurrence: { rule: 'monthly', strategy: 'fluid',
+                rrule: 'FREQ=MONTHLY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1' },
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+        expect(createNextRecurringTask(task, '2026-01-31T12:00:00.000Z', 'done')?.dueDate)
+            .toBe('2026-03-31');
     });
 
     it('falls back to weekly interval when BYDAY is empty', () => {

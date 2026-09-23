@@ -105,6 +105,7 @@ export const deOverrides: Record<string, string> = {
         'recurrence.weekUnit': 'Wochen',
         'recurrence.ordinalSelectLabel': 'Reihenfolge',
         'recurrence.weekdaySelectLabel': 'Wochentag',
+        'recurrence.weekdayMonFri': 'Wochentag (Mo–Fr)',
         'mobileHelp.title': 'Mobile Hilfe',
         'mobileHelp.gesturesTitle': 'Gesten',
         'mobileHelp.swipeRight': 'Nach rechts wischen',

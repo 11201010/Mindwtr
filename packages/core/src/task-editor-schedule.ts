@@ -16,7 +16,7 @@ import {
     type QuickDatePreset,
 } from './date';
 import { tFallback } from './i18n';
-import { buildRRuleString, editRRuleString, parseRRuleString, RECURRENCE_INTERVAL_MAX, type RRuleEditOverrides } from './recurrence';
+import { buildRRuleString, editRRuleString, isMonthlyWeekdaySet, MONTHLY_WEEKDAYS, parseRRuleString, RECURRENCE_INTERVAL_MAX, type RRuleEditOverrides } from './recurrence';
 import { getLocalizedWeekdayButtons, getLocalizedWeekdayLabels, WEEKDAY_ORDER } from './recurrence-constants';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { REPEAT_REMINDER_INTERVAL_OPTIONS } from './schedule-utils';
@@ -336,7 +336,7 @@ export type TaskEditorMonthlyCustom = {
     interval: number;
     mode: 'date' | 'nth' | 'lastDay';
     ordinal: '1' | '2' | '3' | '4' | '-1';
-    weekday: RecurrenceWeekday;
+    weekday: RecurrenceWeekday | 'WEEKDAY';
     monthDays: number[];
 };
 
@@ -406,7 +406,11 @@ export function getTaskEditorMonthlyCustom(rrule: string, anchorDate: Date): Tas
     }
     const token = parsed.byDay?.find((day) => /^(-1|1|2|3|4)/.test(String(day)));
     const match = token ? String(token).match(/^(-1|1|2|3|4)?(SU|MO|TU|WE|TH|FR|SA)$/) : null;
-    if (match) {
+    if (isMonthlyWeekdaySet(parsed.byDay) && [-1, 1, 2, 3, 4].includes(parsed.bySetPos ?? 0)) {
+        state.mode = 'nth';
+        state.ordinal = String(parsed.bySetPos) as TaskEditorMonthlyCustom['ordinal'];
+        state.weekday = 'WEEKDAY';
+    } else if (match) {
         state.mode = 'nth';
         state.ordinal = (match[1] ?? '1') as TaskEditorMonthlyCustom['ordinal'];
         state.weekday = match[2] as RecurrenceWeekday;
@@ -422,7 +426,12 @@ export function buildTaskEditorMonthlyCustomRRule(rrule: string, custom: TaskEdi
     const ends = { count: parsed.count, until: parsed.until };
     // buildRRuleString clamps, dedupes and sorts the day list.
     return custom.mode === 'nth'
-        ? buildRRuleString('monthly', [`${custom.ordinal}${custom.weekday}` as RecurrenceByDay], interval, ends)
+        ? buildRRuleString('monthly', custom.weekday === 'WEEKDAY'
+            ? MONTHLY_WEEKDAYS
+            : [`${custom.ordinal}${custom.weekday}` as RecurrenceByDay], interval, {
+            ...ends,
+            bySetPos: custom.weekday === 'WEEKDAY' ? Number(custom.ordinal) : undefined,
+        })
         : buildRRuleString('monthly', undefined, interval, {
             ...ends,
             byMonthDay: custom.mode === 'lastDay' ? [-1] : (custom.monthDays.length > 0 ? custom.monthDays : [1]),
