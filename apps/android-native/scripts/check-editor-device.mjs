@@ -4,13 +4,17 @@
 //
 // Installs the debug APK with `install -r` (existing development data stays),
 // captures one task with a title unique to this run, and edits it through the
-// editor: (a) a save that changes title, priority, and due date; (b) a draft
-// kept through rotation; (c) a draft kept through process death that still
-// saves; (d) a failed commit that keeps its exact retry through rotation, Back,
-// and a new screen, then stores once; (e) clearing the due date; (f) core's
-// refusal of status `reference` with a priority, which writes nothing. It
-// asserts through the app's own database copy (.db, -wal and -shm pulled
-// together), the UI hierarchy, and logcat. It touches only the development
+// editor (RN's Form tab over core's getTaskEditorModel and saveTaskDraft):
+// (a) a save that changes the title, the due date, and a typed context;
+// (e) clearing the due date; (b) a draft kept through rotation; (c) a draft
+// kept through process death that still saves; (d) a failed commit that keeps
+// its exact retry through rotation, Back, and a new screen, then stores once;
+// (i) a save whose reply dies with the process is sent again on relaunch and stored once;
+// (g) a context chosen from core's suggestions and (h) a due date with a time,
+// in one save; (f) status Reference, whose rule core applies (the due date
+// goes), and a project from the Destination picker. It asserts through the
+// app's own database copy (.db, -wal and -shm pulled together), the UI
+// hierarchy, and logcat. It touches only the development
 // package (it refuses any other APK), never launches over another app, and
 // restores rotation and clears its debug properties on exit. Leave the device
 // on its home screen before running. It needs host `sqlite3`.
@@ -20,7 +24,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, inList, check, connect, draftText, evidenced, fail, field, hasText, Stopped, taskRows } from './device.mjs';
+import { bootFailure, button, check, connect, described, draftText, evidenced, fail, field, inEditor, inList, isOn, Stopped, tagged, taskRows, withDescription, chipOn } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -49,7 +53,7 @@ const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padSt
 const captured = `91${run}`;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, reveal } = device;
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting, type, reveal } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
 // ---- device state ----
@@ -60,8 +64,8 @@ const boots = (processId) => count(logs(processId), 'Core host boot started');
 const recreations = (processId) => count(logs(processId), 'reason=activity-recreate');
 const newScreens = (processId) => count(logs(processId), 'reason=new-screen');
 // The log's `extra` is itself a JSON string, so its quotes arrive escaped.
-const updates = (processId, outcome) => logs(processId).replace(/\\/g, '').split('\n').filter((line) => line.includes('native-android-dev-task-command')
-    && line.includes('"operation":"update"') && line.includes(`"outcome":"${outcome}"`)).length;
+const saves = (processId, outcome) => logs(processId).replace(/\\/g, '').split('\n').filter((line) => line.includes('native-android-dev-task-command')
+    && line.includes('"operation":"saveTaskDraft"') && line.includes(`"outcome":"${outcome}"`)).length;
 const setRotation = (rotation) => {
     requireAppFront();
     sh('settings put system accelerometer_rotation 0');
@@ -81,20 +85,30 @@ const goHome = async () => {
 };
 
 // ---- UI ----
-// The labels are core's English (en.ts): taskEdit.editTask, taskEdit.*Label, status.*, priority.*, common.notSet, common.clear.
+// The labels are core's English (en.ts): taskEdit.*Label, task.destination, status.*, common.notSet, common.clear, calendar.changeTime.
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
-const inEditor = (nodes) => hasText(nodes, 'Edit Task');
 const inbox = () => waitFor('the Inbox', (nodes) => !inEditor(nodes) && Number.isFinite(header(nodes)), 60_000);
-const labelStarting = (nodes, prefix) => nodes.find((node) => node.text?.startsWith(prefix));
-const tapStarting = async (prefix) => {
-    const nodes = await screen();
-    const label = labelStarting(nodes, prefix) ?? fail(`no control labelled ${prefix}…`);
-    await tap(button(nodes, label.text));
-};
-/** The editor's draft as its controls show it; the first text field is the title. */
-const shown = (nodes, label) => labelStarting(nodes, `${label}: `)?.text.slice(label.length + 2);
+/** The editor's draft as its controls announce it ("Due Date: 2026-09-15"); the first text field is the title. */
 const editorShows = (nodes, title, values = {}) => inEditor(nodes) && field(nodes)?.text === title
-    && Object.entries(values).every(([label, value]) => shown(nodes, label) === value);
+    && Object.entries(values).every(([label, value]) => described(nodes, label) === value);
+/** Closes the keyboard if it shows: Back then only closes the keyboard, never the editor. */
+const hideKeyboard = async () => {
+    if (!/mInputShown=true/.test(sh('dumpsys input_method'))) return;
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(600);
+};
+/**
+ * Taps the control announced [description], scrolling the form down a few steps if it is below the fold,
+ * and waits for [expected] (tapped once more only if the first tap provably did nothing; device.mjs tapExpecting).
+ */
+const tapDescribed = async (description, expected, what = description) => {
+    let nodes = await screen();
+    for (let step = 0; step < 4 && !withDescription(nodes, description); step += 1) nodes = await device.swipe(nodes, 'down');
+    return tapExpecting(withDescription(nodes, description) ?? fail(`no control announced "${description}"`), expected, what);
+};
+/** The Material date picker is up: it marks today. */
+const datePicker = (nodes) => Boolean(button(nodes, 'OK')) && nodes.some((node) => /\bToday\b/.test(`${node.text} ${node['content-desc']}`));
 
 const openEditor = async (title) => {
     let nodes = await inbox();
@@ -114,34 +128,50 @@ const openEditor = async (title) => {
     }
     return fail(`row ${title} is not in the Inbox`);
 };
-const choose = async (label, value) => {
-    await tapStarting(`${label}: `);
-    const menu = await waitFor(`the ${label} option ${value}`, (nodes) => button(nodes, value));
-    await tap(button(menu, value));
-    await waitFor(`${label}: ${value}`, (nodes) => shown(nodes, label) === value);
+/** RN's status chips: "Status: <status>", selected when chosen. */
+const chooseStatus = async (value) => {
+    await tapDescribed(`Status: ${value}`, (nodes) => chipOn(nodes, `Status: ${value}`), `Status ${value} selected`);
 };
-/** Picks [day] of the month the picker opens on (the current month) and returns the stored form. */
-const pickDueDay = async (day) => {
-    const month = sh('date +%Y-%m');
-    await tapStarting('Due Date: ');
+const month = () => sh('date +%Y-%m');
+/** Picks [day] of the month the date picker opens on (the current month) and confirms. */
+const pickDay = async (day) => {
     const dayPattern = new RegExp(`(^|\\D)${day}(\\D|$)`);
-    const picker = await waitFor('the date picker', (nodes) => button(nodes, 'OK')
-        && nodes.some((node) => node.clickable === 'true' && dayPattern.test(`${node.text} ${node['content-desc']}`)));
-    await tap(picker.find((node) => node.clickable === 'true' && dayPattern.test(`${node.text} ${node['content-desc']}`)));
-    await waitFor('OK enabled', (nodes) => button(nodes, 'OK')?.enabled === 'true', 10_000);
-    await tap(button(await screen(), 'OK'));
-    const value = `${month}-${String(day).padStart(2, '0')}`;
-    await waitFor(`Due Date: ${value}`, (nodes) => shown(nodes, 'Due Date') === value);
+    const cell = (nodes) => nodes.find((node) => node.clickable === 'true' && dayPattern.test(`${node.text} ${node['content-desc']}`));
+    const picker = await waitFor('the date picker', (nodes) => button(nodes, 'OK') && cell(nodes));
+    await tapExpecting(cell(picker), (nodes) => button(nodes, 'OK')?.enabled === 'true', 'OK enabled', 10_000);
+    await tapExpecting(button(await screen(), 'OK'), (nodes) => !datePicker(nodes), 'the date picker to close', 10_000);
+};
+/** The due date control: RN's compact "Due Date: Not set" row, or the date button showing the draft value. */
+const pickDueDay = async (day) => {
+    await tapDescribed(`Due Date: ${described(await screen(), 'Due Date')}`, datePicker, 'the date picker');
+    await pickDay(day);
+    const value = `${month()}-${String(day).padStart(2, '0')}`;
+    await waitFor(`Due Date: ${value}`, (nodes) => described(nodes, 'Due Date') === value);
     return value;
 };
-const appendTitle = async (digits, expected) => {
-    await tap(field(await screen()));
+/** A text field: tap it, move to the end, and type [digits] (digits only: some keyboards hold letters in a composition strip). */
+const typeInto = async (node, digits, expected, erase = 0) => {
+    // A tap on a focused field moves its cursor to the tap point, which can sit before a trailing ", "
+    // (editor check failure 2026-09-23T20-52-16); tap only to focus it.
+    if (node.focused !== 'true') await tap(node);
     requireAppFront();
-    sh('input keyevent KEYCODE_MOVE_END');
+    // Ctrl+End: the text's true end. A plain End is Compose's line end, which stops before trailing
+    // whitespace, so it put "79…" before the ", " a chosen suggestion leaves (failure 2026-09-23T21-14-34).
+    sh('input keycombination KEYCODE_CTRL_LEFT KEYCODE_MOVE_END');
+    if (erase > 0) sh(`input keyevent ${Array(erase).fill('KEYCODE_DEL').join(' ')}`);
     sh(`input text ${digits}`);
-    await waitFor(`the title ${expected}`, (nodes) => field(nodes)?.text === expected, 10_000);
+    await waitFor(`the text ${expected}`, (nodes) => nodes.some((current) => current.class === 'android.widget.EditText' && current.text === expected), 10_000);
 };
-const save = async () => tap(button(await screen(), 'Save'));
+const appendTitle = async (digits, expected) => typeInto(field(await screen()), digits, expected);
+const contextsField = (nodes) => tagged(nodes, 'editor-contexts') ?? fail('no Contexts field on screen');
+/** An editor save took effect: the editor closed, or it is busy (Save disabled), or core's failure shows. */
+const saveTookEffect = (nodes) => !inEditor(nodes) || button(nodes, 'Save')?.enabled === 'false'
+    || nodes.some((node) => /^[A-Z_]+: /.test(node.text ?? '') || node.text?.includes('Injected commit failure'));
+/** Save; a save queued behind typed text runs once core has resolved it. */
+const save = async () => {
+    const nodes = await waitFor('Save enabled', (current) => button(current, 'Save')?.enabled === 'true', 10_000);
+    await tapExpecting(button(nodes, 'Save'), saveTookEffect, 'the save to start');
+};
 
 // ---- database ----
 const sqlite = (sql) => {
@@ -155,12 +185,16 @@ const sqlite = (sql) => {
     }
     return JSON.parse(execFileSync('sqlite3', ['-json', resolve(dir, 'mindwtr-native-dev.db'), sql], { encoding: 'utf8' }) || '[]');
 };
-const FIELDS = 'title, status, priority, dueDate, startTime, description, projectId, rev';
+const FIELDS = 'title, status, dueDate, startTime, description, projectId, contexts, rev';
 let taskId = '';
-const stored = () => sqlite(`SELECT ${FIELDS} FROM tasks WHERE id = '${taskId}' AND deletedAt IS NULL`)[0];
+// contexts is stored as JSON text; it is compared as the list it holds.
+const stored = () => {
+    const found = sqlite(`SELECT ${FIELDS} FROM tasks WHERE id = '${taskId}' AND deletedAt IS NULL`)[0];
+    return found && { ...found, contexts: JSON.parse(found.contexts ?? '[]') };
+};
 const expectStored = (expected, message) => {
     const row = stored();
-    const wrong = Object.entries(expected).filter(([name, value]) => row?.[name] !== value);
+    const wrong = Object.entries(expected).filter(([name, value]) => JSON.stringify(row?.[name]) !== JSON.stringify(value));
     check(wrong.length === 0, `${message}${wrong.length ? ` (stored ${JSON.stringify(row)})` : ''}`);
     return row;
 };
@@ -196,47 +230,47 @@ try {
     check(sqlite(`SELECT id FROM tasks WHERE title LIKE '${captured}%'`).length === 0, 'this run\'s titles are not in the database yet');
     const total = header(nodes);
     await type(captured);
-    await tap(button(await screen(), 'Save'));
+    await tapExpecting(button(await screen(), 'Save'), (current) => draftText(current) === '' || button(current, 'Save')?.enabled === 'false', 'the capture to start');
     await waitFor('the capture', (current) => header(current) === total + 1 && draftText(current) === '');
     const ids = sqlite(`SELECT id FROM tasks WHERE title = '${captured}' AND deletedAt IS NULL`);
     check(ids.length === 1, 'captured one task to edit');
     taskId = ids[0].id;
-    let row = expectStored({ title: captured, status: 'inbox', priority: null, dueDate: null }, 'captured task starts plain');
+    let row = expectStored({ title: captured, status: 'inbox', dueDate: null, contexts: [] }, 'captured task starts plain');
 
-    // (a) Title, priority, and due date change; exactly those are stored, in one write.
+    // (a) Title, due date, and a typed context change; exactly those are stored, in one write. Core prefixes the context.
+    const context = `78${run}`;
     await openEditor(captured);
-    await choose('Priority', 'High');
     const due = await pickDueDay(15);
     const titleA = `${captured}7`;
     await appendTitle('7', titleA);
+    await typeInto(contextsField(await screen()), context, context);
     await save();
     await inbox();
     row = expectStored({
-        title: titleA, status: 'inbox', priority: 'high', dueDate: due,
+        title: titleA, status: 'inbox', dueDate: due, contexts: [`@${context}`],
         startTime: null, description: null, projectId: null, rev: row.rev + 1,
-    }, '(a) stored exactly the edited title, priority, and due date in one write');
+    }, '(a) stored exactly the edited title, due date, and @context in one write');
 
     // (e) Clearing the due date stores null. Done before the restart steps: an Inbox task
     // with a past date is moved to Next by core at startup and would leave the Inbox.
     await openEditor(titleA);
-    await tap(button(await screen(), 'Clear Due Date'));
-    await waitFor('Due Date: Not set', (current) => shown(current, 'Due Date') === 'Not set');
+    await tapDescribed('Clear Due Date', (current) => described(current, 'Due Date') === 'Not set', 'Due Date: Not set');
     await save();
     await inbox();
-    row = expectStored({ title: titleA, priority: 'high', dueDate: null, rev: row.rev + 1 }, '(e) cleared due date stored as null');
+    row = expectStored({ title: titleA, dueDate: null, contexts: [`@${context}`], rev: row.rev + 1 }, '(e) cleared due date stored as null');
 
     // (b) Rotation mid-edit keeps the draft; nothing is written.
     await openEditor(titleA);
-    await choose('Priority', 'Low');
+    const dueB = await pickDueDay(16);
     const titleB = `${titleA}8`;
     await appendTitle('8', titleB);
     await rotate(1);
     nodes = await waitFor('the draft after rotation', (current) => editorShows(current, titleB));
     check(pid() === processId, '(b) landscape: same process, draft title kept');
     await rotate(0);
-    nodes = await waitFor('the draft after rotating back', (current) => editorShows(current, titleB, { Priority: 'Low', 'Due Date': 'Not set' }));
-    check(boots(processId) === 1, '(b) portrait: draft title and priority kept, one host boot');
-    expectStored({ title: titleA, priority: 'high', rev: row.rev }, '(b) an unsaved draft wrote nothing');
+    nodes = await waitFor('the draft after rotating back', (current) => editorShows(current, titleB, { 'Due Date': dueB }));
+    check(boots(processId) === 1, '(b) portrait: draft title and due date kept, one host boot');
+    expectStored({ title: titleA, dueDate: null, rev: row.rev }, '(b) an unsaved draft wrote nothing');
 
     // (c) Home, process death, relaunch: the draft comes back and saves against its restored base.
     await goHome();
@@ -244,35 +278,32 @@ try {
     sh(`run-as ${PKG} kill -9 ${processId}`);
     await waitFor('process death', () => pid() !== processId, 10_000);
     launch();
-    nodes = await waitFor('the restored editor', (current) => editorShows(current, titleB, { Priority: 'Low', 'Due Date': 'Not set' }), 60_000);
+    nodes = await waitFor('the restored editor', (current) => editorShows(current, titleB, { 'Due Date': dueB }), 60_000);
     processId = pid();
     check(boots(processId) === 1, '(c) editor draft restored after process death, one host boot');
-    // Core's startup pass may promote an Inbox task whose date has passed to Next
-    // (its own write, same rule as the RN app). The editor's save is measured from here.
     const booted = stored();
     if (booted.rev !== row.rev) console.log(`note - (c) core wrote the task at startup: status ${row.status} -> ${booted.status}, rev ${row.rev} -> ${booted.rev}`);
     await save();
     await inbox();
-    row = expectStored({ title: titleB, status: booted.status, priority: 'low', dueDate: null, rev: booted.rev + 1 },
-        '(c) restored draft saved once');
+    row = expectStored({ title: titleB, status: booted.status, dueDate: dueB, rev: booted.rev + 1 }, '(c) restored draft saved once');
 
     // (d) A failed commit keeps the draft and only its exact retry, across rotation, Back, and a new screen.
     await openEditor(titleB);
-    await choose('Priority', 'Medium');
+    const titleD = `${titleB}9`;
+    await appendTitle('9', titleD);
     setProp('fail_commit', '1');
     await save();
     const hasError = (current) => current.some((node) => node.text?.includes('Injected commit failure'));
-    const failedEditor = (current, label, portrait = true) => {
-        check(field(current)?.text === titleB && field(current)?.enabled === 'false', `(d${label}) draft kept and locked`);
-        if (portrait) check(shown(current, 'Priority') === 'Medium', `(d${label}) edited priority kept`);
+    const failedEditor = (current, label) => {
+        check(field(current)?.text === titleD && field(current)?.enabled === 'false', `(d${label}) draft kept and locked`);
         check(button(current, 'Save')?.enabled === 'true', `(d${label}) exact retry allowed`);
-        check(button(current, 'Cancel')?.enabled === 'false', `(d${label}) leaving the editor blocked`);
+        check(button(current, 'Close')?.enabled === 'false', `(d${label}) leaving the editor blocked`);
     };
     nodes = await waitFor('save failure', (current) => inEditor(current) && hasError(current));
     failedEditor(nodes, '');
-    expectStored({ priority: 'low', rev: row.rev }, '(d) failed commit stored nothing');
+    expectStored({ title: titleB, rev: row.rev }, '(d) failed commit stored nothing');
     await rotate(1);
-    failedEditor(await waitFor('failed state after rotation', (current) => inEditor(current) && hasError(current)), ' landscape', false);
+    failedEditor(await waitFor('failed state after rotation', (current) => inEditor(current) && hasError(current)), ' landscape');
     await rotate(0);
     failedEditor(await waitFor('failed state after rotating back', (current) => inEditor(current) && hasError(current)), ' portrait');
     // Back is left to the system while the retry is owed, so it leaves the app.
@@ -291,30 +322,81 @@ try {
     await waitFor('a new screen on the running host', () => newScreens(processId) > newScreensBefore, 15_000);
     failedEditor(await waitFor('failed state on the new screen', (current) => inEditor(current) && hasError(current)), ' on a new screen');
     check(pid() === processId && boots(processId) === 1, '(d) same process and host');
-    expectStored({ priority: 'low', rev: row.rev }, '(d) still nothing stored before the retry');
+    expectStored({ title: titleB, rev: row.rev }, '(d) still nothing stored before the retry');
     setProp('fail_commit', '');
     await save();
     nodes = await inbox();
     check(!hasError(nodes) && taskRows(nodes).some((node) => node.enabled === 'true'),
         '(d) retry cleared the failure: rows work again');
-    row = expectStored({ title: titleB, priority: 'medium', dueDate: null, rev: row.rev + 1 }, '(d) retry stored the edit once');
+    row = expectStored({ title: titleD, dueDate: dueB, rev: row.rev + 1 }, '(d) retry stored the edit once');
 
-    // (f) Status reference with a priority: core refuses, the draft stays editable, nothing is written.
-    await openEditor(titleB);
-    await choose('Status', 'Reference');
-    await choose('Priority', 'High');
+    // (i) A save whose acknowledgment dies with the process: the commit lands, core's reply is held back, and the
+    // process is killed. The exact request was on disk before the call, so the relaunch sends it again before the
+    // draft unlocks, and core writes nothing twice: the editor closes and the task holds the edit from one write.
+    await openEditor(titleD);
+    const titleI = `${titleD}6`;
+    await appendTitle('6', titleI);
+    // The due date goes too: a past date would let core's startup pass move this Inbox task to Next on the relaunch.
+    await hideKeyboard();
+    await tapDescribed('Clear Due Date', (current) => described(current, 'Due Date') === 'Not set', 'Due Date: Not set');
+    setProp('delay_after_ms', '20000');
     await save();
-    nodes = await waitFor('core refusal', (current) => current.some((node) => node.text?.includes('priority cannot be set while status is reference')));
-    check(nodes.some((node) => node.text?.startsWith('INVALID_INPUT: ')), '(f) core\'s INVALID_INPUT message shown');
-    check(editorShows(nodes, titleB, { Status: 'Reference', Priority: 'High' }) && field(nodes)?.enabled === 'true'
-        && button(nodes, 'Save')?.enabled === 'true', '(f) draft kept and still editable (no retry lock)');
-    expectStored({ status: 'inbox', priority: 'medium', rev: row.rev }, '(f) nothing written');
-    await tap(button(await screen(), 'Cancel'));
-    await tap(button(await waitFor('the discard question', (current) => hasText(current, 'Discard unsaved changes?')), 'Discard'));
+    await waitFor('the commit while its reply is held back', () => stored()?.title === titleI && stored()?.dueDate === null, 15_000);
+    await goHome(); // onStop saves the editor's key, as a user leaving the app would
+    sh(`run-as ${PKG} kill -9 ${processId}`);
+    setProp('delay_after_ms', '');
+    await waitFor('process death', () => pid() !== processId, 10_000);
+    launch();
+    nodes = await inbox();
+    processId = pid();
+    check(boots(processId) === 1 && !inEditor(nodes), '(i) the relaunch sent the saved request again and closed the editor');
+    check(saves(processId, 'saved') === 1, '(i) task-command log shows the re-sent saveTaskDraft saved in the new process');
+    row = expectStored({ title: titleI, status: 'inbox', dueDate: null, rev: row.rev + 1 }, '(i) the edit is stored from one write');
+
+    // (g) A context from core's suggestions, and (h) a due date with a time (RN's clock button), in one save.
+    await openEditor(titleI);
+    const stored0 = `@${context}`;
+    const prefix = `78${run.slice(0, 6)}`;
+    // Erase the stored context and type its first digits: core suggests the stored one.
+    await typeInto(contextsField(await screen()), prefix, prefix, stored0.length + 2);
+    nodes = await waitFor(`core's suggestion ${stored0}`, (current) => current.some((node) => node.text === stored0 && node.class !== 'android.widget.EditText'));
+    await tapExpecting(nodes.find((node) => node.text === stored0 && node.class !== 'android.widget.EditText'),
+        (current) => tagged(current, 'editor-contexts')?.text === `${stored0}, `, 'the suggestion in the field');
+    const second = `79${run.slice(0, 6)}`;
+    await typeInto(contextsField(await screen()), second, `${stored0}, ${second}`);
+    await hideKeyboard();
+    await pickDueDay(16);
+    await tapDescribed(`Change time Due Date`, datePicker, 'the date picker');
+    await pickDay(17);
+    await waitFor('the time picker', (current) => button(current, 'OK') && !datePicker(current));
+    const dueH = `${month()}-17T00:00`;
+    await tapExpecting(button(await screen(), 'OK'), (current) => described(current, 'Due Date') === dueH, `Due Date: ${dueH}`);
+    await save();
     await inbox();
-    expectStored({ status: 'inbox', priority: 'medium', rev: row.rev }, '(f) Discard wrote nothing');
-    check(updates(processId, 'saved') >= 2 && updates(processId, 'failed') >= 2, // (c) and (d) saves; (d) and (f) failures in this process
-        'task-command log shows operation=update saves and failures');
+    row = expectStored({ title: titleI, contexts: [stored0, `@${second}`], dueDate: dueH, rev: row.rev + 1 },
+        '(g) the suggestion replaced the typed digits and (h) the due date kept its time, in one write');
+
+    // (f) Status Reference and a project from the Destination picker: core applies its reference rule (the due date goes).
+    await openEditor(titleI);
+    await chooseStatus('Reference');
+    nodes = await tapDescribed(`Destination: ${described(await screen(), 'Destination')}`, (current) => Boolean(button(current, 'Cancel')), 'the Destination picker');
+    const choice = nodes.find((node) => (node['resource-id'] ?? '').endsWith('destination-project'));
+    const projectTitle = choice ? nodes.find((node) => node.text && (() => { const [l, t, r, b] = node.bounds.match(/\d+/g).map(Number); const [cl, ct, cr, cb] = choice.bounds.match(/\d+/g).map(Number); return l >= cl && t >= ct && r <= cr && b <= cb; })())?.text : undefined;
+    if (choice) {
+        await tapExpecting(choice, (current) => described(current, 'Destination') === projectTitle, `Destination: ${projectTitle}`);
+    } else {
+        console.log('note - (f) the development data has no project to choose; the picker closes with Cancel');
+        await tapExpecting(button(nodes, 'Cancel'), (current) => !button(current, 'Cancel'), 'the picker to close');
+    }
+    await save();
+    await inbox();
+    row = expectStored({ title: titleI, status: 'reference', dueDate: null, rev: row.rev + 1 }, '(f) core stored Reference and cleared the due date');
+    if (choice) {
+        const chosen = sqlite(`SELECT title FROM projects WHERE id = (SELECT projectId FROM tasks WHERE id = '${taskId}')`)[0];
+        check(chosen?.title === projectTitle, `(f) the Destination picker stored the project "${projectTitle}"`);
+    }
+    check(saves(processId, 'saved') >= 3, // the (i) re-send, (g)/(h), and (f) saves in this process; (d)'s failure was in the one before
+        'task-command log shows operation=saveTaskDraft saves');
 
     // Relaunch: boot validation passes and the final values stand.
     requireAppFront();
@@ -324,7 +406,7 @@ try {
     nodes = await inbox();
     processId = pid();
     check(boots(processId) === 1 && !bootFailure(nodes), 'relaunch: boot validation passed');
-    expectStored({ title: titleB, status: 'inbox', priority: 'medium', dueDate: null, startTime: null, rev: row.rev },
+    expectStored({ title: titleI, status: 'reference', dueDate: null, contexts: [stored0, `@${second}`], rev: row.rev },
         'relaunch: final values stored');
     console.log('Editor device check passed');
 } catch (error) {

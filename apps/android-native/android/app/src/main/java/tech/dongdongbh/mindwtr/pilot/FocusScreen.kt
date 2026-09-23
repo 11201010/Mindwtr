@@ -41,7 +41,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
-data class FocusSection(val key: String, val title: String, val total: Int, val rows: List<TaskRow>)
+/** One Focus section as core sent it. [focusBlockedLabel] is core's reason every star here can only refuse (Upcoming). */
+data class FocusSection(val key: String, val title: String, val total: Int, val rows: List<TaskRow>, val focusBlockedLabel: String?)
 /** One of core's "Projects to review" rows: the project, its status, and core's review date text. */
 data class ReviewProject(val id: String, val title: String, val status: String, val color: String?, val reviewDate: String?)
 
@@ -68,7 +69,10 @@ data class FocusView(val revision: String, val dateLabel: String, val sections: 
             val items = json.getJSONArray("sections")
             val review = json.getJSONArray("reviewProjects")
             return FocusView(json.getString("revision"), json.getString("dateLabel"), List(items.length()) { index ->
-                items.getJSONObject(index).let { FocusSection(it.getString("key"), it.getString("title"), it.getInt("total"), it.taskRows()) }
+                items.getJSONObject(index).let {
+                    FocusSection(it.getString("key"), it.getString("title"), it.getInt("total"), it.taskRows(),
+                        if (it.isNull("focusBlockedLabel")) null else it.getString("focusBlockedLabel"))
+                }
             }, List(review.length()) { index ->
                 review.getJSONObject(index).let {
                     ReviewProject(it.getString("id"), it.getString("title"), it.getString("status"),
@@ -147,7 +151,7 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
                     }
                     item(key = "${section.key}:${task.id}") {
                         TaskRowItem(model, task, status = if (section.key == "reviewDue") RowStatus.Badge else RowStatus.Hidden,
-                            star = if (section.key == "upcoming") RowStar.Disabled else RowStar.Shown, focusHighlight = section.key != "focus")
+                            star = RowStar.Shown, starBlocked = section.focusBlockedLabel, focusHighlight = section.key != "focus")
                     }
                 }
                 if (section.rows.size < section.total) item(key = "more:${section.key}") {

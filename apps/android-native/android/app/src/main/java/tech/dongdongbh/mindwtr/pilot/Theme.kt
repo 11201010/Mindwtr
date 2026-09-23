@@ -144,6 +144,10 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val scrim = rgba(0, 0, 0, 0.35f)
     /** RN's status menu backdrop, rgba(0,0,0,0.5). */
     val menuScrim = rgba(0, 0, 0, 0.5f)
+    /** RN's task editor picker backdrop (task-edit-modal.styles overlay), rgba(0,0,0,0.45). */
+    val pickerScrim = rgba(0, 0, 0, 0.45f)
+    /** RN's token suggestion divider, rgba(148,163,184,0.2). */
+    val divider = rgba(148, 163, 184, 0.2f)
     /** RN's highlight of a project's available next action. */
     val availableBg = if (isDark) rgba(59, 130, 246, 0.08f) else rgba(59, 130, 246, 0.05f)
     val availableBorder = if (isDark) rgba(59, 130, 246, 0.34f) else rgba(59, 130, 246, 0.24f)

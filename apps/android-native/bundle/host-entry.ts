@@ -105,7 +105,7 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
-type Command = 'create' | 'complete' | 'update' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter';
+type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter';
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const meta = {
         scope: 'native-android',
@@ -234,10 +234,28 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getFocusSectionWindow({ key: key as FocusTaskSectionKey, offset, limit, revision }));
         });
     },
-    editor(id: string): string {
+    editorModel(id: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.getTaskEditor({ id }));
+            return unwrap(contract.getTaskEditorModel({ id }));
+        });
+    },
+    /** The checklist and live attachment titles of core's getTask, which the editor shows read-only. */
+    editorContent(id: string): string {
+        return submit(async () => {
+            requireSaved();
+            const task = unwrap(contract.getTask({ id }));
+            return {
+                checklist: (task.checklist ?? []).map(({ title, isCompleted }) => ({ title, isCompleted: isCompleted === true })),
+                attachments: (task.attachments ?? []).filter((attachment) => !attachment.deletedAt).map((attachment) => attachment.title),
+            };
+        });
+    },
+    /** Core's suggestions for the whole text of a context, tag, or person input. */
+    editorSuggestions(id: string, field: string, query: string, limit: number): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getTaskEditorSuggestions({ id, field: field as 'contexts' | 'tags' | 'assignedTo', query, limit }));
         });
     },
     /** Core's setLanguage. "" is no stored language. Labels are not stored data, so no failed save blocks them. */
@@ -287,9 +305,13 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getProjectDetail({ projectId: id, offset, limit, revision: revision || undefined }));
         });
     },
-    /** `json` is `{ id, base, patch }`, passed to core unchanged. */
+    /** `json` is `{ id, base, patch }`, passed to core unchanged: the status menu and the Restore and Next swipes. */
     update(json: string): string {
         return submit(async () => taskResult('update', await contract.updateTask(JSON.parse(json))));
+    },
+    /** `json` is the editor's `{ id, base, patch }` of draft fields, passed to core's saveTaskDraft unchanged. */
+    saveDraft(json: string): string {
+        return submit(async () => taskResult('saveTaskDraft', await contract.saveTaskDraft(JSON.parse(json))));
     },
     create(title: string, captureId: string): string {
         return submit(async () => taskResult('create', await contract.createInboxTask({ title, captureId })));

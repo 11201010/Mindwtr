@@ -7,7 +7,8 @@
 // sequential, with sections), 20 tasks with contexts, dates, priorities, notes, and one
 // starred task, and RN's quick-access tab set to Projects so both tab bars show the same
 // tabs. The script installs the harness RN build (154), puts the fixture in as its
-// database, and shoots Inbox, Focus, and Projects in light and dark mode. Then it installs
+// database, and shoots Inbox, Focus, Projects, and the task editor (Form tab) for one
+// task opened from Focus, in light and dark mode. Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
 // /home/dd/.mindwtr-harness/parity/<timestamp>/.
@@ -20,7 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { check, connect, evidenced, hasText, Stopped, tab, tabSelected } from './device.mjs';
+import { button, check, connect, evidenced, hasText, inEditor, inList, Stopped, tab, tabSelected } from './device.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -147,6 +148,24 @@ const openLink = (path) => {
     if (!current.includes(`${PKG}/`) && !current.includes(`${home}/`)) throw new Stopped(`another app is in front: ${current.trim()}`);
     sh(`am start -W -a android.intent.action.VIEW -d 'mindwtr-upgradetest://${path}' ${PKG}`);
 };
+/** The task whose editor is shot: opened from Focus, where it has a project, a context, a priority, and a due date. */
+const EDITOR_TASK = T.outline;
+/** Opens the editor for EDITOR_TASK from the Focus screen on show, shoots it, and closes it with Back (nothing was edited). */
+const shootEditor = async (name, rn) => {
+    const nodes = await waitFor(`${EDITOR_TASK} in Focus`, (current) => Boolean(inList(current, EDITOR_TASK)), 45_000);
+    await tap(inList(nodes, EDITOR_TASK));
+    const formShown = (current) => current.some((node) => node.class === 'android.widget.EditText' && node.text === EDITOR_TASK)
+        && (rn || inEditor(current));
+    // RN may open on its View tab (Edit | Preview tabs, no title field); its Edit tab is the Form tab this app builds.
+    const rnTabs = (current) => rn && hasText(current, 'Preview') && Boolean(button(current, 'Edit'));
+    const open = await waitFor(`the editor for ${EDITOR_TASK}`, (current) => formShown(current) || rnTabs(current), 30_000);
+    if (!formShown(open)) await tap(button(open, 'Edit'));
+    await shoot(name, formShown);
+    const editorOpen = (current) => formShown(current) || rnTabs(current);
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await waitFor('the editor to close', (current) => !editorOpen(current), 15_000);
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -174,6 +193,8 @@ try {
             openLink(screen.link);
             await shoot(`rn-${screen.name}-${mode === 'yes' ? 'dark' : 'light'}`, (nodes) => hasText(nodes, screen.text));
         }
+        openLink('focus');
+        await shootEditor(`rn-editor-${mode === 'yes' ? 'dark' : 'light'}`, true);
     }
     await stopApp();
 
@@ -188,6 +209,9 @@ try {
             if (!tabSelected(nodes, screen.tab)) await tap(tab(nodes, screen.tab));
             await shoot(`native-${screen.name}-${mode === 'yes' ? 'dark' : 'light'}`, (current) => tabSelected(current, screen.tab) && hasText(current, screen.text));
         }
+        const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Focus')), 60_000);
+        if (!tabSelected(nodes, 'Focus')) await tap(tab(nodes, 'Focus'));
+        await shootEditor(`native-editor-${mode === 'yes' ? 'dark' : 'light'}`, false);
     }
     await stopApp();
 

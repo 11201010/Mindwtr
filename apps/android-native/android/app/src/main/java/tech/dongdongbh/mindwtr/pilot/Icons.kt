@@ -72,6 +72,43 @@ object Lucide {
     val Paperclip = lucide("Paperclip", "m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551")
     val ChevronsUp = lucide("ChevronsUp", "m17 11-5-5-5 5", "m17 18-5-5-5 5")
     val ChevronsDown = lucide("ChevronsDown", "m7 6 5 5 5-5", "m7 13 5 5 5-5")
+    // The task editor's field headings and controls (TaskEditFormTab and its field components).
+    val Type = lucide("Type", "M12 4v16", "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2", "M9 20h6")
+    val ListTodo = lucide("ListTodo", "M13 5h8", "M13 12h8", "M13 19h8", "m3 17 2 2 4-4",
+        "M4 4h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z")
+    val Layers = lucide("Layers", "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
+        "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12",
+        "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17")
+    val AtSign = lucide("AtSign", circle(12, 12, 4), "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8")
+    val Tag = lucide("Tag", "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z",
+        "M7 7.5a.5 .5 0 1 0 1 0a.5 .5 0 1 0-1 0")
+    private const val CALENDAR = "M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"
+    val Calendar = lucide("Calendar", "M8 2v4", "M16 2v4", CALENDAR, "M3 10h18")
+    val CalendarDays = lucide("CalendarDays", "M8 2v4", "M16 2v4", CALENDAR, "M3 10h18", "M8 14h.01", "M12 14h.01", "M16 14h.01",
+        "M8 18h.01", "M12 18h.01", "M16 18h.01")
+    val CalendarX = lucide("CalendarX", "M8 2v4", "M16 2v4", CALENDAR, "M3 10h18", "m14 14-4 4", "m10 14 4 4")
+    val CalendarClock = lucide("CalendarClock", "M16 14v2.2l1.6 1", "M16 2v4", "M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5",
+        "M3 10h5", "M8 2v4", circle(16, 16, 6))
+    val Clock = lucide("Clock", "M12 6v6l4 2", circle(12, 12, 10))
+    val Flag = lucide("Flag", "M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528")
+    private const val BATTERY = "M4 6h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"
+    val BatteryCharging = lucide("BatteryCharging", "m11 7-3 5h4l-3 5", "M14.856 6H16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.935", "M22 14v-4",
+        "M5.14 18H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2.936")
+    val BatteryLow = lucide("BatteryLow", "M22 14v-4", "M6 14v-4", BATTERY)
+    val BatteryMedium = lucide("BatteryMedium", "M10 14v-4", "M22 14v-4", "M6 14v-4", BATTERY)
+    val BatteryFull = lucide("BatteryFull", "M10 10v4", "M14 10v4", "M22 14v-4", "M6 10v4", BATTERY)
+    val CircleSlash = lucide("CircleSlash", circle(12, 12, 10), "M9 15 15 9")
+    val Hourglass = lucide("Hourglass", "M5 22h14", "M5 2h14", "M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22",
+        "M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2")
+    val User = lucide("User", "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2", circle(12, 7, 4))
+    val AlignLeft = lucide("AlignLeft", "M21 5H3", "M15 12H3", "M17 19H3")
+    val Navigation = lucide("Navigation", "M3 11 22 2 13 21 11 13z")
+    /** RN's field help button draws Ionicons help-circle-outline; lucide's CircleQuestionMark is the same glyph. */
+    val CircleHelp = lucide("CircleHelp", circle(12, 12, 10), "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", "M12 17h.01")
+    // RN's TASK_STATUS_ICONS (lib/task-status-icons.ts): Inbox, ArrowRight, Check and these.
+    val CirclePause = lucide("CirclePause", circle(12, 12, 10), "M10 15V9", "M14 15V9")
+    val CircleArrowUp = lucide("CircleArrowUp", circle(12, 12, 10), "m16 12-4-4-4 4", "M12 16V8")
+    val Book = lucide("Book", "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20")
     /** RN's add-project button draws Plus at stroke 2.4. */
     val PlusMedium = lucide("PlusMedium", "M5 12h14", "M12 5v14", stroke = 2.4f)
 }

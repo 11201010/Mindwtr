@@ -50,19 +50,28 @@ assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = tit
 assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy\)/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("create", captureId, draft\)/);
 assert.match(rowUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
-// The swipe follows RN's getLeftAction per status; it and TalkBack's custom action are one command with one enabled rule.
+// The swipe is core's meta.swipe (RN's getLeftAction moved to core); it and TalkBack's custom action are one command with one enabled rule.
 // Done keeps core's completeTask and its retry; Restore and Next are the status change with theirs. RN draws no Done button.
-assert.match(rowUi, /"done" -> "inbox"\s+"someday", "reference", "inbox" -> "next"\s+else -> "done"/);
+assert.match(rowUi, /val target = meta\.swipe\.target\s+val swipeLabel = meta\.swipe\.label/);
+assert.match(model, /meta\.getJSONObject\("swipe"\)\.let \{ RowSwipe\(it\.getString\("target"\), it\.getString\("label"\), it\.getString\("icon"\)\) \}/);
+// No Kotlin status-to-swipe map: no status literal decides a swipe target, label, or icon.
+const STATUS = '"(?:inbox|next|waiting|someday|reference|done)"';
+for (const [name, text] of Object.entries({ rowUi, model, focusUi, projectsUi, activity })) {
+    assert.doesNotMatch(code(text), new RegExp(`${STATUS}(?:\\s*,\\s*${STATUS})*\\s*->\\s*${STATUS}`), `${name}: no status-to-swipe map in Kotlin`);
+}
+assert.doesNotMatch(code(rowUi), /swipeTarget|archived\.restoreToInbox/);
+assert.match(rowUi, /when \(swipe\.icon\) \{ "restore" -> Lucide\.RotateCcw; "done" -> Lucide\.Check; else -> Lucide\.ArrowRight \}/);
 assert.match(rowUi, /val swipeOn = completable && \(if \(target == "done"\) canComplete else canMove\)/);
 assert.match(rowUi, /val canMove = writable && !busy && \(failedAction == null \|\| failedAction == statusAction\(task, target\)\)/);
 assert.match(rowUi, /val onSwipe = \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
-assert.match(rowUi, /SwipeAction\(enabled = swipeOn, target = target, label = swipeLabel, shape = shape, onSwipe = onSwipe\)/);
+assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe\)/);
 assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \}\)/);
 assert.doesNotMatch(code(rowUi + activity), /IconButton\(onClick = \{ complete\(/, 'no visible Done button: RN has none');
 assert.match(rowUi, /if \(value == SwipeToDismissBoxValue\.StartToEnd\) onSwipe\(\)\s+false/, 'the row springs back; the list refresh removes it');
-// Every failed command holds its exact retry, except an update core refused before writing.
+// Every failed command holds its exact retry, except an update or editor save core refused before writing.
 assert.match(model, /private val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
-assert.match(model, /val refused = action\?\.kind == "update" && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}/);
+assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft"\)/);
+assert.match(model, /val refused = action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
@@ -72,7 +81,7 @@ assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s 
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
-assert.equal(code(model).match(/\bperform\(action\)/g).length, 8, 'create, complete, update, task star, project star, status, project create, area filter');
+assert.equal(code(model).match(/\bperform\(action\)/g).length, 8, 'create, complete, editor save, task star, project star, status, project create, area filter');
 assert.equal(code(model).match(/\bperform\s*\{/g).length, 7, 'editor, reload, Try again, three More, open project');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
@@ -92,7 +101,7 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /private fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /private enum class Part \{ Inbox, Focus, Projects, Project, Areas \}/);
+assert.match(model, /private enum class Part \{ Inbox, Focus, Projects, Project, Areas, Editor \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('private fun applyPage(')));
     for (const part of ['Inbox', 'Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -109,9 +118,32 @@ assert.equal(code(model).match(/(?<!var )\bcommandAt = /g).length, 1, 'only a co
 assert.match(rowUi, /val canComplete = writable && !busy &&\s*\(failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)\)/);
 // Only the capture draft survives process death; a restored unchanged draft reuses its capture UUID.
 for (const field of ['draft', 'captureId', 'submittedTitle']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
-// The editor draft (core's reply = loaded values, plus the edited values) survives process death.
-for (const field of ['editor', 'editorEdited']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
-assert.match(model, /saved\["editor"\] = value\?\.reply\?\.source\s+saved\["editorEdited"\] = value\?\.let \{ json\(it\.edited\) \}/);
+// The editor draft survives process death through a synced file in the no-backup folder; the Bundle holds only its key.
+// The model is read again from core, and the saved edits go on top with their own bases.
+assert.match(model, /private var editorKey: String\? = saved\.get<String>\("editorKey"\)/);
+assert.doesNotMatch(code(model), /saved\["editor(?!Key)/, 'no editor model or draft in the Bundle');
+assert.match(model, /EditorDrafts\(File\(app\.noBackupFilesDir, "editor"\)\)/);
+assert.match(model, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\(key\)\)\)/);
+assert.match(model, /TaskEditor\.restore\(readEditor\(runtime, draft\.getString\("id"\)\), draft\)/);
+assert.match(editorUi, /put\("bases", JSONObject\(edited\.keys\.associateWith \{ base\(it\) \}\)\)/);
+// An uncertain save's exact request is on disk before the call; after process death it is sent again before the draft unlocks.
+assert.match(model, /val action = saveDraftAction\(current\)\s+pendingSave = action\s+keepEditor\(current\)\s+sendDraft\(action\)/);
+assert.match(model, /pendingSave\?\.let \{ state\.put\("pending", JSONObject\(\)\.put\("base", JSONObject\(it\.base\)\)\.put\("patch", JSONObject\(it\.patch\)\)\) \}\s+drafts\.write\(key, state\)/);
+assert.match(model, /val action = FailedAction\("saveDraft", restored\.id, base = map\("base"\), patch = map\("patch"\)\)\s+failedAction = action\s+sendDraft\(action\)/);
+// Unresolved typed text is an unsaved edit: Close asks, and Save waits for core, then saves.
+assert.match(editorUi, /val dirty get\(\) = patch\.isNotEmpty\(\) \|\| waiting/);
+assert.match(editorUi, /val leave = \{ if \(editor\.readOnly \|\| !editor\.dirty\) closeEditor\(\) else confirmLeave = true \}/);
+assert.match(model, /if \(current\.waiting\) \{ saveQueued = true; return \}/);
+assert.match(model, /if \(saveQueued && !resolved\.waiting\) \{ saveQueued = false; saveEditor\(\) \}/);
+// Text the app puts in a field (a chosen suggestion) leaves the cursor at its end, as RN's TextInput does.
+assert.match(editorUi, /if \(field\.text != value\) field = TextFieldValue\(value, TextRange\(value\.length\)\)\s+BasicTextField\(field, \{ typed -> field = typed;/);
+// A chip's click, label, and state are one accessibility node: one-of-many choices are selectable (TalkBack says
+// "selected" as RN does; uiautomator reports selected), and only on/off chips (quick tokens, after completion) toggle.
+assert.match(editorUi, /\.semantics \{ contentDescription = description \}\s+\.then\(if \(toggle\) Modifier\.toggleable\(value = active, enabled = enabled, role = Role\.Button, onValueChange = \{ onClick\(\) \}\)\s+else Modifier\.selectable\(selected = active, enabled = enabled, role = Role\.Tab, onClick = onClick\)\)/);
+assert.equal(code(editorUi).match(/toggle = true/g).length, 2, 'only the quick token chips and "Repeat after completion" toggle');
+// RN's Waiting prompt: choosing Waiting asks for the person first, with core's people suggestions.
+assert.match(editorUi, /if \(status == "waiting" && !active\) openWaitingPrompt\(\) else editFields\(mapOf\("status" to status\)\)/);
+assert.match(editorUi, /fun assignWaiting\(person: String\) = edit\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
 for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
@@ -191,7 +223,7 @@ assert.match(model, /focus = pending\.focus\s+projects = pending\.projects\s+kee
 assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ host = runtime; restore\(pending\) \}/g).length, 2);
 assert.match(model, /runtime\.createInboxTask\(title, id\)\s+acknowledged\(action\)/);
 assert.match(model, /runtime\.completeTask\(id\)\s+acknowledged\(action\)/);
-assert.match(model, /runtime\.updateTask\(current\.id, json\(current\.base\), json\(current\.patch\)\)\s+acknowledged\(action\)/);
+assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\)\)\s+\} catch \(failure: Exception\) \{[\s\S]{0,300}?throw failure\s+\}\s+acknowledged\(action\)\s+ui \{ closeEditor\(\) \}/);
 // The new contract commands: each is a perform(action) with its exact retry, acknowledged only after core's reply.
 for (const [call, fn] of [
     ['runtime\\.setTaskFocus\\(id, focused\\)', 'fun setTaskFocus('], ['runtime\\.setProjectFocus\\(id, focused\\)', 'fun setProjectFocus('],
@@ -234,29 +266,53 @@ assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt].j
 // The language override is the same debug-only property read, and it replaces only the stored language.
 assert.match(coreHost, /fun language\(stored: String, system: String\): JSONObject =\s*callAsync\("language", debugFault\("language"\)\.ifEmpty \{ stored \}, system\)/);
 assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
-// update is a task command: the fault hooks and the diagnostic line cover it.
-assert.match(coreHost, /val command = method in setOf\("create", "complete", "update", "taskFocus", "projectFocus", "createProject", "setAreaFilter"\)/);
+// update and the editor's saveDraft are task commands: the fault hooks and the diagnostic line cover them.
+assert.match(coreHost, /val command = method in setOf\("create", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter"\)/);
 
-// The editor reaches core only through CoreHost's two calls, which reach only the two contract commands.
-assert.match(coreHost, /fun taskEditor\(id: String\): JSONObject = callAsync\("editor", id\)/);
+// The editor reads core's model (getTaskEditorModel, plus getTask's checklist and attachments) and saves only
+// through core's saveTaskDraft, via perform with an exact FailedAction. The status menu keeps updateTask.
+assert.match(coreHost, /fun taskEditorModel\(id: String\): JSONObject = callAsync\("editorModel", id\)/);
+assert.match(coreHost, /fun editorContent\(id: String\): JSONObject = callAsync\("editorContent", id\)/);
+assert.match(coreHost, /fun editorSuggestions\(id: String, field: String, query: String, limit: Int\): JSONObject =\s*callAsync\("editorSuggestions", id, field, query, limit\)/);
+assert.match(coreHost, /fun saveTaskDraft\(id: String, baseJson: String, patchJson: String\): JSONObject =\s*callAsync\("saveDraft", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\.toString\(\)\)/);
 assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson: String\): JSONObject =\s*callAsync\("update", JSONObject\(\)\.put\("id", id\)\.put\("base", JSONObject\(baseJson\)\)\.put\("patch", JSONObject\(patchJson\)\)\.toString\(\)\)/);
-assert.match(hostEntry, /editor\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditor\(\{ id \}\)\);/);
+assert.doesNotMatch(coreHost + hostEntry, /taskEditor\(|getTaskEditor\(/, 'the seven-field editor reply is gone');
+assert.match(hostEntry, /editorModel\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorModel\(\{ id \}\)\);/);
+assert.match(hostEntry, /editorContent\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const task = unwrap\(contract\.getTask\(\{ id \}\)\);/);
+assert.match(hostEntry, /editorSuggestions\(id: string, field: string, query: string, limit: number\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditorSuggestions\(\{ id, field: [^,]*, query, limit \}\)\);/);
+assert.match(hostEntry, /saveDraft\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('saveTaskDraft', await contract\.saveTaskDraft\(JSON\.parse\(json\)\)\)\);/);
 assert.match(hostEntry, /update\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('update', await contract\.updateTask\(JSON\.parse\(json\)\)\)\);/);
-assert.equal(model.match(/runtime\.taskEditor\(id\)/g).length, 2, 'open and Reload');
-assert.equal(model.match(/runtime\.updateTask\(/g).length, 2, 'the editor save and the status menu');
-assert.equal([activity, owner, editorUi].join('\n').match(/taskEditor\(|updateTask\(/g), null);
+assert.equal(model.match(/runtime\.taskEditorModel\(id\)/g).length, 1, 'readEditor: open and Reload');
+assert.equal(model.match(/EditorModel\.of\(runtime\.taskEditorModel\(id\), runtime\.editorContent\(id\)\)/g).length, 1);
+assert.equal(model.match(/readEditor\(runtime, id\)/g).length, 2, 'open and Reload');
+assert.equal(model.match(/runtime\.saveTaskDraft\(/g).length, 1, 'the editor save');
+assert.equal(model.match(/runtime\.updateTask\(/g).length, 1, 'the status menu and the Restore and Next swipes');
+assert.equal(model.match(/runtime\.editorSuggestions\(/g).length, 1);
+assert.equal([activity, owner, editorUi].join('\n').match(/taskEditorModel\(|editorContent\(|editorSuggestions\(|saveTaskDraft\(|updateTask\(/g), null);
 assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
-// The patch holds only changed fields; base holds the loaded values of exactly those; no change means no call.
-assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = EDITOR_FIELDS\.filter \{ edited\[it\] != loaded\[it\] \}\.associateWith \{ edited\[it\] \}/);
-assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ loaded\[it\] \}/);
-assert.match(editorUi, /val EDITOR_FIELDS = listOf\("title", "description", "status", "priority", "projectId", "startTime", "dueDate"\)/);
-assert.match(model, /val current = editor \?: return\s+if \(current\.patch\.isEmpty\(\)\) \{ closeEditor\(\); return \}\s+val action = updateAction\(current\)\s+perform\(action\)/);
-assert.match(model, /FailedAction\("update", current\.id, base = current\.base, patch = current\.patch\)/);
-// Reload: an edit survives only where the stored value still equals the old base.
-assert.match(editorUi, /if \(fresh\.fields\[field\] == loaded\[field\]\) edited\[field\] else fresh\.fields\[field\]/);
-// No Kotlin date parsing, and no formatting of stored values: the only date call formats picker output.
+// The save: exactly the changed draft fields, base = their loaded values, as a perform with its exact FailedAction; no change means no call.
+assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
+assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
+assert.match(model, /fun saveDraftAction\(current: TaskEditor\) = FailedAction\("saveDraft", current\.id, base = current\.base, patch = current\.patch\)/);
+assert.match(model, /val current = editor \?: return\s+if \(current\.waiting\) \{ saveQueued = true; return \}\s+if \(current\.patch\.isEmpty\(\)\) \{ closeEditor\(\); return \}/);
+assert.match(model, /private fun sendDraft\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\)\)/);
+// Draft values are core's own JSON, compared and sent as JSON text; null stays JSON null.
+assert.match(editorUi, /fun draftJson\(values: Map<String, String\?>\): String =\s*JSONObject\(\)\.apply \{ values\.forEach \{ \(field, literal\) -> put\(field, draftValue\(literal\)\) \} \}\.toString\(\)/);
+// Typed token and person text becomes core's draft value (getTaskEditorSuggestions), applied only while the text is unchanged; Save waits for it.
+assert.match(editorUi, /if \(field !in inputs \|\| input\(field\) != text\) this\s+else withEdits\(mapOf\(field to draftLiteral\(draftValue\)\)\)\.copy\(resolved = resolved \+ \(field to text\)\)/);
+assert.match(model, /val resolved = current\.resolve\(field, text, found\.draftValue\)\s+keepEditor\(resolved\)/);
+assert.match(editorUi, /val saveEnabled = if \(editor\.readOnly\) true else writable && !busy &&\s*\(failedAction == null \|\| failedAction == saveDraftAction\(editor\)\)/);
+// Suggestions are a background read: they never take busy and never replace an owed retry.
+assert.match(model, /background\(listOf\(Part\.Editor\), \{ runtime -> EditorSuggestions\.parse\(text, runtime\.editorSuggestions\(id, coreField, text, SUGGESTIONS\)\) \}\)/);
+// Reload after a conflict: an edit survives only where the stored value still equals the old base.
+assert.match(editorUi, /val kept = \{ field: String -> \(fresh\.draft\[field\] \?: "null"\) == base\(field\) \}/);
+// Kotlin holds no editor rule: the fields, their order, sections, open state, badges, and choices are core's model, walked as sent.
+assert.match(editorUi, /for \(section in editor\.model\.sections\) \{/);
+assert.match(editorUi, /section\.fields\.forEach \{ field\(it\) \}/);
+assert.doesNotMatch(code(editorUi), /\.(sort\w*|sorted\w*|groupBy|reversed|shuffled|distinct\w*)\b/);
+// No Kotlin date parsing or formatting of stored values: dates show as the draft holds them; only picker output is named.
 assert.doesNotMatch([editorUi, model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n'),
-    /java\.time|LocalDate|Instant|DateTimeFormatter|Calendar|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
+    /java\.time|LocalDate|Instant|DateTimeFormatter|java\.util\.Calendar|GregorianCalendar|Calendar\.getInstance|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter|EditorSuggestions)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
 assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
 // No Kotlin date formatting or date coloring anywhere in the UI package: dates and their tones are core's (row meta, the Focus date line).
 {
@@ -270,11 +326,15 @@ assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].
 assert.equal(editorUi.match(/SimpleDateFormat|\.format\(/g).length, 3); // import, constructor, one format call
 assert.match(editorUi, /private fun pickedDay\(pickerMillis: Long\): String =\s*SimpleDateFormat\("yyyy-MM-dd", Locale\.US\)\.apply \{ timeZone = TimeZone\.getTimeZone\("UTC"\) \}\.format\(Date\(pickerMillis\)\)/);
 assert.equal(editorUi.match(/pickedDay\(/g).length, 2);
-assert.match(editorUi, /state\.selectedDateMillis\?\.let \{ pickerMillis -> editField\(field, pickedDay\(pickerMillis\)\) \}/);
-// Read-only offers no Save; a failed save allows only its exact retry and leaves Back to the system.
-assert.match(editorUi, /if \(!editor\.readOnly\) \{\s*Button\(onClick = model::saveEditor,\s*enabled = writable && !busy && \(failedAction == null \|\| failedAction == updateAction\(editor\)\)\)/);
+assert.match(editorUi, /private fun pickedTime\(hour: Int, minute: Int\) = "T\$\{hour\.toString\(\)\.padStart\(2, '0'\)\}:\$\{minute\.toString\(\)\.padStart\(2, '0'\)\}"/);
+assert.equal(editorUi.match(/pickedTime\(/g).length, 2);
+// A draft date is never read apart: no substring, split, or pattern over a date field's value.
+assert.doesNotMatch(code(editorUi), /text\("(dueDate|startTime|reviewAt)"\)\.(substring|split|take|drop|contains|startsWith|endsWith|matches|replace)/);
+assert.doesNotMatch(code(editorUi), /\b(due|value)\.(substring|split|take|drop|contains|startsWith|endsWith|matches)\(/);
+// Read-only offers only Close; a failed save allows only its exact retry and leaves Back to the system.
 assert.match(editorUi, /val locked = busy \|\| failed \|\| editor\.readOnly/);
 assert.match(editorUi, /BackHandler\(enabled = !failed\)/);
+assert.match(editorUi, /clickable\(enabled = !busy && !failed, role = Role\.Button, onClick = leave\)/);
 
 // Focus reaches core only through CoreHost's two calls, which reach only core's two Focus queries.
 assert.match(coreHost, /fun focus\(limit: Int\): JSONObject = callAsync\("focus", limit\)/);
@@ -291,11 +351,16 @@ assert.match(focusUi, /return FocusView\(json\.getString\("revision"\), json\.ge
 assert.match(model, /fun JSONObject\.taskRows\(\): List<TaskRow> = getJSONArray\("rows"\)\.let \{ items ->\s*List\(items\.length\(\)\) \{ index ->/);
 assert.match(focusUi, /for \(section in focus\?\.sections\.orEmpty\(\)\) \{/);
 assert.match(focusUi, /section\.rows\.forEachIndexed \{ index, task ->/);
-// Core's two flags are the only row data Focus acts on: laterToday places one subheading, revealDate is shown as text.
+// Core's row data is the only row data Focus acts on: laterToday places one subheading, revealLabel is shown as text,
+// and the section's focusBlockedLabel disables the star with core's reason.
 assert.match(focusUi, /val laterToday = section\.rows\.indexOfFirst \{ it\.laterToday \}/);
 assert.equal(code([focusUi, activity, model, rowUi].join('\n')).match(/(?<!"agenda)\.laterToday\b/g).length, 1); // not the label key
-assert.match(rowUi, /task\.revealDate\?\.let \{ MetaText\(it, c\.secondaryText, 600, Modifier\.padding\(top = 4\.dp\)\) \}/);
-assert.equal(code([focusUi, activity, model, rowUi].join('\n')).match(/\.revealDate\b/g).length, 1);
+assert.match(rowUi, /task\.revealLabel\?\.let \{ MetaText\(it, c\.secondaryText, 600, Modifier\.padding\(top = 4\.dp\)\) \}/);
+assert.equal(code([focusUi, activity, model, rowUi].join('\n')).match(/\.revealLabel\b/g).length, 1);
+assert.doesNotMatch(code([focusUi, activity, model, rowUi].join('\n')), /revealDate/);
+assert.match(focusUi, /star = RowStar\.Shown, starBlocked = section\.focusBlockedLabel/);
+assert.doesNotMatch(code(focusUi), /"upcoming"/, 'Focus never names a section to decide a control');
+assert.match(rowUi, /val label = blocked \?: t\(if \(task\.isFocusedToday\) "agenda\.removeFromFocus" else "agenda\.addToFocus"\)/);
 // A stale Load more reads Focus again from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
@@ -340,8 +405,17 @@ for (const [list, prefix] of [['EDITOR_STATUSES', 'status'], ['EDITOR_PRIORITIES
     const values = [...new RegExp(`const ${list} = \\[([^\\]]*)\\]`).exec(contractSource)[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
     for (const value of values) assert(labelKeys.includes(`${prefix}.${value}`), `LABEL_KEYS lacks ${prefix}.${value}`);
 }
-assert.match(editorUi, /editor\.reply\.statuses\.map \{ it to t\("status\.\$it"\) \}/);
-assert.match(editorUi, /editor\.reply\.priorities\.map \{ it to t\("priority\.\$it"\) \}/);
+assert.match(editorUi, /for \(status in editor\.model\.statuses\)/);
+assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.model\.priorities, !locked, t\("taskEdit\.priorityLabel"\), \{ t\("priority\.\$it"\) \}\)/);
+// Every label key core's editor model can send (recurrence choices, energy levels, section titles) is in LABEL_KEYS.
+{
+    const modelSource = readFileSync(resolve(app, '../../packages/core/src/task-editor-model.ts'), 'utf8');
+    for (const [, key] of modelSource.matchAll(/labelKey: '([^']+)'/g)) assert(labelKeys.includes(key), `LABEL_KEYS lacks ${key}`);
+    for (const value of [...modelSource.matchAll(/TASK_EDITOR_ENERGY_LEVEL_OPTIONS: TaskEnergyLevel\[\] = \[([^\]]*)\]/g)][0][1].matchAll(/'([^']+)'/g)) {
+        assert(labelKeys.includes(`energyLevel.${value[1]}`), `LABEL_KEYS lacks energyLevel.${value[1]}`);
+    }
+    for (const id of ['scheduling', 'organization', 'details']) assert(labelKeys.includes(`taskEdit.${id}`), `LABEL_KEYS lacks taskEdit.${id}`);
+}
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
 for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt })) {
     const body = code(text);
@@ -475,6 +549,9 @@ for (const walk of [/List\(groups\.length\(\)\) \{ index ->/, /List\(rows\.lengt
     /for \(\(bucket, heading\) in PROJECT_BUCKETS\) \{/, /for \(group in groups\) \{/, /for \(row in group\.projects\) item/,
     /for \(entry in detail\?\.items\.orEmpty\(\)\) when \(entry\)/]) assert.match(projectsUi, walk);
 assert.match(projectsUi, /group\.areaName \?: t\("projects\.noArea"\)/);
+// The project status line is core's text (Completed or Cancelled for a closed project).
+assert.match(projectsUi, /Text\(row\.statusLabel, style = rnText\(12, 400\), color = color\)/);
+assert.doesNotMatch(code(projectsUi), /"list\.done"/);
 assert.match(projectsUi, /val open = !collapsible \|\| \(if \(bucket == "deferred"\) projectsView\.showDeferred else projectsView\.showArchived\)/, 'Deferred and Archived start closed (RN\'s default)');
 assert.match(projectsUi, /val areaKey = group\.areaId \?: "no-area"/);
 // A read-only project's rows have no Complete; its cue is core's value, shown with mobile's label.
@@ -538,9 +615,22 @@ export function createNativeHostContract() {
       globalThis.focusInputs.push(JSON.stringify(input));
       return globalThis.focusWindowResult;
     },
-    getTaskEditor(input) {
+    getTaskEditorModel(input) {
       globalThis.editorInputs.push(JSON.stringify(input));
       return { ok: true, value: { version: 1, id: input.id } };
+    },
+    getTask(input) {
+      globalThis.editorInputs.push(JSON.stringify(['task', input]));
+      return { ok: true, value: { id: input.id, checklist: [{ id: 'c', title: 'Milk', isCompleted: true }],
+        attachments: [{ title: 'kept' }, { title: 'gone', deletedAt: '2026-09-01' }] } };
+    },
+    getTaskEditorSuggestions(input) {
+      globalThis.editorInputs.push(JSON.stringify(['suggest', input]));
+      return { ok: true, value: { draftValue: '@home', matches: [], quick: [] } };
+    },
+    async saveTaskDraft(input) {
+      globalThis.updateInputs.push(JSON.stringify(['draft', input]));
+      return globalThis.saveDraftResult;
     },
     async updateTask(input) {
       globalThis.updateInputs.push(JSON.stringify(input));
@@ -606,6 +696,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         projectDetailResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Project changed; restart paging from offset zero' } },
         focusWindowResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Focus changed; restart paging' } },
         updateResult: { ok: true, value: { id: 't', changed: true } },
+        saveDraftResult: { ok: true, value: { id: 't', draft: { title: 'b' } } },
         __mindwtrNative: {
             sqlAll(sql) {
                 // 'auto': the tasks count matches the load, as a real database would.
@@ -656,8 +747,20 @@ assert.deepEqual(ready.updateInputs, [updateInput]);
 ready.updateResult = { ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } };
 assert.deepEqual(await poll(ready, ready.MindwtrHost.update(updateInput)),
     { ok: false, error: 'STALE_REVISION: Task changed while editing: title' });
-assert.deepEqual(await poll(ready, ready.MindwtrHost.editor('t')), { ok: true, value: { version: 1, id: 't' } });
-assert.deepEqual(ready.editorInputs, ['{"id":"t"}']);
+assert.deepEqual(await poll(ready, ready.MindwtrHost.editorModel('t')), { ok: true, value: { version: 1, id: 't' } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.editorContent('t')),
+    { ok: true, value: { checklist: [{ title: 'Milk', isCompleted: true }], attachments: ['kept'] } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.editorSuggestions('t', 'contexts', 'home', 4)),
+    { ok: true, value: { draftValue: '@home', matches: [], quick: [] } });
+assert.deepEqual(ready.editorInputs, ['{"id":"t"}', '["task",{"id":"t"}]', '["suggest",{"id":"t","field":"contexts","query":"home","limit":4}]']);
+// saveDraft passes Kotlin's { id, base, patch } to core's saveTaskDraft unchanged, and a refusal keeps its code prefix.
+const draftInput = JSON.stringify({ id: 't', base: { title: 'a', dueDate: '', relativeStartOffset: null }, patch: { title: 'b', dueDate: '2026-09-15T14:05', relativeStartOffset: null } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.saveDraft(draftInput)), { ok: true, value: { id: 't', draft: { title: 'b' } } });
+ready.saveDraftResult = { ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } };
+assert.deepEqual(await poll(ready, ready.MindwtrHost.saveDraft(draftInput)), { ok: false, error: 'STALE_REVISION: Task changed while editing: title' });
+assert.deepEqual(ready.updateInputs.slice(-2), [JSON.stringify(['draft', JSON.parse(draftInput)]), JSON.stringify(['draft', JSON.parse(draftInput)])]);
+ready.updateInputs.length = 2;
+ready.saveDraftResult = { ok: true, value: { id: 't', draft: { title: 'b' } } };
 // Focus queries pass Kotlin's arguments to core unchanged; a stale window keeps its code prefix for Kotlin.
 assert.deepEqual(await poll(ready, ready.MindwtrHost.focus(50)), { ok: true, value: { version: 1, revision: 'f', sections: [] } });
 assert.deepEqual(await poll(ready, ready.MindwtrHost.focusWindow('next', 50, 50, 'f')),
@@ -718,10 +821,10 @@ assert.equal(blockedRefresh.ok, false);
 assert.match(blockedRefresh.error, /SAVE_FAILED/);
 assert.equal(ready.queryCount, queriesBeforeFailure);
 // The editor cannot load unsaved in-memory values as if they were stored.
-const blockedEditor = await poll(ready, ready.MindwtrHost.editor('t'));
-assert.equal(blockedEditor.ok, false);
-assert.match(blockedEditor.error, /^SAVE_FAILED: disk full$/);
-assert.equal(ready.editorInputs.length, 1);
+for (const blocked of [ready.MindwtrHost.editorModel('t'), ready.MindwtrHost.editorContent('t'), ready.MindwtrHost.editorSuggestions('t', 'tags', 'x', 4)]) {
+    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+}
+assert.equal(ready.editorInputs.length, 3);
 // Focus cannot show unsaved in-memory values as stored either.
 for (const blocked of [ready.MindwtrHost.focus(50), ready.MindwtrHost.focusWindow('next', 0, 50, 'f')]) {
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
@@ -733,7 +836,8 @@ assert.equal((await poll(ready, ready.MindwtrHost.complete('t'))).ok, true);
 assert.equal((await poll(ready, ready.MindwtrHost.create('Retry', '123'))).ok, true);
 ready.updateResult = { ok: true, value: { id: 't', changed: false } };
 assert.equal((await poll(ready, ready.MindwtrHost.update(updateInput))).ok, true);
-assert.equal(ready.completeCount + ready.createCount + ready.updateInputs.length, commandsBefore + 3);
+assert.equal((await poll(ready, ready.MindwtrHost.saveDraft(draftInput))).ok, true);
+assert.equal(ready.completeCount + ready.createCount + ready.updateInputs.length, commandsBefore + 4);
 // Projects cannot show unsaved in-memory values as stored either; labels still load.
 for (const blocked of [ready.MindwtrHost.projects(), ready.MindwtrHost.projectDetail('p1', 0, 50, '')]) {
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
@@ -852,7 +956,7 @@ assert.match(brokenBoot.error, /disk I\/O error/);
 assert.equal(brokenStorage.activationCount, 0);
 console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
 console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
-console.log('Editor: reads and writes only through CoreHost, patch of changed fields only, no Kotlin date parsing');
+console.log('Editor: core\'s model and suggestions in, saveTaskDraft out through perform with an exact retry, changed fields only, no Kotlin date parsing');
 console.log('Focus: reads only through CoreHost, core order and flags only, stale windows restart, blocked after a failed save');
 console.log('Labels: every UI word from core getStrings, one key map filled after setLanguage, debug-only language override');
 console.log('Theme: one Kotlin theme object equal to RN\'s palettes, no color elsewhere, core resolves the mode and owns its hues');

@@ -58,6 +58,8 @@ data class ProjectRow(
     val id: String,
     val title: String,
     val status: String,
+    /** Core's status line text (Completed or Cancelled for a closed project). */
+    val statusLabel: String,
     val isFocused: Boolean,
     val focusDisabled: Boolean,
     val activeTaskCount: Int,
@@ -87,7 +89,7 @@ data class ProjectsView(val buckets: Map<String, List<ProjectGroup>>) {
                             val rows = group.getJSONArray("projects")
                             ProjectGroup(group.text("areaId"), group.text("areaName"), group.text("areaColor"), group.text("areaIcon"), List(rows.length()) { row ->
                                 rows.getJSONObject(row).let {
-                                    ProjectRow(it.getString("id"), it.getString("title"), it.getString("status"), it.getBoolean("isFocused"),
+                                    ProjectRow(it.getString("id"), it.getString("title"), it.getString("status"), it.getString("statusLabel"), it.getBoolean("isFocused"),
                                         it.getBoolean("focusDisabled"), it.getInt("activeTaskCount"), it.text("nextActionTitle"),
                                         it.getBoolean("focusedWithoutNextAction"))
                                 }
@@ -319,9 +321,7 @@ private fun ProjectRowItem(model: InboxViewModel, row: ProjectRow) = with(model)
                     "someday" -> theme.projectSomeday
                     else -> c.secondaryText
                 }
-                // RN names a closed project Completed or Cancelled; the contract does not say which, so Closed shows core's Completed.
-                val statusKey = if (row.status == "archived") "list.done" else "status.${row.status}"
-                Text(t(statusKey), style = rnText(12, 400), color = color)
+                Text(row.statusLabel, style = rnText(12, 400), color = color)
             }
         }
         Text("${row.activeTaskCount}", style = rnText(12, 600, 16), color = c.secondaryText, textAlign = TextAlign.End,

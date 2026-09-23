@@ -136,10 +136,21 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's setAreaFilter with one of getAreaFilter's `next` selections, unchanged. */
     fun setAreaFilter(selectionJson: String): JSONObject = callAsync("setAreaFilter", selectionJson)
 
-    /** Core's editor reply for one task: its seven fields as stored, plus the choices core allows. */
-    fun taskEditor(id: String): JSONObject = callAsync("editor", id)
+    /** Core's getTaskEditorModel for one task: its draft, the fields to show by section, and each field's choices. */
+    fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 
-    /** [baseJson] and [patchJson] go to core's updateTask unchanged; core decides everything. */
+    /** The task's checklist and attachment titles from core's getTask, shown read-only in the editor. */
+    fun editorContent(id: String): JSONObject = callAsync("editorContent", id)
+
+    /** Core's getTaskEditorSuggestions for a context, tag, or person input's whole text as typed. */
+    fun editorSuggestions(id: String, field: String, query: String, limit: Int): JSONObject =
+        callAsync("editorSuggestions", id, field, query, limit)
+
+    /** [baseJson] and [patchJson] go to core's saveTaskDraft unchanged; core decides everything. */
+    fun saveTaskDraft(id: String, baseJson: String, patchJson: String): JSONObject =
+        callAsync("saveDraft", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
+
+    /** The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged. */
     fun updateTask(id: String, baseJson: String, patchJson: String): JSONObject =
         callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
 
@@ -182,7 +193,7 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     }
 
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
-        val command = method in setOf("create", "complete", "update", "taskFocus", "projectFocus", "createProject", "setAreaFilter")
+        val command = method in setOf("create", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter")
         if (command) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")

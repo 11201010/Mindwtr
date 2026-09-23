@@ -59,20 +59,8 @@ import androidx.compose.ui.unit.dp
 /** What a list shows at a row's right edge, as RN's lists do: nothing, the status glyph (one-status lists), or the status badge. */
 enum class RowStatus { Hidden, Icon, Badge }
 
-/** RN's Focus star: none, a working star, or one drawn disabled (every Upcoming row is deferred). */
-enum class RowStar { Hidden, Shown, Disabled }
-
-/**
- * ponytail: a copy of RN's getLeftAction (apps/mobile/components/swipeable-task-item.tsx);
- * core row meta will carry the swipe target (pending core task), then this map goes.
- * RN's swipe action for a row's status (getLeftAction): Done restores to the Inbox,
- * Next and Waiting complete, Someday, Reference and Inbox move to Next; anything else completes.
- */
-private fun swipeTarget(status: String) = when (status) {
-    "done" -> "inbox"
-    "someday", "reference", "inbox" -> "next"
-    else -> "done"
-}
+/** RN's Focus star: none or shown. A shown star is disabled with core's reason when its section sends one (Upcoming). */
+enum class RowStar { Hidden, Shown }
 
 /** RN's status menu order (QUICK_STATUS_OPTIONS). */
 private val MENU_STATUSES = listOf("inbox", "next", "waiting", "someday", "done", "reference")
@@ -85,19 +73,22 @@ private val MENU_STATUSES = listOf("inbox", "next", "waiting", "someday", "done"
  * Done as a custom action. An Upcoming row also shows core's reveal date, and a project row
  * core's sequence cue as [note]; [available] marks core's available next action. A read-only
  * project's rows are not [completable]. [focusHighlight] outlines a starred row, as RN does
- * outside Today's Focus.
+ * outside Today's Focus. [starBlocked] is core's reason the star can only refuse (the section's
+ * focusBlockedLabel): an unstarred row's star is then drawn disabled with that label, as RN does.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TaskRowItem(
     model: InboxViewModel, task: TaskRow, status: RowStatus = RowStatus.Hidden, star: RowStar = RowStar.Hidden,
     completable: Boolean = true, note: String? = null, available: Boolean = false, focusHighlight: Boolean = false,
+    starBlocked: String? = null,
 ) = with(model) {
     val theme = LocalTheme.current
     val c = theme.colors
     val meta = task.meta
-    val target = swipeTarget(task.status)
-    val swipeLabel = t(when (target) { "inbox" -> "archived.restoreToInbox"; "next" -> "status.next"; else -> "common.done" })
+    // Core's swipe action (meta.swipe): the status it sets, its label, and its icon.
+    val target = meta.swipe.target
+    val swipeLabel = meta.swipe.label
     val canComplete = writable && !busy &&
         (failedAction == null || failedAction == FailedAction("complete", task.id))
     // Done keeps its own command (core's completeTask); Restore and Next are RN's status change, with its exact retry.
@@ -111,7 +102,7 @@ fun TaskRowItem(
     val showStatus = status != RowStatus.Hidden && meta.statusLabel != null
     val highlighted = focusHighlight && showStar && task.isFocusedToday
     Box(Modifier.padding(bottom = 6.dp)) {
-        SwipeAction(enabled = swipeOn, target = target, label = swipeLabel, shape = shape, onSwipe = onSwipe) {
+        SwipeAction(enabled = swipeOn, swipe = meta.swipe, shape = shape, onSwipe = onSwipe) {
             Row(
                 Modifier.fillMaxWidth().clip(shape).background(c.bg).background(if (available) theme.availableBg else c.taskItemBg)
                     .border(if (highlighted) 2.dp else 1.dp, if (highlighted) c.tint else if (available) theme.availableBorder else c.border, shape)
@@ -136,7 +127,7 @@ fun TaskRowItem(
                                     contentDescription = meta.accessibilityLabel
                                     if (swipeOn) customActions = listOf(CustomAccessibilityAction(swipeLabel) { onSwipe(); true })
                                 })
-                        if (showStar) StarButton(model, task, star == RowStar.Disabled && !task.isFocusedToday)
+                        if (showStar) StarButton(model, task, starBlocked?.takeIf { !task.isFocusedToday })
                     }
                     // TalkBack hears the line in core's label above, so it is not read twice.
                     val parts = meta.parts.filter { !it.detail }
@@ -147,7 +138,7 @@ fun TaskRowItem(
                         }
                     }
                     note?.let { MetaText(it, if (available) c.tint else c.secondaryText, 600, Modifier.padding(top = 2.dp)) }
-                    task.revealDate?.let { MetaText(it, c.secondaryText, 600, Modifier.padding(top = 4.dp)) }
+                    task.revealLabel?.let { MetaText(it, c.secondaryText, 600, Modifier.padding(top = 4.dp)) }
                 }
                 if (showStatus) StatusControl(model, task, status == RowStatus.Icon, completable)
             }
@@ -193,15 +184,16 @@ fun MetaText(text: String, color: Color, weight: Int, modifier: Modifier = Modif
 
 /**
  * RN's FocusStarIcon in its 44 x 44 button: amber and filled when starred, else the secondary
- * text color at 60% (30% and disabled on an Upcoming row). A tap asks core for the other
- * state; while a failed star's retry is owed, only that exact star works.
+ * text color at 60%. With core's [blocked] reason it is drawn at 30%, disabled, and TalkBack hears
+ * that reason (RN's focusToggleDisabledLabel). A tap asks core for the other state; while a
+ * failed star's retry is owed, only that exact star works.
  */
 @Composable
-private fun StarButton(model: InboxViewModel, task: TaskRow, disabled: Boolean) = with(model) {
-    val theme = LocalTheme.current
+private fun StarButton(model: InboxViewModel, task: TaskRow, blocked: String?) = with(model) {
+    val disabled = blocked != null
     val target = !task.isFocusedToday
     val enabled = !disabled && writable && !busy && (failedAction == null || failedAction == taskFocusAction(task.id, target))
-    val label = t(if (task.isFocusedToday) "agenda.removeFromFocus" else "agenda.addToFocus")
+    val label = blocked ?: t(if (task.isFocusedToday) "agenda.removeFromFocus" else "agenda.addToFocus")
     FocusStar(task.isFocusedToday, disabled, 22, Modifier.size(44.dp)
         .clickable(enabled = enabled, role = Role.Button) { setTaskFocus(task.id, target) }
         .semantics { contentDescription = label; if (disabled) disabled() })
@@ -313,14 +305,14 @@ fun ToastCard(model: InboxViewModel, modifier: Modifier) {
 }
 
 /**
- * RN's swipe right: the row slides over the action's status color with RN's icon and label
- * (Restore: RotateCcw, Done: Check, Next: ArrowRight). RN reveals a button to tap; here the
+ * RN's swipe right: the row slides over the target status's color with core's icon and label
+ * (restore: RotateCcw, done: Check, next: ArrowRight). RN reveals a button to tap; here the
  * swipe itself runs the action (one gesture), and the row springs back while core's reply
  * and the list refresh arrive.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SwipeAction(enabled: Boolean, target: String, label: String, shape: RoundedCornerShape, onSwipe: () -> Unit, content: @Composable () -> Unit) {
+private fun SwipeAction(enabled: Boolean, swipe: RowSwipe, shape: RoundedCornerShape, onSwipe: () -> Unit, content: @Composable () -> Unit) {
     val theme = LocalTheme.current
     val state = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
         if (value == SwipeToDismissBoxValue.StartToEnd) onSwipe()
@@ -329,10 +321,10 @@ private fun SwipeAction(enabled: Boolean, target: String, label: String, shape: 
     SwipeToDismissBox(
         state,
         backgroundContent = {
-            Row(Modifier.fillMaxSize().clip(shape).background(theme.status(target).text).padding(start = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(when (target) { "inbox" -> Lucide.RotateCcw; "done" -> Lucide.Check; else -> Lucide.ArrowRight }, null,
+            Row(Modifier.fillMaxSize().clip(shape).background(theme.status(swipe.target).text).padding(start = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(when (swipe.icon) { "restore" -> Lucide.RotateCcw; "done" -> Lucide.Check; else -> Lucide.ArrowRight }, null,
                     tint = theme.onAction, modifier = Modifier.size(20.dp))
-                Text(label, style = rnText(12, 600), color = theme.onAction, maxLines = 1, modifier = Modifier.padding(start = 4.dp))
+                Text(swipe.label, style = rnText(12, 600), color = theme.onAction, maxLines = 1, modifier = Modifier.padding(start = 4.dp))
             }
         },
         enableDismissFromStartToEnd = enabled,

@@ -11,6 +11,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 
 /**
@@ -22,14 +24,16 @@ data class MetaPart(
     val kind: String, val text: String, val detail: Boolean, val dotColor: String? = null, val tone: String? = null,
     val overflow: Int = 0, val done: Int = 0, val of: Int = 0, val spoken: String? = null,
 )
-/** Core's TaskRowMeta: the meta line in order, the priority strip, the status label, the star rule, and TalkBack's label. */
+/** Core's swipe action for a row (RN's getLeftAction): the status it sets, its label, and its icon (restore, done, next). */
+data class RowSwipe(val target: String, val label: String, val icon: String)
+/** Core's TaskRowMeta: the meta line in order, the priority strip, the status label, the star rule, the swipe, and TalkBack's label. */
 data class RowMeta(
     val parts: List<MetaPart>, val priority: String?, val statusLabel: String?, val canFocus: Boolean,
-    val rtl: Boolean, val accessibilityLabel: String,
+    val swipe: RowSwipe, val rtl: Boolean, val accessibilityLabel: String,
 )
 /**
  * One task row as core sent it (NativeTaskRow). Kotlin never parses or formats a date:
- * the meta line is core's text. [revealDate] (Upcoming) and [laterToday] are core's.
+ * the meta line is core's text. [revealLabel] (Upcoming, in the user's date format) and [laterToday] are core's.
  */
 data class TaskRow(
     val id: String,
@@ -37,7 +41,7 @@ data class TaskRow(
     val status: String,
     val isFocusedToday: Boolean,
     val meta: RowMeta,
-    val revealDate: String? = null,
+    val revealLabel: String? = null,
     val laterToday: Boolean = false,
 )
 /** The three lists. [label] is the core key of the tab label mobile shows. */
@@ -51,8 +55,9 @@ data class FailedAction(
     val patch: Map<String, String?> = emptyMap(),
 )
 
-/** Core refused the update before writing anything, so there is no retry to hold. */
+/** Core refused the update or the editor save before writing anything, so there is no retry to hold. */
 private val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
+private val REFUSABLE = setOf("update", "saveDraft")
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -61,13 +66,18 @@ private fun JSONObject.metaPart(): MetaPart = MetaPart(
 
 private fun JSONObject.text(name: String) = if (!has(name) || isNull(name)) null else getString(name)
 
+/** A field map as JSON. Null stays JSON null: `JSONObject.put(name, null)` would drop the name. */
+fun json(values: Map<String, String?>): String =
+    JSONObject().apply { values.forEach { (name, value) -> put(name, value ?: JSONObject.NULL) } }.toString()
+
 /** One NativeTaskRow as core sent it. */
 fun JSONObject.taskRow() = getJSONObject("meta").let { meta ->
     TaskRow(getString("id"), getString("title"), getString("status"), getBoolean("isFocusedToday"),
         RowMeta(meta.getJSONArray("parts").let { parts -> List(parts.length()) { parts.getJSONObject(it).metaPart() } },
             meta.text("priority"), meta.text("statusLabel"), meta.getBoolean("canFocus"),
+            meta.getJSONObject("swipe").let { RowSwipe(it.getString("target"), it.getString("label"), it.getString("icon")) },
             meta.getString("textDirection") == "rtl", meta.getString("accessibilityLabel")),
-        text("revealDate"), getBoolean("laterToday"))
+        text("revealLabel"), getBoolean("laterToday"))
 }
 
 /** Core's `rows` array, in its order. */
@@ -75,7 +85,31 @@ fun JSONObject.taskRows(): List<TaskRow> = getJSONArray("rows").let { items ->
     List(items.length()) { index -> items.getJSONObject(index).taskRow() }
 }
 
+/**
+ * The open editor's draft on disk, in the app's no-backup folder: the task id, the edits with their
+ * bases, the typed text, and an uncertain save's exact request. Saved instance state holds only the
+ * file's key, so a large model or a long note never reaches the Bundle limit. Each write is synced and
+ * renamed into place, so an uncertain save's request is durable before the call starts.
+ */
+private class EditorDrafts(private val dir: File) {
+    private fun file(key: String) = File(dir, "editor-$key.json")
+    fun read(key: String): JSONObject? = runCatching { JSONObject(file(key).readText()) }.getOrNull()
+    fun write(key: String, state: JSONObject) {
+        dir.mkdirs()
+        val partial = File(dir, "editor-$key.json.partial")
+        FileOutputStream(partial).use { out -> out.write(state.toString().toByteArray()); out.fd.sync() }
+        check(partial.renameTo(file(key))) { "Cannot save the editor draft" }
+    }
+    fun delete(key: String) { file(key).delete() }
+    /** Drafts of editors this screen no longer has (a force-stop discarded their key). */
+    fun deleteExcept(key: String?) { dir.listFiles()?.forEach { if (it.name != "editor-$key.json") it.delete() } }
+}
+
 private const val PAGE = 50
+/** The suggestions of RN's waiting prompt (people, like the Assigned To field). */
+const val WAITING_PROMPT = "waitingFor"
+/** RN's editor shows 4 matches (MAX_VISIBLE_SUGGESTIONS). */
+private const val SUGGESTIONS = 4
 
 /** How deep each list is shown, so a refresh reads it again as deep. */
 private data class Depth(val focus: Map<String, Int>, val project: String?, val projectItems: Int)
@@ -133,10 +167,20 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var projectDraft by mutableStateOf(saved.get<String>("projectDraft") ?: ""); private set
     var projectAreaId by mutableStateOf(saved.get<String>("projectAreaId")); private set
     var projectRequestId by mutableStateOf(saved.get<String>("projectRequestId") ?: UUID.randomUUID().toString()); private set
-    /** The open editor, if any. Its base is the reply it was opened (or reloaded) with, even after process death. */
-    var editor by mutableStateOf(saved.get<String>("editor")?.let { source ->
-        runCatching { TaskEditor.restore(source, saved.get<String>("editorEdited")!!) }.getOrNull()
-    }); private set
+    /**
+     * The open editor, if any. After process death it comes back once core has booted: the model is
+     * read again from core and the saved edits go on top with their own bases (see [EditorDrafts]).
+     */
+    var editor by mutableStateOf<TaskEditor?>(null); private set
+    private val drafts = EditorDrafts(File(app.noBackupFilesDir, "editor"))
+    /** The key of the open editor's draft file; the only editor state in the Bundle. */
+    private var editorKey: String? = saved.get<String>("editorKey")
+    /** An editor save whose outcome is unknown: its exact request, on disk before the call, until core answers. */
+    private var pendingSave: FailedAction? = null
+    /** Save was pressed while typed text waited for core's draft value; it runs once that arrives. */
+    private var saveQueued = false
+    /** Core's suggestions for each typed editor field, for the text they were read for. Read again after a restore. */
+    var suggestions by mutableStateOf<Map<String, EditorSuggestions>>(emptyMap()); private set
     /** The last save was refused as stale; the screen offers Reload. */
     var conflict by mutableStateOf(false); private set
     @Volatile private var host: CoreHost? = null
@@ -147,6 +191,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         saved["captureId"] = captureId
         saved["projectRequestId"] = projectRequestId
         val at = depth()
+        val savedDraft = editorKey?.let(drafts::read)
+        drafts.deleteExcept(if (savedDraft != null) editorKey else null)
+        if (savedDraft == null) keepKey(null)
         Thread({
             try {
                 val runtime = ProcessCoreHost.get(getApplication())
@@ -158,7 +205,15 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending) }; return@Thread }
                     throw failure
                 }
-                ui { host = runtime; showLists(lists, ++issued); writable = true; loading = false }
+                // The editor open at process death: core's model read again, the saved draft on top.
+                val restored = savedDraft?.let { draft ->
+                    runCatching { TaskEditor.restore(readEditor(runtime, draft.getString("id")), draft) }
+                        .onFailure { Log.w(CoreHost.TAG, "Editor draft not restored", it) }.getOrNull()
+                }
+                ui {
+                    host = runtime; showLists(lists, ++issued); writable = true; loading = false
+                    restored?.let { resumeEditor(it, savedDraft.optJSONObject("pending")) }
+                }
             } catch (failure: Throwable) {
                 Log.e(CoreHost.TAG, "Core boot failed", failure)
                 // No command can run, and core's labels may never have loaded: the screen shows only this message.
@@ -198,12 +253,38 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         saved["submittedTitle"] = submitted
     }
 
-    // ponytail: saves core's whole reply, project list included, in instance state (Binder limit ~1 MB).
-    // If project lists grow to thousands, save only the fields and fetch the choices again on restore.
+    private fun keepKey(key: String?) {
+        editorKey = key
+        saved["editorKey"] = key
+    }
+
+    /** Every editor change goes to its draft file (synced) before anything else; closing deletes the file. */
     private fun keepEditor(value: TaskEditor?) {
         editor = value
-        saved["editor"] = value?.reply?.source
-        saved["editorEdited"] = value?.let { json(it.edited) }
+        if (value == null) {
+            editorKey?.let(drafts::delete)
+            keepKey(null)
+            pendingSave = null
+            return
+        }
+        val key = editorKey ?: UUID.randomUUID().toString().also(::keepKey)
+        val state = value.state()
+        pendingSave?.let { state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch))) }
+        drafts.write(key, state)
+    }
+
+    /**
+     * The restored editor. An uncertain save left on disk is reconciled first: its exact request is
+     * sent again (core writes nothing twice: a field already holding its new value is left alone),
+     * and the draft stays locked to it until core answers.
+     */
+    private fun resumeEditor(restored: TaskEditor, pending: JSONObject?) {
+        keepEditor(restored)
+        if (pending == null || failedAction != null) return
+        fun map(name: String) = pending.getJSONObject(name).let { m -> m.keys().asSequence().associateWith<String, String?> { m.getString(it) } }
+        val action = FailedAction("saveDraft", restored.id, base = map("base"), patch = map("patch"))
+        failedAction = action
+        sendDraft(action)
     }
 
     private fun restore(pending: ProcessCoreHost.PendingFailure) {
@@ -211,6 +292,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (action.kind == "create") { setCapture(action.title, action.id, action.title); showCapture(true) }
         if (action.kind == "createProject") setProjectDraft(action.title, action.base["areaId"], action.id)
         areaFilter = pending.areas
+        if (action.kind == "saveDraft") pendingSave = action
         pending.editor?.let(::keepEditor)
         rows = pending.rows
         total = pending.total
@@ -258,39 +340,97 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         ui { failedAction = null }
     }
 
+    /** Core's editor model and the task's read-only checklist and attachments, read together. */
+    private fun readEditor(runtime: CoreHost, id: String) = EditorModel.of(runtime.taskEditorModel(id), runtime.editorContent(id))
+
     fun openEditor(id: String) = perform { runtime ->
-        val reply = EditorReply(runtime.taskEditor(id).toString())
-        ui { keepEditor(TaskEditor.open(reply)) }
+        val opened = readEditor(runtime, id)
+        ui { suggestions = emptyMap(); keepEditor(TaskEditor.open(opened)) }
     }
 
-    fun editField(field: String, value: String?) { editor?.let { keepEditor(it.edit(field, value)) } }
+    /** Draft values exactly as RN's controls write them; core runs every rule when it saves. */
+    fun editFields(values: Map<String, Any?>) { editor?.let { keepEditor(it.edit(values)) } }
 
-    fun editText(field: String, text: String) { editor?.let { keepEditor(it.editText(field, text)) } }
+    fun editText(field: String, text: String) = editFields(mapOf(field to text))
+
+    /** A context, tag, or person input: the text as typed, and core's draft value and suggestions for it. */
+    fun editInput(field: String, text: String) {
+        val current = editor ?: return
+        keepEditor(current.typed(field, text))
+        suggest(field, text)
+    }
+
+    /** Core's getTaskEditorSuggestions for [text]; its draft value applies only while the field still shows [text]. */
+    fun suggest(field: String, text: String) {
+        val id = editor?.id ?: return
+        // The waiting prompt asks core for people, as the Assigned To field does.
+        val coreField = if (field == WAITING_PROMPT) "assignedTo" else field
+        background(listOf(Part.Editor), { runtime -> EditorSuggestions.parse(text, runtime.editorSuggestions(id, coreField, text, SUGGESTIONS)) }) { found, _ ->
+            val current = editor?.takeIf { it.id == id } ?: return@background
+            suggestions = suggestions + (field to found)
+            if (field !in TYPED_FIELDS) return@background
+            val resolved = current.resolve(field, text, found.draftValue)
+            keepEditor(resolved)
+            if (saveQueued && !resolved.waiting) { saveQueued = false; saveEditor() }
+        }
+    }
 
     fun closeEditor() {
         keepEditor(null)
+        suggestions = emptyMap()
+        saveQueued = false
         error = null
         conflict = false
     }
 
-    fun updateAction(current: TaskEditor) = FailedAction("update", current.id, base = current.base, patch = current.patch)
+    /** RN's waiting prompt, starting from the person the draft names. */
+    fun openWaitingPrompt() { editor?.let { keepEditor(it.copy(waitingFor = it.input("assignedTo"))); suggest(WAITING_PROMPT, it.input("assignedTo")) } }
 
-    /** Sends only the changed fields with their loaded values. Nothing changed: close, no call. */
+    fun editWaitingPrompt(text: String) {
+        editor?.let { keepEditor(it.copy(waitingFor = text)) }
+        suggest(WAITING_PROMPT, text)
+    }
+
+    fun closeWaitingPrompt() { editor?.let { keepEditor(it.copy(waitingFor = null)) } }
+
+    /** RN's confirmWaitingAssignment: Waiting and the person, in the draft. */
+    fun confirmWaiting() { editor?.let { keepEditor(it.assignWaiting(it.waitingFor.orEmpty())) } }
+
+    fun saveDraftAction(current: TaskEditor) = FailedAction("saveDraft", current.id, base = current.base, patch = current.patch)
+
+    /**
+     * Sends only the changed draft fields with their loaded values, to core's saveTaskDraft. Nothing
+     * changed: close, no call. Typed text core has not resolved yet queues the save until it has.
+     * The exact request is on disk before the call, so an outcome lost with the process is sent again.
+     */
     fun saveEditor() {
         val current = editor ?: return
+        if (current.waiting) { saveQueued = true; return }
         if (current.patch.isEmpty()) { closeEditor(); return }
-        val action = updateAction(current)
-        perform(action) { runtime ->
-            runtime.updateTask(current.id, json(current.base), json(current.patch))
-            acknowledged(action)
-            ui { closeEditor() }
+        if (busy || (failedAction != null && failedAction != saveDraftAction(current))) return
+        val action = saveDraftAction(current)
+        pendingSave = action
+        keepEditor(current)
+        sendDraft(action)
+    }
+
+    /** Core's saveTaskDraft with [action]'s exact request. A refusal wrote nothing, so no request is owed. */
+    private fun sendDraft(action: FailedAction) = perform(action) { runtime ->
+        try {
+            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch))
+        } catch (failure: Exception) {
+            // A restored request locked the draft before it was sent; a refusal unlocks it, as nothing is owed.
+            if (UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }) ui { pendingSave = null; failedAction = null; editor?.let(::keepEditor) }
+            throw failure
         }
+        acknowledged(action)
+        ui { closeEditor() }
     }
 
     fun reloadEditor() {
         val id = editor?.id ?: return
         perform { runtime ->
-            val fresh = EditorReply(runtime.taskEditor(id).toString())
+            val fresh = readEditor(runtime, id)
             ui { editor?.let { keepEditor(it.reloaded(fresh)) } }
         }
     }
@@ -624,7 +764,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private val shownAt = HashMap<Part, Long>()
 
     /** One list a read can show. */
-    private enum class Part { Inbox, Focus, Projects, Project, Areas }
+    private enum class Part { Inbox, Focus, Projects, Project, Areas, Editor }
 
     /** A read's result for [part] is shown only if no command, and no newer read of that list, came first. */
     private fun fresh(mine: Long, part: Part) = (mine > commandAt && mine > (shownAt[part] ?: 0L)).also { if (it) shownAt[part] = mine }
@@ -680,7 +820,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             try { work(runtime); done = true }
             catch (failure: Throwable) {
                 val message = failure.message ?: failure.javaClass.simpleName
-                val refused = action?.kind == "update" && UPDATE_REFUSALS.any { message.startsWith(it) }
+                val refused = action?.kind in REFUSABLE && UPDATE_REFUSALS.any { message.startsWith(it) }
                 val failed = if ((action != null && !refused) || message.startsWith("SAVE_FAILED")) {
                     action ?: FailedAction("storage", "")
                 } else null

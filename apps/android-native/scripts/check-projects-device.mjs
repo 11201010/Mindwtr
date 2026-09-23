@@ -18,7 +18,7 @@
 // (a) each project row shows core's task count and next action, and Archived
 // ("Closed") starts closed; (b) the open project shows core's section markers,
 // rows, and sequence cues in core's order; (c) Done from the project stores
-// `done` once; (d) a row opens the editor and Cancel returns to the project;
+// `done` once; (d) a row opens the editor and Close returns to the project;
 // (e) rotation and (f) process death keep the open project; (g) a failed Done
 // keeps its exact retry through rotation, Back, and a new screen, then stores
 // once; (h) Back returns to the list, which shows core's new count; (i) the
@@ -41,7 +41,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, Stopped, tab, tabSelected, taskRows } from './device.mjs';
+import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, Stopped, tab, tabSelected, taskRows } from './device.mjs';
 
 const cliArgs = process.argv.slice(2);
 const prune = cliArgs.includes('--prune-old');
@@ -111,8 +111,7 @@ const stopApp = async () => {
     await waitFor('the app process to end', () => pid() === '', 10_000);
 };
 
-// ---- UI (core's English labels: nav.projects, projects.closed, common.back, common.done, common.more, taskEdit.editTask) ----
-const inEditor = (nodes) => hasText(nodes, 'Edit Task');
+// ---- UI (core's English labels: nav.projects, projects.closed, common.back, common.done, common.more, common.close) ----
 const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes) && hasText(nodes, 'Inbox'), 60_000);
 const textNode = (nodes, text) => nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText');
 /** The open project: the Projects tab, core's project title as the heading, and Back. */
@@ -428,13 +427,13 @@ try {
     detail = coreDetail('c', ids.sequential);
     expectCoreOrder(await screen(), detail, '(c) after Done,');
 
-    // (d) A row opens the editor; Cancel returns to the open project.
+    // (d) A row opens the editor; Close returns to the open project.
     const editTask = detail.items.find((item) => item.cue !== undefined && item.text !== firstTask && /^\d+$/.test(item.text))?.text
         ?? fail('core lists no task to edit');
     nodes = await tapUntil(editTask, `the editor for ${editTask}`, (current) => inEditor(current) && field(current)?.text === editTask);
-    await tap(button(nodes, 'Cancel'));
-    await openProject(names.sequential, 'the project after Cancel');
-    check(true, '(d) the editor opened from the project, and Cancel returned to it');
+    await tap(button(nodes, 'Close'));
+    await openProject(names.sequential, 'the project after Close');
+    check(true, '(d) the editor opened from the project, and Close returned to it');
 
     // (e) Rotation keeps the open project, on the same process and host.
     await rotate(1);

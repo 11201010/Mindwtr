@@ -107,6 +107,32 @@ export const inList = (nodes, text) => {
     const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
     return nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText' && box(node)[1] >= top && box(node)[3] <= bottom);
 };
+/** The task editor is open: its root carries the test tag `task-editor` (RN's editor has no title to find it by). */
+export const inEditor = (nodes) => nodes.some((node) => /(^|\/)task-editor$/.test(node['resource-id'] ?? ''));
+/** The node tagged [tag] (a Compose test tag, exposed as the resource id). */
+export const tagged = (nodes, tag) => nodes.find((node) => (node['resource-id'] ?? '').split('/').pop() === tag);
+/** A choice chip is on: selected (one-of-many chips are selectable, as RN's). */
+export const isOn = (node) => node?.selected === 'true';
+/** The value an editor control announces as "<label>: <value>", as RN's accessibility labels do (Status, Destination, Due Date). */
+export const described = (nodes, label) => nodes.find((node) => node['content-desc']?.startsWith(`${label}: `))?.['content-desc'].slice(label.length + 2);
+/** The node whose TalkBack text is exactly [description]. */
+export const withDescription = (nodes, description) => nodes.find((node) => node['content-desc'] === description);
+/**
+ * Whether the choice chip described [description] is on. A selected Compose `selectable` node reports
+ * `selected="true"` but `clickable="false"`, so look at the smallest focusable node around the label.
+ */
+export const chipOn = (nodes, description) => {
+    const label = withDescription(nodes, description);
+    if (!label) return false;
+    if (isOn(label)) return true;
+    const [x1, y1, x2, y2] = box(label);
+    const area = (node) => { const [l, t, r, b] = box(node); return (r - l) * (b - t); };
+    const around = nodes.filter((node) => node.focusable === 'true').filter((node) => {
+        const [l, t, r, b] = box(node);
+        return l <= x1 && t <= y1 && r >= x2 && b >= y2;
+    }).sort((a, b) => area(a) - area(b))[0];
+    return isOn(around);
+};
 /** The control labelled [label] on the same line as the row titled [title] (RN's star sits beside the title). */
 export const besideRow = (nodes, title, label) => {
     const row = nodes.find((node) => node.text === title && node.class !== 'android.widget.EditText');
@@ -134,7 +160,25 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         }
         sh(`am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${activity}`);
     };
-    const pid = () => { try { return sh(`pidof ${pkg}`); } catch { return ''; } };
+    /**
+     * The app's process id. Two processes can carry the package's name at once: one still exiting, or one
+     * the system started on its own (for example right after a package replace). The newest one is the
+     * process the last launch created; the others are printed once, with their start and parent, as evidence.
+     */
+    const noted = new Set();
+    const pid = () => {
+        let all;
+        try { all = sh(`pidof ${pkg}`).split(/\s+/).filter(Boolean); } catch { return ''; }
+        if (all.length <= 1) return all[0] ?? '';
+        const started = (id) => { try { return Number(sh(`cat /proc/${id}/stat`).split(') ').pop().split(' ')[19]); } catch { return -1; } };
+        const newest = all.sort((a, b) => started(b) - started(a))[0];
+        const key = all.join(' ');
+        if (!noted.has(key)) {
+            noted.add(key);
+            console.log(`note - ${all.length} processes named ${pkg} (${key}); using the newest, ${newest}:\n${sh(`ps -A -o PID,PPID,STIME,STAT,NAME | grep -E '^ *(PID|${all.join('|')}) '`)}`);
+        }
+        return newest;
+    };
     const logs = (processId, tag) => adbRaw('logcat', '-d', `--pid=${processId}`, '-s', `${tag}:*`).toString('utf8');
     const screen = async () => {
         for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -165,6 +209,28 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         const [x1, y1, x2, y2] = box(node);
         sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
         await sleep(400);
+    };
+    /** Everything a tap can change on screen: texts, labels, places, and each control's enabled and on state. */
+    const state = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}|${node.enabled}|${node.selected}|${node.checked}`).join('\n');
+    /**
+     * Taps [node] and waits for [expected]. A heads-up notification can sit over a control and take the tap.
+     * The tap is repeated once, and only when it provably did nothing: after 4 s the app is still in front and
+     * its screen is exactly as before the tap (no busy state, no disabled control, nothing moved). The retry
+     * waits 5 s first, so the notification can leave. A tap that changed anything is never repeated.
+     */
+    const tapExpecting = async (node, expected, description, timeoutMs = 30_000) => {
+        const before = state(await screen());
+        await tap(node);
+        const deadline = Date.now() + 4_000;
+        let nodes = await screen();
+        while (!expected(nodes) && Date.now() < deadline) { await sleep(500); nodes = await screen(); }
+        if (!expected(nodes) && state(nodes) === before) {
+            console.log(`note - the tap for ${description} changed nothing (a notification over the control?); tapping again once`);
+            await sleep(5_000);
+            nodes = await screen();
+            if (!expected(nodes) && state(nodes) === before) await tap(node);
+        }
+        return waitFor(description, expected, timeoutMs);
     };
     /** Swipes the app's list one step: 'up' scrolls toward the top. A list that fits is not scrollable: same hierarchy. */
     const swipe = async (nodes, direction) => {
@@ -255,5 +321,5 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull, swipeDone, completeUntil };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, tapExpecting, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull, swipeDone, completeUntil };
 }
