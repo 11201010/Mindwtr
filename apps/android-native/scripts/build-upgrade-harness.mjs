@@ -26,10 +26,11 @@ import { resolve } from 'node:path';
 const PKG = 'tech.dongdongbh.mindwtr.upgradetest';
 const TAG = 'v1.3.2';
 const V132 = 'ee82a9e3e9a1d4e0c406f5ffff80e768a1f1f812';
-// The RN 154 recovery source. Repoint it to the commit that fixes RN's stale
-// startup snapshot (task mobile-drain-after-canonical); until then scenario 4
-// reports BLOCKED. The identity patch must still apply to it.
-const RECOVERY_COMMIT = V132;
+// The RN 154 recovery source: the first main commit whose startup writers wait
+// for the canonical SQLite load (df495e076). v1.3.2 itself runs its first session
+// on a stale AsyncStorage snapshot and hides native edits. The identity patch
+// must still apply to it.
+const RECOVERY_COMMIT = 'df495e07691b71657932cf7bb406121c3e89d703';
 const repo = resolve(import.meta.dirname, '../../..');
 const home = process.env.MINDWTR_HARNESS_DIR ?? '/home/dd/.mindwtr-harness';
 const sdk = '/home/dd/Android/Sdk';
@@ -82,6 +83,12 @@ const buildRn = (commit, versionCodes) => {
         fail(`bun.lock at ${commit} differs from this checkout; the node_modules link farm would not match it`);
     }
     const src = resolve(home, `rn-src-${commit.slice(0, 12)}`);
+    // Metro caches transforms by real path. expo-router's route context lives in the
+    // shared link farm and bakes in this archive's app path, so a cache left by another
+    // archive points at a deleted folder and the app crashes with "No routes found".
+    for (const name of readdirSync(env.TMPDIR)) {
+        if (name.startsWith('metro-')) rmSync(resolve(env.TMPDIR, name), { recursive: true, force: true });
+    }
     rmSync(src, { recursive: true, force: true });
     mkdirSync(src, { recursive: true });
     try {
