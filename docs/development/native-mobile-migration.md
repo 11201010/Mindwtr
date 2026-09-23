@@ -36,6 +36,24 @@ Windowed results need stable IDs, result revisions, counts, bounded prefetching,
 
 Keep the existing shared Focus improvements. Review scheduling/concurrency separately from fingerprint/derivation optimizations so stale snapshots cannot erase edits. Being off the UI thread alone does not make a busy single engine responsive.
 
+### Branches, worktrees, and integration
+
+Use short-lived task branches and dedicated worktrees, merging reviewed, buildable increments into `main`. Keep the existing RN client in `apps/mobile/`, the new clients in `apps/android-native/` and `apps/ios-native/`, and one shared `packages/core/`. Do not maintain a migration branch until both apps are finished or permanent platform branches with separate core histories.
+
+Start from current `main` in this order:
+
+1. **`feat/native-host-contract`**: define and test the initial commands, windowed queries, revisions, errors, durable-save semantics, and shared fixtures. The first deliverable supports Inbox/create/complete and safe persistence; expand the contract as implemented workflows require it.
+2. **`feat/native-android-foundation`**: integrate and clean up the reviewed pilot against that contract.
+3. **`feat/native-ios-foundation`**: implement the JavaScriptCore/SwiftUI host against the same contract and fixtures.
+
+Android and Apple work can overlap once the initial contract is agreed. Land shared contract changes before merging their consumers; keep one contract owner and build upgrade tests alongside the foundations. Subsequent branches cover coherent workflows, such as a task editor, rather than an entire platform. Shared-core changes must pass existing-client checks before merging.
+
+For each task: current `main` → branch/worktree → implementation and relevant tests → independent review → merge → next task from updated `main`. Keep one active implementation task per branch/worktree and one integration owner. On the Linux workstation, place worktrees under `/home/dd/worktrees/Mindwtr/<task>` and keep dependencies/build outputs on disk under `/home/dd`. On the Mac, use a dedicated directory in its local clone/worktree storage. Worktrees isolate source files, not hardware: acquire the existing device lock for physical-device operations and restore any changed device settings.
+
+Preserve experiment commits/tags and reports as evidence; integrate reviewed code without rewriting that history. A temporary integration branch is acceptable only when an initial import cannot be split into buildable pieces, with the first coherent foundation as its merge endpoint.
+
+**Merging source does not publish a native replacement.** Before foundation integration, verify production packaging still selects `apps/mobile/` and native changes only trigger their relevant validation builds. Native beta distribution explicitly selects platform, source commit/artifact, and audience; production switches require the platform's release decision and promotion controls in section 6. A tested commit from `main` can supply a beta without a permanent beta branch.
+
 ## 3. Milestones
 
 | Milestone | Work | Exit evidence |
