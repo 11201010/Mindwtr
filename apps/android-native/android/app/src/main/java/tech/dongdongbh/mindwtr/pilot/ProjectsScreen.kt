@@ -1,6 +1,23 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -40,12 +57,14 @@ import org.json.JSONObject
 data class ProjectRow(
     val id: String,
     val title: String,
+    val status: String,
     val isFocused: Boolean,
+    val focusDisabled: Boolean,
     val activeTaskCount: Int,
     val nextActionTitle: String?,
     val focusedWithoutNextAction: Boolean,
 )
-data class ProjectGroup(val areaId: String?, val areaName: String?, val projects: List<ProjectRow>)
+data class ProjectGroup(val areaId: String?, val areaName: String?, val areaColor: String?, val areaIcon: String?, val projects: List<ProjectRow>)
 
 /** Core's three buckets, in the order the handoff and mobile show them, with mobile's heading key for each. */
 val PROJECT_BUCKETS = listOf("active" to "projects.activeSection", "deferred" to "projects.deferredSection", "archived" to "projects.closed")
@@ -66,10 +85,11 @@ data class ProjectsView(val buckets: Map<String, List<ProjectGroup>>) {
                     List(groups.length()) { index ->
                         groups.getJSONObject(index).let { group ->
                             val rows = group.getJSONArray("projects")
-                            ProjectGroup(group.text("areaId"), group.text("areaName"), List(rows.length()) { row ->
+                            ProjectGroup(group.text("areaId"), group.text("areaName"), group.text("areaColor"), group.text("areaIcon"), List(rows.length()) { row ->
                                 rows.getJSONObject(row).let {
-                                    ProjectRow(it.getString("id"), it.getString("title"), it.getBoolean("isFocused"),
-                                        it.getInt("activeTaskCount"), it.text("nextActionTitle"), it.getBoolean("focusedWithoutNextAction"))
+                                    ProjectRow(it.getString("id"), it.getString("title"), it.getString("status"), it.getBoolean("isFocused"),
+                                        it.getBoolean("focusDisabled"), it.getInt("activeTaskCount"), it.text("nextActionTitle"),
+                                        it.getBoolean("focusedWithoutNextAction"))
                                 }
                             })
                         }
@@ -127,11 +147,17 @@ fun ProjectsTab(model: InboxViewModel, modifier: Modifier) {
     if (model.openProjectId == null) ProjectList(model, modifier) else ProjectDetailList(model, modifier)
 }
 
-/** Core's groups as they come, drawn as RN's project list: Active, then Deferred and Archived, which open on a tap and start closed. */
+/**
+ * Core's groups as they come, drawn as RN's project list: RN's "Add new project…" field first,
+ * then Active, then Someday / Waiting and Closed, which open on a tap and start closed. Each
+ * area header has RN's dot and chevron and folds its projects. What is open is kept on the
+ * device as RN keeps it.
+ */
 @Composable
 private fun ProjectList(model: InboxViewModel, modifier: Modifier) = with(model) {
     val c = LocalTheme.current.colors
     LazyColumn(modifier, contentPadding = PaddingValues(12.dp)) {
+        item(key = "add") { AddProjectField(model) }
         if (projects != null && PROJECT_BUCKETS.all { (bucket, _) -> projects?.buckets?.get(bucket).isNullOrEmpty() }) item(key = "empty") {
             Text(t("projects.empty"), style = rnText(16, 400), color = c.secondaryText, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(48.dp))
@@ -141,7 +167,7 @@ private fun ProjectList(model: InboxViewModel, modifier: Modifier) = with(model)
             val groups = projects?.buckets?.get(bucket).orEmpty()
             if (groups.isEmpty()) continue
             val collapsible = bucket != "active"
-            val open = !collapsible || bucket in expanded
+            val open = !collapsible || (if (bucket == "deferred") projectsView.showDeferred else projectsView.showArchived)
             val ruled = !first
             first = false
             item(key = "bucket:$bucket") {
@@ -165,34 +191,120 @@ private fun ProjectList(model: InboxViewModel, modifier: Modifier) = with(model)
             }
             if (!open) continue
             for (group in groups) {
-                item(key = "area:$bucket:${group.areaId}") {
-                    val area = group.areaName ?: t("projects.noArea")
-                    // RN's area header: 12/700 capitals, 44 high.
-                    Text(area.uppercase(), style = rnText(12, 700, letterSpacing = 0.4f), color = c.secondaryText,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(top = 14.dp, bottom = 8.dp, start = 4.dp)
-                            .clearAndSetSemantics { text = AnnotatedString(area); heading() })
-                }
-                for (row in group.projects) item(key = "project:${row.id}") { ProjectRowItem(model, row) }
+                // RN keys a collapsed area by its id, "no-area" without one, the same in every group.
+                val areaKey = group.areaId ?: "no-area"
+                val folded = areaKey in projectsView.collapsedAreas
+                item(key = "area:$bucket:${group.areaId}") { AreaHeader(model, group, areaKey, folded) }
+                if (!folded) for (row in group.projects) item(key = "project:${row.id}") { ProjectRowItem(model, row) }
             }
         }
     }
 }
 
-/** RN's project row: the title, core's next action or its warning, then core's active task count and a star when starred. */
+/** RN's area header: the area's icon or colored dot, its name in capitals, and a chevron; a tap folds its projects. */
+@Composable
+private fun AreaHeader(model: InboxViewModel, group: ProjectGroup, areaKey: String, folded: Boolean) {
+    val c = LocalTheme.current.colors
+    val area = group.areaName ?: t("projects.noArea")
+    val toggleLabel = t(if (folded) "markdown.expand" else "markdown.collapse")
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 44.dp)
+            .clearAndSetSemantics {
+                text = AnnotatedString(area)
+                heading()
+                onClick(label = toggleLabel) { model.toggleArea(areaKey); true }
+            }
+            .clickable { model.toggleArea(areaKey) }.padding(top = 4.dp, bottom = 8.dp, start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val icon = group.areaIcon
+        val dot = coreColorOrNull(group.areaColor)
+        if (icon != null) Text(icon, style = rnText(14, 400, 18), color = c.secondaryText, modifier = Modifier.padding(end = 8.dp))
+        else if (dot != null) Box(Modifier.padding(end = 8.dp).size(8.dp).clip(CircleShape).background(dot).border(1.dp, c.border, CircleShape))
+        Text(area.uppercase(), style = rnText(12, 700, letterSpacing = 0.4f), color = c.secondaryText, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
+        Icon(if (folded) Lucide.ChevronRight else Lucide.ChevronDown, null, tint = c.secondaryText, modifier = Modifier.size(16.dp))
+    }
+}
+
+/**
+ * RN's "Add new project…" field and its + button; once a title is typed, RN's area chips
+ * (No area, then core's areas) choose the new project's area. + runs core's createProject
+ * with the draft's request UUID; while its retry is owed the field is locked, and only +
+ * (the exact retry) works.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AddProjectField(model: InboxViewModel) = with(model) {
+    val c = LocalTheme.current.colors
+    val areas = areaFilter?.areas.orEmpty()
+    val chosen = projectAreaId ?: areaFilter?.soleArea ?: ""
+    val retrying = failedAction?.kind == "createProject"
+    val canAdd = writable && !busy && projectDraft.isNotBlank() &&
+        (failedAction == null || failedAction == createProjectAction(chosen))
+    val placeholder = t("projects.addPlaceholder")
+    Column(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val shape = RoundedCornerShape(8.dp)
+            BasicTextField(
+                value = projectDraft, onValueChange = model::editProjectDraft, singleLine = true,
+                enabled = writable && !busy && !retrying, textStyle = rnText(16, 400).copy(color = c.text),
+                cursorBrush = SolidColor(c.tint),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (canAdd) createProject(chosen) }),
+                modifier = Modifier.weight(1f).semantics { contentDescription = placeholder },
+                decorationBox = { field ->
+                    Box(Modifier.clip(shape).background(c.inputBg).border(1.dp, c.border, shape).padding(horizontal = 12.dp, vertical = 12.dp)) {
+                        if (projectDraft.isEmpty()) Text(placeholder, style = rnText(16, 400), color = c.secondaryText, maxLines = 1)
+                        field()
+                    }
+                },
+            )
+            val add = t("projects.add")
+            Box(
+                Modifier.padding(start = 8.dp).size(46.dp).clip(RoundedCornerShape(8.dp)).background(c.tint)
+                    .clickable(enabled = canAdd, role = Role.Button) { createProject(chosen) }
+                    .semantics { contentDescription = add }.alpha(if (canAdd) 1f else 0.5f),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Lucide.PlusMedium, null, tint = c.onTint, modifier = Modifier.size(22.dp)) }
+        }
+        if (projectDraft.isNotBlank() && areas.isNotEmpty()) {
+            FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AreaChip(t("projects.noArea"), chosen == "", !retrying) { chooseProjectArea("") }
+                for (area in areas) AreaChip(area.label, chosen == area.id, !retrying) { chooseProjectArea(area.id) }
+            }
+        }
+    }
+}
+
+/** RN's chip: a pill, filled with the tint when selected. */
+@Composable
+private fun AreaChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val c = LocalTheme.current.colors
+    Text(label, style = rnText(12, 600), color = if (selected) c.onTint else c.text,
+        modifier = Modifier.clip(CircleShape).background(if (selected) c.tint else c.cardBg).border(1.dp, if (selected) c.tint else c.border, CircleShape)
+            .selectable(selected = selected, enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp))
+}
+
+/**
+ * RN's project row: the title; core's next action, its "No next action" warning, or the
+ * project's status in RN's status color; then core's active task count and RN's star. The
+ * star asks core for the other state, dimmed and disabled when core says five are starred.
+ */
 @Composable
 private fun ProjectRowItem(model: InboxViewModel, row: ProjectRow) = with(model) {
     val theme = LocalTheme.current
     val c = theme.colors
-    val starred = t("filters.starred")
     val count = "${row.activeTaskCount} ${t("common.tasks")}"
+    val view = LocalView.current
     Row(
         Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(8.dp)).background(c.cardBg)
-            .clickable(enabled = writable && !busy && failedAction == null) { openProject(row.id) }
-            .heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+            .heightIn(min = 52.dp).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(row.title, style = rnText(16, 500), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f).clickable(enabled = writable && !busy && failedAction == null, role = Role.Button) { openProject(row.id) }) {
+            Text(row.title, style = rnText(16, 500), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(bottom = 4.dp))
             if (row.nextActionTitle != null) {
                 Text("↳ ${row.nextActionTitle}", style = rnText(12, 400), color = c.secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } else if (row.focusedWithoutNextAction) {
@@ -200,15 +312,29 @@ private fun ProjectRowItem(model: InboxViewModel, row: ProjectRow) = with(model)
                     Icon(Lucide.TriangleAlert, null, tint = theme.attention, modifier = Modifier.size(12.dp))
                     Text(t("projects.noNextAction"), style = rnText(12, 400), color = theme.attention, modifier = Modifier.padding(start = 4.dp))
                 }
+            } else {
+                val color = when (row.status) {
+                    "active" -> c.tint
+                    "waiting" -> theme.projectWaiting
+                    "someday" -> theme.projectSomeday
+                    else -> c.secondaryText
+                }
+                // RN names a closed project Completed or Cancelled; the contract does not say which, so Closed shows core's Completed.
+                val statusKey = if (row.status == "archived") "list.done" else "status.${row.status}"
+                Text(t(statusKey), style = rnText(12, 400), color = color)
             }
         }
-        Text("${row.activeTaskCount}", style = rnText(12, 600, 16), color = c.secondaryText,
-            modifier = Modifier.padding(start = 8.dp).semantics { contentDescription = count })
-        if (row.isFocused) {
-            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                Icon(Lucide.StarFilled, starred, tint = theme.star, modifier = Modifier.size(18.dp))
+        Text("${row.activeTaskCount}", style = rnText(12, 600, 16), color = c.secondaryText, textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 8.dp).widthIn(min = 20.dp).semantics { contentDescription = count })
+        val disabled = row.focusDisabled && !row.isFocused
+        val enabled = !disabled && writable && !busy && (failedAction == null || failedAction == projectFocusAction(row.id, !row.isFocused))
+        val label = t(if (row.isFocused) "projects.removeFromFocus" else "projects.addToFocus")
+        FocusStar(row.isFocused, disabled, 18, Modifier.padding(end = 4.dp).size(44.dp)
+            .clickable(enabled = enabled, role = Role.Button) {
+                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                setProjectFocus(row.id, !row.isFocused)
             }
-        }
+            .semantics { contentDescription = label; selected = row.isFocused; if (disabled) disabled() })
     }
 }
 
@@ -241,8 +367,8 @@ private fun ProjectDetailList(model: InboxViewModel, modifier: Modifier) = with(
                         Modifier.fillMaxWidth().alpha(if (entry.muted) 0.6f else 1f).padding(top = 12.dp, bottom = 8.dp, start = 4.dp))
                 }
                 is DetailTask -> item(key = "task:${entry.row.id}") {
-                    TaskRowItem(model, entry.row, completable, note = entry.sequenceCue?.let(CUE_KEYS::get)?.let(::t),
-                        available = entry.sequenceCue == "available")
+                    TaskRowItem(model, entry.row, status = RowStatus.Badge, completable = completable,
+                        note = entry.sequenceCue?.let(CUE_KEYS::get)?.let(::t), available = entry.sequenceCue == "available")
                 }
             }
             if (detail != null && detail.items.size < detail.total) item(key = "more") {

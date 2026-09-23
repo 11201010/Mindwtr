@@ -62,4 +62,16 @@ object Lucide {
     val ChevronDown = lucide("ChevronDown", "m6 9 6 6 6-6", stroke = 2.2f)
     val ChevronRight = lucide("ChevronRight", "m9 18 6-6-6-6", stroke = 2.2f)
     val X = lucide("X", "M18 6 6 18", "m6 6 12 12")
+    val RotateCcw = lucide("RotateCcw", "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5")
+    val ArrowRight = lucide("ArrowRight", "M5 12h14", "m12 5 7 7-7 7")
+    val CircleDot = lucide("CircleDot", circle(12, 12, 10), circle(12, 12, 1))
+    val UserRound = lucide("UserRound", circle(12, 8, 5), "M20 21a8 8 0 0 0-16 0")
+    val Repeat = lucide("Repeat", "m17 2 4 4-4 4", "M3 11v-1a4 4 0 0 1 4-4h14", "m7 22-4-4 4-4", "M21 13v1a4 4 0 0 1-4 4H3")
+    val History = lucide("History", "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5", "M12 7v5l4 2")
+    val ListChecks = lucide("ListChecks", "M13 5h8", "M13 12h8", "M13 19h8", "m3 17 2 2 4-4", "m3 7 2 2 4-4")
+    val Paperclip = lucide("Paperclip", "m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551")
+    val ChevronsUp = lucide("ChevronsUp", "m17 11-5-5-5 5", "m17 18-5-5-5 5")
+    val ChevronsDown = lucide("ChevronsDown", "m7 6 5 5 5-5", "m7 13 5 5 5-5")
+    /** RN's add-project button draws Plus at stroke 2.4. */
+    val PlusMedium = lucide("PlusMedium", "M5 12h14", "M12 5v14", stroke = 2.4f)
 }

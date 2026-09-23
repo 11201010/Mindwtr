@@ -20,7 +20,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, doneButtons, draftText, evidenced, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, inList, check, connect, draftText, evidenced, fail, field, hasText, Stopped, taskRows } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -101,7 +101,8 @@ const openEditor = async (title) => {
     // The Inbox grows with every run and pages by 50, so scroll and load more until the row appears.
     for (let page = 0; page < 20; page += 1) {
         nodes = await reveal(title, 20);
-        const row = nodes.find((node) => node.text === title && node.class !== 'android.widget.EditText');
+        // Only a row fully inside the list: a clipped one's middle can sit on the tab bar's capture button.
+        const row = inList(nodes, title);
         if (row) {
             await tap(row);
             return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
@@ -294,8 +295,8 @@ try {
     setProp('fail_commit', '');
     await save();
     nodes = await inbox();
-    check(!hasError(nodes) && doneButtons(nodes).some((node) => button(nodes, node['content-desc'])?.enabled === 'true'),
-        '(d) retry cleared the failure: Done works again');
+    check(!hasError(nodes) && taskRows(nodes).some((node) => node.enabled === 'true'),
+        '(d) retry cleared the failure: rows work again');
     row = expectStored({ title: titleB, priority: 'medium', dueDate: null, rev: row.rev + 1 }, '(d) retry stored the edit once');
 
     // (f) Status reference with a priority: core refuses, the draft stays editable, nothing is written.

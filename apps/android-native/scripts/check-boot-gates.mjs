@@ -38,6 +38,9 @@ const editorUi = source('TaskEditor.kt');
 const focusUi = source('FocusScreen.kt');
 const projectsUi = source('ProjectsScreen.kt');
 const labelsKt = source('Labels.kt');
+const rowUi = source('TaskRowView.kt');
+const areaUi = source('AreaSwitcher.kt');
+const viewStateKt = source('ViewState.kt');
 // Comments may name the rules below; only code is checked against them.
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 assert.match(activity, /enabled = !busy && failedAction == null,[\s\S]*?modifier = Modifier\.weight\(1f\)/);
@@ -46,25 +49,30 @@ assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = tit
 // A failed read offers Try again; while a failed command's retry is owed, nothing else is offered.
 assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy\)/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("create", captureId, draft\)/);
-assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
-// Swipe and the circle button are one command: the same enabled rule, the same complete(task.id).
-assert.match(activity, /SwipeToComplete\(enabled = completable && canComplete, label = done, shape = shape, onComplete = \{ complete\(task\.id\) \}\)/);
-assert.match(activity, /IconButton\(onClick = \{ complete\(task\.id\) \}, enabled = canComplete,/);
-assert.match(activity, /if \(value == SwipeToDismissBoxValue\.StartToEnd\) onComplete\(\)\s+false/, 'the row springs back; the list refresh removes it');
-assert.match(activity, /val done = t\("common\.done"\)[\s\S]*contentDescription = "\$done \$\{task\.title\}"/);
+assert.match(rowUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
+// The swipe follows RN's getLeftAction per status; it and TalkBack's custom action are one command with one enabled rule.
+// Done keeps core's completeTask and its retry; Restore and Next are the status change with theirs. RN draws no Done button.
+assert.match(rowUi, /"done" -> "inbox"\s+"someday", "reference", "inbox" -> "next"\s+else -> "done"/);
+assert.match(rowUi, /val swipeOn = completable && \(if \(target == "done"\) canComplete else canMove\)/);
+assert.match(rowUi, /val canMove = writable && !busy && \(failedAction == null \|\| failedAction == statusAction\(task, target\)\)/);
+assert.match(rowUi, /val onSwipe = \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
+assert.match(rowUi, /SwipeAction\(enabled = swipeOn, target = target, label = swipeLabel, shape = shape, onSwipe = onSwipe\)/);
+assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \}\)/);
+assert.doesNotMatch(code(rowUi + activity), /IconButton\(onClick = \{ complete\(/, 'no visible Done button: RN has none');
+assert.match(rowUi, /if \(value == SwipeToDismissBoxValue\.StartToEnd\) onSwipe\(\)\s+false/, 'the row springs back; the list refresh removes it');
 // Every failed command holds its exact retry, except an update core refused before writing.
 assert.match(model, /private val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
 assert.match(model, /val refused = action\?\.kind == "update" && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
-assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return\s+busy = true\s+if \(action != null\) shown = \+\+issued\s+if \(failedAction == null\) error = null/);
+assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
 assert.equal(code(model).match(/\berror = null\b/g).length, 3, 'perform and applyPage (no retry owed), closeEditor');
 assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s success never clears an owed retry\'s failure');
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
-assert.equal(code(model).match(/\bperform\(action\)/g).length, 3, 'create, complete, update');
+assert.equal(code(model).match(/\bperform\(action\)/g).length, 8, 'create, complete, update, task star, project star, status, project create, area filter');
 assert.equal(code(model).match(/\bperform\s*\{/g).length, 7, 'editor, reload, Try again, three More, open project');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
@@ -74,36 +82,44 @@ assert.doesNotMatch(backgroundFn, /busy = /);
 assert.equal(code(model).match(/\bbusy = true\b/g).length, 1, 'only a user action takes busy');
 assert.match(model, /fun refreshFocus\(\) \{\s+val depth = focus\.depth\(\)\s+background\(/);
 assert.match(model, /fun refreshProjects\(\) \{\s+val at = depth\(\)\s+background\(/);
-assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(\{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
+assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds, in the background, once busy is released.
 assert.match(model, /try \{ work\(runtime\); done = true \}/);
 assert.match(model, /ui \{\s+busy = false\s+if \(done && action != null\) refreshAll\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
 // a result is shown only if nothing newer was shown first (a background failure too).
-assert.match(model, /private fun fresh\(mine: Long\) = \(mine > shown\)\.also \{ if \(it\) shown = mine \}/);
-assert.match(backgroundFn, /ui \{\s+if \(!fresh\(mine\)\) return@ui\s+result\.onSuccess\(apply\)\.onFailure/);
+// Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
+// makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
+assert.match(model, /private fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
+assert.match(model, /private enum class Part \{ Inbox, Focus, Projects, Project, Areas \}/);
+{
+    const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('private fun applyPage(')));
+    for (const part of ['Inbox', 'Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
+    assert.doesNotMatch(code(model), /\bfresh\(mine\)/, 'every freshness check names its list');
+}
+assert.match(backgroundFn, /if \(result\.isFailure && parts\.map \{ fresh\(mine, it\) \}\.none \{ it \}\) return@ui\s+result\.onSuccess \{ apply\(it, mine\) \}\.onFailure/);
 assert.match(backgroundFn, /if \(busy \|\| failedAction != null\) return@onFailure/, 'a background failure never replaces an owed retry or a running action');
 for (const read of ['fun refresh()', 'fun loadMore()', 'fun loadMoreFocus(', 'fun openProject(', 'fun loadMoreProject(']) {
     const body = code(model.slice(model.indexOf(read), model.indexOf('\n    }\n', model.indexOf(read))));
-    assert.match(body, /val mine = \+\+issued[\s\S]*ui \{ if \(fresh\(mine\)\)/, `${read} shows its result only if nothing newer came first`);
+    assert.match(body, /val mine = \+\+issued[\s\S]*ui \{ (if \(fresh\(mine, Part\.\w+\)\)|showLists\(lists, mine\))/, `${read} shows its result only if nothing newer came first`);
 }
-assert.equal(code(model).match(/(?<!var )\bshown = /g).length, 2, 'fresh() and a command\'s start');
+assert.equal(code(model).match(/(?<!var )\bcommandAt = /g).length, 1, 'only a command\'s start outdates reads');
 // The exact retry of a failed Done is enabled wherever its row shows: Inbox, Focus, and a project.
-assert.match(activity, /val canComplete = writable && !busy &&\s*\(failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)\)/);
+assert.match(rowUi, /val canComplete = writable && !busy &&\s*\(failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)\)/);
 // Only the capture draft survives process death; a restored unchanged draft reuses its capture UUID.
 for (const field of ['draft', 'captureId', 'submittedTitle']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
 // The editor draft (core's reply = loaded values, plus the edited values) survives process death.
 for (const field of ['editor', 'editorEdited']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
 assert.match(model, /saved\["editor"\] = value\?\.reply\?\.source\s+saved\["editorEdited"\] = value\?\.let \{ json\(it\.edited\) \}/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
-for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt]) {
+for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
 }
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const themeKt = source('Theme.kt');
 const iconsKt = source('Icons.kt');
-const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, coreHost, sqliteBridge, guard];
+const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, coreHost, sqliteBridge, guard];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
@@ -168,7 +184,7 @@ assert.match(activity, /model\.attach\(\)/);
 // A failed command's exact retry outlives its screen inside this process only.
 assert.match(model, /val failed = if \(\(action != null[\s\S]*?ProcessCoreHost\.recordFailure\([\s\S]*?ui \{/);
 // A failed update keeps its editor draft with the retry, so a new screen reopens the editor on it.
-assert.match(model, /PendingFailure\(failed, message, rows, total, editor, screen, focus, projects, project\)/);
+assert.match(model, /PendingFailure\(failed, message, rows, total, editor, screen, focus, projects, project, areaFilter\)/);
 assert.match(model, /pending\.editor\?\.let\(::keepEditor\)/);
 // ...and a failure on Focus reopens Focus with its rows, since reads wait for the retry.
 assert.match(model, /focus = pending\.focus\s+projects = pending\.projects\s+keepProject\(pending\.project\?\.projectId\)\s+project = pending\.project\s+show\(pending\.screen\)/);
@@ -176,6 +192,29 @@ assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ ho
 assert.match(model, /runtime\.createInboxTask\(title, id\)\s+acknowledged\(action\)/);
 assert.match(model, /runtime\.completeTask\(id\)\s+acknowledged\(action\)/);
 assert.match(model, /runtime\.updateTask\(current\.id, json\(current\.base\), json\(current\.patch\)\)\s+acknowledged\(action\)/);
+// The new contract commands: each is a perform(action) with its exact retry, acknowledged only after core's reply.
+for (const [call, fn] of [
+    ['runtime\\.setTaskFocus\\(id, focused\\)', 'fun setTaskFocus('], ['runtime\\.setProjectFocus\\(id, focused\\)', 'fun setProjectFocus('],
+    ['runtime\\.updateTask\\(task\\.id, json\\(action\\.base\\), json\\(action\\.patch\\)\\)', 'fun changeStatus('],
+    ['runtime\\.createProject\\(action\\.title, areaId, action\\.id\\)', 'fun createProject('], ['runtime\\.setAreaFilter\\(option\\.next\\)', 'fun setAreaFilter('],
+]) {
+    const body = model.slice(model.indexOf(fn), model.indexOf('\n    }\n', model.indexOf(fn)));
+    assert.match(body, new RegExp(`perform\\(action\\) \\{ runtime ->\\s+(val reply = )?${call}\\s+acknowledged\\(action\\)`), `${fn} runs through perform(action) with its exact retry`);
+}
+// A star's retry re-sends the same target; a new project's retry re-sends the same request UUID, kept with its draft.
+assert.match(model, /FailedAction\("taskFocus", id, patch = mapOf\("focused" to "\$focused"\)\)/);
+assert.match(model, /FailedAction\("projectFocus", id, patch = mapOf\("focused" to "\$focused"\)\)/);
+assert.match(model, /FailedAction\("createProject", projectRequestId, projectDraft, base = mapOf\("areaId" to areaId\)\)/);
+for (const field of ['projectDraft', 'projectRequestId']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
+assert.match(model, /if \(action\.kind == "createProject"\) setProjectDraft\(action\.title, action\.base\["areaId"\], action\.id\)/, 'a new screen restores the owed create, never re-sends it');
+// A refused star shows core's own text (RN's toast); an empty refusal shows nothing.
+assert.match(model, /val blocked = reply\.optString\("blocked"\)\s+if \(blocked\.isNotEmpty\(\)\) ui \{ showToast\(reply\.getString\("blockedTitle"\), blocked\) \}/);
+// The area filter is read with every list, so its label and the lists change together.
+assert.match(model, /readOpen\(runtime, at\),\s+AreaFilter\.parse\(runtime\.areaFilter\(\)\),\s+\)/);
+for (const [fn, js] of [['setTaskFocus', 'taskFocus'], ['setProjectFocus', 'projectFocus'], ['createProject', 'createProject'], ['areaFilter', 'areaFilter'], ['setAreaFilter', 'setAreaFilter']]) {
+    assert.match(coreHost, new RegExp(`fun ${fn}\\([^)]*\\): JSONObject =\\s*callAsync\\("${js}"`), `CoreHost.${fn} reaches host method ${js}`);
+}
+assert.equal([activity, owner, editorUi, focusUi, projectsUi, rowUi, areaUi].join('\n').match(/\.setTaskFocus\(|\.setProjectFocus\(|\.createProject\(|\.setAreaFilter\(|\.areaFilter\(\)/g), null);
 assert.equal(model.match(/clearFailure/g).length, 1);
 assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db"|SQLite\/mindwtr\.db")/);
 assert.match(model, /ProcessCoreHost\.get\(/);
@@ -196,7 +235,7 @@ assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt].j
 assert.match(coreHost, /fun language\(stored: String, system: String\): JSONObject =\s*callAsync\("language", debugFault\("language"\)\.ifEmpty \{ stored \}, system\)/);
 assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
 // update is a task command: the fault hooks and the diagnostic line cover it.
-assert.match(coreHost, /val command = method in setOf\("create", "complete", "update"\)/);
+assert.match(coreHost, /val command = method in setOf\("create", "complete", "update", "taskFocus", "projectFocus", "createProject", "setAreaFilter"\)/);
 
 // The editor reaches core only through CoreHost's two calls, which reach only the two contract commands.
 assert.match(coreHost, /fun taskEditor\(id: String\): JSONObject = callAsync\("editor", id\)/);
@@ -204,9 +243,9 @@ assert.match(coreHost, /fun updateTask\(id: String, baseJson: String, patchJson:
 assert.match(hostEntry, /editor\(id: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getTaskEditor\(\{ id \}\)\);/);
 assert.match(hostEntry, /update\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('update', await contract\.updateTask\(JSON\.parse\(json\)\)\)\);/);
 assert.equal(model.match(/runtime\.taskEditor\(id\)/g).length, 2, 'open and Reload');
-assert.equal(model.match(/runtime\.updateTask\(/g).length, 1);
+assert.equal(model.match(/runtime\.updateTask\(/g).length, 2, 'the editor save and the status menu');
 assert.equal([activity, owner, editorUi].join('\n').match(/taskEditor\(|updateTask\(/g), null);
-assert.equal([activity, editorUi, focusUi, projectsUi].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
+assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
 // The patch holds only changed fields; base holds the loaded values of exactly those; no change means no call.
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = EDITOR_FIELDS\.filter \{ edited\[it\] != loaded\[it\] \}\.associateWith \{ edited\[it\] \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ loaded\[it\] \}/);
@@ -216,9 +255,18 @@ assert.match(model, /FailedAction\("update", current\.id, base = current\.base, 
 // Reload: an edit survives only where the stored value still equals the old base.
 assert.match(editorUi, /if \(fresh\.fields\[field\] == loaded\[field\]\) edited\[field\] else fresh\.fields\[field\]/);
 // No Kotlin date parsing, and no formatting of stored values: the only date call formats picker output.
-assert.doesNotMatch([editorUi, model, activity, focusUi, projectsUi].join('\n'),
-    /java\.time|LocalDate|Instant|DateTimeFormatter|Calendar|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
-assert.equal([model, activity, focusUi, projectsUi].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
+assert.doesNotMatch([editorUi, model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n'),
+    /java\.time|LocalDate|Instant|DateTimeFormatter|Calendar|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
+assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
+// No Kotlin date formatting or date coloring anywhere in the UI package: dates and their tones are core's (row meta, the Focus date line).
+{
+    const { readdirSync } = await import('node:fs');
+    const dir = resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot');
+    for (const name of readdirSync(dir).filter((file) => file.endsWith('.kt') && file !== 'TaskEditor.kt')) {
+        assert.doesNotMatch(code(readFileSync(resolve(dir, name), 'utf8')), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|\bdueDate\b|\bstartTime\b/,
+            `${name} formats, parses, or colors a date; only core's meta text is shown`);
+    }
+}
 assert.equal(editorUi.match(/SimpleDateFormat|\.format\(/g).length, 3); // import, constructor, one format call
 assert.match(editorUi, /private fun pickedDay\(pickerMillis: Long\): String =\s*SimpleDateFormat\("yyyy-MM-dd", Locale\.US\)\.apply \{ timeZone = TimeZone\.getTimeZone\("UTC"\) \}\.format\(Date\(pickerMillis\)\)/);
 assert.equal(editorUi.match(/pickedDay\(/g).length, 2);
@@ -238,16 +286,16 @@ assert.equal(model.match(/runtime\.focusWindow\(/g).length, 1);
 assert.equal([activity, owner, editorUi, focusUi, projectsUi].join('\n').match(/\.focus\(|focusWindow\(/g), null);
 // Rows render in core's order: sections and rows are walked as parsed, never sorted, filtered, or regrouped.
 const focusCode = code(focusUi) + code(model.slice(model.indexOf('fun JSONObject.taskRows()'), model.indexOf('private const val PAGE')));
-assert.doesNotMatch(focusCode, /\.(sort\w*|sorted\w*|filter\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/);
-assert.match(focusUi, /return FocusView\(json\.getString\("revision"\), List\(items\.length\(\)\) \{ index ->/);
+assert.doesNotMatch(focusCode, /\.(sort\w*|sorted\w*|filter(?!Bg\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/);
+assert.match(focusUi, /return FocusView\(json\.getString\("revision"\), json\.getString\("dateLabel"\), List\(items\.length\(\)\) \{ index ->/);
 assert.match(model, /fun JSONObject\.taskRows\(\): List<TaskRow> = getJSONArray\("rows"\)\.let \{ items ->\s*List\(items\.length\(\)\) \{ index ->/);
 assert.match(focusUi, /for \(section in focus\?\.sections\.orEmpty\(\)\) \{/);
 assert.match(focusUi, /section\.rows\.forEachIndexed \{ index, task ->/);
 // Core's two flags are the only row data Focus acts on: laterToday places one subheading, revealDate is shown as text.
 assert.match(focusUi, /val laterToday = section\.rows\.indexOfFirst \{ it\.laterToday \}/);
-assert.equal(code([focusUi, activity, model].join('\n')).match(/(?<!"agenda)\.laterToday\b/g).length, 1); // not the label key
-assert.match(activity, /task\.revealDate\?\.let \{ MetaText\(it, c\.secondaryText, 600, Modifier\.padding\(top = 4\.dp\)\) \}/);
-assert.equal(code([focusUi, activity, model].join('\n')).match(/\.revealDate\b/g).length, 1);
+assert.equal(code([focusUi, activity, model, rowUi].join('\n')).match(/(?<!"agenda)\.laterToday\b/g).length, 1); // not the label key
+assert.match(rowUi, /task\.revealDate\?\.let \{ MetaText\(it, c\.secondaryText, 600, Modifier\.padding\(top = 4\.dp\)\) \}/);
+assert.equal(code([focusUi, activity, model, rowUi].join('\n')).match(/\.revealDate\b/g).length, 1);
 // A stale Load more reads Focus again from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
@@ -255,8 +303,17 @@ assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Li
 assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 1, 'one caller: the lifecycle loop');
 assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Commands from Focus and a project use the Inbox's command path and its exact-retry lock.
-assert.match(activity, /fun TaskRowItem\(model: InboxViewModel, task: TaskRow, completable: Boolean = true, note: String\? = null, available: Boolean = false\)/);
-assert.match(focusUi, /item\(key = "\$\{section\.key\}:\$\{task\.id\}"\) \{ TaskRowItem\(model, task\) \}/);
+assert.match(rowUi, /fun TaskRowItem\(\s*model: InboxViewModel, task: TaskRow, status: RowStatus = RowStatus\.Hidden, star: RowStar = RowStar\.Hidden,/);
+assert.match(focusUi, /item\(key = "\$\{section\.key\}:\$\{task\.id\}"\) \{\s*TaskRowItem\(model, task,/);
+// RN hides a section core counts as empty, "Projects to review" included, and folds a section on its title.
+assert.match(focusUi, /if \(section\.total == 0\) continue/);
+assert.match(focusUi, /if \(reviewCount > 0\) \{/);
+assert.match(focusUi, /if \(!open\) continue/);
+assert.match(focusUi, /view\.dateLabel\.uppercase\(\)/, 'the Focus date line is core\'s text');
+// Open sections are device-local, under RN's keys and defaults.
+assert.match(viewStateKt, /const val FOCUS_VIEW_KEY = "mindwtr:view:focus:v1"/);
+assert.match(viewStateKt, /const val PROJECTS_VIEW_KEY = "mindwtr:view:projects:v1"/);
+assert.match(viewStateKt, /val FOCUS_SECTION_KEYS = listOf\("focus", "schedule", "next", "upcoming", "reviewDue", "reviewProjects"\)/);
 assert.match(focusUi, /onClick = \{ loadMoreFocus\(section\.key\) \}, enabled = writable && !busy && failedAction == null/);
 // The selected list survives rotation (ViewModel) and process death (SavedStateHandle).
 assert.match(model, /saved\.get<String>\("screen"\)/);
@@ -286,7 +343,7 @@ for (const [list, prefix] of [['EDITOR_STATUSES', 'status'], ['EDITOR_PRIORITIES
 assert.match(editorUi, /editor\.reply\.statuses\.map \{ it to t\("status\.\$it"\) \}/);
 assert.match(editorUi, /editor\.reply\.priorities\.map \{ it to t\("priority\.\$it"\) \}/);
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt })) {
     const body = code(text);
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
     for (const [, rest] of body.matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
@@ -366,11 +423,11 @@ for (const scheme of ['light', 'dark']) {
     assert.deepEqual(kotlinPalette(`${scheme.toUpperCase()} =`), FIELDS.map((field) => genericValue(scheme, field)), `RN default ${scheme} matches`);
 }
 // No color is written anywhere else: every other file draws with LocalTheme.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt })) {
     assert.doesNotMatch(code(text), /\bColor\(|Color\.(Black|White|Red|Green|Blue|Gray|Yellow|Cyan|Magenta|DarkGray|LightGray|Transparent)\b|parseColor|"#[0-9A-Fa-f]{3,8}"|0x[0-9A-Fa-f]{8}/,
         `${name} writes a color; colors live only in Theme.kt`);
 }
-assert.equal([activity, focusUi, projectsUi].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
+assert.equal([activity, focusUi, projectsUi, rowUi, areaUi].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
 assert.equal(code(activity).match(/MindwtrTheme\(/g).length, 1, 'one theme wraps the whole app');
 // Core classifies the theme and owns its hues; Kotlin never names a theme mode.
 assert.doesNotMatch(code(themeKt + owner), /"(system|material3-light|material3-dark)"/);
@@ -382,10 +439,17 @@ const themeCall = hostEntry.slice(hostEntry.indexOf('theme(stored: string): stri
 assert.match(themeCall, /const mode = typeof synced === 'string' && synced \? synced : \(stored \|\| 'system'\);/, 'RN: the synced setting wins over the device-local choice');
 assert.match(themeCall, /themeDescriptor\(mode\)/);
 assert.doesNotMatch(themeCall, /requireSaved/);
-// Row data stays core's: dates and the project title are shown as the strings core sent.
-assert.match(activity, /task\.dueDate\?\.let \{ MetaText\(it, c\.secondaryText, 600\) \}/);
-assert.match(activity, /val start = task\.startTime\?\.let \{ "\$\{t\("taskEdit\.startDateLabel"\)\}: \$it" \}/);
-assert.match(model, /text\("priority"\), text\("dueDate"\), text\("startTime"\), text\("projectTitle"\)\)/);
+// Rows read core's meta: the parts in core's order (detail parts hidden, as RN's lists and default Focus hide them),
+// core's due tone mapped to RN's colors, the strip from meta.priority, and TalkBack's label from meta.accessibilityLabel.
+assert.match(model, /fun JSONObject\.taskRow\(\) = getJSONObject\("meta"\)\.let \{ meta ->/);
+assert.match(model, /meta\.getJSONArray\("parts"\)\.let \{ parts -> List\(parts\.length\(\)\) \{ parts\.getJSONObject\(it\)\.metaPart\(\) \} \}/);
+assert.match(rowUi, /val parts = meta\.parts\.filter \{ !it\.detail \}/);
+assert.match(rowUi, /for \(part in parts\) MetaPartView\(part\)/);
+assert.match(rowUi, /"due" -> MetaText\(part\.text, when \(part\.tone\) \{ "overdue" -> c\.danger; "dueSoon" -> c\.warning; else -> c\.secondaryText \}, 600\)/);
+assert.match(rowUi, /val strip = theme\.priority\(meta\.priority\)/);
+assert.match(rowUi, /contentDescription = meta\.accessibilityLabel/);
+assert.match(rowUi, /coreColorOrNull\(part\.dotColor\) \?: c\.tint/, 'a null dot color is the tint, as RN');
+assert.doesNotMatch(code(model), /"dueDate"|"startTime"|"projectTitle"/, 'no row reads core\'s raw dates');
 // Icons are lucide's own paths, with its ISC notice.
 assert.match(iconsKt, /Lucide is ISC licensed/);
 assert.match(iconsKt, /val Target = lucide\("Target", circle\(12, 12, 10\), circle\(12, 12, 6\), circle\(12, 12, 2\)\)/);
@@ -405,17 +469,17 @@ assert.equal(model.match(/runtime\.projects\(\)/g).length, 2, 'read() after boot
 assert.equal(model.match(/runtime\.projectDetail\(/g).length, 2, 'the first window and the next');
 assert.equal([activity, owner, editorUi, focusUi, projectsUi].join('\n').match(/\.projects\(\)|projectDetail\(/g), null);
 // Projects render only core's order: groups, areas, rows, and detail items are walked as parsed, never sorted or dropped.
-assert.doesNotMatch(code(projectsUi) + code(model), /\.(sort\w*|sorted\w*|filter\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/);
+assert.doesNotMatch(code(projectsUi) + code(model), /\.(sort\w*|sorted\w*|filter(?!Bg\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/);
 assert.match(projectsUi, /val PROJECT_BUCKETS = listOf\("active" to "projects\.activeSection", "deferred" to "projects\.deferredSection", "archived" to "projects\.closed"\)/);
 for (const walk of [/List\(groups\.length\(\)\) \{ index ->/, /List\(rows\.length\(\)\) \{ row ->/, /List\(items\.length\(\)\) \{ index ->/,
     /for \(\(bucket, heading\) in PROJECT_BUCKETS\) \{/, /for \(group in groups\) \{/, /for \(row in group\.projects\) item/,
     /for \(entry in detail\?\.items\.orEmpty\(\)\) when \(entry\)/]) assert.match(projectsUi, walk);
 assert.match(projectsUi, /group\.areaName \?: t\("projects\.noArea"\)/);
-assert.match(projectsUi, /val open = !collapsible \|\| bucket in expanded/, 'Deferred and Archived start closed');
+assert.match(projectsUi, /val open = !collapsible \|\| \(if \(bucket == "deferred"\) projectsView\.showDeferred else projectsView\.showArchived\)/, 'Deferred and Archived start closed (RN\'s default)');
+assert.match(projectsUi, /val areaKey = group\.areaId \?: "no-area"/);
 // A read-only project's rows have no Complete; its cue is core's value, shown with mobile's label.
 assert.match(projectsUi, /val completable = detail\?\.readOnly == false/);
-assert.match(projectsUi, /TaskRowItem\(model, entry\.row, completable, note = entry\.sequenceCue\?\.let\(CUE_KEYS::get\)\?\.let\(::t\),\s*available = entry\.sequenceCue == "available"\)/);
-assert.match(activity, /if \(completable\) \{\s*IconButton\(onClick = \{ complete\(task\.id\) \}/);
+assert.match(projectsUi, /TaskRowItem\(model, entry\.row, status = RowStatus\.Badge, completable = completable,\s*note = entry\.sequenceCue\?\.let\(CUE_KEYS::get\)\?\.let\(::t\), available = entry\.sequenceCue == "available"\)/);
 // A stale window restarts the project from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+return if \(start == null\) view else readProject\(runtime, id, null, depth\)/);
 assert.match(model, /if \(id != openProjectId\) return\s+if \(detail == null\) keepProject\(null\)\s+project = detail/,
@@ -499,11 +563,17 @@ export function createNativeHostContract() {
       return globalThis.projectDetailResult;
     },
     async createInboxTask() { globalThis.createCount++; return { ok: true, value: { id: 'id' } }; },
+    async setTaskFocus(input) { globalThis.newInputs.push(JSON.stringify(['taskFocus', input])); return globalThis.taskFocusResult; },
+    async setProjectFocus(input) { globalThis.newInputs.push(JSON.stringify(['projectFocus', input])); return { ok: true, value: { blocked: '' } }; },
+    async createProject(input) { globalThis.newInputs.push(JSON.stringify(['createProject', input])); return { ok: true, value: { id: 'p' } }; },
+    getAreaFilter() { globalThis.newInputs.push('areaFilter'); return { ok: true, value: { revision: 'a', label: 'All', summary: 'All areas', options: [] } }; },
+    async setAreaFilter(input) { globalThis.newInputs.push(JSON.stringify(['setAreaFilter', input])); return { ok: true, value: input }; },
     async completeTask() { globalThis.completeCount++; return { ok: true, value: { id: 'id' } }; },
   };
 }
 export const STATUS_COLORS_BY_THEME = {
-  light: { done: { text: '#22C55E' } }, dark: { done: { text: '#4ADE80' } }, nord: { done: { text: '#A3BE8C' } },
+  light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } },
+  nord: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } },
 };
 export const TASK_PRIORITY_COLORS = { urgent: '#dc2626', low: '#3b82f6' };
 export function themeDescriptor(theme) {
@@ -531,7 +601,8 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
         createCount: 0, completeCount: 0, persistenceFailure: null, editorInputs: [], updateInputs: [], focusInputs: [],
-        languageInputs: [], projectInputs: [], settings: undefined,
+        languageInputs: [], projectInputs: [], settings: undefined, newInputs: [],
+        taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
         projectDetailResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Project changed; restart paging from offset zero' } },
         focusWindowResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Focus changed; restart paging' } },
         updateResult: { ok: true, value: { id: 't', changed: true } },
@@ -613,12 +684,12 @@ assert.deepEqual(ready.languageInputs, ['{"storedLanguage":null,"systemLocale":"
 {
     const theme = async (stored) => (await poll(ready, ready.MindwtrHost.theme(stored))).value;
     assert.deepEqual(await theme(''), { mode: 'system', preset: 'default', material: false, scheme: null,
-        done: { light: '#22C55E', dark: '#4ADE80' }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+        status: { light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
     assert.deepEqual(await theme('material3-light'), { mode: 'material3-light', preset: 'default', material: true, scheme: 'light',
-        done: { light: '#22C55E', dark: '#4ADE80' }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+        status: { light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
     ready.settings = { theme: 'nord' };
     assert.deepEqual(await theme('material3-light'), { mode: 'nord', preset: 'nord', material: false, scheme: 'dark',
-        done: { light: '#A3BE8C', dark: '#A3BE8C' }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+        status: { light: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } }, dark: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
     ready.settings = undefined;
 }
 // Projects pass Kotlin's arguments to core unchanged; the first window has no revision, and a stale one keeps its code prefix.
@@ -629,6 +700,17 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.projectDetail('p1', 50, 50,
 ready.projectDetailResult = { ok: true, value: { version: 1, revision: 'r', projectId: 'p1', readOnly: false, total: 0, items: [] } };
 assert.equal((await poll(ready, ready.MindwtrHost.projectDetail('p1', 0, 50, ''))).ok, true);
 assert.deepEqual(ready.projectInputs, ['projects', '{"projectId":"p1","offset":50,"limit":50,"revision":"r"}', '{"projectId":"p1","offset":0,"limit":50}']);
+// The new commands pass Kotlin's arguments to core unchanged: the star's target, the request UUID, "" as no area, a `next` selection.
+assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.projectFocus('p', false)), { ok: true, value: { blocked: '' } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.createProject('New', '', '123')), { ok: true, value: { id: 'p' } });
+assert.equal((await poll(ready, ready.MindwtrHost.areaFilter())).value.label, 'All');
+assert.equal((await poll(ready, ready.MindwtrHost.setAreaFilter('{"included":["a"],"excluded":[]}'))).ok, true);
+assert.deepEqual(ready.newInputs, ['["taskFocus",{"id":"t","focused":true}]', '["projectFocus",{"id":"p","focused":false}]',
+    '["createProject",{"title":"New","areaId":null,"requestId":"123"}]', 'areaFilter', '["setAreaFilter",{"included":["a"],"excluded":[]}]']);
+ready.taskFocusResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } };
+assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: false, error: 'SAVE_FAILED: disk full' });
+ready.newInputs.length = 0;
 ready.persistenceFailure = { message: 'disk full' };
 const queriesBeforeFailure = ready.queryCount;
 const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
@@ -657,6 +739,14 @@ for (const blocked of [ready.MindwtrHost.projects(), ready.MindwtrHost.projectDe
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
 }
 assert.equal(ready.projectInputs.length, 3);
+// The area filter is a read: it waits for the retry. Its commands, like every command, reach core so the retry can save.
+assert.deepEqual(await poll(ready, ready.MindwtrHost.areaFilter()), { ok: false, error: 'SAVE_FAILED: disk full' });
+ready.taskFocusResult = { ok: true, value: { id: 't', focused: true } };
+for (const command of [ready.MindwtrHost.taskFocus('t', true), ready.MindwtrHost.projectFocus('p', true),
+    ready.MindwtrHost.createProject('New', 'a', '123'), ready.MindwtrHost.setAreaFilter('{"included":[],"excluded":[]}')]) {
+    assert.equal((await poll(ready, command)).ok, true);
+}
+assert.equal(ready.newInputs.length, 4);
 assert.equal((await poll(ready, ready.MindwtrHost.language('', 'zh-CN'))).ok, true);
 assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok, true);
 // The RN legacy import runs after the validated load and before activation. RN state changes only
@@ -769,4 +859,5 @@ console.log('Theme: one Kotlin theme object equal to RN\'s palettes, no color el
 console.log('Accessibility: the failure banner sits above the list (zIndex, live region, first in traversal); sections expose core\'s text');
 console.log('Projects: reads only through CoreHost, core order and groups only, stale windows restart, blocked after a failed save');
 console.log('RN legacy import: after the validated load, confirmed by a re-read before RN state changes; RKStorage checkpointed first');
+console.log('RN look: rows read core meta (no Kotlin date formatting or coloring); stars, status, new project, and area filter run through perform with exact retries');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

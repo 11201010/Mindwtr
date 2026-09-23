@@ -6,9 +6,11 @@
 // captures two tasks with titles unique to this run, sets both to Next in the
 // editor, and checks Focus: (a) they appear under "Next actions"; (b) a due
 // date of today, picked where the date picker marks today, moves one under
-// "Today", and Save and Cancel return to Focus; (c) Complete from Focus
-// removes it and stores `done` once; (d) rotation keeps the Focus tab and its
-// rows; (e) process death restores the Focus tab; (f) a failed Complete keeps
+// "Today", and Save and Cancel return to Focus; (c) Complete from Focus (RN's
+// swipe right) removes it and stores `done` once; (d) rotation keeps the Focus tab and its
+// rows; (e) process death restores the Focus tab; (h) the star moves a row under
+// "Today's Focus" and stores it once, and a second tap takes it back (skipped
+// when core refuses the star: its toast shows); (f) a failed Complete keeps
 // its exact retry through rotation, Back, and a new screen, then stores once;
 // (g) Load more adds rows to a section with more than 50 (skipped when the
 // development data has none). It asserts through the app's own database copy
@@ -23,11 +25,14 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, tab, tabSelected } from './device.mjs';
+import { besideRow, inList, bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, tab, tabSelected, taskRow, taskRows } from './device.mjs';
 // Focus section titles as core renders them in English (core's dictionary, not literals).
 const { en } = await import(resolve(import.meta.dirname, '../../../packages/core/src/i18n/locales/en.ts'));
 const NEXT_ACTIONS = en['focus.nextActions'];
 const TODAY = en['focus.schedule'];
+const TODAYS_FOCUS = en['agenda.todaysFocus'];
+const STAR = en['agenda.addToFocus'];
+const UNSTAR = en['agenda.removeFromFocus'];
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -57,7 +62,7 @@ const first = `71${run}`;
 const second = `72${run}`;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, swipe, signature, toTop } = device;
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, swipe, signature, toTop, completeUntil } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
 // ---- device state ----
@@ -104,12 +109,13 @@ const sectionOf = (nodes, title) => {
     const row = rowNode(nodes, title);
     if (!row) return undefined;
     const top = box(row)[1];
-    return headers(nodes).filter((header) => header.top <= top).sort((a, b) => b.top - a.top)[0]?.title;
+    return headers(nodes).filter((header) => header.top <= top).sort((a, b) => b.top - a.top)[0]?.title ?? passedSection;
 };
 const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes)
     && Number.isFinite(inboxCount(nodes)), 60_000);
+// Section titles scroll with the rows (as in RN), so a scrolled list may show rows only.
 const focusList = (description = 'Focus') => waitFor(description, (nodes) => tabSelected(nodes, 'Focus') && !inEditor(nodes)
-    && headers(nodes).length > 0, 60_000);
+    && (headers(nodes).length > 0 || taskRows(nodes).length > 0), 60_000);
 const showTab = async (name) => {
     const nodes = await waitFor('the tabs', (current) => tab(current, name), 60_000);
     if (!tabSelected(nodes, name)) await tap(tab(nodes, name));
@@ -150,10 +156,17 @@ const choose = async (label, value) => {
  * Scrolls Focus from the top until [title] is on screen. An enabled
  * "More <section>" (core's `common.more`) on the way is tapped, since sections page by 50.
  */
+/**
+ * Scrolls from the top until the row is fully in the list. Section titles scroll with the
+ * rows (as in RN), so it remembers the last title it scrolled past for `sectionOf`.
+ */
+let passedSection;
 const findRow = async (title) => {
     let nodes = await toTop();
+    passedSection = undefined;
     for (let step = 0; step < 80; step += 1) {
-        if (rowNode(nodes, title)) return nodes;
+        if (inList(nodes, title)) return nodes;
+        passedSection = headers(nodes).sort((a, b) => b.top - a.top)[0]?.title ?? passedSection;
         const more = nodes.find((node) => node['content-desc']?.startsWith('More ') && button(nodes, node['content-desc'])?.enabled === 'true');
         if (more) {
             await tap(button(nodes, more['content-desc']));
@@ -178,7 +191,8 @@ const openFromInbox = async (title) => {
     let nodes = await inbox();
     for (let page = 0; page < 20; page += 1) {
         nodes = await device.reveal(title, 20);
-        const row = rowNode(nodes, title);
+        // Only a row fully inside the list: a clipped one's middle can sit on the tab bar's capture button.
+        const row = inList(nodes, title);
         if (row) {
             await tap(row);
             return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
@@ -192,7 +206,7 @@ const openFromInbox = async (title) => {
 };
 const openFromFocus = async (title) => {
     const nodes = await findRow(title);
-    await tap(rowNode(nodes, title));
+    await tap(inList(nodes, title));
     return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
 };
 
@@ -209,7 +223,7 @@ const sqlite = (sql) => {
     return JSON.parse(execFileSync('sqlite3', ['-json', resolve(dir, 'mindwtr-native-dev.db'), sql], { encoding: 'utf8' }) || '[]');
 };
 const ids = {};
-const stored = (title) => sqlite(`SELECT status, dueDate, rev FROM tasks WHERE id = '${ids[title]}' AND deletedAt IS NULL`)[0];
+const stored = (title) => sqlite(`SELECT status, dueDate, rev, isFocusedToday FROM tasks WHERE id = '${ids[title]}' AND deletedAt IS NULL`)[0];
 const expectStored = (title, expected, message) => {
     const row = stored(title);
     const wrong = Object.entries(expected).filter(([name, value]) => row?.[name] !== value);
@@ -300,8 +314,10 @@ try {
     // (c) Complete from Focus: the row leaves, core's Today total drops by one, and done is stored once.
     const todayTotal = sectionTotal(nodes, TODAY);
     const savedBefore = completes(processId, 'saved');
-    nodes = await tapUntil(`Done ${first}`, `${first} to leave Focus`,
-        (current) => !rowNode(current, first) && sectionTotal(current, TODAY) === todayTotal - 1);
+    // Core's Today total drops by one; a section core counts as empty is hidden, as in RN.
+    const todayAfter = (current) => sectionTotal(current, TODAY) ?? (headers(current).length > 0 ? 0 : undefined);
+    nodes = await completeUntil(first, `${first} to leave Focus`,
+        (current) => !rowNode(current, first) && todayAfter(current) === todayTotal - 1);
     check(true, `(c) ${first} left Focus; Today total ${todayTotal} -> ${todayTotal - 1}`);
     expectStored(first, { status: 'done', dueDate: today, rev: due.rev + 1 }, '(c) done stored in one write');
     check(completes(processId, 'saved') === savedBefore + 1, '(c) task-command log shows one operation=complete saved');
@@ -326,10 +342,29 @@ try {
     check(boots(processId) === 1, '(e) Focus tab restored after process death, one host boot');
     nodes = await expectSection(second, NEXT_ACTIONS, '(e)');
 
+    // (h) The star: core stores the target state, and the row moves under core's "Today's Focus"; a second tap takes it back.
+    const beforeStar = stored(second);
+    await tap(besideRow(nodes, second, STAR) ?? fail(`no "${STAR}" star beside ${second}`));
+    // A Next task with no start date can only be refused at core's focus limit: its toast shows core's "Max N focus items."
+    const limitToast = new RegExp(`^${en['agenda.maxFocusItems'].split('{{count}}').map((piece) => piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\d+')}$`);
+    nodes = await waitFor('the star to be stored or refused', (current) => stored(second)?.isFocusedToday === 1
+        || current.some((node) => limitToast.test(node.text ?? '')), 15_000);
+    if (stored(second).isFocusedToday !== 1) {
+        console.log('skip - (h) core refused the star at its focus limit, and its toast showed core\'s text');
+        expectStored(second, { rev: beforeStar.rev }, '(h) a refused star stored nothing');
+    } else {
+        expectStored(second, { isFocusedToday: 1, status: 'next', rev: beforeStar.rev + 1 }, '(h) the star stored isFocusedToday once');
+        nodes = await expectSection(second, TODAYS_FOCUS, '(h)');
+        await tap(besideRow(nodes, second, UNSTAR) ?? fail(`no "${UNSTAR}" star beside ${second}`));
+        await waitFor('the star removal to be stored', () => stored(second)?.isFocusedToday === 0, 15_000);
+        expectStored(second, { isFocusedToday: 0, rev: beforeStar.rev + 2 }, '(h) the second tap stored the removal once');
+        nodes = await expectSection(second, NEXT_ACTIONS, '(h) unstarred:');
+    }
+
     // (f) A failed Complete from Focus keeps only its exact retry across rotation, Back, and a new screen.
     const beforeFailure = stored(second);
     setProp('fail_commit', '1');
-    nodes = await tapUntil(`Done ${second}`, 'the failed Complete', hasError);
+    nodes = await completeUntil(second, 'the failed Complete', hasError);
     const failedFocus = async (description, labelText) => {
         // At the top of the list nothing overlaps the pinned failure text, so the tree reports it there.
         await toTop();
@@ -339,10 +374,10 @@ try {
         // text, so the accessibility tree omits that text although it stays on screen (screenshot-verified,
         // U04 follow-up). The failure was asserted above; here the owed retry itself is the evidence.
         check(tabSelected(current, 'Focus'), `(f${labelText}) Focus tab kept`);
-        check(button(current, `Done ${second}`)?.enabled === 'true', `(f${labelText}) exact retry allowed`);
-        const others = current.filter((node) => node['content-desc']?.startsWith('Done ') && node['content-desc'] !== `Done ${second}`)
-            .map((node) => button(current, node['content-desc'])).filter(Boolean);
-        check(others.every((node) => node.enabled === 'false'), `(f${labelText}) ${others.length} other Done buttons blocked`);
+        check(Boolean(taskRow(current, second)), `(f${labelText}) the row with the owed retry is still shown`);
+        // Every row locks with the owed retry; only the failed row's swipe stays on (the same rule, check-boot-gates.mjs).
+        const rows = taskRows(current);
+        check(rows.length > 0 && rows.every((node) => node.enabled === 'false'), `(f${labelText}) ${rows.length} rows locked`);
         check(tab(current, 'Inbox')?.enabled === 'true', `(f${labelText}) tabs still work`);
     };
     await failedFocus('the failure', '');
@@ -371,16 +406,18 @@ try {
     // Reads wait while the retry is owed, so no read failure can have replaced the Done retry.
     check(!logs(processId).includes('lock=storage'), '(f) no read failed while the retry was owed (log has no lock=storage)');
     setProp('fail_commit', '');
-    nodes = await tapUntil(`Done ${second}`, 'the retry', (current) => !hasError(current) && !rowNode(current, second));
+    nodes = await completeUntil(second, 'the retry', (current) => !hasError(current) && !rowNode(current, second));
     expectStored(second, { status: 'done', rev: beforeFailure.rev + 1 }, '(f) retry stored done once');
     check(completes(processId, 'failed') >= 1 && completes(processId, 'saved') >= 1, '(f) task-command log shows the failed and the saved complete');
 
     // (g) Load more on a section with more than 50 rows, if the development data has one.
     nodes = await toTop();
+    passedSection = undefined;
     let more;
     for (let step = 0; step < 80 && !more; step += 1) {
         more = nodes.find((node) => node['content-desc']?.startsWith('More '));
         if (more) break;
+        passedSection = headers(nodes).sort((a, b) => b.top - a.top)[0]?.title ?? passedSection;
         const next = await swipe(nodes, 'down');
         if (signature(next) === signature(nodes)) break;
         nodes = next;
@@ -390,9 +427,8 @@ try {
     } else {
         const section = more['content-desc'].slice('More '.length);
         const moreTop = box(more)[1];
-        // Row titles as their Complete buttons name them; a row the window added sits where Load more was.
-        const rowTitles = (current) => current.filter((node) => node['content-desc']?.startsWith('Done '))
-            .map((node) => ({ title: node['content-desc'].slice('Done '.length), top: box(node)[1] }));
+        // Row titles; a row the window added sits where Load more was.
+        const rowTitles = (current) => taskRows(current).map((node) => ({ title: node.text, top: box(node)[1] }));
         const before = new Set(rowTitles(nodes).map(({ title }) => title));
         const addedRow = (current) => rowTitles(current).find(({ title, top }) => !before.has(title) && top >= moreTop - 5);
         nodes = await tapUntil(more['content-desc'], `rows after Load more ${section}`, addedRow);

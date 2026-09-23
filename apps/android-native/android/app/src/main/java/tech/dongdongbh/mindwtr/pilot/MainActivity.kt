@@ -125,7 +125,7 @@ class MainActivity : ComponentActivity() {
                         // An open project draws its own header, as RN's project screen does. In landscape the
                         // selected tab already names the screen, so the title bar gives its height to the rows.
                         val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-                        if ((screen != Screen.Projects || openProjectId == null) && !landscape) TopBar(t(screen.label))
+                        if ((screen != Screen.Projects || openProjectId == null) && !landscape) TopBar(model, t(screen.label))
                         // A failure stays in view above the list. A failed read offers Try again; a failed command only its exact retry.
                         error?.let { message ->
                             FailureBanner(message) { if (failedAction == null) TextButton(onClick = { refresh() }, enabled = !busy) { Text(t("common.retry")) } }
@@ -142,7 +142,10 @@ class MainActivity : ComponentActivity() {
                                 }
                                 TabBar(model)
                             }
+                            ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 78.dp))
                             if (capturing) CaptureSheet(model)
+                            if (areaSheet) AreaSheet(model)
+                            StatusMenu(model)
                         }
                     }
                 }
@@ -157,13 +160,17 @@ fun Modifier.hairline(color: Color, top: Boolean) = drawBehind {
     drawLine(color, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
 }
 
-/** RN's tab header: card background, a hairline below, the title centered at 17/700. */
+/**
+ * RN's tab header: card background, a hairline below, the title centered at 17/700, and RN's
+ * area switcher at the left. RN's search button at the right is not built (no search screen yet).
+ */
 @Composable
-private fun TopBar(title: String) {
+private fun TopBar(model: InboxViewModel, title: String) {
     val c = LocalTheme.current.colors
     Box(Modifier.fillMaxWidth().height(56.dp).background(c.cardBg).hairline(c.border, top = false), contentAlignment = Alignment.Center) {
         Text(title, style = rnText(17, 700), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 72.dp).semantics { heading() })
+        AreaTrigger(model, Modifier.align(Alignment.CenterStart).padding(start = 16.dp))
     }
 }
 
@@ -365,105 +372,11 @@ private fun InboxList(model: InboxViewModel, modifier: Modifier) = with(model) {
         if (total == 0) item(key = "empty") {
             EmptyState(t("inbox.empty"), t("inbox.emptyAddHint"), t("nav.addTask")) { showCapture(true) }
         }
-        items(rows, key = { it.id }) { task -> TaskRowItem(model, task) }
+        items(rows, key = { it.id }) { task -> TaskRowItem(model, task, status = RowStatus.Icon) }
         if (rows.size < total) item(key = "more") {
             Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                 PillButton(t("common.more"), onClick = model::loadMore, enabled = writable && !busy && failedAction == null)
             }
         }
     }
-}
-
-/**
- * One row on any list, as RN's task row: a card with the priority strip, the title,
- * and core's project and dates exactly as core sent them. A tap opens the editor.
- * A swipe right completes, and the circle button completes too, for TalkBack and
- * one-handed use. An Upcoming row also shows core's reveal date, and a project row
- * core's sequence cue as [note]; [available] marks core's available next action.
- * A read-only project's rows are not [completable].
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun TaskRowItem(model: InboxViewModel, task: TaskRow, completable: Boolean = true, note: String? = null, available: Boolean = false) = with(model) {
-    val theme = LocalTheme.current
-    val c = theme.colors
-    val done = t("common.done")
-    val canComplete = writable && !busy &&
-        (failedAction == null || failedAction == FailedAction("complete", task.id))
-    val canEdit = writable && !busy && failedAction == null
-    val shape = RoundedCornerShape(theme.rowRadius)
-    val strip = theme.priority(task.priority)
-    Box(Modifier.padding(bottom = 6.dp)) {
-        SwipeToComplete(enabled = completable && canComplete, label = done, shape = shape, onComplete = { complete(task.id) }) {
-            Row(
-                Modifier.fillMaxWidth().clip(shape).background(c.bg).background(if (available) theme.availableBg else c.taskItemBg)
-                    .border(1.dp, if (available) theme.availableBorder else c.border, shape)
-                    .pointerInput(canEdit) { detectTapGestures { if (canEdit) openEditor(task.id) } }
-                    .drawBehind {
-                        // RN's priority strip: 3 wide, 6 in from the start, 8 from the top and the bottom.
-                        if (strip != null) drawRoundRect(strip, Offset(6.dp.toPx(), 8.dp.toPx()),
-                            Size(3.dp.toPx(), size.height - 16.dp.toPx()), CornerRadius(2.dp.toPx()))
-                    }
-                    .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = if (completable) 4.dp else 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(task.title, style = rnText(15, 500, 20), color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().clickable(enabled = canEdit, onClickLabel = t("common.edit")) { openEditor(task.id) })
-                    val start = task.startTime?.let { "${t("taskEdit.startDateLabel")}: $it" }
-                    if (task.projectTitle != null || task.dueDate != null || start != null || note != null) {
-                        FlowRow(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            task.projectTitle?.let { project ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(6.dp).clip(CircleShape).background(c.tint))
-                                    MetaText(project, c.secondaryText, 500, Modifier.padding(start = 4.dp))
-                                }
-                            }
-                            task.dueDate?.let { MetaText(it, c.secondaryText, 600) }
-                            start?.let { MetaText(it, c.secondaryText, 500) }
-                            note?.let { MetaText(it, if (available) c.tint else c.secondaryText, 600) }
-                        }
-                    }
-                    task.revealDate?.let { MetaText(it, c.secondaryText, 600, Modifier.padding(top = 4.dp)) }
-                }
-                if (completable) {
-                    IconButton(onClick = { complete(task.id) }, enabled = canComplete,
-                        modifier = Modifier.semantics { contentDescription = "$done ${task.title}" }) {
-                        Icon(Lucide.Circle, null, tint = c.secondaryText, modifier = Modifier.size(22.dp).alpha(if (canComplete) 1f else 0.4f))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MetaText(text: String, color: Color, weight: Int, modifier: Modifier = Modifier) =
-    Text(text, style = rnText(12, weight, 16), color = color, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = modifier)
-
-/**
- * RN's swipe right: the row slides over core's Done color with Check and "Done".
- * RN reveals a Done button to tap; here the swipe itself completes (one gesture),
- * and the row springs back while core's reply and the list refresh arrive.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SwipeToComplete(enabled: Boolean, label: String, shape: RoundedCornerShape, onComplete: () -> Unit, content: @Composable () -> Unit) {
-    val theme = LocalTheme.current
-    val state = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
-        if (value == SwipeToDismissBoxValue.StartToEnd) onComplete()
-        false
-    })
-    SwipeToDismissBox(
-        state,
-        backgroundContent = {
-            Row(Modifier.fillMaxSize().clip(shape).background(theme.done).padding(start = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Lucide.Check, null, tint = theme.onAction, modifier = Modifier.size(20.dp))
-                Text(label, style = rnText(12, 600), color = theme.onAction, modifier = Modifier.padding(start = 4.dp))
-            }
-        },
-        enableDismissFromStartToEnd = enabled,
-        enableDismissFromEndToStart = false,
-        content = { content() },
-    )
 }

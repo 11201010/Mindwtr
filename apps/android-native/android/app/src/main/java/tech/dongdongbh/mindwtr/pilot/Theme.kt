@@ -74,26 +74,55 @@ private val PRESETS = mapOf(
 
 /** Core's theme reply (host-entry.ts `theme`): the preset, Material 3 or not, a fixed scheme or the system's, and core's hues. */
 object ThemeChoice {
-    class Reply(val preset: String, val material: Boolean, val scheme: String?, val doneLight: Color, val doneDark: Color, val priority: Map<String, Color>)
+    class Reply(val preset: String, val material: Boolean, val scheme: String?,
+                val statusLight: Map<String, StatusColors>, val statusDark: Map<String, StatusColors>, val priority: Map<String, Color>)
 
     /** Set once at boot, before any list shows. Null until then, or when the read failed: RN's default look. */
     @Volatile var current: Reply? = null
         private set
 
+    private fun palette(json: JSONObject): Map<String, StatusColors> = json.keys().asSequence().associateWith { status ->
+        json.getJSONObject(status).let { StatusColors(coreColor(it.getString("bg")), coreColor(it.getString("text")), coreColor(it.getString("border"))) }
+    }
+
     fun load(json: JSONObject) {
-        val done = json.getJSONObject("done")
+        val status = json.getJSONObject("status")
         val priority = json.getJSONObject("priority")
         current = Reply(
             json.getString("preset"), json.getBoolean("material"), if (json.isNull("scheme")) null else json.getString("scheme"),
-            rgb(done.getString("light")), rgb(done.getString("dark")),
+            palette(status.getJSONObject("light")), palette(status.getJSONObject("dark")),
             priority.keys().asSequence().associateWith { rgb(priority.getString(it)) },
         )
     }
 }
 
+/** One core status color set (StatusColorSet): the badge background, its text, and its border. */
+@Immutable
+data class StatusColors(val bg: Color, val text: Color, val border: Color)
+
+/**
+ * A color core sends as data (an area's color, a status badge): `#RGB`, `#RRGGBB`, or
+ * `#RRGGBBAA` read in RN's order (alpha last). Anything else is null, so the caller
+ * falls back to a theme color, as RN's `part.dotColor || tc.tint` does.
+ */
+fun coreColorOrNull(hex: String?): Color? {
+    val digits = hex?.takeIf { it.startsWith("#") }?.substring(1) ?: return null
+    if (digits.any { it.digitToIntOrNull(16) == null }) return null
+    return when (digits.length) {
+        3 -> Color(0xFF000000 or digits.map { "$it$it" }.joinToString("").toLong(16))
+        6 -> Color(0xFF000000 or digits.toLong(16))
+        8 -> Color((digits.substring(6).toLong(16) shl 24) or digits.substring(0, 6).toLong(16))
+        else -> null
+    }
+}
+
+private fun coreColor(hex: String): Color = requireNotNull(coreColorOrNull(hex)) { "Unsupported color $hex" }
+
 /** Everything a screen draws with: RN's tokens for one theme and scheme, plus RN's few fixed colors. */
 @Immutable
-class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial: Boolean, val done: Color, private val priorities: Map<String, Color>) {
+class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial: Boolean, private val statuses: Map<String, StatusColors>, private val priorities: Map<String, Color>) {
+    /** Core's status colors for a task status (RN's useStatusColors); the plain theme colors if core sent none. */
+    fun status(value: String): StatusColors = statuses[value] ?: StatusColors(colors.filterBg, colors.secondaryText, colors.border)
     /** Core's TASK_PRIORITY_COLORS hue for a priority value, or none. */
     fun priority(value: String?): Color? = value?.let(priorities::get)
     /** RN's task row radius (M3 shape.large on Material 3) and capture button radius. */
@@ -102,10 +131,19 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     /** RN's FOCUS_STAR_COLOR, and the amber of its "no next action" warning. */
     val star = rgb("#F59E0B")
     val attention = rgb("#F59E0B")
+    /** RN's row meta colors: a context, a tag, and the amber of a project deadline or a date issue. */
+    val context = rgb("#3B82F6")
+    val tag = rgb("#7C3AED")
+    val metaAmber = rgb("#F59E0B")
+    /** RN's project status hues (buildProjectStatusPalette): Waiting and Someday; Active is the tint, Closed the secondary text. */
+    val projectWaiting = rgb("#F59E0B")
+    val projectSomeday = rgb("#A855F7")
     /** RN's swipe action label and icon. */
     val onAction = rgb("#FFFFFF")
     /** RN's sheet backdrop, rgba(0,0,0,0.35). */
     val scrim = rgba(0, 0, 0, 0.35f)
+    /** RN's status menu backdrop, rgba(0,0,0,0.5). */
+    val menuScrim = rgba(0, 0, 0, 0.5f)
     /** RN's highlight of a project's available next action. */
     val availableBg = if (isDark) rgba(59, 130, 246, 0.08f) else rgba(59, 130, 246, 0.05f)
     val availableBorder = if (isDark) rgba(59, 130, 246, 0.34f) else rgba(59, 130, 246, 0.24f)
@@ -122,8 +160,8 @@ fun mindwtrTheme(reply: ThemeChoice.Reply?, systemDark: Boolean): MindwtrTheme {
         material -> if (dark) M3_DARK else M3_LIGHT
         else -> if (dark) DARK else LIGHT
     }
-    val done = reply?.let { if (dark) it.doneDark else it.doneLight } ?: colors.success
-    return MindwtrTheme(colors, dark, material, done, reply?.priority.orEmpty())
+    val statuses = reply?.let { if (dark) it.statusDark else it.statusLight }.orEmpty()
+    return MindwtrTheme(colors, dark, material, statuses, reply?.priority.orEmpty())
 }
 
 val LocalTheme = staticCompositionLocalOf { mindwtrTheme(null, false) }

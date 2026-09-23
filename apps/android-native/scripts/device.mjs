@@ -83,14 +83,37 @@ export const draftText = (nodes) => field(nodes)?.text ?? '';
 export const hasText = (nodes, text) => nodes.some((node) => node.text === text && node.class !== 'android.widget.EditText');
 /** The message of a failed boot: the app then shows only this text, tagged for tests, and no command control. */
 export const bootFailure = (nodes) => nodes.find((node) => /(^|\/)boot-failure$/.test(node['resource-id'] ?? ''))?.text;
-/** Task rows with a Done button fully inside the list: core's `common.done` label, then the title. */
-export const doneButtons = (nodes) => {
+/**
+ * Task rows fully inside the list: each row's title node (test tag `task-row`), whose text is the
+ * title and whose `enabled` is the row's edit lock. RN draws no Done button: Done is a swipe
+ * right and a TalkBack custom action.
+ */
+export const taskRows = (nodes) => {
     const list = nodes.find((node) => node.scrollable === 'true');
     const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
-    return nodes.filter((node) => node['content-desc']?.startsWith('Done ')).filter((node) => {
+    return nodes.filter((node) => /(^|\/)task-row$/.test(node['resource-id'] ?? '')).filter((node) => {
         const [, t, , b] = box(node);
         return t >= top && b <= bottom;
     });
+};
+export const taskRow = (nodes, title) => taskRows(nodes).find((node) => node.text === title);
+/**
+ * The node reading [text] only when it lies fully inside the list. A row scrolled partly
+ * under the tab bar still reports bounds there, so tapping its middle can hit the tab bar's
+ * center capture button (check-focus-device failure 2026-09-23T18-15-24).
+ */
+export const inList = (nodes, text) => {
+    const list = nodes.find((node) => node.scrollable === 'true');
+    const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
+    return nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText' && box(node)[1] >= top && box(node)[3] <= bottom);
+};
+/** The control labelled [label] on the same line as the row titled [title] (RN's star sits beside the title). */
+export const besideRow = (nodes, title, label) => {
+    const row = nodes.find((node) => node.text === title && node.class !== 'android.widget.EditText');
+    if (!row) return undefined;
+    const [, t, , b] = box(row);
+    const middle = (t + b) / 2;
+    return nodes.find((node) => node['content-desc'] === label && box(node)[1] <= middle && box(node)[3] >= middle);
 };
 
 export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/dd/Android/Sdk/platform-tools/adb' }) {
@@ -185,13 +208,13 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         await waitFor(`the draft ${title} in the field`, (nodes) => field(nodes)?.text === title, 10_000);
     };
     /**
-     * Scrolls the app's list until a row reads [text]: back to the top first (an earlier
-     * step may have left the list scrolled past the row), then forward. The list grows with every run.
+     * Scrolls the app's list until a row reading [text] lies fully inside it (see inList): back to the
+     * top first (an earlier step may have left the list scrolled past the row), then forward.
      */
     const reveal = async (text, swipes = 150) => {
         let nodes = await screen();
         for (const towardTop of [true, false]) {
-            for (let step = 0; step < swipes && !hasText(nodes, text); step += 1) {
+            for (let step = 0; step < swipes && !inList(nodes, text); step += 1) {
                 let next = await swipe(nodes, towardTop ? 'up' : 'down');
                 if (signature(next) === signature(nodes)) {
                     // At the bottom of a paged list: load the next window (core's `common.more`) and keep going.
@@ -205,11 +228,32 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
                 }
                 nodes = next;
             }
-            if (hasText(nodes, text)) break;
+            if (inList(nodes, text)) break;
         }
         return nodes;
     };
+    /** Swipes the row titled [title] to the right: RN's swipe action, Done in this app. */
+    const swipeDone = async (nodes, title) => {
+        const row = taskRow(nodes, title) ?? fail(`no row ${title} on screen`);
+        requireAppFront();
+        const [x1, y1, , y2] = box(row);
+        const y = Math.round((y1 + y2) / 2);
+        sh(`input swipe ${x1 + 10} ${y} ${x1 + 650} ${y} 300`);
+        await sleep(600);
+    };
+    /** Swipes [title] to Done until [done] holds; a swipe can land while the list still moves, so swipe again. */
+    const completeUntil = async (title, description, done) => {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const nodes = await screen();
+            // The last swipe took effect after the wait ran out: another would be a second command.
+            if (attempt > 0 && done(nodes)) return nodes;
+            if (!taskRow(nodes, title) && attempt > 0) break;
+            await swipeDone(nodes, title);
+            try { return await waitFor(description, done, 8_000); } catch { /* swipe again */ }
+        }
+        return waitFor(description, done, 20_000);
+    };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull, swipeDone, completeUntil };
 }

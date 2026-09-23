@@ -24,6 +24,10 @@ val LABEL_KEYS = listOf(
     "common.tasks", "filters.starred", "projects.availableNextAction", "projects.laterInSequence",
     "markdown.expand", "markdown.collapse",
     "inbox.empty", "inbox.emptyAddHint", "agenda.allClear", "agenda.noTasks", "projects.empty",
+    "agenda.addToFocus", "agenda.removeFromFocus", "projects.addToFocus", "projects.removeFromFocus",
+    "taskStatus.changeStatus", "task.aria.changeStatus", "task.aria.changeStatusHint",
+    "projects.addPlaceholder", "projects.add", "projects.areaFilter", "agenda.reviewDueProjects", "common.open",
+    "agenda.collapseOtherSections", "agenda.expandOtherSections", "status.active", "status.archived", "list.done", "archived.restoreToInbox",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

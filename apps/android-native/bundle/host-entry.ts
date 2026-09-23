@@ -105,7 +105,8 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
-const taskResult = <T>(operation: 'create' | 'complete' | 'update', result: Parameters<typeof unwrap<T>>[0]): T => {
+type Command = 'create' | 'complete' | 'update' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter';
+const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const meta = {
         scope: 'native-android',
         category: 'storage' as const,
@@ -264,9 +265,10 @@ globalThis.MindwtrHost = {
                 preset: preset ?? 'default',
                 material: mode === 'material3-light' || mode === 'material3-dark',
                 scheme: descriptor?.scheme ?? null,
-                done: {
-                    light: STATUS_COLORS_BY_THEME[preset ?? 'light'].done.text,
-                    dark: STATUS_COLORS_BY_THEME[preset ?? 'dark'].done.text,
+                // Core's status palettes ({ bg, text, border } per status): RN's badges, glyphs, and Done swipe.
+                status: {
+                    light: STATUS_COLORS_BY_THEME[preset ?? 'light'],
+                    dark: STATUS_COLORS_BY_THEME[preset ?? 'dark'],
                 },
                 priority: TASK_PRIORITY_COLORS,
             };
@@ -294,5 +296,26 @@ globalThis.MindwtrHost = {
     },
     complete(id: string): string {
         return submit(async () => taskResult('complete', await contract.completeTask({ id })));
+    },
+    /** A target state, so an exact retry re-sends the same target. A `{ blocked }` reply wrote nothing. */
+    taskFocus(id: string, focused: boolean): string {
+        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused })));
+    },
+    projectFocus(id: string, focused: boolean): string {
+        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused })));
+    },
+    /** `areaId` "" is no area. Core dedupes a retry by `requestId` within this process. */
+    createProject(title: string, areaId: string, requestId: string): string {
+        return submit(async () => taskResult('createProject', await contract.createProject({ title, areaId: areaId || null, requestId })));
+    },
+    areaFilter(): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getAreaFilter());
+        });
+    },
+    /** `json` is one of getAreaFilter's `next` selections, passed to core unchanged. */
+    setAreaFilter(json: string): string {
+        return submit(async () => taskResult('areaFilter', await contract.setAreaFilter(JSON.parse(json))));
     },
 };

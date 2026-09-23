@@ -39,6 +39,7 @@ internal object ProcessCoreHost {
         val focus: FocusView? = null,
         val projects: ProjectsView? = null,
         val project: ProjectDetail? = null,
+        val areas: AreaFilter? = null,
     )
 
     @Volatile var failure: PendingFailure? = null

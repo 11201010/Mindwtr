@@ -16,7 +16,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, doneButtons, draftText, evidenced, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, box, button, check, connect, draftText, evidenced, field, hasText, Stopped, taskRows } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -139,9 +139,16 @@ try {
     check(pid() === processId && boots(processId) === 1, '(b) same process, no second host boot');
     setProp('delay_before_ms', '');
     // Landscape: the count line is a list item, so one drag scrolls it away and rows fill the screen.
-    console.log(`info - (b) landscape shows ${doneButtons(nodes).length} full task rows below the count line`);
+    console.log(`info - (b) landscape shows ${taskRows(nodes).length} full task rows below the count line`);
     const scrolled = await swipe(nodes, 'down');
-    check(doneButtons(scrolled).length >= 3, `(b) landscape shows ${doneButtons(scrolled).length} full task rows after one drag (at least 3)`);
+    // How many rows the list holds: its height over the row pitch. Counting fully visible rows
+    // instead depends on where the drag happens to stop.
+    const list = scrolled.find((node) => node.scrollable === 'true');
+    const tops = scrolled.filter((node) => /(^|\/)task-row$/.test(node['resource-id'] ?? '')).map((node) => box(node)[1]).sort((a, b) => a - b);
+    const pitches = tops.slice(1).map((top, index) => top - tops[index]).sort((a, b) => a - b);
+    const pitch = pitches[Math.floor(pitches.length / 2)];
+    const rowsHeld = list && pitch ? (box(list)[3] - box(list)[1]) / pitch : 0;
+    check(rowsHeld >= 3, `(b) the landscape list holds ${rowsHeld.toFixed(1)} task rows after one drag (at least 3)`);
     await toTop();
     rotate(0);
     await waitFor('rotation back', () => recreations(processId).length > recreatedBefore + 1, 15_000);
@@ -219,9 +226,9 @@ try {
         check(field(current)?.text === titles.d && field(current)?.enabled === 'false', `(d${label}) draft kept and locked`);
         check(button(current, 'Save')?.enabled === 'true', `(d${label}) exact retry allowed`);
         check(!button(current, 'Try again'), `(d${label}) no read retry offered while the capture's retry is owed`);
-        const completes = current.filter((node) => node['content-desc']?.startsWith('Done '))
-            .map((node) => button(current, node['content-desc'])).filter(Boolean); // a clipped edge row has no match
-        check(completes.length > 0 && completes.every((node) => node.enabled === 'false'), `(d${label}) Done blocked`);
+        // Rows lock with the owed retry (the same rule gates their swipe and TalkBack Done; check-boot-gates.mjs).
+        const rows = taskRows(current);
+        check(rows.length > 0 && rows.every((node) => node.enabled === 'false'), `(d${label}) rows locked`);
     };
     failedState(nodes, '');
     check(rowsTitled(titles.d) === 0, '(d) failed commit stored nothing');
@@ -255,8 +262,8 @@ try {
     await tapAdd();
     nodes = await waitFor('retry d', (current) => header(current) === total + 1 && draftText(current) === '');
     total += 1;
-    check(!hasError(nodes) && doneButtons(nodes).some((node) => button(nodes, node['content-desc'])?.enabled === 'true'),
-        '(d) retry cleared the failure: Done works again');
+    check(!hasError(nodes) && taskRows(nodes).some((node) => node.enabled === 'true'),
+        '(d) retry cleared the failure: rows work again');
     check(rowsTitled(titles.d) === 1 && boots(processId) === 1, '(d) exactly one row, still one host');
 
     // (e) Relaunch: boot validation passes and the counts match.

@@ -120,6 +120,22 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
 
     fun completeTask(id: String): JSONObject = callAsync("complete", id)
 
+    /** Core's setTaskFocus to the target [focused]. A reply with `blocked` wrote nothing. */
+    fun setTaskFocus(id: String, focused: Boolean): JSONObject = callAsync("taskFocus", id, focused)
+
+    /** Core's setProjectFocus to the target [focused]. `{ blocked: "" }` wrote nothing. */
+    fun setProjectFocus(id: String, focused: Boolean): JSONObject = callAsync("projectFocus", id, focused)
+
+    /** Core's createProject; [areaId] "" is no area, and [requestId] is kept for the exact retry. */
+    fun createProject(title: String, areaId: String, requestId: String): JSONObject =
+        callAsync("createProject", title, areaId, requestId)
+
+    /** Core's getAreaFilter: the trigger label, the summary, and each option with its `next` selection. */
+    fun areaFilter(): JSONObject = callAsync("areaFilter")
+
+    /** Core's setAreaFilter with one of getAreaFilter's `next` selections, unchanged. */
+    fun setAreaFilter(selectionJson: String): JSONObject = callAsync("setAreaFilter", selectionJson)
+
     /** Core's editor reply for one task: its seven fields as stored, plus the choices core allows. */
     fun taskEditor(id: String): JSONObject = callAsync("editor", id)
 
@@ -166,7 +182,7 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     }
 
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
-        val command = method in setOf("create", "complete", "update")
+        val command = method in setOf("create", "complete", "update", "taskFocus", "projectFocus", "createProject", "setAreaFilter")
         if (command) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")
