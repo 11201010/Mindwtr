@@ -130,13 +130,15 @@ try {
     check(recreations(processId).at(-1).includes('inFlight=true'), '(b) new Activity attached to the running host during the save');
     nodes = await waitFor('save b after rotation', (current) => header(current) === total + 1 && field(current)?.text === '');
     total += 1;
-    check(hasText(await reveal(titles.b), titles.b), '(b) the recreated Activity shows the saved task');
+    // The header already proves the landscape Activity received the save. Look for the row
+    // after rotating back (another recreation): a landscape Inbox shows about one row.
     check(rowsTitled(titles.b) === 1, '(b) exactly one stored row for the capture');
     check(pid() === processId && boots(processId) === 1, '(b) same process, no second host boot');
     setProp('delay_before_ms', '');
     rotate(0);
     await waitFor('rotation back', () => recreations(processId).length > recreatedBefore + 1, 15_000);
     await loaded();
+    check(hasText(await reveal(titles.b), titles.b), '(b) the recreated Activity shows the saved task');
 
     // (c1) Process death before the commit: the restored draft retries once.
     setProp('delay_before_ms', '8000');

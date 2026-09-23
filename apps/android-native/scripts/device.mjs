@@ -82,18 +82,32 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         sh(`input text ${title}`);
         await waitFor(`the draft ${title} in the field`, (nodes) => field(nodes)?.text === title, 10_000);
     };
-    /** Scrolls the app's list forward until a row reads [text]; the list grows with every run. */
-    const reveal = async (text, swipes = 12) => {
-        let nodes = await screen();
-        for (let swipe = 0; swipe < swipes && !hasText(nodes, text); swipe += 1) {
+    /**
+     * Scrolls the app's list until a row reads [text]: back to the top first (an earlier
+     * step may have left the list scrolled past the row), then forward. The list grows with every run.
+     */
+    const reveal = async (text, swipes = 150) => {
+        const signature = (nodes) => nodes.map((node) => `${node.text}|${node.bounds}`).join('\n');
+        const step = async (nodes, towardTop) => {
             const list = nodes.find((node) => node.scrollable === 'true');
-            if (!list) break;
+            if (!list) return nodes;
             requireAppFront();
             const [x1, y1, x2, y2] = box(list);
             const x = Math.round((x1 + x2) / 2);
-            sh(`input swipe ${x} ${Math.round(y2 - (y2 - y1) * 0.15)} ${x} ${Math.round(y1 + (y2 - y1) * 0.15)} 300`);
+            const [low, high] = [Math.round(y2 - (y2 - y1) * 0.15), Math.round(y1 + (y2 - y1) * 0.15)];
+            // A moderate drag: a fast one flings past rows on a short (landscape) list.
+            sh(`input swipe ${x} ${towardTop ? high : low} ${x} ${towardTop ? low : high} 500`);
             await sleep(400);
-            nodes = await screen();
+            return screen();
+        };
+        let nodes = await screen();
+        for (const towardTop of [true, false]) {
+            for (let swipe = 0; swipe < swipes && !hasText(nodes, text); swipe += 1) {
+                const next = await step(nodes, towardTop);
+                if (signature(next) === signature(nodes)) break;
+                nodes = next;
+            }
+            if (hasText(nodes, text)) break;
         }
         return nodes;
     };

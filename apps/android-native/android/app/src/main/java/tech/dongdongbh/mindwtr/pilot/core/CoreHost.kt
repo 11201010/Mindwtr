@@ -96,6 +96,13 @@ class CoreHost(private val databaseFile: File) {
     fun inboxWindow(offset: Int, limit: Int, revision: String): JSONObject =
         callAsync("window", offset, limit, revision)
 
+    /** Core's getFocus: its sections in its order, the first [limit] rows of each. */
+    fun focus(limit: Int): JSONObject = callAsync("focus", limit)
+
+    /** Core's getFocusSectionWindow. A changed Focus fails with "STALE_REVISION: …". */
+    fun focusWindow(key: String, offset: Int, limit: Int, revision: String): JSONObject =
+        callAsync("focusWindow", key, offset, limit, revision)
+
     fun createInboxTask(title: String, captureId: String): JSONObject =
         callAsync("create", title, captureId)
 

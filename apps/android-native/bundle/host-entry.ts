@@ -5,6 +5,7 @@ import {
     logWarn,
     setStorageAdapter,
     splitSqlStatements,
+    type FocusTaskSectionKey,
     type SqliteClient,
     useTaskStore,
 } from '@mindwtr/core';
@@ -152,6 +153,19 @@ globalThis.MindwtrHost = {
         return submit(async () => {
             requireSaved();
             return unwrap(contract.getInboxWindow({ offset, limit, revision: revision || undefined }));
+        });
+    },
+    focus(limit: number): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getFocus({ limit }));
+        });
+    },
+    /** Core checks `key` and refuses a stale `revision`; Kotlin then reads Focus again from offset 0. */
+    focusWindow(key: string, offset: number, limit: number, revision: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getFocusSectionWindow({ key: key as FocusTaskSectionKey, offset, limit, revision }));
         });
     },
     editor(id: string): string {
