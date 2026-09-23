@@ -2,13 +2,40 @@ import { isTaskVisibleInInbox } from './area-filter';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
+import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { sortTasksBy } from './task-utils';
-import type { Task } from './types';
+import { hasTimeComponent, safeParseDate } from './date';
+import type { Project, Task, TaskPriority, TaskStatus } from './types';
 import { generateUUID } from './uuid';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
+export const NATIVE_HOST_EDITOR_FIELDS = ['title', 'description', 'status', 'priority', 'projectId', 'startTime', 'dueDate'] as const;
+export type NativeEditableFields = {
+    title: string;
+    description: string | null;
+    status: TaskStatus;
+    priority: TaskPriority | null;
+    projectId: string | null;
+    startTime: string | null;
+    dueDate: string | null;
+};
+export type NativeTaskEditor = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    id: string;
+    fields: NativeEditableFields;
+    projects: Array<Pick<Project, 'id' | 'title'>>;
+    readOnly: boolean;
+    statuses: TaskStatus[];
+    priorities: TaskPriority[];
+};
+
 const CAPTURE_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
+const EDITOR_FIELD_SET = new Set<string>(NATIVE_HOST_EDITOR_FIELDS);
+const EDITOR_STATUSES = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done'] as const satisfies readonly TaskStatus[];
+const EDITOR_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const satisfies readonly TaskPriority[];
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const EDITOR_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]([01]\d|2[0-3]):?[0-5]\d)?$/;
 
 export type NativeHostErrorCode = 'NOT_READY' | 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'ACTION_FAILED' | 'SAVE_FAILED';
 export type NativeHostResult<T> = { ok: true; value: T } | {
@@ -38,6 +65,17 @@ const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<neve
 });
 const hasLoadError = (message: string | null): boolean => (
     message?.startsWith('Failed to fetch data') === true || message === 'Storage request timed out. Try again.'
+);
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+);
+const isValidEditorDate = (value: unknown): value is string => (
+    typeof value === 'string'
+    && safeParseDate(value) !== null
+    && (DATE_ONLY_PATTERN.test(value) || (EDITOR_DATETIME_PATTERN.test(value) && hasTimeComponent(value)))
+);
+const normalizeEditorValue = (field: keyof NativeEditableFields, value: unknown): unknown => (
+    value == null || (field === 'description' && value === '') ? null : value
 );
 
 /** One instance per serial native JS host. All reads and commands use the shared store. */
@@ -190,6 +228,164 @@ export function createNativeHostContract() {
             const task = useTaskStore.getState()._tasksById.get(input.id);
             if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
             return { ok: true, value: JSON.parse(JSON.stringify(task)) as Task };
+        },
+
+        getTaskEditor(input: { id: string }): NativeHostResult<NativeTaskEditor> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const taskProject = task.projectId
+                ? state._allProjects.find((project) => project.id === task.projectId)
+                : undefined;
+            const projects = state._allProjects
+                .filter((project) => isSelectableProjectForTaskAssignment(project)
+                    || (project.id === task.projectId && !project.deletedAt && project.status === 'archived'))
+                .map(({ id, title }) => ({ id, title }));
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    id: task.id,
+                    fields: {
+                        title: task.title,
+                        description: task.description ?? null,
+                        status: task.status,
+                        priority: task.priority ?? null,
+                        projectId: task.projectId ?? null,
+                        startTime: task.startTime ?? null,
+                        dueDate: task.dueDate ?? null,
+                    },
+                    projects,
+                    readOnly: taskProject?.status === 'archived',
+                    statuses: [...EDITOR_STATUSES],
+                    priorities: [...EDITOR_PRIORITIES],
+                },
+            };
+        },
+
+        async updateTask(input: {
+            id: string;
+            base: Partial<NativeEditableFields>;
+            patch: Partial<NativeEditableFields>;
+        }): Promise<NativeHostResult<{ id: string; changed: boolean }>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
+            if (!isObjectRecord(input.base) || !isObjectRecord(input.patch)) {
+                return fail('INVALID_INPUT', 'base and patch must be objects');
+            }
+            const patchKeys = Object.keys(input.patch);
+            if (patchKeys.length === 0) return fail('INVALID_INPUT', 'patch must include an editor field');
+            if (patchKeys.some((key) => !EDITOR_FIELD_SET.has(key))) {
+                return fail('INVALID_INPUT', 'patch fields must be title, description, status, priority, projectId, startTime, or dueDate');
+            }
+            const baseKeys = Object.keys(input.base);
+            const mismatchedFields = NATIVE_HOST_EDITOR_FIELDS.filter((field) =>
+                Object.prototype.hasOwnProperty.call(input.base, field)
+                !== Object.prototype.hasOwnProperty.call(input.patch, field));
+            if (baseKeys.length !== patchKeys.length || mismatchedFields.length > 0) {
+                const fields = mismatchedFields.length > 0 ? `: ${mismatchedFields.join(', ')}` : '';
+                return fail('INVALID_INPUT', `base and patch fields must match${fields}`);
+            }
+
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const taskProject = task.projectId
+                ? state._allProjects.find((project) => project.id === task.projectId)
+                : undefined;
+            if (taskProject?.status === 'archived') {
+                return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
+            }
+
+            for (const key of patchKeys) {
+                const field = key as keyof NativeEditableFields;
+                const value = input.patch[field];
+                switch (field) {
+                    case 'title':
+                        if (typeof value !== 'string' || !value.trim()) return fail('INVALID_INPUT', 'title must be a non-blank string');
+                        break;
+                    case 'status':
+                        if (typeof value !== 'string' || !EDITOR_STATUSES.some((status) => status === value)) {
+                            return fail('INVALID_INPUT', 'status must be an editable status');
+                        }
+                        break;
+                    case 'description':
+                        if (value != null && typeof value !== 'string') return fail('INVALID_INPUT', 'description must be a string or null');
+                        break;
+                    case 'priority':
+                        if (value != null && !EDITOR_PRIORITIES.some((priority) => priority === value)) {
+                            return fail('INVALID_INPUT', 'priority must be an editable priority or null');
+                        }
+                        break;
+                    case 'projectId':
+                        if (value != null) {
+                            const project = typeof value === 'string'
+                                ? state._allProjects.find((candidate) => candidate.id === value)
+                                : undefined;
+                            if (!project || !isSelectableProjectForTaskAssignment(project)) {
+                                return fail('INVALID_INPUT', 'projectId must reference an editable project or null');
+                            }
+                        }
+                        break;
+                    case 'startTime':
+                    case 'dueDate':
+                        if (value != null && !isValidEditorDate(value)) {
+                            return fail('INVALID_INPUT', `${field} must be a valid date or datetime`);
+                        }
+                        break;
+                }
+            }
+
+            const resultingStatus = Object.prototype.hasOwnProperty.call(input.patch, 'status')
+                ? input.patch.status
+                : task.status;
+            if (resultingStatus === 'reference') {
+                for (const field of ['priority', 'startTime', 'dueDate'] as const) {
+                    if (Object.prototype.hasOwnProperty.call(input.patch, field) && input.patch[field] != null) {
+                        return fail('INVALID_INPUT', `${field} cannot be set while status is reference`);
+                    }
+                }
+            }
+
+            const updates: Partial<Task> = {};
+            const conflicts: string[] = [];
+            for (const key of patchKeys) {
+                const field = key as keyof NativeEditableFields;
+                const current = normalizeEditorValue(field, task[field]);
+                const base = normalizeEditorValue(field, input.base[field]);
+                const next = normalizeEditorValue(field, input.patch[field]);
+                if (current === base) {
+                    if (current !== next) Object.assign(updates, { [field]: next === null ? undefined : next });
+                } else if (current !== next) {
+                    conflicts.push(field);
+                }
+            }
+            if (conflicts.length > 0) {
+                return fail('STALE_REVISION', `Task changed while editing: ${conflicts.join(', ')}`);
+            }
+
+            const changed = Object.keys(updates).length > 0;
+            try {
+                if (changed) {
+                    const result = await useTaskStore.getState().updateTask(input.id, updates);
+                    if (!result.success) {
+                        const failure = useTaskStore.getState().persistenceFailure;
+                        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? result.error ?? 'Task update failed');
+                    }
+                } else if (useTaskStore.getState().persistenceFailure) {
+                    await useTaskStore.getState().retryPersistence();
+                }
+                const saved = await save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: { id: input.id, changed } };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
+            }
         },
 
         /** Reuse captureId for retries so a failed save cannot create a duplicate. */
