@@ -33,6 +33,7 @@ type ProjectAreaModalsProps = {
     onSetSelectedProject: React.Dispatch<React.SetStateAction<Project | null>>;
     onSetShowAreaManager: React.Dispatch<React.SetStateAction<boolean>>;
     onSetShowAreaPicker: React.Dispatch<React.SetStateAction<boolean>>;
+    reorderAreas: (orderedIds: string[]) => void | Promise<void>;
     onShowToast: (options: { title: string; message: string; tone: 'warning' | 'error' | 'success' | 'info' }) => void;
     overlayModalPresentation: 'overFullScreen' | 'fullScreen';
     pickerCardMaxHeight: number;
@@ -65,6 +66,7 @@ export function ProjectAreaModals({
     onSetSelectedProject,
     onSetShowAreaManager,
     onSetShowAreaPicker,
+    reorderAreas,
     onShowToast,
     overlayModalPresentation,
     pickerCardMaxHeight,
@@ -196,7 +198,7 @@ export function ProjectAreaModals({
                                 showsVerticalScrollIndicator
                                 nestedScrollEnabled
                             >
-                                {sortedAreas.map((area) => {
+                                {sortedAreas.map((area, index) => {
                                     const inUse = (areaUsage.get(area.id) || 0) > 0;
                                     const isExpanded = expandedAreaColorId === area.id;
                                     return (
@@ -207,6 +209,20 @@ export function ProjectAreaModals({
                                                     <Text style={[styles.areaManagerText, { color: tc.text }]}>{area.name}</Text>
                                                 </View>
                                                 <View style={styles.areaManagerActions}>
+                                                    <TouchableOpacity
+                                                        accessibilityRole="button"
+                                                        accessibilityLabel={`${t('projects.moveUp')}: ${area.name}`}
+                                                        accessibilityState={{ disabled: index === 0 }}
+                                                        disabled={index === 0}
+                                                        onPress={() => {
+                                                            const ids = sortedAreas.map((item) => item.id);
+                                                            [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
+                                                            void reorderAreas(ids);
+                                                        }}
+                                                        style={[styles.areaOrderButton, index === 0 && styles.areaOrderButtonDisabled]}
+                                                    >
+                                                        <Text style={[styles.areaOrderText, { color: tc.text }]}>↑</Text>
+                                                    </TouchableOpacity>
                                                     <TouchableOpacity
                                                         onPress={() => onSetExpandedAreaColorId(isExpanded ? null : area.id)}
                                                         style={[styles.colorToggleButton, { borderColor: tc.border }]}
@@ -301,10 +317,12 @@ export function ProjectAreaModals({
                                 <Text style={[styles.linkModalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
+                                accessibilityRole="button"
+                                accessibilityLabel={t('common.save')}
                                 onPress={() => {
                                     const name = newAreaName.trim();
                                     if (!name) return;
-                                    if (!selectedProject || !getLiveMutableProject(selectedProject.id)) {
+                                    if (selectedProject && !getLiveMutableProject(selectedProject.id)) {
                                         dismissProjectPickers();
                                         return;
                                     }

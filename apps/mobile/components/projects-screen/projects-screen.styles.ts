@@ -906,8 +906,10 @@ export const projectsScreenStyles = StyleSheet.create({
         borderWidth: 1,
     },
     areaOrderButton: {
-        paddingHorizontal: 6,
-        paddingVertical: 2,
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
         borderRadius: 6,
         borderWidth: 1,
         borderColor: 'transparent',

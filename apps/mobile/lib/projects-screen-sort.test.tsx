@@ -19,6 +19,7 @@ const modalCapture = vi.hoisted(() => ({
   projectTaskSortBy: undefined as string | undefined,
   onProjectTaskSortByChange: undefined as ((next: string) => void) | undefined,
   overlayVisible: false,
+  areaManagerVisible: false,
 }));
 
 const now = '2026-06-15T00:00:00.000Z';
@@ -84,6 +85,7 @@ beforeEach(() => {
   modalCapture.projectTaskSortBy = undefined;
   modalCapture.onProjectTaskSortByChange = undefined;
   modalCapture.overlayVisible = false;
+  modalCapture.areaManagerVisible = false;
 });
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -224,7 +226,12 @@ vi.mock('@/components/projects-screen/use-project-attachments', () => ({
   }),
 }));
 
-vi.mock('@/components/projects-screen/ProjectAreaModals', () => ({ ProjectAreaModals: () => null }));
+vi.mock('@/components/projects-screen/ProjectAreaModals', () => ({
+  ProjectAreaModals: (props: { showAreaManager: boolean }) => {
+    modalCapture.areaManagerVisible = props.showAreaManager;
+    return null;
+  },
+}));
 vi.mock('@/components/projects-screen/ProjectDetailModal', () => ({
   ProjectDetailModal: (props: {
     taskSortBy?: string;
@@ -273,6 +280,13 @@ const renderOpenedProject = async () => {
 };
 
 describe('ProjectsScreen per-project sort persistence', () => {
+  it('opens area management directly from the Projects list', async () => {
+    const tree = await renderOpenedProject();
+    expect(modalCapture.areaManagerVisible).toBe(false);
+    act(() => tree.root.findByProps({ accessibilityLabel: 'areas.manage' }).props.onPress());
+    expect(modalCapture.areaManagerVisible).toBe(true);
+  });
+
   it('initializes the sort to default when the project has no persisted sort', async () => {
     await renderOpenedProject();
 

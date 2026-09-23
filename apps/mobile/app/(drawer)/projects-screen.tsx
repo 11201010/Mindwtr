@@ -1004,32 +1004,42 @@ export default function ProjectsScreen() {
           </View>
         )}
         <View style={styles.filterSection}>
-          <TouchableOpacity
-            accessibilityLabel={`${projectTagFilterHeading}, ${projectTagFilterActionLabel}`}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: showTagFilter, selected: projectTagFilterActive }}
-            onPress={() => setShowTagFilter((current) => !current)}
-            style={styles.filterHeader}
-            testID="projects-tag-filter-toggle"
-          >
-            <CompactText
-              numberOfLines={1}
-              style={[
-                styles.tagFilterLabel,
-                { color: projectTagFilterActive ? tc.tint : tc.text },
-              ]}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TouchableOpacity
+              accessibilityLabel={`${projectTagFilterHeading}, ${projectTagFilterActionLabel}`}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showTagFilter, selected: projectTagFilterActive }}
+              onPress={() => setShowTagFilter((current) => !current)}
+              style={[styles.filterHeader, { flex: 1 }]}
+              testID="projects-tag-filter-toggle"
             >
-              {projectTagFilterHeading}
-            </CompactText>
-            <CompactText
-              adjustsFontSizeToFit
-              minimumFontScale={0.78}
-              numberOfLines={1}
-              style={[styles.filterToggleText, { color: tc.secondaryText }]}
+              <CompactText
+                numberOfLines={1}
+                style={[
+                  styles.tagFilterLabel,
+                  { color: projectTagFilterActive ? tc.tint : tc.text },
+                ]}
+              >
+                {projectTagFilterHeading}
+              </CompactText>
+              <CompactText
+                adjustsFontSizeToFit
+                minimumFontScale={0.78}
+                numberOfLines={1}
+                style={[styles.filterToggleText, { color: tc.secondaryText }]}
+              >
+                {projectTagFilterActionLabel}
+              </CompactText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={t('areas.manage')}
+              onPress={() => setShowAreaManager(true)}
+              style={[styles.areaSortButton, { borderColor: tc.border, minHeight: 44, justifyContent: 'center' }]}
             >
-              {projectTagFilterActionLabel}
-            </CompactText>
-          </TouchableOpacity>
+              <CompactText style={[styles.areaSortText, { color: tc.text }]}>{t('areas.manage')}</CompactText>
+            </TouchableOpacity>
+          </View>
           {showTagFilter ? renderProjectTagFilters() : null}
         </View>
       </View>
@@ -1143,6 +1153,7 @@ export default function ProjectsScreen() {
         onSetSelectedProject={setSelectedProject}
         onSetShowAreaManager={setShowAreaManager}
         onSetShowAreaPicker={setShowAreaPicker}
+        reorderAreas={reorderAreas}
         onShowToast={showToast}
         overlayModalPresentation={overlayModalPresentation}
         pickerCardMaxHeight={pickerCardMaxHeight}
