@@ -52,7 +52,7 @@ describe('normalizeTaskForLoad focusOrder invariant', () => {
         expect(normalized.focusOrder).toBeUndefined();
     });
 
-    it('clears focusOrder when a focused task defers to a future start', () => {
+    it('keeps a queued star but clears focusOrder until its future start', () => {
         const task = createTask({
             status: 'next',
             isFocusedToday: true,
@@ -62,7 +62,7 @@ describe('normalizeTaskForLoad focusOrder invariant', () => {
 
         const normalized = normalizeTaskForLoad(task, NOW_ISO);
 
-        expect(normalized.isFocusedToday).toBe(false);
+        expect(normalized.isFocusedToday).toBe(true);
         expect(normalized.focusOrder).toBeUndefined();
     });
 

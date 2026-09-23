@@ -26,6 +26,7 @@ import {
     isSupportedLanguage,
     isSandboxMode,
     isTaskFinished,
+    isTaskFocusedNow,
     recordDonationPromptShown,
     recordUpdateReminderChecked,
     recordUpdateReminderDismissed,
@@ -45,6 +46,7 @@ import {
     type AppAnnouncementAction,
 } from '@mindwtr/core';
 import { buildTrayTooltip } from './lib/tray-tooltip';
+import { useLocalDayKey } from './hooks/useLocalDayKey';
 import { GlobalSearch } from './components/GlobalSearch';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { StartupPromptModal, type StartupPromptPresentation } from './components/StartupPromptModal';
@@ -324,13 +326,14 @@ function App() {
     // store's identity check and re-render on every write. NUL is the separator
     // because it cannot occur in a task title — a space would split multi-word
     // titles into separate entries.
-    const focusTaskTitles = useTaskStore((state) => (
-        sortTasksByFocusOrder(
-            state.tasks.filter((task) => (
-                task.isFocusedToday && !isTaskFinished(task)
-            ))
-        ).map((task) => task.title).join(FOCUS_TITLE_SEPARATOR)
-    ));
+    const focusTasks = useTaskStore((state) => state.tasks);
+    const localDayKey = useLocalDayKey();
+    const focusTaskTitles = useMemo(() => {
+        const now = new Date();
+        return sortTasksByFocusOrder(
+            focusTasks.filter((task) => isTaskFocusedNow(task, now) && !isTaskFinished(task))
+        ).map((task) => task.title).join(FOCUS_TITLE_SEPARATOR);
+    }, [focusTasks, localDayKey]);
     const trayTooltip = useMemo(() => buildTrayTooltip({
         appName: translateWithFallback(t, 'app.name', 'Mindwtr'),
         focusLabel: translateWithFallback(t, 'agenda.todaysFocus', "Today's Focus"),

@@ -15,8 +15,8 @@ import type { Task } from './types';
  * `normalizeTaskForLoad`, which has two clock-reading branches that land on fields
  * the content signature compares:
  *
- *   1. `isFocusedToday` (task-status.ts, the `isFutureStart` branch) — a focused
- *      task whose start time is after the end of "today" loses its focus flag.
+ *   1. `focusOrder` (task-status.ts, the `isFutureStart` branch) — a queued
+ *      future-start star has no current Focus order until its start day.
  *   2. `completedAt` (task-status.ts, `normalizeTaskLifecycleFields`) — a finished
  *      task with no `completedAt`, no `updatedAt` and no `createdAt` falls all the
  *      way back to the backfilled `createdAt`, which is `nowIso`.
@@ -57,8 +57,10 @@ describe('merge content signature vs the merge clock', () => {
         const beforeStart = signAt(task, EARLY);
         const afterStart = signAt(task, LATE);
 
-        expect(beforeStart).not.toContain('"isFocusedToday"');
+        expect(beforeStart).toContain('"isFocusedToday":true');
+        expect(beforeStart).not.toContain('"focusOrder"');
         expect(afterStart).toContain('"isFocusedToday":true');
+        expect(afterStart).toContain('"focusOrder":3');
         expect(beforeStart).not.toEqual(afterStart);
     });
 

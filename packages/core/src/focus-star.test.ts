@@ -66,10 +66,12 @@ describe('resolveFocusStarAction', () => {
         expect(action).toMatchObject({ canToggle: false, blockedReason: 'limit' });
     });
 
-    it('blocks deferred tasks with the deferred reason', () => {
+    it('queues future-start next actions without using a current Focus slot', () => {
         const deferred = makeTask({ startTime: '2099-01-01T00:00:00.000Z' });
-        const action = resolveFocusStarAction(deferred, baseContext());
-        expect(action).toMatchObject({ canToggle: false, blockedReason: 'deferred' });
+        const action = resolveFocusStarAction(deferred, baseContext({ focusedCount: 3 }));
+        expect(action).toMatchObject({ canToggle: true, blockedReason: null });
+        const recurring = makeTask({ recurrence: { rule: 'daily' }, dueDate: '2099-01-01' });
+        expect(resolveFocusStarAction(recurring, baseContext()).blockedReason).toBe('deferred');
     });
 });
 
@@ -136,14 +138,14 @@ describe('resolveTaskFocusCreation', () => {
         });
     });
 
-    it('refuses an ineligible star and preserves eligible review-due statuses', () => {
+    it('queues a future-start star and preserves eligible review-due statuses', () => {
         expect(resolveTaskFocusCreation(
             makeTask({ status: 'next', isFocusedToday: true, startTime: '2099-01-01' }),
-            baseContext(),
+            baseContext({ focusedCount: 3 }),
         )).toEqual({
             status: 'next',
-            isFocusedToday: false,
-            outcome: 'refused-ineligible',
+            isFocusedToday: true,
+            outcome: 'focused',
         });
 
         for (const status of ['waiting', 'someday'] as const) {

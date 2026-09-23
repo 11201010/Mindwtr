@@ -36,13 +36,13 @@ import {
   deriveFocusTaskLists,
   FOCUS_SORT_OPTIONS,
   buildFocusTaskGroups,
+  getFocusStarBlockedText,
   getProjectDeadlineBoostLabel,
   getReviewDueProjects,
   removeAdvancedFilterCriteriaChip,
   shouldShowTaskForStart,
   generateUUID,
   markSavedFilterDeleted,
-  getFocusStarBlockedText,
   normalizeFocusTaskLimit,
   resolveFeatureFlags,
   resolveTaskPerspectiveForFeatures,
@@ -52,6 +52,7 @@ import {
   getAdvancedReviewDate,
   isTaskActionable,
   isTaskDateCoherent,
+  isTaskFutureFocusCandidate,
   isTodayScheduleCandidate,
   safeFormatDate,
   safeParseDueDate,
@@ -284,9 +285,9 @@ export default function FocusScreen() {
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusReorderPositionRef = useRef<number | null>(null);
   const { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled, pomodoro: pomodoroEnabled } = resolveFeatureFlags(settings);
-  const focusTaskLimit = normalizeFocusTaskLimit(settings?.gtd?.focusTaskLimit);
-  const upcomingFocusBlockedLabel = getFocusStarBlockedText(t, { blockedReason: 'deferred' }, focusTaskLimit)
-    ?? undefined;
+  const upcomingFocusBlockedLabel = getFocusStarBlockedText(
+    t, { blockedReason: 'deferred' }, normalizeFocusTaskLimit(settings?.gtd?.focusTaskLimit),
+  ) ?? undefined;
   const focusGroupBy = normalizeFocusGroupBy(settings?.gtd?.focusGroupBy);
   const { areaById, projectById, resolvedAreaFilter, visibleTasks } = useVisibleTaskContext();
   const visibleProjects = useMemo(() => (
@@ -483,10 +484,10 @@ export default function FocusScreen() {
       return;
     }
     const previousStartTime = task.startTime;
-    // "Today" is a start date too (#1252): it files the task under Today without
-    // starring it. Only a later date is a deferral, and only a deferral drops the star.
+    // A future-start Next action keeps its star queued for its start day.
+    // Other statuses still drop a star when deferred.
     const startsToday = startDate.getTime() <= getStartDateOffset(0).getTime();
-    const previousFocused = !startsToday && task.isFocusedToday === true;
+    const previousFocused = !startsToday && task.status !== 'next' && task.isFocusedToday === true;
     const deferUpdates: Partial<Task> = {
       startTime,
       ...(previousFocused ? { isFocusedToday: false } : {}),
@@ -1375,9 +1376,9 @@ export default function FocusScreen() {
           actions={rowActions}
           isHighlighted={item.task.id === highlightTaskId}
           showFocusToggle
-          // Every Upcoming row is deferred by construction, so the star could only
-          // ever refuse — disabled with the reason beats a tap that just toasts.
-          focusToggleDisabledLabel={section.type === 'upcoming' ? upcomingFocusBlockedLabel : undefined}
+          focusToggleDisabledLabel={section.type === 'upcoming' && !isTaskFutureFocusCandidate(item.task)
+            ? upcomingFocusBlockedLabel
+            : undefined}
           showFocusHighlight={section.type !== 'focus'}
           hideStatusBadge={section.type !== 'reviewDue'}
           hideDetails={!showDetails}

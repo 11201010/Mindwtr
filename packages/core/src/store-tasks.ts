@@ -41,6 +41,7 @@ import { generateUUID as uuidv4 } from './uuid';
 import { canSkipRecurringTaskOccurrence, createNextRecurringTask, normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRepeatReminderMinutes } from './schedule-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
+import { isTaskFutureFocusCandidate } from './task-utils';
 import {
     buildTaskContainerMovePatch,
     normalizeOptionalContainerId,
@@ -593,7 +594,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 });
                 newTask.status = focusDecision.status;
                 newTask.isFocusedToday = focusDecision.isFocusedToday;
-                if (focusDecision.outcome === 'focused') {
+                if (focusDecision.outcome === 'focused' && !isTaskFutureFocusCandidate(newTask)) {
                     creationContext.focusedCount += 1;
                 }
             }
@@ -642,6 +643,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     ? { settings: completedCreationContext.deviceState.settings }
                     : {}),
             };
+        });
+
+        const queuedCount = newTasks.filter((task) => task.isFocusedToday && isTaskFutureFocusCandidate(task)).length;
+        if (queuedCount > 0) logInfo('Scheduled Focus queued', {
+            scope: 'store',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.3/scheduled-focus-queue', operation: 'create', count: queuedCount },
         });
 
         return actionOk({ id: resultIds[0], ids: resultIds });
@@ -706,7 +714,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             return actionFail(preparedUpdates.error);
         }
         const isPromotingTaskFocus = preparedUpdates.updates.isFocusedToday === true && existingTask.isFocusedToday !== true;
-        if (isPromotingTaskFocus) {
+        if (isPromotingTaskFocus && !isTaskFutureFocusCandidate({ ...existingTask, ...preparedUpdates.updates })) {
             const focusTaskLimit = normalizeFocusTaskLimit(currentState.settings.gtd?.focusTaskLimit);
             const focusedCount = currentState.getFocusedCount();
             if (focusedCount >= focusTaskLimit) {
@@ -876,6 +884,14 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 return actionFail(message);
             }
             logTaskProjectReactivationSaved(incrementalPersistence.reactivatedProjectIds.length);
+        }
+        if (isPromotingTaskFocus && incrementalPersistence.task?.isFocusedToday
+            && isTaskFutureFocusCandidate(incrementalPersistence.task)) {
+            logInfo('Scheduled Focus queued', {
+                scope: 'store',
+                category: 'storage',
+                context: { releaseCheck: 'v1.3.3/scheduled-focus-queue', operation: 'update' },
+            });
         }
         return actionOk();
     },

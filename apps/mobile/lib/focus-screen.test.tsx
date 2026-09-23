@@ -1159,11 +1159,12 @@ describe('FocusScreen', () => {
     vi.useRealTimers();
   });
 
-  it('disables the Upcoming star and gives each row its reveal date', () => {
+  it('offers the Upcoming star and gives each row its reveal date', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 3, 5, 12, 0, 0, 0));
     storeState.tasks = [
       makeTask('deferred-soon', { title: 'Deferred soon', startTime: '2026-04-08' }),
+      makeTask('recurring-soon', { title: 'Recurring soon', dueDate: '2026-04-10', recurrence: { rule: 'daily' } }),
       makeTask('plain-next', { title: 'Plain next' }),
     ];
 
@@ -1175,10 +1176,10 @@ describe('FocusScreen', () => {
 
     const rows = tree.root.findAllByType(SwipeableTaskItem);
     const upcomingRow = rows.find((node) => node.props.task.id === 'deferred-soon');
+    const recurringRow = rows.find((node) => node.props.task.id === 'recurring-soon');
     const nextRow = rows.find((node) => node.props.task.id === 'plain-next');
-    // Deferred by construction: the star can only refuse, so it announces why
-    // rather than offering a tap that ends in a toast.
-    expect(upcomingRow?.props.focusToggleDisabledLabel)
+    expect(upcomingRow?.props.focusToggleDisabledLabel).toBeUndefined();
+    expect(recurringRow?.props.focusToggleDisabledLabel)
       .toBe('This task is deferred; change its start date before focusing it.');
     expect(nextRow?.props.focusToggleDisabledLabel).toBeUndefined();
     // The reveal date is the section's purpose, so it rides the row.

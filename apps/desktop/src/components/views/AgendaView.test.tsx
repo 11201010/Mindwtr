@@ -456,7 +456,7 @@ describe('AgendaView', () => {
         expect(queryByText('Far away task')).not.toBeInTheDocument();
     });
 
-    it('disables the Upcoming star and shows when each row appears', () => {
+    it('allows starring a future-start Upcoming task and shows when it appears', () => {
         const now = new Date();
         const inThreeDays = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3, 9, 0, 0, 0);
         const deferredTask: Task = {
@@ -469,10 +469,16 @@ describe('AgendaView', () => {
             createdAt: nowIso,
             updatedAt: nowIso,
         };
+        const recurringTask: Task = {
+            ...deferredTask, id: 'recurring-task', title: 'Recurring task',
+            startTime: undefined,
+            dueDate: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 4, 9).toISOString(),
+            recurrence: { rule: 'daily' },
+        };
 
         useTaskStore.setState({
-            tasks: [deferredTask],
-            _allTasks: [deferredTask],
+            tasks: [deferredTask, recurringTask],
+            _allTasks: [deferredTask, recurringTask],
             projects: [],
             _allProjects: [],
             areas: [],
@@ -485,11 +491,10 @@ describe('AgendaView', () => {
 
         const upcomingSection = document.getElementById('agenda-section-upcoming');
         expect(upcomingSection).not.toBeNull();
-        // Every Upcoming row is deferred, so the star states the reason instead of
-        // offering an "Add to Focus" whose only outcome is a refusal toast.
-        const star = getByLabelText('This task is deferred; change its start date before focusing it.');
+        const star = getByLabelText('Add to today\'s focus');
         expect(upcomingSection).toContainElement(star);
-        expect(star).toBeDisabled();
+        expect(star).not.toBeDisabled();
+        expect(getByLabelText('This task is deferred; change its start date before focusing it.')).toBeDisabled();
         // The reveal date is the section's purpose, so it renders on the row.
         expect(upcomingSection).toContainElement(getByText(safeFormatDate(inThreeDays, 'P')));
     });

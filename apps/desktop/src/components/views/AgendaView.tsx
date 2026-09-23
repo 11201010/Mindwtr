@@ -15,7 +15,7 @@ import {
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { shallow, useTaskStore, TaskPriority, TimeEstimate, TIME_ESTIMATE_OPTIONS, buildFocusPools, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
-    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, isDueForReview, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
+    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, isTaskFutureFocusCandidate, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, isDueForReview, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
 import { DEFAULT_FOCUS_SORT_BY } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, SavedFilter, SortField, Task, TaskEnergyLevel } from '@mindwtr/core';
 import { useTaskFilterSelections } from '@mindwtr/core/task-filter-selections';
@@ -900,13 +900,14 @@ export function AgendaView() {
 
     const buildFocusToggle = useCallback((task: Task) => {
         const isFocused = Boolean(task.isFocusedToday);
+        const queued = isTaskFutureFocusCandidate(task);
         // Cheap cap-only gate at render time (rows are many); full eligibility
         // is enforced on click via the core focus-star module, which toasts
         // the blocked reason.
-        const canToggle = isFocused || focusedCount < focusTaskLimit;
+        const canToggle = isFocused || queued || focusedCount < focusTaskLimit;
         const title = isFocused
             ? t('agenda.removeFromFocus')
-            : focusedCount >= focusTaskLimit
+            : !queued && focusedCount >= focusTaskLimit
                 ? formatFocusTaskLimitText(t('agenda.maxFocusItems'), focusTaskLimit)
                 : t('agenda.addToFocus');
         return {
@@ -919,16 +920,11 @@ export function AgendaView() {
         };
     }, [focusTaskLimit, focusedCount, handleToggleFocus, t]);
 
-    // Every Upcoming row is deferred by construction, so the star can only ever
-    // refuse — the cap-only render gate above would show an enabled "Add to Focus"
-    // whose sole outcome is a toast. Disabled-with-the-reason instead, matching
-    // how the project Order row states an unavailable action rather than hiding it.
     const buildUpcomingFocusToggle = useCallback((task: Task) => {
         const toggle = buildFocusToggle(task);
-        if (toggle.isFocused) return toggle;
-        const deferredText = getFocusStarBlockedText(t, { blockedReason: 'deferred' }, focusTaskLimit)
-            ?? toggle.title;
-        return { ...toggle, canToggle: false, title: deferredText, ariaLabel: deferredText };
+        if (toggle.isFocused || isTaskFutureFocusCandidate(task)) return toggle;
+        const title = getFocusStarBlockedText(t, { blockedReason: 'deferred' }, focusTaskLimit) ?? toggle.title;
+        return { ...toggle, canToggle: false, title, ariaLabel: title };
     }, [buildFocusToggle, focusTaskLimit, t]);
 
     const toggleSection = useCallback((sectionKey: FocusSectionKey) => {

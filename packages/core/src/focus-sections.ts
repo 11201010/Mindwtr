@@ -19,6 +19,7 @@ import {
     getFocusSequentialFirstTaskIds,
     getProjectDeadlineBoosts,
     getUpcomingDeferredTasks,
+    isTaskFocusedNow,
     PRIORITY_RANK,
     shouldShowTaskForStart,
     sortByPrecomputedKey,
@@ -69,10 +70,8 @@ export function isTodayScheduleCandidate(
  */
 export interface FocusPools {
     /**
-     * Starred tasks after the user's criteria. Deliberately NOT narrowed by
-     * area visibility or start time: the star buttons enforce a store-wide
-     * count, so a starred task hidden by those rules would silently eat a slot
-     * no filter change can reveal ("I can only star 4 when the limit is 5").
+     * Today's starred tasks after the user's criteria. Area visibility does
+     * not hide a Focus slot; future-start stars remain in Upcoming until ready.
      */
     focused: Task[];
     /** The time-granularity pool after the user's criteria (Next actions, Review Due). */
@@ -118,16 +117,16 @@ export function buildFocusPools({
         { projects, now, tokenMatchMode: 'all' },
     );
     return {
-        focused: narrow(tasks.filter((task) => task.isFocusedToday === true)),
+        focused: narrow(tasks.filter((task) => isTaskFocusedNow(task, now))),
         active: narrow(visibleTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' }))),
         // Today membership is decided at day granularity (a later-today start
         // belongs there, by its time). A task deferred to another day must
         // still be excluded, or a due-today row with a future-day start would
         // double up in both Today and Upcoming.
         schedule: narrow(visibleTasks.filter((task) => shouldShowTaskForStart(task, { now }))),
-        // Starred tasks are excluded: they render in Today's Focus regardless
-        // of deferral, and one task must not appear in two sections (#1061).
-        upcoming: getUpcomingDeferredTasks(narrow(visibleTasks.filter((task) => !task.isFocusedToday)), { now }),
+        // A future-start star stays in Upcoming until its start day. Today's
+        // stars cannot enter this pool because they are no longer deferred.
+        upcoming: getUpcomingDeferredTasks(narrow(visibleTasks), { now }),
         base: visibleTasks,
     };
 }

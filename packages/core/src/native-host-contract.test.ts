@@ -1331,8 +1331,8 @@ describe('native host contract', () => {
             expect(saveData).toHaveBeenCalledTimes(saves);
         });
 
-        // The store stamps a recurrence rule with its series and drops a star that a
-        // future start defers, so the saved draft differs from the request.
+        // The store stamps recurrence and queues a future-start star, so the
+        // saved draft can differ from the request.
         it.each([
             {
                 name: 'a recurrence series stamp',
@@ -1340,9 +1340,9 @@ describe('native host contract', () => {
                 saved: { recurrence: { rule: 'weekly', byDay: ['MO'] } },
             },
             {
-                name: 'a star dropped by a future start',
+                name: 'a star queued for a future start',
                 input: { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } },
-                saved: { startTime: '2027-01-04', isFocusedToday: false },
+                saved: { startTime: '2027-01-04', isFocusedToday: true },
             },
         ] as const)('retries exactly after $name', async ({ input, saved }) => {
             const host = await activateEditor([editTask()]);
@@ -1359,18 +1359,18 @@ describe('native host contract', () => {
 
         it('keeps retry state per task: A, then B, then the exact retry of A', async () => {
             const host = await activateEditor([editTask(), task('b', '2026-09-01T00:00:00.000Z'), task('other', '2026-09-01T00:00:00.000Z')]);
-            // The store drops the star that a future start defers.
+            // The store keeps the star queued for its future start.
             const inputA = { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
             const savedA = storedTask();
-            expect(savedA).toMatchObject({ startTime: '2027-01-04', isFocusedToday: false });
+            expect(savedA).toMatchObject({ startTime: '2027-01-04', isFocusedToday: true });
 
             saveData.mockResolvedValue(undefined);
             expect(await host.saveTaskDraft({ id: 'b', base: { title: 'b' }, patch: { title: 'B' } })).toMatchObject({ ok: true });
             // An unrelated write, through another path, between the failure and the retry.
             expect((await useTaskStore.getState().updateTask('other', { title: 'Other' })).success).toBe(true);
-            expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: true, value: { draft: { focusedToday: false } } });
+            expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: true, value: { draft: { focusedToday: true } } });
             expect(storedTask()).toBe(savedA);
         }, 15_000);
 

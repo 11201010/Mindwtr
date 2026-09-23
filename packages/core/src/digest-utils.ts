@@ -4,6 +4,7 @@ import { safeParseDate, safeParseDueDate } from './date';
 import type { Project, Task } from './types';
 import { isTaskInActiveProject } from './project-utils';
 import { isTaskActionable } from './task-status';
+import { isTaskFocusedNow } from './task-utils';
 
 export interface DailyDigestSummary {
     dueToday: number;
@@ -34,7 +35,7 @@ export function getDailyDigestSummary(
         if (!isTaskActionable(task)) continue;
         if (!isTaskInActiveProject(task, projectMap)) continue;
 
-        if (task.isFocusedToday) focusToday += 1;
+        if (isTaskFocusedNow(task, now)) focusToday += 1;
 
         const due = safeParseDueDate(task.dueDate);
         if (due) {

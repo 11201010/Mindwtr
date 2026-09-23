@@ -230,11 +230,11 @@ describe('repair classes still allocate and still repair', () => {
         expect(normalizedStale.completedAt).toBeUndefined();
     });
 
-    it('a focused task with a future start is unfocused', () => {
+    it('a future-start Next action keeps its queued star but loses focus order', () => {
         const task = baseTask({ isFocusedToday: true, focusOrder: 2, startTime: FAR_FUTURE });
         const normalized = normalizeTaskForLoad(task, NOW);
         expect(normalized).not.toBe(task);
-        expect(normalized.isFocusedToday).toBe(false);
+        expect(normalized.isFocusedToday).toBe(true);
         expect(normalized.focusOrder).toBeUndefined();
     });
 

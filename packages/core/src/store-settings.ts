@@ -601,11 +601,14 @@ export const createSettingsActions = ({
 
     getDerivedState: () => {
         const state = get();
+        const now = new Date();
+        const day = now.toDateString();
         if (
             derivedCache
             && derivedCache.visibleTasksRef === state.tasks
             && derivedCache.taskLookupRef === state._tasksById
             && derivedCache.projectLookupRef === state._projectsById
+            && derivedCache.day === day
         ) {
             return derivedCache.value;
         }
@@ -615,6 +618,7 @@ export const createSettingsActions = ({
             derivedCache
                 && derivedCache.visibleTasksRef === state.tasks
                 && derivedCache.taskLookupRef === state._tasksById
+                && derivedCache.day === day
                 && previous
                 ? {
                     tasksById: previous.tasksById,
@@ -631,7 +635,7 @@ export const createSettingsActions = ({
                     dateCoherenceIssuesByTaskId: previous.dateCoherenceIssuesByTaskId,
                     focusedCount: previous.focusedCount,
                 }
-                : computeTaskDerivedState(state.tasks, state._tasksById);
+                : computeTaskDerivedState(state.tasks, state._tasksById, now);
         const projectDerived =
             derivedCache && derivedCache.projectLookupRef === state._projectsById && previous
                 ? {
@@ -649,6 +653,7 @@ export const createSettingsActions = ({
             visibleTasksRef: state.tasks,
             taskLookupRef: state._tasksById,
             projectLookupRef: state._projectsById,
+            day,
             value: derived,
         };
         recordDerivedStateRebuild(profilerNow() - rebuildStartedAt);

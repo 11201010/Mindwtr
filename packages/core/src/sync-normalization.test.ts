@@ -505,7 +505,7 @@ describe('sync normalization', () => {
         ]));
     });
 
-    it('clears focus flags from tasks with future start dates during merge normalization', () => {
+    it('preserves queued stars on future-start Next actions during merge normalization', () => {
         const task = {
             ...createMockTask('task-1', '2026-01-01T00:00:00.000Z'),
             status: 'next',
@@ -516,7 +516,7 @@ describe('sync normalization', () => {
         const normalized = normalizeTaskForSyncMerge(task, '2026-01-01T10:00:00.000Z');
 
         expect(normalized.startTime).toBe('2026-01-03');
-        expect(normalized.isFocusedToday).toBe(false);
+        expect(normalized.isFocusedToday).toBe(true);
     });
 
     it('detects date incoherence from incoming synced tasks without mutating dates', () => {

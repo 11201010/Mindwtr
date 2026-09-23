@@ -222,14 +222,11 @@ export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toI
 
     const lifecycleNormalized = normalizeTaskLifecycleFields(next);
 
-    // focusOrder only means something while a task is in Today's Focus. Terminal
-    // state is handled above; this second branch handles a future-start defer.
+    // A future-start Next action keeps its queued star across load and sync.
+    // focusOrder only applies once it has reached Today's Focus.
     if (lifecycleNormalized.isFocusedToday && isFutureStart(lifecycleNormalized, new Date(nowIso))) {
-        lifecycleNormalized.isFocusedToday = false;
+        if (lifecycleNormalized.status !== 'next') lifecycleNormalized.isFocusedToday = false;
         lifecycleNormalized.focusOrder = undefined;
-    } else if (next.isFocusedToday && isFutureStart(next, new Date(nowIso))) {
-        next.isFocusedToday = false;
-        next.focusOrder = undefined;
     }
 
     // Hand back the input when nothing actually changed, so an already-normalized

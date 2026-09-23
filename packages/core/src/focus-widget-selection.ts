@@ -17,10 +17,9 @@
  * `now` is a parameter, never `Date.now()`, so the selection is deterministic
  * in tests and one payload build sees one instant.
  */
-import { safeParseDate } from './date';
-import { deriveFocusTaskLists, isTodayScheduleCandidate, type FocusPools } from './focus-sections';
+import { deriveFocusTaskLists, type FocusPools } from './focus-sections';
 import { TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
-import { shouldShowTaskForStart, sortTasksBy } from './task-utils';
+import { isTaskFocusedNow, shouldShowTaskForStart, sortTasksBy } from './task-utils';
 import type { Project, Section, Task, TaskSortBy } from './types';
 
 
@@ -59,10 +58,7 @@ export interface TodayFocusSelection {
  * 1. The Today pool is not narrowed to today's starts. The widget has no
  *    Upcoming section, so a task that is due today but deferred to a later day
  *    would simply vanish; on the screens it moves to Upcoming instead.
- * 2. A starred task planned for a future day is left out unless it is also due
- *    or starting today. The screens keep every starred task because Today's
- *    Focus is its own labelled section; a bare "Today" list must not lead with
- *    a task that starts next week.
+ * 2. A queued star stays out until its start day, even if the task is due sooner.
  * 3. Review Due rejoins the one list, next actions only and minus the steps the
  *    sequential gate holds back. The screens split a next action that is also
  *    due for review into its own section; here that would drop it from the
@@ -75,17 +71,8 @@ export function computeTodayFocusTasks({
     sortBy,
     now,
 }: TodayFocusSelectionInput): TodayFocusSelection {
-    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const isPlannedForFuture = (task: Task) => {
-        const start = safeParseDate(task.startTime);
-        return Boolean(start && start > endOfToday);
-    };
-
     const pools: FocusPools = {
-        focused: activeTasks.filter((task) => (
-            task.isFocusedToday === true
-            && (!isPlannedForFuture(task) || isTodayScheduleCandidate(task, now))
-        )),
+        focused: activeTasks.filter((task) => isTaskFocusedNow(task, now)),
         active: activeTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' })),
         schedule: activeTasks,
         upcoming: [],

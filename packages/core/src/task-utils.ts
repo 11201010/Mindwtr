@@ -129,6 +129,8 @@ export type TaskFocusEligibilityOptions = {
     sections?: readonly SequentialSection[];
     /** Precomputed by buildTaskFocusEligibilityContext; derived per call when absent. */
     sequentialFirstTaskIds?: ReadonlySet<string>;
+    /** A future-start Next action may be starred now for Focus on its start day. */
+    allowFutureStart?: boolean;
 };
 
 type SequentialTaskOrderFields = Pick<Task, 'createdAt' | 'order' | 'orderNum'>;
@@ -535,6 +537,14 @@ export function isTaskFutureStart(
     return deferUntil > endOfToday;
 }
 
+export function isTaskFutureFocusCandidate(task: Task, now: Date = new Date()): boolean {
+    return task.status === 'next' && Boolean(task.startTime) && isTaskFutureStart(task, now);
+}
+
+export function isTaskFocusedNow(task: Task, now: Date = new Date()): boolean {
+    return task.isFocusedToday === true && !isTaskFutureStart(task, now);
+}
+
 export type UpcomingDeferredTask = {
     task: Task;
     /** The defer-until date the task will surface on. */
@@ -871,7 +881,7 @@ export function getTaskFocusEligibility(
         && sequentialProjectIds.has(task.projectId)
         && !sequentialFirstTaskIds.has(task.id),
     );
-    const isVisibleForStart = shouldShowTaskForStart(task, { now });
+    const isVisibleForStart = options.allowFutureStart === true || shouldShowTaskForStart(task, { now });
     const isVisibleActiveTask = isTaskInActiveProject(task, projectMap) && isVisibleForStart;
     const isReviewDueEligible = task.status !== 'inbox' && isDueForReview(task.reviewAt, now);
     const eligible = isVisibleActiveTask

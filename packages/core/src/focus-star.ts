@@ -2,6 +2,7 @@ import type { Project, Section, Task } from './types';
 import {
     FOCUS_ELIGIBILITY_ACTIVE_STATUSES,
     getTaskFocusEligibility,
+    isTaskFutureFocusCandidate,
 } from './task-utils';
 import { formatFocusTaskLimitText } from './focus-utils';
 import { tFallback } from './i18n';
@@ -63,6 +64,7 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
         };
     }
 
+    const queued = isTaskFutureFocusCandidate(task, context.now);
     const eligibility = getTaskFocusEligibility(task, {
         tasks: context.tasks,
         projects: context.projects,
@@ -70,13 +72,14 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
         sequentialProjectIds: context.sequentialProjectIds,
         sectionScopedProjectIds: context.sectionScopedProjectIds,
         sections: context.sections,
+        allowFutureStart: queued,
     });
     const eligible = eligibility.eligible
         || (context.allowUnclarified === true && eligibility.reason === 'clarify');
 
     const blockedReason: FocusStarBlockedReason = !eligible
         ? (eligibility.reason === 'eligible' ? 'clarify' : eligibility.reason)
-        : context.focusedCount >= context.focusTaskLimit
+        : !queued && context.focusedCount >= context.focusTaskLimit
             ? 'limit'
             : null;
 
@@ -112,10 +115,12 @@ export function resolveTaskFocusCreation(
         status: promotedStatus,
         isFocusedToday: false,
     };
+    const queued = isTaskFutureFocusCandidate(candidate);
     const eligibility = getTaskFocusEligibility(candidate, {
         tasks: [...context.tasks, candidate],
         projects: context.projects,
         sections: context.sections,
+        allowFutureStart: queued,
     });
 
     if (!eligibility.eligible) {
@@ -125,7 +130,7 @@ export function resolveTaskFocusCreation(
             outcome: 'refused-ineligible',
         };
     }
-    if (context.focusedCount >= context.focusTaskLimit) {
+    if (!queued && context.focusedCount >= context.focusTaskLimit) {
         return {
             status: task.status,
             isFocusedToday: false,

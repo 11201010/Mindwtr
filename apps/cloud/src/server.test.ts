@@ -3234,7 +3234,7 @@ describe('cloud server api', () => {
             isFocusedToday: true,
         });
         expect(deferred.status).toBe('next');
-        expect(deferred.isFocusedToday).toBe(false);
+        expect(deferred.isFocusedToday).toBe(true);
 
         for (const status of ['waiting', 'someday'] as const) {
             const reviewDue = await createFocused(`Review due ${status}`, {

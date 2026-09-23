@@ -1274,7 +1274,7 @@ describe('TaskStore', () => {
         expect(useTaskStore.getState()._tasksById.get(taskIds[3])?.isFocusedToday).toBe(true);
     });
 
-    it('clears today focus when a focused task is deferred to a future start date', async () => {
+    it('queues focus when a focused Next action is deferred to a future start date', async () => {
         vi.setSystemTime(new Date('2026-05-02T10:00:00.000Z'));
         const { addTask, updateTask } = useTaskStore.getState();
         const result = await addTask('Focused later', { status: 'next', isFocusedToday: true });
@@ -1286,7 +1286,7 @@ describe('TaskStore', () => {
 
         const task = useTaskStore.getState()._tasksById.get(taskId!);
         expect(task?.startTime).toBe('2026-05-03');
-        expect(task?.isFocusedToday).toBe(false);
+        expect(task?.isFocusedToday).toBe(true);
         expect(useTaskStore.getState().getDerivedState().focusedCount).toBe(0);
     });
 

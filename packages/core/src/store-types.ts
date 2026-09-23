@@ -241,6 +241,7 @@ export type DerivedCache = {
     visibleTasksRef: Task[];
     taskLookupRef: Map<string, Task>;
     projectLookupRef: Map<string, Project>;
+    day: string;
     value: DerivedState;
 };
 

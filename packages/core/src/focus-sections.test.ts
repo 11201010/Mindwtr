@@ -52,7 +52,7 @@ const derive = (pools: Partial<FocusPools> & Pick<FocusPools, 'base'>, ctx: {
 describe('buildFocusPools', () => {
     const starredHidden = makeTask({ id: 'starred-hidden', isFocusedToday: true, startTime: iso('2026-03-20T09:00:00') });
     const laterToday = makeTask({ id: 'later-today', startTime: iso('2026-03-10T18:00:00') });
-    const nextWeek = makeTask({ id: 'next-week', startTime: iso('2026-03-12T09:00:00') });
+    const nextWeek = makeTask({ id: 'next-week', isFocusedToday: true, startTime: iso('2026-03-12T09:00:00') });
     const plain = makeTask({ id: 'plain' });
     const all = [starredHidden, laterToday, nextWeek, plain];
 
@@ -64,8 +64,11 @@ describe('buildFocusPools', () => {
         now: NOW,
     });
 
-    it('keeps a starred task the start-time and area rules would hide', () => {
-        expect(ids(pools().focused)).toEqual(['starred-hidden']);
+    it('keeps future-start stars out of Today until their start day', () => {
+        expect(ids(pools().focused)).toEqual([]);
+        const startDay = new Date('2026-03-12T10:00:00');
+        const ready = buildFocusPools({ tasks: all, visibleTasks: all, projects: [], criteria: {}, now: startDay });
+        expect(ids(ready.focused)).toEqual(['next-week']);
     });
 
     it('hides a later-today start from the time-granularity pool but keeps it in Today', () => {
