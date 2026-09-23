@@ -16,7 +16,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, doneButtons, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, check, connect, doneButtons, draftText, evidenced, field, hasText, Stopped } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -66,8 +66,9 @@ const rotate = (rotation) => {
 // ---- UI ----
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
 const hasError = (nodes) => nodes.some((node) => node.text?.includes('Injected commit failure'));
-const loaded = () => waitFor('the Inbox to load', (nodes) => field(nodes) && Number.isFinite(header(nodes)), 60_000);
-const tapAdd = async () => tap(button(await screen(), 'Add'));
+const loaded = () => waitFor('the Inbox to load', (nodes) => Number.isFinite(header(nodes)), 60_000);
+// The capture sheet's Save (core's common.save), as in RN's quick capture.
+const tapAdd = async () => tap(button(await screen(), 'Save'));
 const busyField = (nodes) => field(nodes)?.enabled === 'false';
 
 // ---- database ----
@@ -117,7 +118,7 @@ try {
     check(boots(processId) === 1, `(a) one host boot in process ${processId}`);
     await type(titles.a);
     await tapAdd();
-    nodes = await waitFor('capture a', (current) => header(current) === total + 1 && field(current)?.text === '');
+    nodes = await waitFor('capture a', (current) => header(current) === total + 1 && draftText(current) === '');
     total += 1;
     check(hasText(await reveal(titles.a), titles.a) && rowsTitled(titles.a) === 1, '(a) captured task is listed and stored once');
 
@@ -130,15 +131,15 @@ try {
     rotate(1);
     await waitFor('rotation recreation', () => recreations(processId).length > recreatedBefore, 15_000);
     check(recreations(processId).at(-1).includes('inFlight=true'), '(b) new Activity attached to the running host during the save');
-    nodes = await waitFor('save b after rotation', (current) => header(current) === total + 1 && field(current)?.text === '');
+    nodes = await waitFor('save b after rotation', (current) => header(current) === total + 1 && draftText(current) === '');
     total += 1;
     // The header already proves the landscape Activity received the save. Look for the row
     // after rotating back (another recreation).
     check(rowsTitled(titles.b) === 1, '(b) exactly one stored row for the capture');
     check(pid() === processId && boots(processId) === 1, '(b) same process, no second host boot');
     setProp('delay_before_ms', '');
-    // Landscape: the header and capture row are list items, so one drag scrolls them away and rows fill the screen.
-    console.log(`info - (b) landscape shows ${doneButtons(nodes).length} full task rows below the header and capture row`);
+    // Landscape: the count line is a list item, so one drag scrolls it away and rows fill the screen.
+    console.log(`info - (b) landscape shows ${doneButtons(nodes).length} full task rows below the count line`);
     const scrolled = await swipe(nodes, 'down');
     check(doneButtons(scrolled).length >= 3, `(b) landscape shows ${doneButtons(scrolled).length} full task rows after one drag (at least 3)`);
     await toTop();
@@ -166,7 +167,7 @@ try {
     check(boots(processId) === 1, '(c1) one host boot after process death');
     check(field(nodes)?.text === titles.c1, '(c1) unacknowledged draft restored');
     await tapAdd();
-    nodes = await waitFor('retry c1', (current) => header(current) === total + 1 && field(current)?.text === '');
+    nodes = await waitFor('retry c1', (current) => header(current) === total + 1 && draftText(current) === '');
     total += 1;
     check(rowsTitled(titles.c1) === 1, '(c1) retry stored exactly one row');
 
@@ -190,7 +191,7 @@ try {
     check(boots(processId) === 1 && header(nodes) === total, '(c2) relaunch loads the committed row');
     check(field(nodes)?.text === titles.c2, '(c2) unacknowledged draft restored');
     await tapAdd();
-    nodes = await waitFor('retry c2', (current) => field(current)?.text === '' && !busyField(current));
+    nodes = await waitFor('retry c2', (current) => draftText(current) === '' && !busyField(current));
     check(header(nodes) === total && rowsTitled(titles.c2) === 1, '(c2) same-captureId retry added no duplicate');
 
     // (c3) Force-stop after the commit, before the acknowledgment.
@@ -207,7 +208,7 @@ try {
     total += 1;
     check(boots(processId) === 1 && header(nodes) === total && hasText(await reveal(titles.c3), titles.c3), '(c3) committed row survives force-stop');
     // Force-stop finishes the task, so Android keeps no saved state to restore.
-    check(field(nodes)?.text === '' && rowsTitled(titles.c3) === 1, '(c3) exactly one row, no stale draft');
+    check(draftText(nodes) === '' && rowsTitled(titles.c3) === 1, '(c3) exactly one row, no stale draft');
 
     // (d) Failed write stays visible and retryable across recreation.
     setProp('fail_commit', '1');
@@ -216,7 +217,7 @@ try {
     nodes = await waitFor('save failure', hasError);
     const failedState = (current, label) => {
         check(field(current)?.text === titles.d && field(current)?.enabled === 'false', `(d${label}) draft kept and locked`);
-        check(button(current, 'Add')?.enabled === 'true', `(d${label}) exact retry allowed`);
+        check(button(current, 'Save')?.enabled === 'true', `(d${label}) exact retry allowed`);
         check(!button(current, 'Try again'), `(d${label}) no read retry offered while the capture's retry is owed`);
         const completes = current.filter((node) => node['content-desc']?.startsWith('Done '))
             .map((node) => button(current, node['content-desc'])).filter(Boolean); // a clipped edge row has no match
@@ -252,7 +253,7 @@ try {
     check(pid() === processId && boots(processId) === 1 && rowsTitled(titles.d) === 0, '(d) same process and host, still no row');
     setProp('fail_commit', '');
     await tapAdd();
-    nodes = await waitFor('retry d', (current) => header(current) === total + 1 && field(current)?.text === '');
+    nodes = await waitFor('retry d', (current) => header(current) === total + 1 && draftText(current) === '');
     total += 1;
     check(!hasError(nodes) && doneButtons(nodes).some((node) => button(nodes, node['content-desc'])?.enabled === 'true'),
         '(d) retry cleared the failure: Done works again');
@@ -270,6 +271,7 @@ try {
     for (const [name, title] of Object.entries(titles)) check(rowsTitled(title) === 1, `(e) ${name} stored once`);
     console.log('Lifecycle device check passed');
 } catch (error) {
+    evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {

@@ -1,5 +1,7 @@
 import {
+    STATUS_COLORS_BY_THEME,
     SqliteAdapter,
+    TASK_PRIORITY_COLORS,
     createNativeHostContract,
     legacyImportMismatch,
     logInfo,
@@ -8,6 +10,7 @@ import {
     setStorageAdapter,
     splitSqlStatements,
     sqliteHasAnyData,
+    themeDescriptor,
     type FocusTaskSectionKey,
     type SqliteClient,
     useTaskStore,
@@ -243,6 +246,31 @@ globalThis.MindwtrHost = {
     /** `keysJson` is a JSON array of core i18n keys. */
     strings(keysJson: string): string {
         return submit(async () => unwrap(contract.getStrings({ keys: JSON.parse(keysJson) as string[] })));
+    },
+    /**
+     * The React Native app's theme, resolved as its theme-context.tsx does: the synced
+     * `settings.theme` wins, then RN's device-local `@mindwtr_theme` ([stored], "" for none),
+     * then the system. Core classifies the mode and owns the status and priority hues;
+     * Kotlin holds only the mobile palettes. Cosmetic, so no failed save blocks it.
+     */
+    theme(stored: string): string {
+        return submit(async () => {
+            const synced = useTaskStore.getState().settings?.theme;
+            const mode = typeof synced === 'string' && synced ? synced : (stored || 'system');
+            const descriptor = themeDescriptor(mode);
+            const preset = descriptor?.statusPreset ?? null;
+            return {
+                mode,
+                preset: preset ?? 'default',
+                material: mode === 'material3-light' || mode === 'material3-dark',
+                scheme: descriptor?.scheme ?? null,
+                done: {
+                    light: STATUS_COLORS_BY_THEME[preset ?? 'light'].done.text,
+                    dark: STATUS_COLORS_BY_THEME[preset ?? 'dark'].done.text,
+                },
+                priority: TASK_PRIORITY_COLORS,
+            };
+        });
     },
     projects(): string {
         return submit(async () => {

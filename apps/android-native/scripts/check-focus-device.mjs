@@ -23,7 +23,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, box, button, check, connect, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, tab, tabSelected } from './device.mjs';
 // Focus section titles as core renders them in English (core's dictionary, not literals).
 const { en } = await import(resolve(import.meta.dirname, '../../../packages/core/src/i18n/locales/en.ts'));
 const NEXT_ACTIONS = en['focus.nextActions'];
@@ -91,18 +91,7 @@ const goHome = async () => {
 // ---- UI ----
 const inboxCount = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
 const inEditor = (nodes) => hasText(nodes, 'Edit Task');
-// A Compose Tab is selectable, not clickable: find it as the smallest focusable node around its label.
-const tab = (nodes, name) => {
-    const label = nodes.find((node) => node.text === name && node.class === 'android.widget.TextView');
-    if (!label) return undefined;
-    const [x1, y1, x2, y2] = box(label);
-    const area = (node) => { const [l, t, r, b] = box(node); return (r - l) * (b - t); };
-    return nodes.filter((node) => node.focusable === 'true').filter((node) => {
-        const [l, t, r, b] = box(node);
-        return l <= x1 && t <= y1 && r >= x2 && b >= y2;
-    }).sort((a, b) => area(a) - area(b))[0];
-};
-const tabSelected = (nodes, name) => tab(nodes, name)?.selected === 'true';
+const inboxTab = (nodes) => tab(nodes, 'Inbox');
 /** Focus section titles as "<core title> · <core total>"; each title stays pinned above its rows. */
 const headers = (nodes) => nodes.flatMap((node) => {
     const match = /^(.+) · (\d+)$/.exec(node.text ?? '');
@@ -117,7 +106,7 @@ const sectionOf = (nodes, title) => {
     const top = box(row)[1];
     return headers(nodes).filter((header) => header.top <= top).sort((a, b) => b.top - a.top)[0]?.title;
 };
-const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes) && field(nodes)
+const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes)
     && Number.isFinite(inboxCount(nodes)), 60_000);
 const focusList = (description = 'Focus') => waitFor(description, (nodes) => tabSelected(nodes, 'Focus') && !inEditor(nodes)
     && headers(nodes).length > 0, 60_000);
@@ -234,7 +223,7 @@ const restore = async () => {
     for (const name of PROPS) { try { setProp(name, ''); } catch { /* device gone */ } }
     // Leave the app on its Inbox tab: the other checks start there.
     try {
-        const tab = front().includes(`${PKG}/`) ? button(await screen(), 'Inbox') : undefined;
+        const tab = front().includes(`${PKG}/`) ? inboxTab(await screen()) : undefined;
         if (tab && tab.selected !== 'true') await tap(tab);
     } catch { /* the app is gone */ }
     for (const [name, value] of [['user_rotation', originalRotation], ['accelerometer_rotation', originalAccelerometer]]) {
@@ -265,8 +254,8 @@ try {
     for (const title of [first, second]) {
         const total = inboxCount(await inbox());
         await type(title);
-        await tap(button(await screen(), 'Add'));
-        await waitFor(`the capture of ${title}`, (current) => inboxCount(current) === total + 1 && field(current)?.text === '');
+        await tap(button(await screen(), 'Save'));
+        await waitFor(`the capture of ${title}`, (current) => inboxCount(current) === total + 1 && draftText(current) === '');
         const found = sqlite(`SELECT id FROM tasks WHERE title = '${title}' AND deletedAt IS NULL`);
         check(found.length === 1, `captured ${title} once`);
         ids[title] = found[0].id;
@@ -430,6 +419,7 @@ try {
     expectStored(second, { status: 'done' }, `relaunch: ${second} done`);
     console.log('Focus device check passed');
 } catch (error) {
+    evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {

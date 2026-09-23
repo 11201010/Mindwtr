@@ -13,8 +13,20 @@ import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.util.UUID
 
-/** One task row as core sent it. [revealDate] (Upcoming) is shown as the text it is; [laterToday] is core's flag. */
-data class TaskRow(val id: String, val title: String, val revealDate: String? = null, val laterToday: Boolean = false)
+/**
+ * One task row as core sent it (NativeTaskRow). Every value is shown as the text core sent:
+ * dates are never parsed or formatted here. [revealDate] (Upcoming) and [laterToday] are core's.
+ */
+data class TaskRow(
+    val id: String,
+    val title: String,
+    val revealDate: String? = null,
+    val laterToday: Boolean = false,
+    val priority: String? = null,
+    val dueDate: String? = null,
+    val startTime: String? = null,
+    val projectTitle: String? = null,
+)
 /** The three lists. [label] is the core key of the tab label mobile shows. */
 enum class Screen(val label: String) { Inbox("tab.inbox"), Focus("tab.next"), Projects("nav.projects") }
 /** A command whose outcome is unknown; only this exact command may run again. */
@@ -29,9 +41,11 @@ data class FailedAction(
 /** Core refused the update before writing anything, so there is no retry to hold. */
 private val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
 
+private fun JSONObject.text(name: String) = if (isNull(name)) null else getString(name)
+
 /** One NativeTaskRow as core sent it. */
-fun JSONObject.taskRow() = TaskRow(getString("id"), getString("title"),
-    if (isNull("revealDate")) null else getString("revealDate"), getBoolean("laterToday"))
+fun JSONObject.taskRow() = TaskRow(getString("id"), getString("title"), text("revealDate"), getBoolean("laterToday"),
+    text("priority"), text("dueDate"), text("startTime"), text("projectTitle"))
 
 /** Core's `rows` array, in its order. */
 fun JSONObject.taskRows(): List<TaskRow> = getJSONArray("rows").let { items ->
@@ -66,6 +80,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var error by mutableStateOf<String?>(null); private set
     var draft by mutableStateOf(saved.get<String>("draft") ?: ""); private set
     var captureId by mutableStateOf(saved.get<String>("captureId") ?: UUID.randomUUID().toString()); private set
+    /** The quick capture sheet is open. It survives rotation and process death with its draft. */
+    var capturing by mutableStateOf(saved.get<Boolean>("capturing") ?: false); private set
     private var submittedTitle: String? = saved.get<String>("submittedTitle")
     var failedAction by mutableStateOf<FailedAction?>(null); private set
     var rows by mutableStateOf<List<TaskRow>>(emptyList()); private set
@@ -127,6 +143,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         saved["screen"] = target.name
     }
 
+    /** Opens or closes the quick capture sheet. The draft stays either way; only a saved capture clears it. */
+    fun showCapture(open: Boolean) {
+        capturing = open
+        saved["capturing"] = open
+    }
+
     /** The draft, its capture UUID, and the title last sent with it; all survive process death. */
     private fun setCapture(text: String, id: String, submitted: String?) {
         draft = text
@@ -147,7 +169,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     private fun restore(pending: ProcessCoreHost.PendingFailure) {
         val action = pending.action
-        if (action.kind == "create") setCapture(action.title, action.id, action.title)
+        if (action.kind == "create") { setCapture(action.title, action.id, action.title); showCapture(true) }
         pending.editor?.let(::keepEditor)
         rows = pending.rows
         total = pending.total
@@ -175,7 +197,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         perform(action) { runtime ->
             runtime.createInboxTask(title, id)
             acknowledged(action)
-            ui { setCapture("", UUID.randomUUID().toString(), null) }
+            // As in RN's quick capture: a saved capture closes the sheet.
+            ui { setCapture("", UUID.randomUUID().toString(), null); showCapture(false) }
         }
     }
 
@@ -246,9 +269,34 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val expectedRevision = revision
         val mine = ++issued
         perform { runtime ->
-            val page = InboxPage.parse(runtime.inboxWindow(offset, PAGE, expectedRevision))
+            val page = try {
+                InboxPage.parse(runtime.inboxWindow(offset, PAGE, expectedRevision))
+            } catch (failure: Exception) {
+                // As in Focus, STALE_REVISION is never an error: the Inbox changed (an edit, a
+                // new minute, midnight), so read it again from offset 0 as deep as Load more asked.
+                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+                val reread = readInbox(runtime, offset + PAGE)
+                ui { if (fresh(mine)) applyPage(reread, false) }
+                return@perform
+            }
             ui { if (fresh(mine)) applyPage(page, true) }
         }
+    }
+
+    /** The Inbox from offset 0 to [depth] rows at one revision; a read that goes stale keeps what it has. */
+    private fun readInbox(runtime: CoreHost, depth: Int): InboxPage {
+        var page = InboxPage.parse(runtime.inboxWindow(0, PAGE, ""))
+        while (page.rows.size < minOf(depth, page.total)) {
+            val next = try {
+                InboxPage.parse(runtime.inboxWindow(page.rows.size, PAGE, page.revision))
+            } catch (failure: Exception) {
+                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+                return page
+            }
+            if (next.rows.isEmpty()) break // core sent no rows: stop, never spin
+            page = page.copy(revision = next.revision, total = next.total, rows = page.rows + next.rows)
+        }
+        return page
     }
 
     /** Focus from offset 0, in the background: on resume and each minute while Focus shows. */

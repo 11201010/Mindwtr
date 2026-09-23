@@ -1,13 +1,18 @@
 // Projects check for the isolated native Android development app.
 //
-//   node apps/android-native/scripts/check-projects-device.mjs <adb-serial> [apk]
+//   node apps/android-native/scripts/check-projects-device.mjs <adb-serial> [apk] [--prune-old]
 //
 // Installs the debug APK with `install -r` (existing development data stays).
-// The app cannot create projects, so the script stops the app and INJECTS,
-// through core's own store (Bun runs core's TypeScript) on a host copy of the
-// app's database, three projects with titles unique to this run: a sequential
-// project in a new area with two sections and four tasks, an archived project
-// with one task, and a project with 55 tasks. It then checks the Projects tab:
+// The app cannot create projects, so the script stops the app and, through
+// core's own store (Bun runs core's TypeScript) on a host copy of the app's
+// database, prepares ONE fixture found by its stable titles (marker 424242424242):
+// a sequential project in its own area with two sections and four tasks, an
+// archived project with one task, and a project with 55 tasks. The first run
+// INJECTS it; every later run REUSES it and only sets the sequential project's
+// tasks back to Next (the run completes two of them), so the development data
+// no longer grows. --prune-old also deletes, through core (tombstones), the
+// projects and areas earlier versions of this check injected per run (titles
+// Area/Seq/Arch/Many plus 12 digits) and their detached tasks (61-66 plus 12 digits); nothing else is touched. It then checks the Projects tab:
 // (a) each project row shows core's task count and next action, and Archived
 // ("Closed") starts closed; (b) the open project shows core's section markers,
 // rows, and sequence cues in core's order; (c) Done from the project stores
@@ -24,16 +29,18 @@
 // home screen before running. It needs host `sqlite3` and `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
-import { createHash, randomInt } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, box, button, check, connect, doneButtons, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, box, button, check, connect, doneButtons, evidenced, fail, field, hasText, Stopped, tab, tabSelected } from './device.mjs';
 
-const [serial, apkArg] = process.argv.slice(2);
-if (!serial) {
-    console.error('usage: node check-projects-device.mjs <adb-serial> [apk]');
+const cliArgs = process.argv.slice(2);
+const prune = cliArgs.includes('--prune-old');
+const [serial, apkArg] = cliArgs.filter((arg) => !arg.startsWith('--'));
+if (!serial || cliArgs.some((arg) => arg.startsWith('--') && arg !== '--prune-old')) {
+    console.error('usage: node check-projects-device.mjs <adb-serial> [apk] [--prune-old]');
     process.exit(2);
 }
 const app = resolve(import.meta.dirname, '..');
@@ -56,8 +63,9 @@ const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language'];
 const DB = 'mindwtr-native-dev.db';
 const work = resolve(app, 'android/build/projects-check');
 const coreSrc = resolve(app, '../../packages/core/src');
-// Digits only for task titles: some phone keyboards hold typed letters in a composition strip.
-const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
+// The fixture's stable marker: every run finds the same projects and tasks, so it injects them only once.
+// Digits only in task titles (the editor step picks a task by its digits-only title).
+const run = '424242424242';
 const names = { area: `Area${run}`, sequential: `Seq${run}`, archived: `Arch${run}`, many: `Many${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
@@ -97,20 +105,8 @@ const stopApp = async () => {
 };
 
 // ---- UI (core's English labels: nav.projects, projects.closed, common.back, common.done, common.more, taskEdit.editTask) ----
-const tab = (nodes, name) => {
-    // A Compose Tab is selectable, not clickable: the smallest focusable node around its label.
-    const label = nodes.find((node) => node.text === name && node.class === 'android.widget.TextView');
-    if (!label) return undefined;
-    const [x1, y1, x2, y2] = box(label);
-    const area = (node) => { const [l, t, r, b] = box(node); return (r - l) * (b - t); };
-    return nodes.filter((node) => node.focusable === 'true').filter((node) => {
-        const [l, t, r, b] = box(node);
-        return l <= x1 && t <= y1 && r >= x2 && b >= y2;
-    }).sort((a, b) => area(a) - area(b))[0];
-};
-const tabSelected = (nodes, name) => tab(nodes, name)?.selected === 'true';
 const inEditor = (nodes) => hasText(nodes, 'Edit Task');
-const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes) && Boolean(field(nodes)), 60_000);
+const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes) && hasText(nodes, 'Inbox'), 60_000);
 const textNode = (nodes, text) => nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText');
 /** The open project: the Projects tab, core's project title as the heading, and Back. */
 const inProject = (nodes, title) => tabSelected(nodes, 'Projects') && !inEditor(nodes) && hasText(nodes, title) && Boolean(button(nodes, 'Back'));
@@ -168,8 +164,9 @@ const pullDatabase = (name) => {
 };
 const sqlite = (db, sql) => JSON.parse(execFileSync('sqlite3', ['-json', db, sql], { encoding: 'utf8' }) || '[]');
 /**
- * Runs core's contract on a database copy: `inject` adds this run's projects through core's store and prints their
- * ids; `projects` and `detail` print core's getProjects row and getProjectDetail items as the app shows them.
+ * Runs core's contract on a database copy: `prepare` finds the fixture by its titles (or injects it once) through
+ * core's store, resets it, and prints the ids; `projects` and `detail` print core's getProjects row and
+ * getProjectDetail items as the app shows them.
  */
 const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
     import { Database } from 'bun:sqlite';
@@ -189,29 +186,79 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
     const store = () => useTaskStore.getState();
     const value = (result) => { if (!result.ok) throw new Error(result.error.code + ': ' + result.error.message); return result.value; };
     let out;
-    if (process.env.CHECK_MODE === 'inject') {
-        const add = async (title, props) => {
-            const result = await store().addTask(title, { status: 'next', ...props });
-            if (!result.success || !result.id) throw new Error('addTask failed: ' + result.error);
-            return result.id;
-        };
-        const area = await store().addArea(names.area);
-        const sequential = await store().addProject(names.sequential, '#3b82f6', { areaId: area.id, isSequential: true });
-        const first = await store().addSection(sequential.id, 'S1' + names.run);
-        const second = await store().addSection(sequential.id, 'S2' + names.run);
-        await add('61' + names.run, { projectId: sequential.id, sectionId: first.id });
-        await add('62' + names.run, { projectId: sequential.id, sectionId: first.id });
-        await add('63' + names.run, { projectId: sequential.id, sectionId: second.id });
-        await add('64' + names.run, { projectId: sequential.id });
-        const archived = await store().addProject(names.archived, '#64748b');
-        await add('65' + names.run, { projectId: archived.id });
-        const archivedResult = await store().updateProject(archived.id, { status: 'archived' });
-        if (!archivedResult.success) throw new Error('archive failed: ' + archivedResult.error);
-        const many = await store().addProject(names.many, '#10b981');
-        for (let index = 0; index < 55; index += 1) await add('66' + names.run + String(index).padStart(2, '0'), { projectId: many.id });
-        await flushPendingSave();
-        if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
-        out = { sequential: sequential.id, archived: archived.id, many: many.id };
+    if (process.env.CHECK_MODE === 'prepare') {
+        const live = (items) => items.filter((item) => !item.deletedAt);
+        let pruned = 0;
+        if (process.env.CHECK_PRUNE === '1') {
+            // Only what earlier versions of this check injected per run: its four title shapes with a 12-digit run id.
+            // [0-9], not \\d: this code sits in a template literal, which drops the backslash.
+            for (const project of live(store()._allProjects).filter((item) => /^(Seq|Arch|Many)[0-9]{12}$/.test(item.title) && !item.title.endsWith(names.run))) {
+                const result = await store().deleteProject(project.id);
+                if (!result.success) throw new Error('prune failed: ' + result.error);
+                await flushPendingSave();
+                pruned += 1;
+            }
+            for (const area of live(store()._allAreas).filter((item) => /^Area[0-9]{12}$/.test(item.name) && !item.name.endsWith(names.run))) {
+                const result = await store().deleteArea(area.id);
+                if (!result.success) throw new Error('prune failed: ' + result.error);
+                await flushPendingSave();
+                pruned += 1;
+            }
+            // Deleting a project detaches its tasks, so the old runs' tasks stay as loose next actions:
+            // tombstone them by their title shape (61-66, a 12-digit run id, an optional index).
+            const oldTasks = live(store()._allTasks).filter((item) => {
+                const match = /^6[1-6]([0-9]{12})([0-9]{2})?$/.exec(item.title);
+                return match !== null && match[1] !== names.run;
+            }).map((item) => item.id);
+            if (oldTasks.length > 0) {
+                const result = await store().batchDeleteTasks(oldTasks);
+                if (!result.success) throw new Error('prune failed: ' + result.error);
+                await flushPendingSave();
+                pruned += oldTasks.length;
+            }
+        }
+        const find = (title) => live(store()._allProjects).filter((project) => project.title === title);
+        const found = [names.sequential, names.archived, names.many].map(find);
+        if (found.some((list) => list.length > 1)) throw new Error('the fixture project titles are not unique');
+        if (found.every((list) => list.length === 1)) {
+            const [sequential, archived, many] = found.map(([project]) => project);
+            // Reset: the run completes two of the sequential project's tasks; put all four back to Next.
+            let reset = 0;
+            for (const task of live(store()._allTasks).filter((item) => item.projectId === sequential.id && item.status !== 'next')) {
+                const result = await store().updateTask(task.id, { status: 'next' });
+                if (!result.success) throw new Error('reset failed: ' + result.error);
+                await flushPendingSave(); // one save at a time: core's incremental saves share one SQLite connection
+                reset += 1;
+            }
+            await flushPendingSave();
+            if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
+            out = { reused: true, reset, pruned, sequential: sequential.id, archived: archived.id, many: many.id };
+        } else if (found.some((list) => list.length === 1)) {
+            throw new Error('only part of the fixture is in the database; restore or remove it by hand');
+        } else {
+            const add = async (title, props) => {
+                const result = await store().addTask(title, { status: 'next', ...props });
+                if (!result.success || !result.id) throw new Error('addTask failed: ' + result.error);
+                return result.id;
+            };
+            const area = await store().addArea(names.area);
+            const sequential = await store().addProject(names.sequential, '#3b82f6', { areaId: area.id, isSequential: true });
+            const first = await store().addSection(sequential.id, 'S1' + names.run);
+            const second = await store().addSection(sequential.id, 'S2' + names.run);
+            await add('61' + names.run, { projectId: sequential.id, sectionId: first.id });
+            await add('62' + names.run, { projectId: sequential.id, sectionId: first.id });
+            await add('63' + names.run, { projectId: sequential.id, sectionId: second.id });
+            await add('64' + names.run, { projectId: sequential.id });
+            const archived = await store().addProject(names.archived, '#64748b');
+            await add('65' + names.run, { projectId: archived.id });
+            const archivedResult = await store().updateProject(archived.id, { status: 'archived' });
+            if (!archivedResult.success) throw new Error('archive failed: ' + archivedResult.error);
+            const many = await store().addProject(names.many, '#10b981');
+            for (let index = 0; index < 55; index += 1) await add('66' + names.run + String(index).padStart(2, '0'), { projectId: many.id });
+            await flushPendingSave();
+            if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
+            out = { reused: false, reset: 0, pruned, sequential: sequential.id, archived: archived.id, many: many.id };
+        }
     } else if (process.env.CHECK_MODE === 'projects') {
         const view = value(host.getProjects());
         out = [...view.active, ...view.deferred, ...view.archived].flatMap((group) => group.projects).find((row) => row.id === process.env.CHECK_PROJECT);
@@ -231,7 +278,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
     process.exit(0);
 `], {
     encoding: 'utf8', maxBuffer: 64 << 20,
-    env: { ...process.env, CHECK_DB: db, CHECK_MODE: mode, CHECK_NAMES: JSON.stringify({ ...names, run }), ...extra },
+    env: { ...process.env, CHECK_DB: db, CHECK_MODE: mode, CHECK_NAMES: JSON.stringify({ ...names, run }), CHECK_PRUNE: prune ? '1' : '', ...extra },
 }).trim().split('\n').pop());
 const CUES = { available: 'Available next action', later: 'Later in sequence' }; // core's en projects.availableNextAction / laterInSequence
 let ids = {};
@@ -274,7 +321,7 @@ try {
     console.log(`apk: ${apk}\napk sha256: ${createHash('sha256').update(readFileSync(apk)).digest('hex')}`);
     for (const name of PROPS) setProp(name, '');
 
-    // Setup: upgrade-install, boot once (so the database has this build's schema), stop, inject this run's projects.
+    // Setup: upgrade-install, boot once (so the database has this build's schema), stop, prepare the fixture.
     const beforeInstall = front();
     if (!beforeInstall.includes(`${PKG}/`) && !beforeInstall.includes(`${home}/`)) {
         throw new Stopped(`another app is in front: ${beforeInstall.trim()}`);
@@ -286,15 +333,16 @@ try {
     await inbox();
     await stopApp();
     const db = pullDatabase('inject');
-    check(sqlite(db, `SELECT id FROM projects WHERE title IN ('${names.sequential}', '${names.archived}', '${names.many}')`).length === 0,
-        'this run\'s projects are not in the database yet');
-    ids = core(db, 'inject');
+    ids = core(db, 'prepare');
     // Only the main file goes back, so core's checkpoint must have moved every frame into it.
     check(!existsSync(`${db}-wal`) || statSync(`${db}-wal`).size === 0, 'the injected rows are all in the main database file');
     adbRaw('push', db, STAGED);
     try { runAs(`cp ${STAGED} files/${DB}`); } finally { sh(`rm -f ${STAGED}`); }
     runAs(`rm -f files/${DB}-wal files/${DB}-shm`);
-    console.log(`INJECTED: through core's store, area ${names.area}; sequential project ${names.sequential} (sections S1${run}, S2${run}; tasks 61-64${run}); archived project ${names.archived} (task 65${run}); project ${names.many} (55 tasks 66${run}00-54)`);
+    console.log(ids.reused
+        ? `REUSED: the fixture ${names.sequential}, ${names.archived}, ${names.many}; ${ids.reset} task(s) set back to Next through core's store`
+        : `INJECTED (once): through core's store, area ${names.area}; sequential project ${names.sequential} (sections S1${run}, S2${run}; tasks 61-64${run}); archived project ${names.archived} (task 65${run}); project ${names.many} (55 tasks 66${run}00-54)`);
+    if (prune) console.log(`PRUNED: ${ids.pruned} project(s), area(s) and task(s) earlier runs injected, deleted through core's store`);
 
     launch();
     let nodes = await inbox();
@@ -315,7 +363,9 @@ try {
     // Archived is core's last group, so a closed "Closed" is the list's last row: nothing is listed below it.
     nodes = await reveal('Closed', 80);
     const closedBottom = box(textNode(nodes, 'Closed') ?? fail('no "Closed" group on the list'))[3];
-    const below = nodes.filter((node) => node.package === PKG && node.text && box(node)[1] >= closedBottom);
+    // Only the list's own rows count: the tab bar below the list has labels too (a list that fits is not scrollable).
+    const listBottom = box(tab(nodes, 'Inbox') ?? fail('no tab bar on the Projects tab'))[1];
+    const below = nodes.filter((node) => node.package === PKG && node.text && box(node)[1] >= closedBottom && box(node)[3] <= listBottom);
     check(below.length === 0, `(a) Archived ("Closed") starts closed: nothing is listed below it${below.length ? ` (${below.map((node) => node.text).join(', ')})` : ''}`);
 
     // (b) The open project: core's section markers, rows, and cues, in core's order.
@@ -451,6 +501,7 @@ try {
     check(boots(processId) === 1 && !bootFailure(nodes), 'relaunch: boot validation passed');
     console.log('Projects device check passed');
 } catch (error) {
+    evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {

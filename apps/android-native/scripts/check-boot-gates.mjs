@@ -47,6 +47,10 @@ assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = tit
 assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy\)/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("create", captureId, draft\)/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
+// Swipe and the circle button are one command: the same enabled rule, the same complete(task.id).
+assert.match(activity, /SwipeToComplete\(enabled = completable && canComplete, label = done, shape = shape, onComplete = \{ complete\(task\.id\) \}\)/);
+assert.match(activity, /IconButton\(onClick = \{ complete\(task\.id\) \}, enabled = canComplete,/);
+assert.match(activity, /if \(value == SwipeToDismissBoxValue\.StartToEnd\) onComplete\(\)\s+false/, 'the row springs back; the list refresh removes it');
 assert.match(activity, /val done = t\("common\.done"\)[\s\S]*contentDescription = "\$done \$\{task\.title\}"/);
 // Every failed command holds its exact retry, except an update core refused before writing.
 assert.match(model, /private val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
@@ -86,7 +90,7 @@ for (const read of ['fun refresh()', 'fun loadMore()', 'fun loadMoreFocus(', 'fu
 }
 assert.equal(code(model).match(/(?<!var )\bshown = /g).length, 2, 'fresh() and a command\'s start');
 // The exact retry of a failed Done is enabled wherever its row shows: Inbox, Focus, and a project.
-assert.match(activity, /enabled = writable && !busy &&\s*\(failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)\)/);
+assert.match(activity, /val canComplete = writable && !busy &&\s*\(failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)\)/);
 // Only the capture draft survives process death; a restored unchanged draft reuses its capture UUID.
 for (const field of ['draft', 'captureId', 'submittedTitle']) assert.match(model, new RegExp(`saved\\.get<String>\\("${field}"\\)`));
 // The editor draft (core's reply = loaded values, plus the edited values) survives process death.
@@ -97,7 +101,9 @@ for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
 }
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
-const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, coreHost, sqliteBridge, guard];
+const themeKt = source('Theme.kt');
+const iconsKt = source('Icons.kt');
+const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, coreHost, sqliteBridge, guard];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
@@ -139,11 +145,14 @@ assert.match(rnCheckpoint, /if \(!checkpoint\.exists\(\)\)[\s\S]*listOf\("", "-w
 assert.match(guard, /RN_STATE_CHECKPOINT = "files\/SQLite\/RKStorage\.prewrite"/);
 // Kotlin reads, JS decides: no merge, and the backup is passed on as text, never parsed.
 assert.doesNotMatch(code(kotlinFiles.join('\n')), /merge|JSONObject\((state\.)?backup|JSONArray\((state\.)?backup/i);
-assert.match(guard, /return Opened\(database, bootState\.toString\(\), state\.backup \?: "", state\.language\)/);
+assert.match(guard, /return Opened\(database, bootState\.toString\(\), state\.backup \?: "", state\.language, state\.theme\)/);
 // RN's device-local language is one more AsyncStorage row read from the byte copy, passed on as text.
 assert.match(guard, /private const val LANGUAGE = "mindwtr-language"/);
-assert.match(guard, /listOf\(JSON_AHEAD, RECONCILED, BACKUP_VERSION, LANGUAGE\)/);
+assert.match(guard, /listOf\(JSON_AHEAD, RECONCILED, BACKUP_VERSION, LANGUAGE, THEME\)/);
 assert.match(guard, /language = if \(LANGUAGE in sizes\) value\(LANGUAGE\) else null/);
+// RN's device-local theme is one more row read the same way (theme-context.tsx THEME_STORAGE_KEY).
+assert.match(guard, /private const val THEME = "@mindwtr_theme"/);
+assert.match(guard, /theme = if \(THEME in sizes\) value\(THEME\) else null/);
 assert.match(coreHost, /LegacyRnStoreGuard\.commitRnState\(checkNotNull\(rnDataDir\)/);
 assert.equal(kotlinFiles.join('\n').match(/commitRnState\(/g).length, 2, 'defined once, called once from the guarded bridge callback');
 assert.match(guard, /queryCopy\(asyncStorage, scratch\)/);
@@ -237,16 +246,16 @@ assert.match(focusUi, /section\.rows\.forEachIndexed \{ index, task ->/);
 // Core's two flags are the only row data Focus acts on: laterToday places one subheading, revealDate is shown as text.
 assert.match(focusUi, /val laterToday = section\.rows\.indexOfFirst \{ it\.laterToday \}/);
 assert.equal(code([focusUi, activity, model].join('\n')).match(/(?<!"agenda)\.laterToday\b/g).length, 1); // not the label key
-assert.match(activity, /task\.revealDate\?\.let \{ Text\(it, style = MaterialTheme\.typography\.bodySmall\) \}/);
+assert.match(activity, /task\.revealDate\?\.let \{ MetaText\(it, c\.secondaryText, 600, Modifier\.padding\(top = 4\.dp\)\) \}/);
 assert.equal(code([focusUi, activity, model].join('\n')).match(/\.revealDate\b/g).length, 1);
 // A stale Load more reads Focus again from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
 assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*delay\(60_000\)/);
 assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 1, 'one caller: the lifecycle loop');
-assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.weight\(1f\)\)/);
+assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Commands from Focus and a project use the Inbox's command path and its exact-retry lock.
-assert.match(activity, /fun TaskRowItem\(model: InboxViewModel, task: TaskRow, completable: Boolean = true, note: String\? = null\)/);
+assert.match(activity, /fun TaskRowItem\(model: InboxViewModel, task: TaskRow, completable: Boolean = true, note: String\? = null, available: Boolean = false\)/);
 assert.match(focusUi, /item\(key = "\$\{section\.key\}:\$\{task\.id\}"\) \{ TaskRowItem\(model, task\) \}/);
 assert.match(focusUi, /onClick = \{ loadMoreFocus\(section\.key\) \}, enabled = writable && !busy && failedAction == null/);
 // The selected list survives rotation (ViewModel) and process death (SavedStateHandle).
@@ -266,7 +275,7 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, legacy\?\.language\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+return runtime/);
 assert.equal(kotlinFiles.join('\n').match(/runtime\.language\(|runtime\.strings\(/g).length, 2);
 // Core's editor statuses and priorities each have their label key.
 const contractSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract.ts'), 'utf8');
@@ -277,7 +286,7 @@ for (const [list, prefix] of [['EDITOR_STATUSES', 'status'], ['EDITOR_PRIORITIES
 assert.match(editorUi, /editor\.reply\.statuses\.map \{ it to t\("status\.\$it"\) \}/);
 assert.match(editorUi, /editor\.reply\.priorities\.map \{ it to t\("priority\.\$it"\) \}/);
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt })) {
     const body = code(text);
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
     for (const [, rest] of body.matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
@@ -287,15 +296,99 @@ for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, 
         }
     }
 }
-assert.match(activity, /text = \{ Text\(t\(tab\.label\)\) \}/);
+assert.match(activity, /Text\(t\(tab\.label\), style = rnText\(10, if \(active\) 700 else 600, 12\)/);
 assert.match(model, /enum class Screen\(val label: String\) \{ Inbox\("tab\.inbox"\), Focus\("tab\.next"\), Projects\("nav\.projects"\) \}/);
 // A failed boot shows only its message, found by a test tag, and no command control.
-assert.match(activity, /\} else if \(!writable\) \{[^}]*Text\(error\.orEmpty\(\), color = MaterialTheme\.colorScheme\.error, modifier = Modifier\.testTag\("boot-failure"\)\)\s*\} else \{/);
+assert.match(activity, /\} else if \(!writable\) \{[^}]*Text\(error\.orEmpty\(\), color = MaterialTheme\.colorScheme\.error, modifier = Modifier\.testTag\("boot-failure"\)\.padding\(24\.dp\)\)\s*\} else \{/);
 assert.match(activity, /if \(open != null && writable\) TaskEditorScreen\(model, open\)/);
 
-// Landscape: the Inbox header and capture row are the list's first items; only the tabs (and a failure) stay fixed.
-assert.match(activity, /LazyColumn\(modifier\) \{\s*item\(key = "header"\)[\s\S]*?item\(key = "capture"\)[\s\S]*?items\(rows, key = \{ it\.id \}\)/);
-assert.match(activity, /Screen\.Inbox -> InboxList\(model, Modifier\.weight\(1f\)\)/);
+// Landscape: the Inbox count line is the list's first item; only the header, the tabs (and a failure) stay fixed.
+assert.match(activity, /LazyColumn\(modifier, contentPadding = PaddingValues\(12\.dp\)\) \{\s*item\(key = "header"\)[\s\S]*?items\(rows, key = \{ it\.id \}\)/);
+assert.match(activity, /Screen\.Inbox -> InboxList\(model, Modifier\.fillMaxSize\(\)\)/);
+// Capture: RN's center tab button opens the sheet; the sheet is the Inbox capture unchanged (draft, UUID, exact retry).
+assert.match(activity, /CaptureButton\(model\)[\s\S]*?clickable\(role = Role\.Button\) \{ model\.showCapture\(true\) \}/);
+assert.match(activity, /if \(capturing\) CaptureSheet\(model\)/);
+assert.match(activity, /PillButton\(t\("common\.save"\), filled = true, onClick = model::add,/);
+assert.match(model, /if \(action\.kind == "create"\) \{ setCapture\(action\.title, action\.id, action\.title\); showCapture\(true\) \}/,
+    'a new screen reopens the sheet on an owed capture retry');
+assert.match(model, /saved\.get<Boolean>\("capturing"\)/);
+assert.match(activity, /val closable = !busy && failedAction == null\s+BackHandler\(enabled = failedAction == null\)/, 'an owed capture retry keeps the sheet open');
+// The tab bar: RN's order with Menu's slot kept empty, and RN's lucide icons.
+const tabBar = activity.slice(activity.indexOf('private fun TabBar('), activity.indexOf('private fun RowScope.TabItem('));
+assert.deepEqual([...tabBar.matchAll(/TabItem\(model, Screen\.(\w+)|CaptureButton\(model\)|Spacer\(Modifier\.weight\(1f\)\)/g)]
+    .map(([whole, tab]) => tab ?? (whole.startsWith('Capture') ? 'capture' : 'empty')), ['Focus', 'Inbox', 'capture', 'Projects', 'empty']);
+// The failure text stays in the accessibility tree: drawn above the list, a live region, reached first, and the list is clipped.
+const banner = activity.slice(activity.indexOf('fun FailureBanner('), activity.indexOf('private fun TabBar('));
+assert.match(banner, /\.zIndex\(1f\)/);
+assert.match(banner, /isTraversalGroup = true; traversalIndex = -1f/);
+assert.match(banner, /Text\(message,[\s\S]*?liveRegion = LiveRegionMode\.Assertive/);
+assert(activity.indexOf('FailureBanner(message)') < activity.indexOf('Screen.Inbox -> InboxList('), 'the banner sits above the lists');
+assert.match(activity, /Box\(Modifier\.weight\(1f\)\.fillMaxWidth\(\)\.background\(c\.bg\)\.clipToBounds\(\)\)/);
+// Section titles draw RN's capitals but expose core's own title and count.
+assert.match(activity, /clearAndSetSemantics \{ text = AnnotatedString\(spoken\); heading\(\) \}/);
+assert.match(activity, /val spoken = if \(count == null\) title else "\$title · \$count"/);
+
+// Theme: one Kotlin theme object holds RN's palettes, value for value, and every color the screens draw.
+const mobile = resolve(app, '../mobile');
+const hexes = (text) => [...text.matchAll(/"(#[0-9A-Fa-f]{6})"/g)].map(([, hex]) => hex.toUpperCase());
+const kotlinPalette = (name) => hexes(new RegExp(`${name} palette\\(([^)]*)\\)`).exec(themeKt)?.[1] ?? '');
+const FIELDS = ['bg', 'cardBg', 'taskItemBg', 'text', 'secondaryText', 'icon', 'border', 'tint', 'onTint', 'tabIconDefault',
+    'tabIconSelected', 'inputBg', 'danger', 'success', 'warning', 'filterBg'];
+assert.match(themeKt, new RegExp(`data class ThemeColors\\(\\s*${FIELDS.map((field) => `val ${field}: Color,`).join('\\s*')}\\s*\\)`), 'ThemeColors has RN\'s fields in order');
+const presetSource = readFileSync(resolve(mobile, 'constants/theme-presets.ts'), 'utf8');
+for (const [, preset, body] of presetSource.matchAll(/^ {4}'?([\w-]+)'?: \{\n([\s\S]*?)\n {4}\},/gm)) {
+    const values = Object.fromEntries([...body.matchAll(/(\w+): '(#[0-9A-Fa-f]{6})'/g)].map(([, field, hex]) => [field, hex.toUpperCase()]));
+    assert.deepEqual(kotlinPalette(`"${preset}" to`), FIELDS.map((field) => values[field]), `preset ${preset} matches RN`);
+}
+const m3Source = readFileSync(resolve(mobile, 'constants/material3/m3-color.ts'), 'utf8');
+const m3Role = (scheme, role) => new RegExp(`${scheme}: \\{[\\s\\S]*?\\b${role}: '(#[0-9A-Fa-f]{6})'`).exec(m3Source)[1].toUpperCase();
+const m3Map = { bg: 'background', cardBg: 'surfaceContainer', taskItemBg: 'surfaceContainerHigh', text: 'text', secondaryText: 'secondaryText',
+    icon: 'secondaryText', border: 'outline', tint: 'primary', onTint: 'onPrimary', tabIconDefault: 'secondaryText', tabIconSelected: 'primary',
+    inputBg: 'surfaceVariant', danger: 'error', success: 'success', warning: 'warning', filterBg: 'surfaceVariant' };
+for (const scheme of ['light', 'dark']) {
+    assert.deepEqual(kotlinPalette(`M3_${scheme.toUpperCase()} =`), FIELDS.map((field) => m3Role(scheme, m3Map[field])), `Material 3 ${scheme} matches RN`);
+}
+const tokenSource = readFileSync(resolve(mobile, 'hooks/use-theme-tokens.ts'), 'utf8');
+const generic = tokenSource.slice(tokenSource.indexOf('const isDark = theme.isDark;'), tokenSource.indexOf('const FALLBACK: ThemeTokens'));
+const baseSource = readFileSync(resolve(mobile, 'constants/theme.ts'), 'utf8');
+const baseColor = (scheme, name) => {
+    const block = new RegExp(`${scheme}: \\{([\\s\\S]*?)\\}`).exec(baseSource)[1];
+    const value = new RegExp(`\\b${name}: ([^,]+),`).exec(block)[1].trim();
+    return (value.startsWith("'") ? value.slice(1, -1) : new RegExp(`const ${value} = '([^']+)'`).exec(baseSource)[1]).toUpperCase();
+};
+const genericValue = (scheme, field) => {
+    const expression = new RegExp(`\\b${field}: ([^,\\n]+)`).exec(generic)[1];
+    const choice = expression.includes('?') ? expression.split('?')[1].split(':')[scheme === 'dark' ? 0 : 1].trim() : expression.trim();
+    const colors = /^Colors\.(light|dark)\.(\w+)$/.exec(choice);
+    return colors ? baseColor(colors[1], colors[2]) : choice.replace(/'/g, '').toUpperCase();
+};
+for (const scheme of ['light', 'dark']) {
+    assert.deepEqual(kotlinPalette(`${scheme.toUpperCase()} =`), FIELDS.map((field) => genericValue(scheme, field)), `RN default ${scheme} matches`);
+}
+// No color is written anywhere else: every other file draws with LocalTheme.
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner })) {
+    assert.doesNotMatch(code(text), /\bColor\(|Color\.(Black|White|Red|Green|Blue|Gray|Yellow|Cyan|Magenta|DarkGray|LightGray|Transparent)\b|parseColor|"#[0-9A-Fa-f]{3,8}"|0x[0-9A-Fa-f]{8}/,
+        `${name} writes a color; colors live only in Theme.kt`);
+}
+assert.equal([activity, focusUi, projectsUi].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
+assert.equal(code(activity).match(/MindwtrTheme\(/g).length, 1, 'one theme wraps the whole app');
+// Core classifies the theme and owns its hues; Kotlin never names a theme mode.
+assert.doesNotMatch(code(themeKt + owner), /"(system|material3-light|material3-dark)"/);
+assert.match(themeKt, /json\.getString\("preset"\), json\.getBoolean\("material"\), if \(json\.isNull\("scheme"\)\) null else json\.getString\("scheme"\)/);
+assert.match(coreHost, /fun theme\(stored: String\): JSONObject = callAsync\("theme", stored\)/);
+assert.equal(owner.match(/runtime\.theme\(/g).length, 1);
+assert.match(owner, /runCatching \{ ThemeChoice\.load\(runtime\.theme\(stored \?: ""\)\) \}/, 'a failed theme read keeps RN\'s default look');
+const themeCall = hostEntry.slice(hostEntry.indexOf('theme(stored: string): string {'), hostEntry.indexOf('    projects(): string {'));
+assert.match(themeCall, /const mode = typeof synced === 'string' && synced \? synced : \(stored \|\| 'system'\);/, 'RN: the synced setting wins over the device-local choice');
+assert.match(themeCall, /themeDescriptor\(mode\)/);
+assert.doesNotMatch(themeCall, /requireSaved/);
+// Row data stays core's: dates and the project title are shown as the strings core sent.
+assert.match(activity, /task\.dueDate\?\.let \{ MetaText\(it, c\.secondaryText, 600\) \}/);
+assert.match(activity, /val start = task\.startTime\?\.let \{ "\$\{t\("taskEdit\.startDateLabel"\)\}: \$it" \}/);
+assert.match(model, /text\("priority"\), text\("dueDate"\), text\("startTime"\), text\("projectTitle"\)\)/);
+// Icons are lucide's own paths, with its ISC notice.
+assert.match(iconsKt, /Lucide is ISC licensed/);
+assert.match(iconsKt, /val Target = lucide\("Target", circle\(12, 12, 10\), circle\(12, 12, 6\), circle\(12, 12, 2\)\)/);
 
 // Projects: read only through CoreHost's two calls, which reach only core's two project queries.
 assert.match(coreHost, /fun projects\(\): JSONObject = callAsync\("projects"\)/);
@@ -321,8 +414,8 @@ assert.match(projectsUi, /group\.areaName \?: t\("projects\.noArea"\)/);
 assert.match(projectsUi, /val open = !collapsible \|\| bucket in expanded/, 'Deferred and Archived start closed');
 // A read-only project's rows have no Complete; its cue is core's value, shown with mobile's label.
 assert.match(projectsUi, /val completable = detail\?\.readOnly == false/);
-assert.match(projectsUi, /TaskRowItem\(model, entry\.row, completable, note = entry\.sequenceCue\?\.let\(CUE_KEYS::get\)\?\.let\(::t\)\)/);
-assert.match(activity, /if \(completable\) \{\s*Button\(onClick = \{ complete\(task\.id\) \}/);
+assert.match(projectsUi, /TaskRowItem\(model, entry\.row, completable, note = entry\.sequenceCue\?\.let\(CUE_KEYS::get\)\?\.let\(::t\),\s*available = entry\.sequenceCue == "available"\)/);
+assert.match(activity, /if \(completable\) \{\s*IconButton\(onClick = \{ complete\(task\.id\) \}/);
 // A stale window restarts the project from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+return if \(start == null\) view else readProject\(runtime, id, null, depth\)/);
 assert.match(model, /if \(id != openProjectId\) return\s+if \(detail == null\) keepProject\(null\)\s+project = detail/,
@@ -409,7 +502,15 @@ export function createNativeHostContract() {
     async completeTask() { globalThis.completeCount++; return { ok: true, value: { id: 'id' } }; },
   };
 }
+export const STATUS_COLORS_BY_THEME = {
+  light: { done: { text: '#22C55E' } }, dark: { done: { text: '#4ADE80' } }, nord: { done: { text: '#A3BE8C' } },
+};
+export const TASK_PRIORITY_COLORS = { urgent: '#dc2626', low: '#3b82f6' };
+export function themeDescriptor(theme) {
+  return { nord: { scheme: 'dark', statusPreset: 'nord' }, 'material3-light': { scheme: 'light', statusPreset: null } }[theme];
+}
 export const useTaskStore = { getState: () => ({
+  settings: globalThis.settings,
   _allTasks: globalThis.lastLoaded ? globalThis.lastLoaded.tasks : [],
   _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
   persistenceFailure: globalThis.persistenceFailure,
@@ -430,7 +531,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
         createCount: 0, completeCount: 0, persistenceFailure: null, editorInputs: [], updateInputs: [], focusInputs: [],
-        languageInputs: [], projectInputs: [],
+        languageInputs: [], projectInputs: [], settings: undefined,
         projectDetailResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Project changed; restart paging from offset zero' } },
         focusWindowResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Focus changed; restart paging' } },
         updateResult: { ok: true, value: { id: 't', changed: true } },
@@ -508,6 +609,18 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]')),
     { ok: true, value: { language: 'zh', strings: { 'tab.inbox': '收集箱' }, missing: [] } });
 assert.deepEqual(ready.languageInputs, ['{"storedLanguage":null,"systemLocale":"en-US"}', '{"storedLanguage":"zh","systemLocale":"en-US"}',
     '{"keys":["tab.inbox"]}']);
+// Theme: the synced setting wins over RN's device-local choice, then the system; core classifies it and sends its hues.
+{
+    const theme = async (stored) => (await poll(ready, ready.MindwtrHost.theme(stored))).value;
+    assert.deepEqual(await theme(''), { mode: 'system', preset: 'default', material: false, scheme: null,
+        done: { light: '#22C55E', dark: '#4ADE80' }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+    assert.deepEqual(await theme('material3-light'), { mode: 'material3-light', preset: 'default', material: true, scheme: 'light',
+        done: { light: '#22C55E', dark: '#4ADE80' }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+    ready.settings = { theme: 'nord' };
+    assert.deepEqual(await theme('material3-light'), { mode: 'nord', preset: 'nord', material: false, scheme: 'dark',
+        done: { light: '#A3BE8C', dark: '#A3BE8C' }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
+    ready.settings = undefined;
+}
 // Projects pass Kotlin's arguments to core unchanged; the first window has no revision, and a stale one keeps its code prefix.
 assert.deepEqual(await poll(ready, ready.MindwtrHost.projects()),
     { ok: true, value: { version: 1, revision: 'p', active: [], deferred: [], archived: [] } });
@@ -652,6 +765,8 @@ console.log('RN legacy guard runs before the RN database opens and reads RKStora
 console.log('Editor: reads and writes only through CoreHost, patch of changed fields only, no Kotlin date parsing');
 console.log('Focus: reads only through CoreHost, core order and flags only, stale windows restart, blocked after a failed save');
 console.log('Labels: every UI word from core getStrings, one key map filled after setLanguage, debug-only language override');
+console.log('Theme: one Kotlin theme object equal to RN\'s palettes, no color elsewhere, core resolves the mode and owns its hues');
+console.log('Accessibility: the failure banner sits above the list (zIndex, live region, first in traversal); sections expose core\'s text');
 console.log('Projects: reads only through CoreHost, core order and groups only, stale windows restart, blocked after a failed save');
 console.log('RN legacy import: after the validated load, confirmed by a re-read before RN state changes; RKStorage checkpointed first');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

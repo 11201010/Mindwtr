@@ -4,8 +4,8 @@
 //
 // Installs the debug APK with `install -r` (existing development data stays)
 // and compares the labels with core's own dictionaries (en.ts and zh-Hans.ts,
-// read from source): (a) with no override the tabs, the Add button, the
-// capture field label, and the Inbox header show core's English, so the
+// read from source): (a) with no override the tabs, the capture button, and
+// the Inbox count line show core's English, so the
 // phone's language must resolve to English; (b) with the debug-only property
 // `debug.mindwtr.native.language=zh` and a fresh process, the same labels show
 // core's Chinese and the app logs `language=zh missing=0`; (c) with the
@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { box, button, check, connect, field, Stopped } from './device.mjs';
+import { button, check, connect, evidenced, Stopped, tab } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -51,34 +51,21 @@ const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { sh, home, front, pid, waitFor, logs } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
-/** A Compose Tab is selectable, not clickable: the smallest focusable node around its label. */
-const tab = (nodes, name) => {
-    const text = nodes.find((node) => node.text === name && node.class === 'android.widget.TextView');
-    if (!text) return undefined;
-    const [x1, y1, x2, y2] = box(text);
-    const area = (node) => { const [l, t, r, b] = box(node); return (r - l) * (b - t); };
-    return nodes.filter((node) => node.focusable === 'true').filter((node) => {
-        const [l, t, r, b] = box(node);
-        return l <= x1 && t <= y1 && r >= x2 && b >= y2;
-    }).sort((a, b) => area(a) - area(b))[0];
-};
-
 /** A fresh process (force-stop, launch), then every checked label must be core's text in [language]. */
 const expectLanguage = async (language, step) => {
     sh(`am force-stop ${PKG}`);
     await waitFor('the app process to end', () => pid() === '', 10_000);
     await waitFor('home screen', () => front().includes(`${home}/`), 10_000);
     device.launch(ACTIVITY);
-    const [inbox, focus, projects, add, capture] = ['tab.inbox', 'tab.next', 'nav.projects', 'common.add', 'nav.addTask']
+    const [inbox, focus, projects, capture] = ['tab.inbox', 'tab.next', 'nav.projects', 'nav.addTask']
         .map((key) => label(language, key));
-    const nodes = await waitFor(`the ${language} Inbox`, (current) => Boolean(field(current)) && tab(current, inbox)
+    const nodes = await waitFor(`the ${language} Inbox`, (current) => tab(current, inbox)
         && current.some((node) => node.text?.startsWith(`${inbox} · `)), 60_000);
     for (const [name, text] of [['tab.inbox', inbox], ['tab.next', focus], ['nav.projects', projects]]) {
         check(Boolean(tab(nodes, text)), `(${step}) the ${name} tab reads core's ${language} "${text}"`);
     }
-    check(Boolean(button(nodes, add)), `(${step}) the Add button reads core's ${language} "${add}"`);
-    // An empty Compose text field may expose its label as a child text or as the field's hint.
-    check(nodes.some((node) => node.text === capture || node.hint === capture), `(${step}) the capture field label reads core's ${language} "${capture}"`);
+    // RN's center capture button is labelled with core's nav.addTask.
+    check(Boolean(button(nodes, capture)), `(${step}) the capture button reads core's ${language} "${capture}"`);
     check(nodes.some((node) => /^.+ · \d+$/.test(node.text ?? '') && node.text.startsWith(`${inbox} · `)), `(${step}) the Inbox header reads core's ${language} "${inbox} · N"`);
     const line = logs(pid(), TAG).split('\n').find((entry) => entry.includes('Native Android labels')) ?? '';
     check(line.includes(`language=${language} missing=0`), `(${step}) the app logged ${line.slice(line.indexOf('Native Android labels')) || 'no labels line'}`);
@@ -101,6 +88,7 @@ try {
     await expectLanguage('en', 'c');
     console.log('Language device check passed');
 } catch (error) {
+    evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {

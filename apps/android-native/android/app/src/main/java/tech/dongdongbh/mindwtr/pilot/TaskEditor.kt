@@ -1,6 +1,7 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -119,7 +120,7 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) {
         val leave = { if (editor.readOnly || editor.patch.isEmpty()) closeEditor() else confirmLeave = true }
         BackHandler(enabled = !failed) { if (!busy) leave() }
 
-        Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(t("taskEdit.editTask"), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = leave, enabled = !busy && !failed) { Text(t(if (editor.readOnly) "common.close" else "common.cancel")) }

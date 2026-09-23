@@ -90,6 +90,7 @@ internal object ProcessCoreHost {
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, legacy?.language)
+            loadTheme(runtime, legacy?.theme)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
@@ -101,6 +102,12 @@ internal object ProcessCoreHost {
     private fun setLanguage(runtime: CoreHost, stored: String?) {
         runtime.language(stored ?: "", Locale.getDefault().toLanguageTag())
         Labels.load(runtime.strings(LABEL_KEYS))
+    }
+
+    /** RN's theme as core resolves it. The theme is cosmetic: a failed read keeps RN's default look. */
+    private fun loadTheme(runtime: CoreHost, stored: String?) {
+        runCatching { ThemeChoice.load(runtime.theme(stored ?: "")) }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android theme read failed; using the default theme", it) }
     }
 
     fun logHostReuse(reason: String, attaches: Int, inFlight: Boolean) {

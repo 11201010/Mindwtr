@@ -2,11 +2,46 @@
 // one serial. UI input happens only while `pkg` is in front, and a launch
 // happens only from the launcher or `pkg` itself.
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 export class Stopped extends Error {}
-export const fail = (message) => { throw new Error(message); };
+
+// The last connected device, for failure evidence.
+let evidenceDevice;
+/**
+ * Saves a screenshot and the uiautomator XML of the phone as it is now to
+ * /home/dd/.mindwtr-harness/failures/<script>-<timestamp>/ and prints the path.
+ * It never throws: evidence must not hide the failure it records.
+ */
+export const saveEvidence = () => {
+    if (!evidenceDevice) return undefined;
+    const script = basename(process.argv[1] ?? 'device', '.mjs');
+    const dir = `/home/dd/.mindwtr-harness/failures/${script}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+        mkdirSync(dir, { recursive: true });
+        try { writeFileSync(`${dir}/screen.png`, evidenceDevice.adbRaw('exec-out', 'screencap', '-p')); } catch { /* device gone */ }
+        try {
+            evidenceDevice.sh(`uiautomator dump ${evidenceDevice.uiFile}`);
+            writeFileSync(`${dir}/ui.xml`, evidenceDevice.adbRaw('exec-out', 'cat', evidenceDevice.uiFile));
+        } catch { /* hierarchy unavailable */ }
+        console.error(`failure evidence: ${dir}`);
+        return dir;
+    } catch {
+        return undefined;
+    }
+};
+/** Fails the check: saves evidence first. Scripts' catch blocks save it for any other error (see `evidenced`). */
+export const fail = (message) => {
+    const error = new Error(message);
+    error.evidence = saveEvidence();
+    throw error;
+};
+/** For a script's catch: evidence for a failure that did not come through fail(). */
+export const evidenced = (error) => {
+    if (!(error instanceof Stopped) && !error?.evidence) saveEvidence();
+};
 export const check = (condition, message) => { if (!condition) fail(message); console.log(`ok - ${message}`); };
 
 const decode = (value) => value.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -25,6 +60,26 @@ export const button = (nodes, label) => {
         return area(a) - area(b);
     })[0];
 };
+/**
+ * The tab labelled [name]: the smallest focusable node around a label with that text. A Compose
+ * tab is selectable, and the header above the list can show the same word, so only a label
+ * inside a focusable node counts.
+ */
+export const tab = (nodes, name) => {
+    const area = (node) => { const [l, t, r, b] = box(node); return (r - l) * (b - t); };
+    for (const label of nodes.filter((node) => node.text === name && node.class === 'android.widget.TextView')) {
+        const [x1, y1, x2, y2] = box(label);
+        const found = nodes.filter((node) => node.focusable === 'true').filter((node) => {
+            const [l, t, r, b] = box(node);
+            return l <= x1 && t <= y1 && r >= x2 && b >= y2;
+        }).sort((a, b) => area(a) - area(b))[0];
+        if (found) return found;
+    }
+    return undefined;
+};
+export const tabSelected = (nodes, name) => tab(nodes, name)?.selected === 'true';
+/** The capture field's text, "" when the capture sheet is closed (a saved capture closes it, as in RN). */
+export const draftText = (nodes) => field(nodes)?.text ?? '';
 export const hasText = (nodes, text) => nodes.some((node) => node.text === text && node.class !== 'android.widget.EditText');
 /** The message of a failed boot: the app then shows only this text, tagged for tests, and no command control. */
 export const bootFailure = (nodes) => nodes.find((node) => /(^|\/)boot-failure$/.test(node['resource-id'] ?? ''))?.text;
@@ -41,6 +96,7 @@ export const doneButtons = (nodes) => {
 export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/dd/Android/Sdk/platform-tools/adb' }) {
     const adbRaw = (...args) => execFileSync(adb, ['-s', serial, ...args], { maxBuffer: 64 << 20 });
     const sh = (command) => adbRaw('shell', command).toString('utf8').replace(/\r/g, '').trim();
+    evidenceDevice = { adbRaw, sh, uiFile };
     const home = sh('cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
         .split('\n').pop().split('/')[0];
     const front = () => sh('dumpsys activity activities').split('\n')
@@ -101,7 +157,7 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         return screen();
     };
     const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
-    /** Scrolls the list to its first item (the Inbox header and capture row are list items). */
+    /** Scrolls the list to its first item (the Inbox count line is a list item). */
     const toTop = async () => {
         let nodes = await screen();
         for (let step = 0; step < 60; step += 1) {
@@ -111,9 +167,19 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         }
         return nodes;
     };
+    /** Opens RN's quick capture sheet from the center tab button (core's `nav.addTask`), unless a field already shows. */
+    const openCapture = async () => {
+        let nodes = await screen();
+        if (field(nodes)) return nodes;
+        // The count line ("Inbox · N") is the list's first item: start from the top so the
+        // capture's new count is on screen when it lands. At the top already, this is one drag.
+        if (!nodes.some((node) => /^.+ · \d+$/.test(node.text ?? ''))) nodes = await toTop();
+        await tap(button(nodes, 'Add Task') ?? fail('no Add Task button on screen'));
+        return waitFor('the capture sheet', (current) => Boolean(field(current)), 10_000);
+    };
     const type = async (title) => {
-        const nodes = await screen();
-        await tap(field(nodes) ?? field(await toTop()) ?? fail('no text field on screen'));
+        const nodes = await openCapture();
+        await tap(field(nodes) ?? fail('no text field on screen'));
         requireAppFront();
         sh(`input text ${title}`);
         await waitFor(`the draft ${title} in the field`, (nodes) => field(nodes)?.text === title, 10_000);
@@ -145,5 +211,5 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, type, swipe, signature, toTop, reveal, pull };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull };
 }

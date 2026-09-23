@@ -20,7 +20,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, doneButtons, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, check, connect, doneButtons, draftText, evidenced, fail, field, hasText, Stopped } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -84,7 +84,7 @@ const goHome = async () => {
 // The labels are core's English (en.ts): taskEdit.editTask, taskEdit.*Label, status.*, priority.*, common.notSet, common.clear.
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
 const inEditor = (nodes) => hasText(nodes, 'Edit Task');
-const inbox = () => waitFor('the Inbox', (nodes) => !inEditor(nodes) && field(nodes) && Number.isFinite(header(nodes)), 60_000);
+const inbox = () => waitFor('the Inbox', (nodes) => !inEditor(nodes) && Number.isFinite(header(nodes)), 60_000);
 const labelStarting = (nodes, prefix) => nodes.find((node) => node.text?.startsWith(prefix));
 const tapStarting = async (prefix) => {
     const nodes = await screen();
@@ -195,8 +195,8 @@ try {
     check(sqlite(`SELECT id FROM tasks WHERE title LIKE '${captured}%'`).length === 0, 'this run\'s titles are not in the database yet');
     const total = header(nodes);
     await type(captured);
-    await tap(button(await screen(), 'Add'));
-    await waitFor('the capture', (current) => header(current) === total + 1 && field(current)?.text === '');
+    await tap(button(await screen(), 'Save'));
+    await waitFor('the capture', (current) => header(current) === total + 1 && draftText(current) === '');
     const ids = sqlite(`SELECT id FROM tasks WHERE title = '${captured}' AND deletedAt IS NULL`);
     check(ids.length === 1, 'captured one task to edit');
     taskId = ids[0].id;
@@ -327,6 +327,7 @@ try {
         'relaunch: final values stored');
     console.log('Editor device check passed');
 } catch (error) {
+    evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {

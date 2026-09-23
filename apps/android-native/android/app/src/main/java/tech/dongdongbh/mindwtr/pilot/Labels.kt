@@ -12,7 +12,7 @@ import java.util.Collections
  */
 val LABEL_KEYS = listOf(
     "tab.inbox", "tab.next", "nav.projects",
-    "nav.addTask", "common.add", "common.more", "common.retry", "common.done", "common.edit", "common.back",
+    "nav.addTask", "quickAdd.inputLabel", "common.more", "common.retry", "common.done", "common.edit", "common.back",
     "agenda.laterToday",
     "taskEdit.editTask", "common.cancel", "common.close", "common.save", "common.ok", "common.clear", "common.discard",
     "common.none", "common.notSet", "taskEdit.titleLabel", "taskEdit.descriptionLabel", "taskEdit.statusLabel",
@@ -23,6 +23,7 @@ val LABEL_KEYS = listOf(
     "projects.activeSection", "projects.deferredSection", "projects.closed", "projects.noArea", "projects.noNextAction",
     "common.tasks", "filters.starred", "projects.availableNextAction", "projects.laterInSequence",
     "markdown.expand", "markdown.collapse",
+    "inbox.empty", "inbox.emptyAddHint", "agenda.allClear", "agenda.noTasks", "projects.empty",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

@@ -137,6 +137,9 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's getStrings for [keys], in the language core chose. */
     fun strings(keys: List<String>): JSONObject = callAsync("strings", JSONArray(keys).toString())
 
+    /** RN's theme as core resolves it: [stored] is RN's device-local `@mindwtr_theme` ("" for none). */
+    fun theme(stored: String): JSONObject = callAsync("theme", stored)
+
     /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
     fun projects(): JSONObject = callAsync("projects")
 

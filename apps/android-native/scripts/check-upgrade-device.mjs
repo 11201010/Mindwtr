@@ -40,7 +40,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped } from './device.mjs';
 
 const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
@@ -309,7 +309,7 @@ const liveInbox = (tasks) => tasks.filter((task) => task.status === 'inbox' && !
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
 // A failed boot shows only its message (tagged `boot-failure`) and no command control.
 const unavailable = bootFailure;
-const nativeScreen = () => waitFor('the native screen', (nodes) => Boolean(field(nodes)) || unavailable(nodes) !== undefined, 60_000);
+const nativeScreen = () => waitFor('the native screen', (nodes) => Number.isFinite(header(nodes)) || unavailable(nodes) !== undefined, 60_000);
 const autoCleanSwitch = (nodes) => nodes.find((node) => node.class === 'android.widget.Switch' && node['content-desc'] === AUTO_CLEAN_LABEL);
 const nativeGuardLog = () => device.logs(pid(), TAG).split('\n').find((line) => line.includes(GUARD)) ?? '';
 // The JS host's log `extra` is a JSON string, so its quotes arrive escaped.
@@ -423,8 +423,8 @@ const scenarioUpgrade = async () => {
     check(!hasText(nodes, t.done), '(1) the completed RN task is not in the native Inbox');
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(1) guard logged outcome=clear');
     await type(t.native);
-    await tap(button(await screen(), 'Add'));
-    nodes = await waitFor('the native capture', (current) => header(current) === expected.length + 1 && field(current)?.text === '');
+    await tap(button(await screen(), 'Save'));
+    nodes = await waitFor('the native capture', (current) => header(current) === expected.length + 1 && draftText(current) === '');
     check(hasText(nodes, t.native), '(1) native capture is listed');
     await stopApp();
 
@@ -735,6 +735,7 @@ try {
     if (want('5b')) await scenarioMissingWithBackup();
     console.log(`\nUpgrade device check passed${blocked4 ? '; scenario 4 BLOCKED (see above)' : ''}`);
 } catch (error) {
+    evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {
