@@ -1,0 +1,1064 @@
+{
+  "_comment": [
+    "Project detail list parity fixture.",
+    "mobileSnapshot is what apps/mobile rendered (ProjectTaskList -> TaskList FlatList data and row sequence cues)",
+    "at ba772fc43, before the list model moved to core. reorderSectionId \"undefined\" means the key was undefined.",
+    "Do not regenerate it from the core model: it is the reference the model must match."
+  ],
+  "projects": [
+    {
+      "id": "p-live",
+      "title": "Launch",
+      "status": "active",
+      "color": "#123456",
+      "order": 0,
+      "tagIds": [
+        "#research"
+      ],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "p-other",
+      "title": "Other",
+      "status": "active",
+      "color": "#123456",
+      "order": 0,
+      "tagIds": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "p-archived",
+      "title": "Finished",
+      "status": "archived",
+      "color": "#123456",
+      "order": 0,
+      "tagIds": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "p-seq",
+      "title": "Sequential",
+      "status": "active",
+      "color": "#123456",
+      "order": 0,
+      "tagIds": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "isSequential": true
+    }
+  ],
+  "sections": [
+    {
+      "id": "sec-a",
+      "projectId": "p-live",
+      "title": "Design",
+      "order": 0,
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "sec-empty",
+      "projectId": "p-live",
+      "title": "Empty",
+      "order": 1,
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "sec-b",
+      "projectId": "p-live",
+      "title": "Build",
+      "order": 2,
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "sec-del",
+      "projectId": "p-live",
+      "title": "Deleted",
+      "order": 3,
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "deletedAt": "2026-09-05T00:00:00.000Z"
+    },
+    {
+      "id": "arch-kept",
+      "projectId": "p-archived",
+      "title": "Kept history",
+      "order": 0,
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "deletedAt": "2026-09-15T12:00:00.000Z",
+      "projectArchivedAt": "2026-09-15T12:00:00.000Z"
+    },
+    {
+      "id": "arch-gone",
+      "projectId": "p-archived",
+      "title": "Deleted before archive",
+      "order": 1,
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "deletedAt": "2026-09-15T12:00:00.000Z",
+      "projectArchivedAt": "2026-09-15T12:00:00.000Z",
+      "deletedAtBeforeProjectArchive": "2026-09-10T00:00:00.000Z"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "live-b1",
+      "title": "Build API",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "sec-b",
+      "order": 3
+    },
+    {
+      "id": "live-a1",
+      "title": "Sketch",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "sec-a",
+      "order": 1
+    },
+    {
+      "id": "live-a2",
+      "title": "Review",
+      "status": "waiting",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "sec-a",
+      "order": 2
+    },
+    {
+      "id": "live-u1",
+      "title": "Loose end",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 5
+    },
+    {
+      "id": "live-missing",
+      "title": "Orphan section",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "sec-missing",
+      "order": 4
+    },
+    {
+      "id": "live-deleted-sec",
+      "title": "In deleted section",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "sec-del",
+      "order": 6
+    },
+    {
+      "id": "live-done1",
+      "title": "Shipped v1",
+      "status": "done",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "sec-a",
+      "order": 0,
+      "completedAt": "2026-09-10T00:00:00.000Z"
+    },
+    {
+      "id": "live-done2",
+      "title": "Shipped v0",
+      "status": "done",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 7,
+      "completedAt": "2026-09-12T00:00:00.000Z"
+    },
+    {
+      "id": "live-archived",
+      "title": "Old idea",
+      "status": "archived",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 8,
+      "completedAt": "2026-09-11T00:00:00.000Z"
+    },
+    {
+      "id": "live-trashed",
+      "title": "Trashed",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 9,
+      "deletedAt": "2026-09-06T00:00:00.000Z"
+    },
+    {
+      "id": "live-someday",
+      "title": "Maybe",
+      "status": "someday",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 10
+    },
+    {
+      "id": "live-tie-y",
+      "title": "Tie Y",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 11
+    },
+    {
+      "id": "live-tie-x",
+      "title": "Tie X",
+      "status": "next",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 11
+    },
+    {
+      "id": "live-ref",
+      "title": "Style guide",
+      "status": "reference",
+      "projectId": "p-live",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 2
+    },
+    {
+      "id": "other-ref-tag",
+      "title": "Bibliography",
+      "status": "reference",
+      "projectId": "p-other",
+      "tags": [
+        "#Research"
+      ],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 1
+    },
+    {
+      "id": "other-ref",
+      "title": "Elsewhere",
+      "status": "reference",
+      "projectId": "p-other",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "loose-ref-tag",
+      "title": "Loose reading",
+      "status": "reference",
+      "tags": [
+        "#research"
+      ],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "other-next",
+      "title": "Other work",
+      "status": "next",
+      "projectId": "p-other",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "arch-t1",
+      "title": "Cancelled in kept section",
+      "status": "archived",
+      "projectId": "p-archived",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "arch-kept",
+      "order": 1,
+      "cancelledAt": "2026-09-15T12:00:00.000Z",
+      "projectArchivedAt": "2026-09-15T12:00:00.000Z"
+    },
+    {
+      "id": "arch-t2",
+      "title": "Formerly sectioned",
+      "status": "archived",
+      "projectId": "p-archived",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "sectionId": "arch-gone",
+      "order": 0,
+      "cancelledAt": "2026-09-15T12:00:00.000Z",
+      "projectArchivedAt": "2026-09-15T12:00:00.000Z"
+    },
+    {
+      "id": "arch-done",
+      "title": "Done before archive",
+      "status": "done",
+      "projectId": "p-archived",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 2,
+      "completedAt": "2026-09-09T00:00:00.000Z"
+    },
+    {
+      "id": "arch-ref",
+      "title": "Archived notes",
+      "status": "reference",
+      "projectId": "p-archived",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "seq-1",
+      "title": "First step",
+      "status": "next",
+      "projectId": "p-seq",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 0
+    },
+    {
+      "id": "seq-2",
+      "title": "Second step",
+      "status": "next",
+      "projectId": "p-seq",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 1
+    },
+    {
+      "id": "seq-3",
+      "title": "Waiting step",
+      "status": "waiting",
+      "projectId": "p-seq",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 2
+    },
+    {
+      "id": "seq-4",
+      "title": "Done step",
+      "status": "done",
+      "projectId": "p-seq",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 3,
+      "completedAt": "2026-09-08T00:00:00.000Z"
+    },
+    {
+      "id": "seq-5",
+      "title": "Third step",
+      "status": "next",
+      "projectId": "p-seq",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-09-01T00:00:00.000Z",
+      "updatedAt": "2026-09-01T00:00:00.000Z",
+      "order": 4
+    }
+  ],
+  "translations": {
+    "projects.noSection": "No section",
+    "status.done": "Done",
+    "status.reference": "Reference"
+  },
+  "scenarios": [
+    {
+      "name": "live-default",
+      "projectId": "p-live",
+      "showCompletedTasks": false,
+      "sortBy": "default"
+    },
+    {
+      "name": "live-show-completed",
+      "projectId": "p-live",
+      "showCompletedTasks": true,
+      "sortBy": "default"
+    },
+    {
+      "name": "live-show-completed-expanded",
+      "projectId": "p-live",
+      "showCompletedTasks": true,
+      "sortBy": "default",
+      "expandCompleted": true
+    },
+    {
+      "name": "live-sorted-title",
+      "projectId": "p-live",
+      "showCompletedTasks": false,
+      "sortBy": "title"
+    },
+    {
+      "name": "archived-default",
+      "projectId": "p-archived",
+      "showCompletedTasks": false,
+      "sortBy": "default"
+    },
+    {
+      "name": "sequential-default",
+      "projectId": "p-seq",
+      "showCompletedTasks": false,
+      "sortBy": "default"
+    },
+    {
+      "name": "sequential-show-completed",
+      "projectId": "p-seq",
+      "showCompletedTasks": true,
+      "sortBy": "default"
+    }
+  ],
+  "mobileSnapshot": {
+    "live-default": [
+      {
+        "type": "section",
+        "id": "sec-a",
+        "title": "Design",
+        "count": 2,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-a1",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-a2",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "sec-b",
+        "title": "Build",
+        "count": 1,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-b1",
+        "reorderSectionId": "sec-b",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "no-section",
+        "title": "No section",
+        "count": 6,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-missing",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-u1",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-deleted-sec",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-someday",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-x",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-y",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "project-reference-tasks",
+        "title": "Reference",
+        "count": 3,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "other-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-ref",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "loose-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      }
+    ],
+    "live-show-completed": [
+      {
+        "type": "section",
+        "id": "sec-a",
+        "title": "Design",
+        "count": 2,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-a1",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-a2",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "sec-b",
+        "title": "Build",
+        "count": 1,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-b1",
+        "reorderSectionId": "sec-b",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "no-section",
+        "title": "No section",
+        "count": 6,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-missing",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-u1",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-deleted-sec",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-someday",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-x",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-y",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "project-completed-tasks",
+        "title": "Done",
+        "count": 3,
+        "muted": true,
+        "collapsible": true,
+        "collapsed": true
+      },
+      {
+        "type": "section",
+        "id": "project-reference-tasks",
+        "title": "Reference",
+        "count": 3,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "other-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-ref",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "loose-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      }
+    ],
+    "live-show-completed-expanded": [
+      {
+        "type": "section",
+        "id": "sec-a",
+        "title": "Design",
+        "count": 2,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-a1",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-a2",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "sec-b",
+        "title": "Build",
+        "count": 1,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-b1",
+        "reorderSectionId": "sec-b",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "no-section",
+        "title": "No section",
+        "count": 6,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-missing",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-u1",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-deleted-sec",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-someday",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-x",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-y",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "project-completed-tasks",
+        "title": "Done",
+        "count": 3,
+        "muted": true,
+        "collapsible": true,
+        "collapsed": false
+      },
+      {
+        "type": "task",
+        "id": "live-done2",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-archived",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-done1",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "project-reference-tasks",
+        "title": "Reference",
+        "count": 3,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "other-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-ref",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "loose-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      }
+    ],
+    "live-sorted-title": [
+      {
+        "type": "section",
+        "id": "sec-a",
+        "title": "Design",
+        "count": 2,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-a2",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-a1",
+        "reorderSectionId": "sec-a",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "sec-b",
+        "title": "Build",
+        "count": 1,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-b1",
+        "reorderSectionId": "sec-b",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "no-section",
+        "title": "No section",
+        "count": 6,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "live-deleted-sec",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-u1",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-someday",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-missing",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-x",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-tie-y",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "project-reference-tasks",
+        "title": "Reference",
+        "count": 3,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "other-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "live-ref",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "loose-ref-tag",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      }
+    ],
+    "archived-default": [
+      {
+        "type": "section",
+        "id": "arch-kept",
+        "title": "Kept history",
+        "count": 1,
+        "muted": null,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "arch-t1",
+        "reorderSectionId": "arch-kept",
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "no-section",
+        "title": "No section",
+        "count": 2,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "arch-done",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "arch-t2",
+        "reorderSectionId": null,
+        "sequenceCue": null
+      },
+      {
+        "type": "section",
+        "id": "project-reference-tasks",
+        "title": "Reference",
+        "count": 1,
+        "muted": true,
+        "collapsible": null,
+        "collapsed": null
+      },
+      {
+        "type": "task",
+        "id": "arch-ref",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      }
+    ],
+    "sequential-default": [
+      {
+        "type": "task",
+        "id": "seq-1",
+        "reorderSectionId": "undefined",
+        "sequenceCue": "available"
+      },
+      {
+        "type": "task",
+        "id": "seq-2",
+        "reorderSectionId": "undefined",
+        "sequenceCue": "later"
+      },
+      {
+        "type": "task",
+        "id": "seq-3",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "seq-5",
+        "reorderSectionId": "undefined",
+        "sequenceCue": "later"
+      }
+    ],
+    "sequential-show-completed": [
+      {
+        "type": "task",
+        "id": "seq-1",
+        "reorderSectionId": "undefined",
+        "sequenceCue": "available"
+      },
+      {
+        "type": "task",
+        "id": "seq-2",
+        "reorderSectionId": "undefined",
+        "sequenceCue": "later"
+      },
+      {
+        "type": "task",
+        "id": "seq-3",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "seq-4",
+        "reorderSectionId": "undefined",
+        "sequenceCue": null
+      },
+      {
+        "type": "task",
+        "id": "seq-5",
+        "reorderSectionId": "undefined",
+        "sequenceCue": "later"
+      }
+    ]
+  }
+}

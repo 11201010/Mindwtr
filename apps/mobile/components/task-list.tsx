@@ -6,9 +6,9 @@ import DraggableFlatList, { type DragEndParams, type RenderItemParams } from 're
 import {
   useTaskStore,
   Task,
+  type Section,
   TaskStatus,
   sortTasksBy,
-  splitCompletedTasks,
   sortDoneTasksForListView,
   getUsedTaskTokens,
   type TaskSortBy,
@@ -21,7 +21,9 @@ import {
   isTaskInActiveProject,
   isTaskVisibleInInbox,
   getTaskMetadataFilterVisibility,
-  getProjectSectionsForView,
+  buildProjectTaskListModel,
+  selectProjectTaskListTasks,
+  PROJECT_COMPLETED_SECTION_ID,
   createReferenceSearchPredicate,
   isReferenceInVisibleProject,
   SAVED_FILTER_NO_PROJECT_ID,
@@ -86,7 +88,6 @@ import {
   resolveProjectReorderDropPlan,
   type ProjectReorderFlatItem,
   type ProjectTaskReorderGroup,
-  sortProjectTasksByOrder,
 } from './task-list-utils';
 import { TaskFilterSheet } from './task-filter-sheet';
 import {
@@ -148,12 +149,6 @@ export function buildTaskListActivitySessionOwnerId(options: {
 
 export type TaskListGroupBy = TaskGroupBy;
 
-/** The project Completed pile: a screen section, not a grouping heading. */
-const PROJECT_COMPLETED_SECTION_ID = 'project-completed-tasks';
-
-/** The project References pile below the task list, matching desktop's ProjectWorkspace (#1000). */
-const PROJECT_REFERENCE_SECTION_ID = 'project-reference-tasks';
-
 /**
  * The project workspace mode, in one prop. None of it means anything to the
  * three status screens, so it stays behind a single seam instead of widening
@@ -177,6 +172,8 @@ export interface TaskListProjectOptions {
 }
 
 const NO_PROJECT_OPTIONS: Partial<TaskListProjectOptions> = {};
+const NO_TASKS: Task[] = [];
+const NO_SECTIONS: Section[] = [];
 
 /** What the list shows: which tasks, in what order, grouped how. */
 interface TaskListContentProps {
@@ -544,26 +541,32 @@ function TaskListComponent({
 
   const taskListDeriveStartedAt = Date.now();
   const filterableTasks = useMemo(() => {
+    const areaProjectLookup = statusFilter === 'reference' ? allProjectById : projectById;
+    const isVisibleInArea = (task: Task) => (statusFilter === 'inbox'
+      ? isTaskVisibleInInbox(task, { projectById: areaProjectLookup })
+      : taskMatchesAreaFilterSelection(task, resolvedAreaFilter, areaProjectLookup, areaById));
+    if (projectId) {
+      return selectProjectTaskListTasks(tasks, {
+        projectId,
+        statusFilter,
+        includeArchived,
+        includeDone,
+        isVisible: isVisibleInArea,
+      });
+    }
     return tasks.filter((task) => {
       if (task.deletedAt) return false;
       if (statusFilter === 'all' && task.status === 'reference') return false;
       if (statusFilter === 'all' && !includeDone && task.status === 'done') return false;
       const matchesStatus = statusFilter === 'all' ? true : task.status === statusFilter;
-      const matchesProject = projectId ? task.projectId === projectId : true;
-      if (!projectId) {
-        if (statusFilter === 'reference') {
-          if (!isReferenceInVisibleProject(task, allProjectById, includeArchivedReferenceProjects)) return false;
-        } else if (!isTaskInActiveProject(task, projectById)) {
-          return false;
-        }
+      if (statusFilter === 'reference') {
+        if (!isReferenceInVisibleProject(task, allProjectById, includeArchivedReferenceProjects)) return false;
+      } else if (!isTaskInActiveProject(task, projectById)) {
+        return false;
       }
-      const areaProjectLookup = statusFilter === 'reference' ? allProjectById : projectById;
-      if (statusFilter === 'inbox') {
-        if (!isTaskVisibleInInbox(task, { projectById: areaProjectLookup })) return false;
-      } else if (!taskMatchesAreaFilterSelection(task, resolvedAreaFilter, areaProjectLookup, areaById)) return false;
-      return matchesStatus && matchesProject;
+      return isVisibleInArea(task) && matchesStatus;
     });
-  }, [allProjectById, areaById, includeArchivedReferenceProjects, includeDone, projectById, projectId, resolvedAreaFilter, statusFilter, tasks]);
+  }, [allProjectById, areaById, includeArchived, includeArchivedReferenceProjects, includeDone, projectById, projectId, resolvedAreaFilter, statusFilter, tasks]);
   const referenceProjectFilterOptions = useMemo(() => {
     if (statusFilter !== 'reference') return undefined;
     const usedProjectIds = new Set(
@@ -663,7 +666,51 @@ function TaskListComponent({
     () => createReferenceSearchPredicate(statusFilter === 'reference' ? filterSearchQuery : ''),
     [filterSearchQuery, statusFilter],
   );
+  // A project's list (which tasks, their order, its sections, and the Completed
+  // and Reference piles) is one core model, shared with the native host.
+  const projectTaskList = useMemo(() => {
+    if (!projectId) return null;
+    return buildProjectTaskListModel({
+      project: {
+        id: projectId,
+        status: projectReadOnly ? 'archived' : 'active',
+        tagIds: projectById.get(projectId)?.tagIds,
+      },
+      tasks: filterableTasks,
+      visibleTasks: allVisibleTasks,
+      sections,
+      allSections,
+      statusFilter,
+      criteria: filterCriteria,
+      searchQuery: filterSearchQuery,
+      sortBy,
+      projectOrder: enableProjectReorder,
+      reorderMode: projectReorderMode,
+      groupCompletedTasksLast,
+      completedCollapsed: completedTasksCollapsed,
+      t,
+    });
+  }, [
+    allSections,
+    allVisibleTasks,
+    completedTasksCollapsed,
+    enableProjectReorder,
+    filterCriteria,
+    filterSearchQuery,
+    filterableTasks,
+    groupCompletedTasksLast,
+    projectById,
+    projectId,
+    projectReadOnly,
+    projectReorderMode,
+    sections,
+    sortBy,
+    statusFilter,
+    t,
+  ]);
+
   const filteredTasks = useMemo(() => {
+    if (projectId) return NO_TASKS;
     const filterSelections = {
       criteria: filterCriteria,
       searchQuery: statusFilter === 'reference' ? '' : filterSearchQuery,
@@ -671,36 +718,16 @@ function TaskListComponent({
     return filterableTasks.filter((task) => (
       referenceSearchPredicate(task) && taskMatchesFilterSelections(task, filterSelections)
     ));
-  }, [filterCriteria, filterSearchQuery, filterableTasks, referenceSearchPredicate, statusFilter]);
-
-  // Reference tasks render as their own pile below the list, matching desktop's
-  // ProjectWorkspace: the project's own references plus references whose tags
-  // match the project's tags (that tag match is how one reference serves
-  // several projects) (#1000).
-  const projectReferenceTasks = useMemo(() => {
-    if (!projectId || statusFilter !== 'all') return [] as Task[];
-    const projectTagSet = new Set(
-      (projectById.get(projectId)?.tagIds || []).map((tag) => String(tag).toLowerCase()),
-    );
-    const filterSelections = { criteria: filterCriteria, searchQuery: filterSearchQuery };
-    return sortProjectTasksByOrder(allVisibleTasks.filter((task) => {
-      if (task.deletedAt || task.status !== 'reference') return false;
-      const inProject = task.projectId === projectId
-        || (projectTagSet.size > 0 && (task.tags || []).some((tag) => projectTagSet.has(String(tag).toLowerCase())));
-      return inProject && taskMatchesFilterSelections(task, filterSelections);
-    }));
-  }, [allVisibleTasks, filterCriteria, filterSearchQuery, projectById, projectId, statusFilter]);
+  }, [filterCriteria, filterSearchQuery, filterableTasks, projectId, referenceSearchPredicate, statusFilter]);
 
   const orderedTasks = useMemo(() => {
-    if (projectId && enableProjectReorder && sortBy === 'default') {
-      return sortProjectTasksByOrder(filteredTasks);
-    }
+    if (projectTaskList) return projectTaskList.orderedTasks;
     // Done is a log: default order is completion date descending, matching desktop.
     if (statusFilter === 'done' && sortBy === 'default') {
       return sortDoneTasksForListView(filteredTasks);
     }
     return sortTasksBy(filteredTasks, sortBy);
-  }, [enableProjectReorder, filteredTasks, projectId, sortBy, statusFilter]);
+  }, [filteredTasks, projectTaskList, sortBy, statusFilter]);
   // #784 next-round evidence: the visible order at Task-order enter/exit. An
   // exit digest that differs from what the list later shows — with no Drop
   // line between — proves the order changed after the write, and the id:order
@@ -722,111 +749,29 @@ function TaskListComponent({
     });
   }, [orderedTasks, projectId, projectReorderMode]);
 
-  const { activeTasks: orderedActiveTasks, completedTasks: orderedCompletedTasks } = useMemo(() => {
-    if (!shouldGroupCompletedTasks) {
-      return { activeTasks: orderedTasks, completedTasks: [] as Task[] };
-    }
-    const { activeTasks, completedTasks } = splitCompletedTasks(orderedTasks);
-    return {
-      activeTasks,
-      completedTasks: sortDoneTasksForListView(completedTasks),
-    };
-  }, [orderedTasks, shouldGroupCompletedTasks]);
-
-  const projectSections = useMemo(() => {
-    return getProjectSectionsForView(
-      projectId ? { id: projectId, status: projectReadOnly ? 'archived' : 'active' } : null,
-      sections,
-      allSections,
-    );
-  }, [allSections, projectId, projectReadOnly, sections]);
+  const projectSections = projectTaskList?.sections ?? NO_SECTIONS;
 
   type ListItem =
     | { type: 'section'; id: string; title: string; count: number; muted?: boolean; collapsible?: boolean; collapsed?: boolean }
     | { type: 'task'; task: Task; reorderSectionId?: string | null; groupId?: string };
 
   const listItems = useMemo<ListItem[]>(() => {
-    if (!projectId && activeGroupBy !== 'none') {
+    if (projectTaskList) return projectTaskList.items;
+    if (activeGroupBy !== 'none') {
       // localDayKey is not read here; it is in the dependency list so crossing
       // midnight re-buckets the completedDate axis.
       void localDayKey;
       return buildTaskGroupSections({
         groupBy: activeGroupBy,
-        tasks: orderedActiveTasks,
+        tasks: orderedTasks,
         areas,
         projectById,
         t,
         collapsedGroupIds,
       });
     }
-
-    const appendCompletedTasks = (items: ListItem[]) => {
-      if (!shouldGroupCompletedTasks || orderedCompletedTasks.length === 0) return items;
-      items.push({
-        type: 'section',
-        id: PROJECT_COMPLETED_SECTION_ID,
-        title: tFallback(t, 'list.done', tFallback(t, 'status.done', 'Completed')),
-        count: orderedCompletedTasks.length,
-        muted: true,
-        collapsible: true,
-        collapsed: completedTasksCollapsed,
-      });
-      if (!completedTasksCollapsed) {
-        orderedCompletedTasks.forEach((task) => items.push({ type: 'task', task }));
-      }
-      return items;
-    };
-
-    const appendReferenceTasks = (items: ListItem[]) => {
-      if (projectReorderMode || projectReferenceTasks.length === 0) return items;
-      items.push({
-        type: 'section',
-        id: PROJECT_REFERENCE_SECTION_ID,
-        title: tFallback(t, 'status.reference', 'Reference'),
-        count: projectReferenceTasks.length,
-        muted: true,
-      });
-      projectReferenceTasks.forEach((task) => items.push({ type: 'task', task }));
-      return items;
-    };
-
-    const shouldGroup = Boolean(projectId) && (projectSections.length > 0 || orderedActiveTasks.some((task) => task.sectionId));
-    if (!shouldGroup) {
-      return appendReferenceTasks(appendCompletedTasks(orderedActiveTasks.map((task) => ({ type: 'task', task, reorderSectionId: projectId ? undefined : task.sectionId }))));
-    }
-    const sectionIds = new Set(projectSections.map((section) => section.id));
-    const tasksBySection = new Map<string, Task[]>();
-    const unsectioned: Task[] = [];
-    orderedActiveTasks.forEach((task) => {
-      const sectionId = task.sectionId && sectionIds.has(task.sectionId) ? task.sectionId : null;
-      if (sectionId) {
-        const list = tasksBySection.get(sectionId) ?? [];
-        list.push(task);
-        tasksBySection.set(sectionId, list);
-      } else {
-        unsectioned.push(task);
-      }
-    });
-    const items: ListItem[] = [];
-    projectSections.forEach((section) => {
-      const tasksForSection = tasksBySection.get(section.id) ?? [];
-      if (tasksForSection.length === 0 && !projectReorderMode) return;
-      items.push({ type: 'section', id: section.id, title: section.title, count: tasksForSection.length });
-      tasksForSection.forEach((task) => items.push({ type: 'task', task, reorderSectionId: section.id }));
-    });
-    if (unsectioned.length > 0) {
-      const reorderSectionId = projectSections.length > 0 ? null : undefined;
-      items.push({
-        type: 'section',
-        id: 'no-section',
-        title: t('projects.noSection'),
-        count: unsectioned.length,
-        muted: true,
-      });
-      unsectioned.forEach((task) => items.push({ type: 'task', task, reorderSectionId }));
-    }
-    return appendReferenceTasks(appendCompletedTasks(items));
-  }, [activeGroupBy, areas, collapsedGroupIds, completedTasksCollapsed, localDayKey, orderedActiveTasks, orderedCompletedTasks, projectById, projectId, projectReferenceTasks, projectReorderMode, projectSections, shouldGroupCompletedTasks, t]);
+    return orderedTasks.map((task): ListItem => ({ type: 'task', task, reorderSectionId: task.sectionId }));
+  }, [activeGroupBy, areas, collapsedGroupIds, localDayKey, orderedTasks, projectById, projectTaskList, t]);
   const orderedTaskIds = useMemo(
     () => Array.from(new Set(listItems.flatMap((item) => (item.type === 'task' ? [item.task.id] : [])))),
     [listItems],
@@ -887,7 +832,7 @@ function TaskListComponent({
   const projectReorderGroups = useMemo<ProjectTaskReorderGroup<Task>[]>(() => {
     if (!canUseProjectReorder) return [];
     const reorderItems = shouldGroupCompletedTasks
-      ? listItems.filter((item) => (item.type === 'section' ? item.id !== 'project-completed-tasks' : item.task.status !== 'done'))
+      ? listItems.filter((item) => (item.type === 'section' ? item.id !== PROJECT_COMPLETED_SECTION_ID : item.task.status !== 'done'))
       : listItems;
     return buildProjectTaskReorderGroups<Task>(reorderItems, { includeEmptySections: projectSections.length > 0 });
   }, [canUseProjectReorder, listItems, projectSections.length, shouldGroupCompletedTasks]);

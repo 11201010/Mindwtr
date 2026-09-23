@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, NATIVE_HOST_EDITOR_FIELDS, NATIVE_HOST_MAX_WINDOW, type NativeEditableFields } from './native-host-contract';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -5,6 +6,7 @@ import { noopStorage, type StorageAdapter } from './storage';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import * as projectGrouping from './project-grouping';
 import * as focusDerivation from './focus-sections';
+import * as projectTaskListModel from './project-task-list-model';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isTaskActionable } from './task-status';
@@ -13,9 +15,17 @@ import { getEnglishI18nValue, getTranslator } from './i18n';
 import { getTranslationsSync } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import { zhHans } from './i18n/locales/zh-Hans';
-import type { Area, Project, Task } from './types';
+import type { Area, Project, Section, Task } from './types';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
+const projectParity = JSON.parse(
+    readFileSync(new URL('./project-task-list-parity.fixtures.json', import.meta.url), 'utf8'),
+) as {
+    projects: Project[];
+    sections: Section[];
+    tasks: Task[];
+    mobileSnapshot: Record<string, Array<Record<string, unknown>>>;
+};
 
 const task = (id: string, createdAt: string, extra: Partial<Task> = {}): Task => ({
     id,
@@ -291,6 +301,150 @@ describe('native host contract', () => {
         expect(groupCalls).toHaveBeenCalledTimes(3);
     });
 
+    describe('project detail', () => {
+        // The store state mobile's snapshot rendered from; a real load would run
+        // migrations (for example auto-archiving old Done tasks) first.
+        const activateParity = async () => {
+            const host = createNativeHostContract();
+            expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+            useTaskStore.setState({
+                _allTasks: projectParity.tasks, _allProjects: projectParity.projects, _allSections: projectParity.sections,
+            });
+            return host;
+        };
+        const detail = (host: ReturnType<typeof createNativeHostContract>, projectId: string, limit = NATIVE_HOST_MAX_WINDOW) => {
+            const result = host.getProjectDetail({ projectId, offset: 0, limit });
+            if (!result.ok) throw new Error(`Project detail failed: ${result.error.code}`);
+            return result.value;
+        };
+
+        const expectMobileParity = (value: ReturnType<typeof detail>, scenario: string) => {
+            const mobile = projectParity.mobileSnapshot[scenario];
+            expect(value.total).toBe(mobile.length);
+            expect(value.items.map((item) => (item.type === 'section'
+                ? { type: 'section', id: item.id, count: item.count, muted: item.muted }
+                : { type: 'task', id: item.row.id, sectionId: item.sectionId, sequenceCue: item.sequenceCue })))
+                .toEqual(mobile.map((item) => (item.type === 'section'
+                    ? { type: 'section', id: item.id, count: item.count, muted: item.muted === true }
+                    : {
+                        type: 'task', id: item.id,
+                        sectionId: item.reorderSectionId === 'undefined' ? null : item.reorderSectionId,
+                        sequenceCue: item.sequenceCue,
+                    })));
+        };
+        const setProjectSort = (sorts: Record<string, Project['taskSortBy']>) => useTaskStore.setState({
+            _allProjects: projectParity.projects.map((item) => (item.id in sorts ? { ...item, taskSortBy: sorts[item.id] } : item)),
+        });
+
+        it('pages the mobile project list as it opens, with section markers and sequence cues', async () => {
+            const host = await activateParity();
+            for (const [projectId, scenario] of [
+                ['p-live', 'live-default'], ['p-archived', 'archived-default'], ['p-seq', 'sequential-default'],
+            ] as const) {
+                expectMobileParity(detail(host, projectId), scenario);
+            }
+            const live = detail(host, 'p-live');
+            expect(live).toMatchObject({ version: 1, projectId: 'p-live', readOnly: false });
+            expect(live.items.filter((item) => item.type === 'section').map((item) => item.title))
+                .toEqual(['Design', 'Build', 'No Section', 'Reference']);
+            expect(live.items[1]).toEqual({
+                type: 'task',
+                row: {
+                    id: 'live-a1', title: 'Sketch', status: 'next', priority: null, dueDate: null, startTime: null,
+                    isFocusedToday: false, projectTitle: 'Launch', hasNotes: false, revealDate: null, laterToday: false,
+                },
+                sectionId: 'sec-a',
+                sequenceCue: null,
+            });
+            expect(detail(host, 'p-archived').readOnly).toBe(true);
+            expect(detail(host, 'p-seq').items.map((item) => (item.type === 'task' ? item.sequenceCue : item.id)))
+                .toEqual(['available', 'later', null, 'later']);
+        });
+
+        it('follows the saved project sort like mobile, dropping sequence cues off the default sort', async () => {
+            const host = await activateParity();
+            setProjectSort({ 'p-live': 'title', 'p-seq': 'title' });
+            expectMobileParity(detail(host, 'p-live'), 'live-sorted-title');
+            const sequentialByTitle = detail(host, 'p-seq');
+            expect(sequentialByTitle.items.map((item) => (item.type === 'task' ? item.row.id : item.id)))
+                .toEqual(['seq-1', 'seq-2', 'seq-5', 'seq-3']);
+            expect(sequentialByTitle.items.every((item) => item.type === 'task' && item.sequenceCue === null)).toBe(true);
+
+            // A time-estimate sort (a valid, feature-gated project sort) falls back to project
+            // order while Time estimates is off.
+            setProjectSort({ 'p-seq': 'timeEstimate' });
+            useTaskStore.setState({ settings: { features: { timeEstimates: false } } });
+            const estimatesOff = detail(host, 'p-seq');
+            expectMobileParity(estimatesOff, 'sequential-default');
+            useTaskStore.setState({ settings: { features: { timeEstimates: true } } });
+            expect(host.getProjectDetail({ projectId: 'p-seq', offset: 1, limit: 1, revision: estimatesOff.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(detail(host, 'p-seq').items.every((item) => item.type === 'task' && item.sequenceCue === null)).toBe(true);
+        });
+
+        it('windows items, rejects stale pages, and reports a missing or deleted project', async () => {
+            const host = await activateParity();
+            const full = detail(host, 'p-live');
+            const first = host.getProjectDetail({ projectId: 'p-live', offset: 0, limit: 4 });
+            if (!first.ok) throw new Error('First page failed');
+            expect(first.value.total).toBe(full.total);
+            const pages = [...first.value.items];
+            for (let offset = 4; offset < full.total; offset += 4) {
+                const page = host.getProjectDetail({ projectId: 'p-live', offset, limit: 4, revision: first.value.revision });
+                if (!page.ok) throw new Error(`Page ${offset} failed`);
+                expect(page.value.revision).toBe(first.value.revision);
+                pages.push(...page.value.items);
+            }
+            expect(pages).toEqual(full.items);
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: full.total, limit: 4, revision: first.value.revision }))
+                .toMatchObject({ ok: true, value: { items: [], total: full.total } });
+
+            expect((await useTaskStore.getState().updateTask('live-u1', { title: 'Renamed' })).success).toBe(true);
+            await flushPendingSave();
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: 4, limit: 4, revision: first.value.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+
+            expect(host.getProjectDetail({ projectId: 'missing', offset: 0, limit: 4 }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            expect((await useTaskStore.getState().deleteProject('p-other')).success).toBe(true);
+            await flushPendingSave();
+            expect(host.getProjectDetail({ projectId: 'p-other', offset: 0, limit: 4 }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+
+            for (const input of [
+                null, {}, { projectId: '', offset: 0, limit: 1 }, { projectId: 'p-live', offset: -1, limit: 1 },
+                { projectId: 'p-live', offset: 0, limit: 0 }, { projectId: 'p-live', offset: 0, limit: NATIVE_HOST_MAX_WINDOW + 1 },
+                { projectId: 'p-live', offset: 1, limit: 1 }, { projectId: 'p-live', offset: 0, limit: 1, revision: 1 },
+            ]) {
+                expect(host.getProjectDetail(input as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            }
+        });
+
+        it('translates section titles and invalidates the English revision after a language change', async () => {
+            const host = await activateParity();
+            const english = detail(host, 'p-live');
+            expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: null }))
+                .toEqual({ ok: true, value: { language: 'zh' } });
+            const chinese = detail(host, 'p-live');
+            expect(chinese.revision).not.toBe(english.revision);
+            expect(chinese.items.filter((item) => item.type === 'section').map((item) => item.title))
+                .toEqual(['Design', 'Build', zhHans['projects.noSection'], zhHans['status.reference']]);
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: english.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        });
+
+        it('builds each project list once per revision', async () => {
+            const host = await activateParity();
+            const build = vi.spyOn(projectTaskListModel, 'buildProjectTaskListModel');
+            const first = detail(host, 'p-live');
+            expect(detail(host, 'p-live')).toEqual(first);
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: 2, limit: 2, revision: first.revision }).ok).toBe(true);
+            expect(build).toHaveBeenCalledTimes(1);
+            detail(host, 'p-seq');
+            expect(build).toHaveBeenCalledTimes(2);
+        });
+    });
+
     it('acknowledges create and complete only when their store snapshots are durable', async () => {
         const host = createNativeHostContract();
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
@@ -362,6 +516,8 @@ describe('native host contract', () => {
         expect(host.getInboxWindow({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getFocus({ limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getProjects()).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getProjectDetail({ projectId: 'x', offset: 0, limit: 1 }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: 'x' }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTask({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });

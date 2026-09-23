@@ -1,4 +1,7 @@
-import { compareTasksByProjectOrder } from '@mindwtr/core';
+import { PROJECT_NO_SECTION_ID } from '@mindwtr/core';
+
+// Moved to core with the project list model; re-exported so existing imports keep working.
+export { sortProjectTasksByOrder } from '@mindwtr/core';
 
 export const getBulkActionFailureMessage = (error: unknown, fallback: string): string => {
     const message = error instanceof Error ? error.message : String(error ?? '');
@@ -30,7 +33,7 @@ export function buildProjectTaskReorderGroups<T>(
             currentGroup = {
                 id: item.id,
                 muted: item.muted,
-                sectionId: item.id === 'no-section' ? null : item.id,
+                sectionId: item.id === PROJECT_NO_SECTION_ID ? null : item.id,
                 tasks: [],
                 title: item.title,
             };
@@ -111,11 +114,4 @@ export function resolveProjectReorderDropPlan<T extends { id: string }>(
         }
     }
     return null;
-}
-
-// Delegates to the one core comparator so display, reorder write plans, and
-// desktop all sort identically — including the id tie-break that keeps tied
-// (order, createdAt) rows from reshuffling with every sync merge (#784).
-export function sortProjectTasksByOrder<T extends { createdAt: string; id: string; order?: number; orderNum?: number }>(tasks: T[]): T[] {
-    return [...tasks].sort(compareTasksByProjectOrder);
 }

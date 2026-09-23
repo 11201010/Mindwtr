@@ -1,26 +1,18 @@
 import React from 'react';
 import type { FlatList, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import type { Project, ProjectSequenceTaskCue, Task, TaskSortBy } from '@mindwtr/core';
+import {
+    getProjectDetailTaskListOptions,
+    type Project,
+    type ProjectSequenceTaskCue,
+    type Task,
+    type TaskSortBy,
+} from '@mindwtr/core';
 
 import { TaskList, type TaskListProjectOptions } from '../task-list';
 import type { TaskListBulkBarProps } from '../task-list/TaskListBulkBar';
 
-/**
- * What a project's own state makes of its task list. Archived projects are read
- * only and show their finished work inline; live ones hide it behind the
- * Completed pile unless the workspace asks for it.
- */
-export function getProjectDetailTaskListOptions(selectedProject: Project | null, showCompletedTasks = false) {
-    const isArchived = selectedProject?.status === 'archived';
-    return {
-        allowAdd: !isArchived,
-        enableProjectReorder: !isArchived,
-        includeArchived: isArchived || showCompletedTasks,
-        includeDone: isArchived || showCompletedTasks,
-        groupCompletedTasksLast: !isArchived && showCompletedTasks && !selectedProject?.isSequential,
-        readOnly: isArchived,
-    };
-}
+// The policy lives in core so the native host shows the same project list.
+export { getProjectDetailTaskListOptions };
 
 export interface ProjectTaskListProps {
     project: Project;

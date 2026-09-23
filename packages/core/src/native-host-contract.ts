@@ -2,9 +2,15 @@ import { isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection }
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
-import { isSelectableProjectForTaskAssignment } from './project-utils';
+import { getSequentialProjectTaskCues, isSelectableProjectForTaskAssignment, type ProjectSequenceTaskCue } from './project-utils';
+import {
+    buildProjectTaskListModel,
+    getProjectDetailTaskListOptions,
+    selectProjectTaskListTasks,
+    type ProjectTaskListItem,
+} from './project-task-list-model';
 import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
-import { sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
+import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { hasTimeComponent, safeParseDate } from './date';
 import { buildFocusPools, buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists, type FocusTaskSection, type FocusTaskSectionKey } from './focus-sections';
 import { formatLocalDate } from './import-source-reader';
@@ -105,6 +111,25 @@ export type NativeProjectsView = {
     archived: NativeProjectGroup[];
 };
 
+export type NativeProjectDetailItem =
+    | { type: 'section'; id: string; title: string; count: number; muted: boolean }
+    /** sectionId: the project section the row is filed under as shown (null = no section, Completed, or Reference). */
+    | { type: 'task'; row: NativeTaskRow; sectionId: string | null; sequenceCue: ProjectSequenceTaskCue | null };
+export type NativeProjectDetail = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    projectId: string;
+    readOnly: boolean;
+    total: number;
+    items: NativeProjectDetailItem[];
+};
+type ProjectDetailCache = {
+    readOnly: boolean;
+    items: ProjectTaskListItem[];
+    cues: Map<string, ProjectSequenceTaskCue>;
+    projectTitles: Map<string, string>;
+};
+
 export const sortAreasForDisplay = (areas: Area[]): Area[] => [...areas]
     .filter((area) => !area.deletedAt)
     .sort((a, b) => a.order !== b.order ? a.order - b.order : a.name.localeCompare(b.name));
@@ -166,6 +191,8 @@ export function createNativeHostContract() {
     let cachedLaterTodayIds = new Set<string>();
     let cachedProjectsRevision = '';
     let cachedProjects: NativeProjectsView | null = null;
+    let cachedProjectDetailKey = '';
+    let cachedProjectDetail: ProjectDetailCache | null = null;
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -194,14 +221,18 @@ export function createNativeHostContract() {
         return `${processId}:${generation}`;
     };
 
-    const focusRevision = (now: Date) => {
-        const storeRevision = revision();
+    const settingsRevision = () => {
         const settings = useTaskStore.getState().settings;
         if (settings !== lastSettings) {
             settingsGeneration += 1;
             lastSettings = settings;
         }
-        return `${storeRevision}:${settingsGeneration}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}:${language}`;
+        return settingsGeneration;
+    };
+
+    const focusRevision = (now: Date) => {
+        const storeRevision = revision();
+        return `${storeRevision}:${settingsRevision()}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}:${language}`;
     };
 
     const focusSections = (currentRevision: string, now: Date): FocusTaskSection[] => {
@@ -244,6 +275,51 @@ export function createNativeHostContract() {
             laterToday: section.key === 'schedule' && cachedLaterTodayIds.has(task.id),
         }))
     );
+
+    // The mobile project workspace as it opens: the project's saved sort, no
+    // filter or search, Show completed off, nothing collapsed.
+    const projectDetail = (projectId: string, currentRevision: string): ProjectDetailCache | null => {
+        const key = `${currentRevision}\u0000${projectId}`;
+        if (cachedProjectDetailKey === key && cachedProjectDetail) return cachedProjectDetail;
+        const state = useTaskStore.getState();
+        const project = state._allProjects.find((candidate) => candidate.id === projectId);
+        if (!project || project.deletedAt) return null;
+        const options = getProjectDetailTaskListOptions(project);
+        // Mobile: ProjectDetailModal resolves the saved sort for features (it gates
+        // the cues); TaskList then resolves that for the all-status list.
+        const projectSortBy = resolveTaskSortByForFeatures(project.taskSortBy ?? 'default', state.settings);
+        const projectTasks = state._allTasks.filter((task) => task.projectId === project.id && !task.deletedAt);
+        const model = buildProjectTaskListModel({
+            project,
+            tasks: selectProjectTaskListTasks(projectTasks, {
+                projectId: project.id,
+                statusFilter: 'all',
+                includeArchived: options.includeArchived,
+                includeDone: options.includeDone,
+            }),
+            visibleTasks: state.tasks,
+            sections: state.sections,
+            allSections: state._allSections,
+            statusFilter: 'all',
+            criteria: {},
+            searchQuery: '',
+            sortBy: resolveNonDoneTaskSortBy(projectSortBy, state.settings),
+            projectOrder: options.enableProjectReorder,
+            reorderMode: false,
+            groupCompletedTasksLast: options.groupCompletedTasksLast,
+            completedCollapsed: false,
+            t: translate,
+        });
+        cachedProjectDetail = {
+            readOnly: options.readOnly,
+            items: model.items,
+            // Same input as mobile's ProjectDetailModal: the project's tasks in store order.
+            cues: projectSortBy === 'default' ? getSequentialProjectTaskCues(project, projectTasks) : new Map(),
+            projectTitles: new Map(state.projects.map((candidate) => [candidate.id, candidate.title])),
+        };
+        cachedProjectDetailKey = key;
+        return cachedProjectDetail;
+    };
 
     const save = async (): Promise<NativeHostResult<null>> => {
         const before = readiness();
@@ -447,6 +523,45 @@ export function createNativeHostContract() {
                 cachedProjectsRevision = currentRevision;
             }
             return { ok: true, value: cachedProjects };
+        },
+
+        getProjectDetail(input: { projectId: string; offset: number; limit: number; revision?: string }): NativeHostResult<NativeProjectDetail> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.projectId !== 'string' || !input.projectId.trim()
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || (input.offset > 0 && typeof input.revision !== 'string')
+                || (input.revision !== undefined && typeof input.revision !== 'string')) {
+                return fail('INVALID_INPUT', 'A project ID, valid offset, bounded limit, and revision for later pages are required');
+            }
+            // Feature settings change the resolved sort; titles are translated.
+            const currentRevision = `${revision()}:${settingsRevision()}:${language}`;
+            if (input.revision !== undefined && input.revision !== currentRevision) {
+                return fail('STALE_REVISION', 'Project changed; restart paging from offset zero');
+            }
+            const detail = projectDetail(input.projectId, currentRevision);
+            if (!detail) return fail('TASK_NOT_FOUND', 'Project not found');
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: currentRevision,
+                    projectId: input.projectId,
+                    readOnly: detail.readOnly,
+                    total: detail.items.length,
+                    items: detail.items.slice(input.offset, input.offset + input.limit).map((item): NativeProjectDetailItem => (
+                        item.type === 'section'
+                            ? { type: 'section', id: item.id, title: item.title, count: item.count, muted: item.muted === true }
+                            : {
+                                type: 'task',
+                                row: toNativeTaskRow(item.task, detail.projectTitles),
+                                sectionId: item.reorderSectionId ?? null,
+                                sequenceCue: detail.cues.get(item.task.id) ?? null,
+                            }
+                    )),
+                },
+            };
         },
 
         getFocusSectionWindow(input: {
