@@ -82,7 +82,22 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         sh(`input text ${title}`);
         await waitFor(`the draft ${title} in the field`, (nodes) => field(nodes)?.text === title, 10_000);
     };
+    /** Scrolls the app's list forward until a row reads [text]; the list grows with every run. */
+    const reveal = async (text, swipes = 12) => {
+        let nodes = await screen();
+        for (let swipe = 0; swipe < swipes && !hasText(nodes, text); swipe += 1) {
+            const list = nodes.find((node) => node.scrollable === 'true');
+            if (!list) break;
+            requireAppFront();
+            const [x1, y1, x2, y2] = box(list);
+            const x = Math.round((x1 + x2) / 2);
+            sh(`input swipe ${x} ${Math.round(y2 - (y2 - y1) * 0.15)} ${x} ${Math.round(y1 + (y2 - y1) * 0.15)} 300`);
+            await sleep(400);
+            nodes = await screen();
+        }
+        return nodes;
+    };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, type, pull };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, type, reveal, pull };
 }

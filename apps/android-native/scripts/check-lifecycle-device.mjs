@@ -44,7 +44,7 @@ const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padSt
 const titles = { a: `81${run}`, b: `82${run}`, c1: `83${run}`, c2: `84${run}`, c3: `85${run}`, d: `86${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type } = device;
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, reveal } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
 // ---- device state ----
@@ -117,7 +117,7 @@ try {
     await tapAdd();
     nodes = await waitFor('capture a', (current) => header(current) === total + 1 && field(current)?.text === '');
     total += 1;
-    check(hasText(nodes, titles.a) && rowsTitled(titles.a) === 1, '(a) captured task is listed and stored once');
+    check(hasText(await reveal(titles.a), titles.a) && rowsTitled(titles.a) === 1, '(a) captured task is listed and stored once');
 
     // (b) Save during recreation.
     setProp('delay_before_ms', '5000');
@@ -130,7 +130,7 @@ try {
     check(recreations(processId).at(-1).includes('inFlight=true'), '(b) new Activity attached to the running host during the save');
     nodes = await waitFor('save b after rotation', (current) => header(current) === total + 1 && field(current)?.text === '');
     total += 1;
-    check(hasText(nodes, titles.b), '(b) the recreated Activity shows the saved task');
+    check(hasText(await reveal(titles.b), titles.b), '(b) the recreated Activity shows the saved task');
     check(rowsTitled(titles.b) === 1, '(b) exactly one stored row for the capture');
     check(pid() === processId && boots(processId) === 1, '(b) same process, no second host boot');
     setProp('delay_before_ms', '');
@@ -196,7 +196,7 @@ try {
     nodes = await loaded();
     processId = pid();
     total += 1;
-    check(boots(processId) === 1 && header(nodes) === total && hasText(nodes, titles.c3), '(c3) committed row survives force-stop');
+    check(boots(processId) === 1 && header(nodes) === total && hasText(await reveal(titles.c3), titles.c3), '(c3) committed row survives force-stop');
     // Force-stop finishes the task, so Android keeps no saved state to restore.
     check(field(nodes)?.text === '' && rowsTitled(titles.c3) === 1, '(c3) exactly one row, no stale draft');
 
