@@ -3,6 +3,7 @@ import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
+import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
 import { sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { hasTimeComponent, safeParseDate } from './date';
 import { buildFocusPools, buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists, type FocusTaskSection, type FocusTaskSectionKey } from './focus-sections';
@@ -14,7 +15,7 @@ import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
-import type { Project, Task, TaskPriority, TaskStatus } from './types';
+import type { Area, Project, Task, TaskPriority, TaskStatus } from './types';
 import { generateUUID } from './uuid';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
@@ -81,6 +82,32 @@ export type NativeFocusView = {
     revision: string;
     sections: NativeFocusSection[];
 };
+export type NativeProjectRow = Pick<Project, 'id' | 'title' | 'status'> & {
+    isFocused: boolean;
+    color: string | null;
+    activeTaskCount: number;
+    nextActionId: string | null;
+    nextActionTitle: string | null;
+    focusedWithoutNextAction: boolean;
+};
+export type NativeProjectGroup = {
+    areaId: string | null;
+    areaName: string | null;
+    areaColor: string | null;
+    areaIcon: string | null;
+    projects: NativeProjectRow[];
+};
+export type NativeProjectsView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    active: NativeProjectGroup[];
+    deferred: NativeProjectGroup[];
+    archived: NativeProjectGroup[];
+};
+
+export const sortAreasForDisplay = (areas: Area[]): Area[] => [...areas]
+    .filter((area) => !area.deletedAt)
+    .sort((a, b) => a.order !== b.order ? a.order - b.order : a.name.localeCompare(b.name));
 
 const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>): NativeTaskRow => ({
     id: task.id,
@@ -125,6 +152,7 @@ export function createNativeHostContract() {
     let lastTasks = useTaskStore.getState()._allTasks;
     let lastProjects = useTaskStore.getState()._allProjects;
     let lastSections = useTaskStore.getState()._allSections;
+    let lastAreas = useTaskStore.getState()._allAreas;
     let lastSortBy = resolveNonDoneTaskSortBy(useTaskStore.getState().settings.taskSortBy, useTaskStore.getState().settings);
     let lastSettings = useTaskStore.getState().settings;
     let settingsGeneration = 0;
@@ -136,6 +164,8 @@ export function createNativeHostContract() {
     let cachedFocusProjectTitles = new Map<string, string>();
     let cachedRevealDates = new Map<string, string>();
     let cachedLaterTodayIds = new Set<string>();
+    let cachedProjectsRevision = '';
+    let cachedProjects: NativeProjectsView | null = null;
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -153,11 +183,12 @@ export function createNativeHostContract() {
         const state = useTaskStore.getState();
         const sortBy = resolveNonDoneTaskSortBy(state.settings.taskSortBy, state.settings);
         if (state._allTasks !== lastTasks || state._allProjects !== lastProjects
-            || state._allSections !== lastSections || sortBy !== lastSortBy) {
+            || state._allSections !== lastSections || state._allAreas !== lastAreas || sortBy !== lastSortBy) {
             generation += 1;
             lastTasks = state._allTasks;
             lastProjects = state._allProjects;
             lastSections = state._allSections;
+            lastAreas = state._allAreas;
             lastSortBy = sortBy;
         }
         return `${processId}:${generation}`;
@@ -362,6 +393,60 @@ export function createNativeHostContract() {
                     })),
                 },
             };
+        },
+
+        getProjects(): NativeHostResult<NativeProjectsView> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            const currentRevision = revision();
+            if (cachedProjectsRevision !== currentRevision || !cachedProjects) {
+                const state = useTaskStore.getState();
+                const orderedAreas = sortAreasForDisplay(state.areas);
+                const areaById = new Map(orderedAreas.map((area) => [area.id, area]));
+                const summaries = state.getDerivedState().projectTaskSummaryById;
+                const groups = buildProjectGroups({
+                    projects: state.projects,
+                    orderedAreas,
+                    areaFilter: resolveAreaFilterSelection(undefined, state.areas),
+                    tagFilter: { kind: 'all' },
+                    pinFocused: true,
+                });
+                const toNativeGroup = (group: ProjectAreaGroup): NativeProjectGroup => {
+                    const area = group.areaId ? areaById.get(group.areaId) : undefined;
+                    return {
+                        areaId: area?.id ?? null,
+                        areaName: area?.name ?? null,
+                        areaColor: area?.color ?? null,
+                        areaIcon: area?.icon ?? null,
+                        projects: group.projects.map((project): NativeProjectRow => {
+                            const summary = summaries.get(project.id);
+                            const nextAction = summary?.nextAction;
+                            const activeTaskCount = summary?.activeTaskCount ?? 0;
+                            const isFocused = project.isFocused === true;
+                            return {
+                                id: project.id,
+                                title: project.title,
+                                status: project.status,
+                                isFocused,
+                                color: project.color ?? null,
+                                activeTaskCount,
+                                nextActionId: nextAction?.id ?? null,
+                                nextActionTitle: nextAction?.title ?? null,
+                                focusedWithoutNextAction: isFocused && !nextAction && activeTaskCount > 0,
+                            };
+                        }),
+                    };
+                };
+                cachedProjects = {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: currentRevision,
+                    active: groups.active.map(toNativeGroup),
+                    deferred: groups.deferred.map(toNativeGroup),
+                    archived: groups.archived.map(toNativeGroup),
+                };
+                cachedProjectsRevision = currentRevision;
+            }
+            return { ok: true, value: cachedProjects };
         },
 
         getFocusSectionWindow(input: {

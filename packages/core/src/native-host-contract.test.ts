@@ -3,6 +3,7 @@ import { createNativeHostContract, NATIVE_HOST_EDITOR_FIELDS, NATIVE_HOST_MAX_WI
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
+import * as projectGrouping from './project-grouping';
 import * as focusDerivation from './focus-sections';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
@@ -12,7 +13,7 @@ import { getEnglishI18nValue, getTranslator } from './i18n';
 import { getTranslationsSync } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import { zhHans } from './i18n/locales/zh-Hans';
-import type { Project, Task } from './types';
+import type { Area, Project, Task } from './types';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -36,6 +37,12 @@ const project = (id: string, status: Project['status'] = 'active', order = 0, ex
     tagIds: [],
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-01T00:00:00.000Z',
+    ...extra,
+});
+
+const area = (id: string, name: string, order: number, extra: Partial<Area> = {}): Area => ({
+    id, name, order, color: '#abcdef', icon: 'home',
+    createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
     ...extra,
 });
 
@@ -191,6 +198,99 @@ describe('native host contract', () => {
             .toMatchObject({ ok: true, value: { total: 0, rows: [] } });
     });
 
+    it('matches mobile Projects grouping and core summaries, caching until an area or task changes', async () => {
+        const areas = [
+            area('later', 'Later', 2), area('zeta', 'Zeta', 1), area('alpha', 'Alpha', 1),
+            area('deleted-area', 'Deleted', 0, { deletedAt: '2026-09-02T00:00:00.000Z' }),
+        ];
+        const projects = [
+            project('alpha-regular', 'active', 0, { areaId: 'alpha' }),
+            project('alpha-focused', 'active', 9, { areaId: 'alpha', isFocused: true }),
+            project('zeta-active', 'active', 0, { areaId: 'zeta' }),
+            project('later-active', 'active', 0, { areaId: 'later' }),
+            project('orphan', 'active', 0, { areaId: 'deleted-area' }),
+            project('waiting', 'waiting', 0, { areaId: 'zeta' }),
+            project('someday', 'someday', 0, { areaId: 'later' }),
+            project('archived', 'archived', 0, { areaId: 'alpha' }),
+            project('deleted-project', 'active', 0, { areaId: 'alpha', deletedAt: '2026-09-02T00:00:00.000Z' }),
+        ];
+        getData.mockResolvedValue({
+            tasks: [
+                task('focused-waiting', '2026-09-01T00:00:00.000Z', { projectId: 'alpha-focused', status: 'waiting' }),
+                task('regular-next', '2026-09-01T00:00:00.000Z', { projectId: 'alpha-regular', status: 'next', title: 'Next step' }),
+                task('regular-done', '2026-09-01T00:00:00.000Z', { projectId: 'alpha-regular', status: 'done' }),
+            ],
+            projects, sections: [], areas, people: [], settings: {},
+        });
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        const state = useTaskStore.getState();
+        const independentlyOrderedAreas = [...state.areas]
+            .filter((item) => !item.deletedAt)
+            .sort((a, b) => a.order !== b.order ? a.order - b.order : a.name.localeCompare(b.name));
+        const mobileGroups = projectGrouping.buildProjectGroups({
+            projects: state.projects,
+            orderedAreas: independentlyOrderedAreas,
+            areaFilter: resolveAreaFilterSelection(undefined, independentlyOrderedAreas),
+            tagFilter: { kind: 'all' },
+            pinFocused: true,
+        });
+        const groupCalls = vi.spyOn(projectGrouping, 'buildProjectGroups');
+        const first = host.getProjects();
+        if (!first.ok) throw new Error('Projects query failed');
+        const shape = (groups: { areaId: string | null; projects: { id: string }[] }[]) =>
+            groups.map(({ areaId, projects: rows }) => ({ areaId, ids: rows.map(({ id }) => id) }));
+        for (const key of ['active', 'deferred', 'archived'] as const) {
+            expect(shape(first.value[key])).toEqual(shape(mobileGroups[key].map((group) => ({
+                areaId: group.areaId ?? null, projects: group.projects,
+            }))));
+        }
+        expect(shape(first.value.active)).toEqual([
+            { areaId: 'alpha', ids: ['alpha-focused', 'alpha-regular'] },
+            { areaId: 'zeta', ids: ['zeta-active'] },
+            { areaId: 'later', ids: ['later-active'] },
+            { areaId: null, ids: ['orphan'] },
+        ]);
+        expect(first.value.active[0]).toMatchObject({ areaName: 'Alpha', areaColor: '#abcdef', areaIcon: 'home' });
+        expect(first.value.active[3]).toMatchObject({ areaName: null, areaColor: null, areaIcon: null });
+        const summaryById = state.getDerivedState().projectTaskSummaryById;
+        for (const row of [...first.value.active, ...first.value.deferred, ...first.value.archived].flatMap((group) => group.projects)) {
+            const summary = summaryById.get(row.id);
+            expect(row).toMatchObject({
+                activeTaskCount: summary?.activeTaskCount ?? 0,
+                nextActionId: summary?.nextAction?.id ?? null,
+                nextActionTitle: summary?.nextAction?.title ?? null,
+                focusedWithoutNextAction: row.isFocused && !summary?.nextAction && (summary?.activeTaskCount ?? 0) > 0,
+                color: '#123456',
+            });
+        }
+        expect(first.value.active[0].projects[0]).toMatchObject({
+            id: 'alpha-focused', isFocused: true, activeTaskCount: 1,
+            nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: true,
+        });
+        expect(first.value.active[0].projects[1]).toMatchObject({
+            id: 'alpha-regular', nextActionId: 'regular-next', nextActionTitle: 'Next step',
+        });
+        const unchanged = host.getProjects();
+        expect(unchanged).toMatchObject({ ok: true, value: { revision: first.value.revision } });
+        if (!unchanged.ok) throw new Error('Projects query failed');
+        expect(unchanged.value).toBe(first.value);
+        expect(groupCalls).toHaveBeenCalledTimes(1);
+
+        expect((await useTaskStore.getState().updateArea('alpha', { name: 'Renamed' })).success).toBe(true);
+        const renamed = host.getProjects();
+        if (!renamed.ok) throw new Error('Projects query failed after area rename');
+        expect(renamed.value.revision).not.toBe(first.value.revision);
+        expect(renamed.value.active[0].areaName).toBe('Renamed');
+        expect(groupCalls).toHaveBeenCalledTimes(2);
+        expect((await useTaskStore.getState().updateTask('regular-next', { title: 'Edited step' })).success).toBe(true);
+        const edited = host.getProjects();
+        if (!edited.ok) throw new Error('Projects query failed after task edit');
+        expect(edited.value.revision).not.toBe(renamed.value.revision);
+        expect(edited.value.active[0].projects[1].nextActionTitle).toBe('Edited step');
+        expect(groupCalls).toHaveBeenCalledTimes(3);
+    });
+
     it('acknowledges create and complete only when their store snapshots are durable', async () => {
         const host = createNativeHostContract();
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
@@ -261,6 +361,7 @@ describe('native host contract', () => {
         const host = createNativeHostContract();
         expect(host.getInboxWindow({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getFocus({ limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getProjects()).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: 'x' }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTask({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
