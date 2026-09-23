@@ -207,7 +207,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 }
                 // The editor open at process death: core's model read again, the saved draft on top.
                 val restored = savedDraft?.let { draft ->
-                    runCatching { TaskEditor.restore(readEditor(runtime, draft.getString("id")), draft) }
+                    runCatching { withView(runtime, TaskEditor.restore(readEditor(runtime, draft.getString("id")), draft)) }
                         .onFailure { Log.w(CoreHost.TAG, "Editor draft not restored", it) }.getOrNull()
                 }
                 ui {
@@ -348,10 +348,57 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         ui { suggestions = emptyMap(); keepEditor(TaskEditor.open(opened)) }
     }
 
-    /** Draft values exactly as RN's controls write them; core runs every rule when it saves. */
-    fun editFields(values: Map<String, Any?>) { editor?.let { keepEditor(it.edit(values)) } }
+    /** The editor [current] with core's model for its whole draft (editTaskDraft without an edit). */
+    private fun withView(runtime: CoreHost, current: TaskEditor): TaskEditor {
+        val sent = current.fullDraft()
+        return current.viewed(current.model.edited(runtime.editTaskDraft(current.id, draftJson(sent), "")), sent)
+    }
 
-    fun editText(field: String, text: String) = editFields(mapOf(field to text))
+    /** RN's controls' edits waiting for core, sent one at a time so each applies to the draft the one before returned. */
+    private val draftEdits = ArrayDeque<String>()
+    /** An edit is with core, or waits for it; Save waits for them, and Close counts them as unsaved. */
+    var editsPending by mutableStateOf(false); private set
+    private var editInFlight = false
+
+    /**
+     * One control's edit through core's editTaskDraft (a date pick, a quick date, a recurrence or relative start
+     * edit, field values): core applies it with its cascades and returns the draft's whole model, which the
+     * editor shows. Nothing is written until Save.
+     */
+    fun editDraft(edit: JSONObject) {
+        editor ?: return
+        draftEdits.addLast(edit.toString())
+        editsPending = true
+        pumpEdits()
+    }
+
+    private fun pumpEdits() {
+        val current = editor
+        val runtime = host
+        if (editInFlight || current == null || runtime == null || busy || failedAction != null) return
+        val edit = draftEdits.removeFirstOrNull() ?: run { editsPending = false; return }
+        editInFlight = true
+        val sent = current.fullDraft()
+        background(listOf(Part.Editor), { engine -> runCatching { current.model.edited(engine.editTaskDraft(current.id, draftJson(sent), edit)) } }) { reply, _ ->
+            editInFlight = false
+            reply.onSuccess { view -> editor?.takeIf { it.id == current.id }?.let { keepEditor(it.viewed(view, sent)) } }
+                .onFailure { failure ->
+                    // Core refused the edit (an invalid value); the draft stays as it was, and later edits go on from it.
+                    Log.w(CoreHost.TAG, "Editor edit refused", failure)
+                    error = failure.message ?: failure.javaClass.simpleName
+                }
+            if (draftEdits.isEmpty()) editsPending = false
+            pumpEdits()
+            if (!editsPending && saveQueued && editor?.waiting == false) { saveQueued = false; saveEditor() }
+        }
+    }
+
+    /** Field values exactly as RN's controls write them, through core, which runs the draft's cascades (status, star, due date). */
+    fun editFields(values: Map<String, Any?>) =
+        editDraft(JSONObject().put("type", "fields").put("patch", JSONObject().apply { values.forEach { (field, value) -> put(field, value ?: JSONObject.NULL) } }))
+
+    /** Typed text (title, notes, location) stays in the editor as typed; no core rule reads it while editing. */
+    fun editText(field: String, text: String) { editor?.let { keepEditor(it.edit(mapOf(field to text))) } }
 
     /** A context, tag, or person input: the text as typed, and core's draft value and suggestions for it. */
     fun editInput(field: String, text: String) {
@@ -371,11 +418,13 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             if (field !in TYPED_FIELDS) return@background
             val resolved = current.resolve(field, text, found.draftValue)
             keepEditor(resolved)
-            if (saveQueued && !resolved.waiting) { saveQueued = false; saveEditor() }
+            if (saveQueued && !resolved.waiting && !editsPending) { saveQueued = false; saveEditor() }
         }
     }
 
     fun closeEditor() {
+        draftEdits.clear()
+        editsPending = false
         keepEditor(null)
         suggestions = emptyMap()
         saveQueued = false
@@ -394,7 +443,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun closeWaitingPrompt() { editor?.let { keepEditor(it.copy(waitingFor = null)) } }
 
     /** RN's confirmWaitingAssignment: Waiting and the person, in the draft. */
-    fun confirmWaiting() { editor?.let { keepEditor(it.assignWaiting(it.waitingFor.orEmpty())) } }
+    fun confirmWaiting() {
+        val current = editor ?: return
+        val person = current.waitingFor.orEmpty()
+        keepEditor(current.assignWaiting(person))
+        editFields(mapOf("status" to "waiting", "assignedTo" to person))
+    }
 
     fun saveDraftAction(current: TaskEditor) = FailedAction("saveDraft", current.id, base = current.base, patch = current.patch)
 
@@ -405,7 +459,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      */
     fun saveEditor() {
         val current = editor ?: return
-        if (current.waiting) { saveQueued = true; return }
+        if (current.waiting || editsPending) { saveQueued = true; return }
         if (current.patch.isEmpty()) { closeEditor(); return }
         if (busy || (failedAction != null && failedAction != saveDraftAction(current))) return
         val action = saveDraftAction(current)
@@ -431,7 +485,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val id = editor?.id ?: return
         perform { runtime ->
             val fresh = readEditor(runtime, id)
-            ui { editor?.let { keepEditor(it.reloaded(fresh)) } }
+            val current = editor ?: return@perform
+            val reloaded = withView(runtime, current.reloaded(fresh))
+            ui { keepEditor(reloaded) }
         }
     }
 

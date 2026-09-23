@@ -11,7 +11,7 @@
 // its exact retry through rotation, Back, and a new screen, then stores once;
 // (i) a save whose reply dies with the process is sent again on relaunch and stored once;
 // (g) a context chosen from core's suggestions and (h) a due date with a time,
-// in one save; (f) status Reference, whose rule core applies (the due date
+// in one save; (j) a new day for a timed due date keeps its time; (f) status Reference, whose rule core applies (the due date
 // goes), and a project from the Destination picker. It asserts through the
 // app's own database copy (.db, -wal and -shm pulled together), the UI
 // hierarchy, and logcat. It touches only the development
@@ -88,7 +88,7 @@ const goHome = async () => {
 // The labels are core's English (en.ts): taskEdit.*Label, task.destination, status.*, common.notSet, common.clear, calendar.changeTime.
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
 const inbox = () => waitFor('the Inbox', (nodes) => !inEditor(nodes) && Number.isFinite(header(nodes)), 60_000);
-/** The editor's draft as its controls announce it ("Due Date: 2026-09-15"); the first text field is the title. */
+/** The editor's draft as its controls announce it ("Due Date: <core's label>"); the first text field is the title. */
 const editorShows = (nodes, title, values = {}) => inEditor(nodes) && field(nodes)?.text === title
     && Object.entries(values).every(([label, value]) => described(nodes, label) === value);
 /** Closes the keyboard if it shows: Back then only closes the keyboard, never the editor. */
@@ -133,6 +133,13 @@ const chooseStatus = async (value) => {
     await tapDescribed(`Status: ${value}`, (nodes) => chipOn(nodes, `Status: ${value}`), `Status ${value} selected`);
 };
 const month = () => sh('date +%Y-%m');
+/** The instant core stores for 00:00 on [day] of this month in the phone's time zone (the same offset all month). */
+const phoneMidnight = (day) => {
+    const [year, mon] = month().split('-').map(Number);
+    const offset = sh('date +%z').match(/^([+-])(\d\d)(\d\d)$/);
+    const minutes = (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3]));
+    return new Date(Date.UTC(year, mon - 1, day) - minutes * 60_000).toISOString();
+};
 /** Picks [day] of the month the date picker opens on (the current month) and confirms. */
 const pickDay = async (day) => {
     const dayPattern = new RegExp(`(^|\\D)${day}(\\D|$)`);
@@ -141,13 +148,17 @@ const pickDay = async (day) => {
     await tapExpecting(cell(picker), (nodes) => button(nodes, 'OK')?.enabled === 'true', 'OK enabled', 10_000);
     await tapExpecting(button(await screen(), 'OK'), (nodes) => !datePicker(nodes), 'the date picker to close', 10_000);
 };
-/** The due date control: RN's compact "Due Date: Not set" row, or the date button showing the draft value. */
+/**
+ * The due date control (RN's compact "Due Date: Not set" row, or the date button with core's label): picks
+ * [day] and waits for core's new label. Returns the stored value a date-only pick writes and the label shown.
+ */
 const pickDueDay = async (day) => {
-    await tapDescribed(`Due Date: ${described(await screen(), 'Due Date')}`, datePicker, 'the date picker');
+    const before = described(await screen(), 'Due Date');
+    await tapDescribed(`Due Date: ${before}`, datePicker, 'the date picker');
     await pickDay(day);
     const value = `${month()}-${String(day).padStart(2, '0')}`;
-    await waitFor(`Due Date: ${value}`, (nodes) => described(nodes, 'Due Date') === value);
-    return value;
+    const nodes = await waitFor(`core's new due date label for day ${day}`, (current) => ![undefined, before, 'Not set'].includes(described(current, 'Due Date')));
+    return { value, label: described(nodes, 'Due Date') };
 };
 /** A text field: tap it, move to the end, and type [digits] (digits only: some keyboards hold letters in a composition strip). */
 const typeInto = async (node, digits, expected, erase = 0) => {
@@ -240,7 +251,7 @@ try {
     // (a) Title, due date, and a typed context change; exactly those are stored, in one write. Core prefixes the context.
     const context = `78${run}`;
     await openEditor(captured);
-    const due = await pickDueDay(15);
+    const { value: due } = await pickDueDay(15);
     const titleA = `${captured}7`;
     await appendTitle('7', titleA);
     await typeInto(contextsField(await screen()), context, context);
@@ -261,14 +272,14 @@ try {
 
     // (b) Rotation mid-edit keeps the draft; nothing is written.
     await openEditor(titleA);
-    const dueB = await pickDueDay(16);
+    const { value: dueB, label: dueBLabel } = await pickDueDay(16);
     const titleB = `${titleA}8`;
     await appendTitle('8', titleB);
     await rotate(1);
     nodes = await waitFor('the draft after rotation', (current) => editorShows(current, titleB));
     check(pid() === processId, '(b) landscape: same process, draft title kept');
     await rotate(0);
-    nodes = await waitFor('the draft after rotating back', (current) => editorShows(current, titleB, { 'Due Date': dueB }));
+    nodes = await waitFor('the draft after rotating back', (current) => editorShows(current, titleB, { 'Due Date': dueBLabel }));
     check(boots(processId) === 1, '(b) portrait: draft title and due date kept, one host boot');
     expectStored({ title: titleA, dueDate: null, rev: row.rev }, '(b) an unsaved draft wrote nothing');
 
@@ -278,7 +289,7 @@ try {
     sh(`run-as ${PKG} kill -9 ${processId}`);
     await waitFor('process death', () => pid() !== processId, 10_000);
     launch();
-    nodes = await waitFor('the restored editor', (current) => editorShows(current, titleB, { 'Due Date': dueB }), 60_000);
+    nodes = await waitFor('the restored editor', (current) => editorShows(current, titleB, { 'Due Date': dueBLabel }), 60_000);
     processId = pid();
     check(boots(processId) === 1, '(c) editor draft restored after process death, one host boot');
     const booted = stored();
@@ -365,16 +376,22 @@ try {
     const second = `79${run.slice(0, 6)}`;
     await typeInto(contextsField(await screen()), second, `${stored0}, ${second}`);
     await hideKeyboard();
-    await pickDueDay(16);
-    await tapDescribed(`Change time Due Date`, datePicker, 'the date picker');
-    await pickDay(17);
-    await waitFor('the time picker', (current) => button(current, 'OK') && !datePicker(current));
-    const dueH = `${month()}-17T00:00`;
-    await tapExpecting(button(await screen(), 'OK'), (current) => described(current, 'Due Date') === dueH, `Due Date: ${dueH}`);
+    const { label: dateOnlyLabel } = await pickDueDay(16);
+    // RN's clock opens the time picker on core's time for the field: midnight for a date-only due.
+    await tapDescribed(`Change time Due Date`, (current) => button(current, 'OK') && !datePicker(current), 'the time picker');
+    await tapExpecting(button(await screen(), 'OK'), (current) => ![undefined, dateOnlyLabel].includes(described(current, 'Due Date')), 'core\'s label with the time');
+    const dueH = phoneMidnight(16);
     await save();
     await inbox();
     row = expectStored({ title: titleI, contexts: [stored0, `@${second}`], dueDate: dueH, rev: row.rev + 1 },
-        '(g) the suggestion replaced the typed digits and (h) the due date kept its time, in one write');
+        '(g) the suggestion replaced the typed digits and (h) the due date got its time (core\'s instant for 00:00), in one write');
+
+    // (j) A new day keeps the time: core moves the due date to the 17th at the same 00:00 (RN keeps the hour).
+    await openEditor(titleI);
+    await pickDueDay(17);
+    await save();
+    await inbox();
+    row = expectStored({ title: titleI, dueDate: phoneMidnight(17), rev: row.rev + 1 }, '(j) a day pick kept the due date\'s time');
 
     // (f) Status Reference and a project from the Destination picker: core applies its reference rule (the due date goes).
     await openEditor(titleI);

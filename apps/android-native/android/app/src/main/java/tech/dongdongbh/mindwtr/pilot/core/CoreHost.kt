@@ -139,6 +139,14 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's getTaskEditorModel for one task: its draft, the fields to show by section, and each field's choices. */
     fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 
+    /**
+     * Core's editTaskDraft: the editor model for [draftJson] after one control's edit ([editJson], "" for none).
+     * It writes nothing; the editor saves the returned draft with saveTaskDraft.
+     */
+    fun editTaskDraft(id: String, draftJson: String, editJson: String): JSONObject =
+        callAsync("editDraft", JSONObject().put("id", id).put("draft", JSONObject(draftJson))
+            .apply { if (editJson.isNotEmpty()) put("edit", JSONObject(editJson)) }.toString())
+
     /** The task's checklist and attachment titles from core's getTask, shown read-only in the editor. */
     fun editorContent(id: String): JSONObject = callAsync("editorContent", id)
 

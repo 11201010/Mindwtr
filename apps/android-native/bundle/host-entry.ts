@@ -251,6 +251,13 @@ globalThis.MindwtrHost = {
             };
         });
     },
+    /** `json` is `{ id, draft, edit? }`, passed to core's editTaskDraft unchanged: the model for the edited draft. */
+    editDraft(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.editTaskDraft(JSON.parse(json)));
+        });
+    },
     /** Core's suggestions for the whole text of a context, tag, or person input. */
     editorSuggestions(id: string, field: string, query: string, limit: number): string {
         return submit(async () => {

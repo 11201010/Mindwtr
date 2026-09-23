@@ -132,9 +132,9 @@ assert.match(model, /pendingSave\?\.let \{ state\.put\("pending", JSONObject\(\)
 assert.match(model, /val action = FailedAction\("saveDraft", restored\.id, base = map\("base"\), patch = map\("patch"\)\)\s+failedAction = action\s+sendDraft\(action\)/);
 // Unresolved typed text is an unsaved edit: Close asks, and Save waits for core, then saves.
 assert.match(editorUi, /val dirty get\(\) = patch\.isNotEmpty\(\) \|\| waiting/);
-assert.match(editorUi, /val leave = \{ if \(editor\.readOnly \|\| !editor\.dirty\) closeEditor\(\) else confirmLeave = true \}/);
-assert.match(model, /if \(current\.waiting\) \{ saveQueued = true; return \}/);
-assert.match(model, /if \(saveQueued && !resolved\.waiting\) \{ saveQueued = false; saveEditor\(\) \}/);
+assert.match(editorUi, /val leave = \{ if \(editor\.readOnly \|\| \(!editor\.dirty && !editsPending\)\) closeEditor\(\) else confirmLeave = true \}/);
+assert.match(model, /if \(current\.waiting \|\| editsPending\) \{ saveQueued = true; return \}/);
+assert.match(model, /if \(saveQueued && !resolved\.waiting && !editsPending\) \{ saveQueued = false; saveEditor\(\) \}/);
 // Text the app puts in a field (a chosen suggestion) leaves the cursor at its end, as RN's TextInput does.
 assert.match(editorUi, /if \(field\.text != value\) field = TextFieldValue\(value, TextRange\(value\.length\)\)\s+BasicTextField\(field, \{ typed -> field = typed;/);
 // A chip's click, label, and state are one accessibility node: one-of-many choices are selectable (TalkBack says
@@ -143,7 +143,7 @@ assert.match(editorUi, /\.semantics \{ contentDescription = description \}\s+\.t
 assert.equal(code(editorUi).match(/toggle = true/g).length, 2, 'only the quick token chips and "Repeat after completion" toggle');
 // RN's Waiting prompt: choosing Waiting asks for the person first, with core's people suggestions.
 assert.match(editorUi, /if \(status == "waiting" && !active\) openWaitingPrompt\(\) else editFields\(mapOf\("status" to status\)\)/);
-assert.match(editorUi, /fun assignWaiting\(person: String\) = edit\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
+assert.match(model, /keepEditor\(current\.assignWaiting\(person\)\)\s+editFields\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
 for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
@@ -294,7 +294,7 @@ assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateK
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
 assert.match(model, /fun saveDraftAction\(current: TaskEditor\) = FailedAction\("saveDraft", current\.id, base = current\.base, patch = current\.patch\)/);
-assert.match(model, /val current = editor \?: return\s+if \(current\.waiting\) \{ saveQueued = true; return \}\s+if \(current\.patch\.isEmpty\(\)\) \{ closeEditor\(\); return \}/);
+assert.match(model, /val current = editor \?: return\s+if \(current\.waiting \|\| editsPending\) \{ saveQueued = true; return \}\s+if \(current\.patch\.isEmpty\(\)\) \{ closeEditor\(\); return \}/);
 assert.match(model, /private fun sendDraft\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\)\)/);
 // Draft values are core's own JSON, compared and sent as JSON text; null stays JSON null.
 assert.match(editorUi, /fun draftJson\(values: Map<String, String\?>\): String =\s*JSONObject\(\)\.apply \{ values\.forEach \{ \(field, literal\) -> put\(field, draftValue\(literal\)\) \} \}\.toString\(\)/);
@@ -307,11 +307,31 @@ assert.match(model, /background\(listOf\(Part\.Editor\), \{ runtime -> EditorSug
 // Reload after a conflict: an edit survives only where the stored value still equals the old base.
 assert.match(editorUi, /val kept = \{ field: String -> \(fresh\.draft\[field\] \?: "null"\) == base\(field\) \}/);
 // Kotlin holds no editor rule: the fields, their order, sections, open state, badges, and choices are core's model, walked as sent.
-assert.match(editorUi, /for \(section in editor\.model\.sections\) \{/);
+assert.match(editorUi, /for \(section in editor\.view\.sections\) \{/);
+// Every structural edit goes through core's editTaskDraft, one at a time, and the editor shows the model core returns.
+assert.match(coreHost, /fun editTaskDraft\(id: String, draftJson: String, editJson: String\): JSONObject =\s*callAsync\("editDraft"/);
+assert.match(hostEntry, /editDraft\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.editTaskDraft\(JSON\.parse\(json\)\)\);/);
+assert.match(model, /background\(listOf\(Part\.Editor\), \{ engine -> runCatching \{ current\.model\.edited\(engine\.editTaskDraft\(current\.id, draftJson\(sent\), edit\)\) \} \}\)/);
+assert.match(model, /if \(editInFlight \|\| current == null \|\| runtime == null \|\| busy \|\| failedAction != null\) return/);
+assert.match(model, /fun editFields\(values: Map<String, Any\?>\) =\s*editDraft\(JSONObject\(\)\.put\("type", "fields"\)/);
+assert.match(editorUi, /if \(\(current\[field\] \?: "null"\) != \(sent\[field\] \?: "null"\)\) current\[field\] \?: "null" else reply\.draft\[field\] \?: "null"/);
+// Dates: core's label, core's picker starts, core's date edits; Kotlin never writes a date value of its own.
+assert.match(editorUi, /DateButton\(part\.label, label, !locked, Modifier\.weight\(1f\)\) \{ pickDate\(id\) \}/);
+assert.match(editorUi, /JSONObject\(\)\.put\("type", "pickDate"\)\.put\("field", target\)\.put\("date", day\)/);
+assert.match(editorUi, /JSONObject\(\)\.put\("type", "pickTime"\)\.put\("field", target\)\.put\("time", pickedTime\(state\.hour, state\.minute\)\)/);
+assert.doesNotMatch(code(editorUi), /relativeStartOffset" to null\)(?!\))/, 'the relative start cascade is core\'s');
+assert.equal(code(editorUi).match(/"relativeStartOffset"/g).length, 1, 'only the Absolute chip names the relative start');
 assert.match(editorUi, /section\.fields\.forEach \{ field\(it\) \}/);
 assert.doesNotMatch(code(editorUi), /\.(sort\w*|sorted\w*|groupBy|reversed|shuffled|distinct\w*)\b/);
-// No Kotlin date parsing or formatting of stored values: dates show as the draft holds them; only picker output is named.
-assert.doesNotMatch([editorUi, model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n'),
+// No Kotlin date parsing or formatting of stored values: dates show core's labels. Two helpers convert only between the
+// picker and core's picker strings: pickedDay (picker output) and pickerStart (core's picker start, yyyy-MM-dd, back into
+// the picker); pickerClock splits core's HH:mm picker start into the time picker's hour and minute.
+const PICKER_START = /private fun pickerStart\(coreDate: String\): Long\? =\s*runCatching \{ SimpleDateFormat\("yyyy-MM-dd", Locale\.US\)\.apply \{ timeZone = TimeZone\.getTimeZone\("UTC"\) \}\.parse\(coreDate\)\?\.time \}\.getOrNull\(\)/;
+assert.match(editorUi, PICKER_START);
+assert.equal(editorUi.match(/pickerStart\(/g).length, 2, 'defined once, used once: the date picker\'s start');
+assert.match(editorUi, /val state = rememberDatePickerState\(initialSelectedDateMillis = pickerStart\(start\)\)/);
+assert.match(editorUi, /val \(hour, minute\) = pickerClock\(editor\.view\.fields\.dates\.getValue\(target\)\.pickerTime\)/);
+assert.doesNotMatch([editorUi.replace(PICKER_START, ''), model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n'),
     /java\.time|LocalDate|Instant|DateTimeFormatter|java\.util\.Calendar|GregorianCalendar|Calendar\.getInstance|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter|EditorSuggestions)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
 assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
 // No Kotlin date formatting or date coloring anywhere in the UI package: dates and their tones are core's (row meta, the Focus date line).
@@ -323,10 +343,10 @@ assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].
             `${name} formats, parses, or colors a date; only core's meta text is shown`);
     }
 }
-assert.equal(editorUi.match(/SimpleDateFormat|\.format\(/g).length, 3); // import, constructor, one format call
+assert.equal(editorUi.match(/SimpleDateFormat|\.format\(/g).length, 4); // import, pickedDay's constructor and format call, pickerStart's constructor
 assert.match(editorUi, /private fun pickedDay\(pickerMillis: Long\): String =\s*SimpleDateFormat\("yyyy-MM-dd", Locale\.US\)\.apply \{ timeZone = TimeZone\.getTimeZone\("UTC"\) \}\.format\(Date\(pickerMillis\)\)/);
 assert.equal(editorUi.match(/pickedDay\(/g).length, 2);
-assert.match(editorUi, /private fun pickedTime\(hour: Int, minute: Int\) = "T\$\{hour\.toString\(\)\.padStart\(2, '0'\)\}:\$\{minute\.toString\(\)\.padStart\(2, '0'\)\}"/);
+assert.match(editorUi, /private fun pickedTime\(hour: Int, minute: Int\) = "\$\{hour\.toString\(\)\.padStart\(2, '0'\)\}:\$\{minute\.toString\(\)\.padStart\(2, '0'\)\}"/);
 assert.equal(editorUi.match(/pickedTime\(/g).length, 2);
 // A draft date is never read apart: no substring, split, or pattern over a date field's value.
 assert.doesNotMatch(code(editorUi), /text\("(dueDate|startTime|reviewAt)"\)\.(substring|split|take|drop|contains|startsWith|endsWith|matches|replace)/);
@@ -405,8 +425,8 @@ for (const [list, prefix] of [['EDITOR_STATUSES', 'status'], ['EDITOR_PRIORITIES
     const values = [...new RegExp(`const ${list} = \\[([^\\]]*)\\]`).exec(contractSource)[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
     for (const value of values) assert(labelKeys.includes(`${prefix}.${value}`), `LABEL_KEYS lacks ${prefix}.${value}`);
 }
-assert.match(editorUi, /for \(status in editor\.model\.statuses\)/);
-assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.model\.priorities, !locked, t\("taskEdit\.priorityLabel"\), \{ t\("priority\.\$it"\) \}\)/);
+assert.match(editorUi, /for \(status in editor\.view\.statuses\)/);
+assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.view\.priorities, !locked, t\("taskEdit\.priorityLabel"\), \{ t\("priority\.\$it"\) \}\)/);
 // Every label key core's editor model can send (recurrence choices, energy levels, section titles) is in LABEL_KEYS.
 {
     const modelSource = readFileSync(resolve(app, '../../packages/core/src/task-editor-model.ts'), 'utf8');
@@ -628,6 +648,10 @@ export function createNativeHostContract() {
       globalThis.editorInputs.push(JSON.stringify(['suggest', input]));
       return { ok: true, value: { draftValue: '@home', matches: [], quick: [] } };
     },
+    editTaskDraft(input) {
+      globalThis.editorInputs.push(JSON.stringify(['edit', input]));
+      return { ok: true, value: { version: 1, id: input.id, draft: input.draft } };
+    },
     async saveTaskDraft(input) {
       globalThis.updateInputs.push(JSON.stringify(['draft', input]));
       return globalThis.saveDraftResult;
@@ -752,7 +776,10 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.editorContent('t')),
     { ok: true, value: { checklist: [{ title: 'Milk', isCompleted: true }], attachments: ['kept'] } });
 assert.deepEqual(await poll(ready, ready.MindwtrHost.editorSuggestions('t', 'contexts', 'home', 4)),
     { ok: true, value: { draftValue: '@home', matches: [], quick: [] } });
-assert.deepEqual(ready.editorInputs, ['{"id":"t"}', '["task",{"id":"t"}]', '["suggest",{"id":"t","field":"contexts","query":"home","limit":4}]']);
+const editInput = { id: 't', draft: { title: 'a', dueDate: '' }, edit: { type: 'pickDate', field: 'dueDate', date: '2026-09-17' } };
+assert.deepEqual(await poll(ready, ready.MindwtrHost.editDraft(JSON.stringify(editInput))), { ok: true, value: { version: 1, id: 't', draft: editInput.draft } });
+assert.deepEqual(ready.editorInputs, ['{"id":"t"}', '["task",{"id":"t"}]', '["suggest",{"id":"t","field":"contexts","query":"home","limit":4}]',
+    JSON.stringify(['edit', editInput])]);
 // saveDraft passes Kotlin's { id, base, patch } to core's saveTaskDraft unchanged, and a refusal keeps its code prefix.
 const draftInput = JSON.stringify({ id: 't', base: { title: 'a', dueDate: '', relativeStartOffset: null }, patch: { title: 'b', dueDate: '2026-09-15T14:05', relativeStartOffset: null } });
 assert.deepEqual(await poll(ready, ready.MindwtrHost.saveDraft(draftInput)), { ok: true, value: { id: 't', draft: { title: 'b' } } });
@@ -821,10 +848,11 @@ assert.equal(blockedRefresh.ok, false);
 assert.match(blockedRefresh.error, /SAVE_FAILED/);
 assert.equal(ready.queryCount, queriesBeforeFailure);
 // The editor cannot load unsaved in-memory values as if they were stored.
-for (const blocked of [ready.MindwtrHost.editorModel('t'), ready.MindwtrHost.editorContent('t'), ready.MindwtrHost.editorSuggestions('t', 'tags', 'x', 4)]) {
+for (const blocked of [ready.MindwtrHost.editorModel('t'), ready.MindwtrHost.editorContent('t'), ready.MindwtrHost.editorSuggestions('t', 'tags', 'x', 4),
+    ready.MindwtrHost.editDraft(JSON.stringify(editInput))]) {
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
 }
-assert.equal(ready.editorInputs.length, 3);
+assert.equal(ready.editorInputs.length, 4);
 // Focus cannot show unsaved in-memory values as stored either.
 for (const blocked of [ready.MindwtrHost.focus(50), ready.MindwtrHost.focusWindow('next', 0, 50, 'f')]) {
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });

@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -131,10 +132,45 @@ class EditorModel(val source: String) {
     /** The checklist and attachment titles, shown read-only (their editors are not built). */
     val checklist = content.getJSONArray("checklist").objects().map { it.getString("title") to it.getBoolean("isCompleted") }
     val attachments = content.getJSONArray("attachments").texts()
+    /** Core's schedule and estimate controls for this draft: date labels, picker starts, quick dates, recurrence, reminders. */
+    val fields = EditorFields(reply.getJSONObject("fields"))
+
+    /** Core's model for an edited draft (editTaskDraft), with this task's checklist and attachments. */
+    fun edited(model: JSONObject) = of(model, content)
 
     companion object {
         fun of(model: JSONObject, content: JSONObject) = EditorModel(JSONObject().put("model", model).put("content", content).toString())
     }
+}
+
+/** One quick date chip: core's label, whether it is on, and the field's draft value after a tap. */
+data class QuickDate(val label: String, val selected: Boolean, val value: String)
+
+/**
+ * A date field as core shows it: [label] in the user's settings, whether it [hasTime], the value after
+ * "Date only", where the pickers start (`yyyy-MM-dd`, `HH:mm`), and RN's quick date chips.
+ */
+class DatePart(json: JSONObject) {
+    val value: String = json.getString("value")
+    val label: String = json.getString("label")
+    val hasTime = json.getBoolean("hasTime")
+    val dateOnly: String = json.getString("dateOnly")
+    val pickerDate: String = json.getJSONObject("picker").getString("date")
+    val pickerTime: String = json.getJSONObject("picker").getString("time")
+    val quickDates = json.getJSONArray("quickDates").objects().map { QuickDate(it.getString("label"), it.getBoolean("selected"), it.getString("value")) }
+}
+
+/** Core's `fields` block of the editor model, read as sent. */
+class EditorFields(json: JSONObject) {
+    val dates = listOf("startTime", "dueDate", "reviewAt").associateWith { DatePart(json.getJSONObject(it)) }
+    /** "Starts after due date", or "". */
+    val dateIssue: String = json.getString("dateIssue")
+    /** The start's absolute/relative control; null without a due date. */
+    val relativeStart: JSONObject? = json.optJSONObject("relativeStart")
+    val recurrence: JSONObject = json.getJSONObject("recurrence")
+    val reminders: JSONObject = json.getJSONObject("reminders")
+    val timeEstimate: JSONObject = json.getJSONObject("timeEstimate")
+    val timeSpent = json.getJSONObject("timeSpent").getBoolean("enabled")
 }
 
 /** The token and person fields: their text is typed freely, and core's getTaskEditorSuggestions turns it into the draft value. */
@@ -161,6 +197,8 @@ data class EditorSuggestions(val text: String, val draftValue: String, val match
 data class TaskEditor(
     val model: EditorModel, val edited: Map<String, String>, val inputs: Map<String, String> = emptyMap(),
     val resolved: Map<String, String> = emptyMap(), val bases: Map<String, String> = emptyMap(), val waitingFor: String? = null,
+    /** Core's model for the current draft (editTaskDraft's reply): the layout, options, and fields to show. */
+    val view: EditorModel = model,
 ) {
     val id get() = model.id
     val readOnly get() = model.readOnly
@@ -189,6 +227,21 @@ data class TaskEditor(
 
     fun typed(field: String, text: String) = copy(inputs = inputs + (field to text))
 
+    /** The whole draft as JSON text, for core's editTaskDraft. */
+    fun fullDraft(): Map<String, String> = (model.draft.keys + edited.keys).associateWith { edited[it] ?: loaded(it) }
+
+    /**
+     * Core's model for the draft [sent]: its draft becomes the editor's, except a field typed into
+     * locally while core answered, which keeps the newer local value.
+     */
+    fun viewed(reply: EditorModel, sent: Map<String, String>): TaskEditor {
+        val current = fullDraft()
+        val combined = (reply.draft.keys + current.keys).associateWith { field ->
+            if ((current[field] ?: "null") != (sent[field] ?: "null")) current[field] ?: "null" else reply.draft[field] ?: "null"
+        }
+        return withEdits(combined.filter { (field, literal) -> literal != (edited[field] ?: loaded(field)) }).copy(view = reply)
+    }
+
     /**
      * Core's draft value for [text], applied only while [text] is still what the field shows. A field
      * nobody typed in keeps the draft core sent, so opening the editor never makes an edit.
@@ -197,9 +250,9 @@ data class TaskEditor(
         if (field !in inputs || input(field) != text) this
         else withEdits(mapOf(field to draftLiteral(draftValue))).copy(resolved = resolved + (field to text))
 
-    /** RN's waiting prompt: Waiting, and the person typed there, as RN's confirmWaitingAssignment writes them. */
-    fun assignWaiting(person: String) = edit(mapOf("status" to "waiting", "assignedTo" to person))
-        .copy(inputs = inputs + ("assignedTo" to person), resolved = resolved + ("assignedTo" to person), waitingFor = null)
+    /** RN's waiting prompt closes with the person as the field's text; core sets Waiting and the person (InboxViewModel.confirmWaiting). */
+    fun assignWaiting(person: String) =
+        copy(inputs = inputs + ("assignedTo" to person), resolved = resolved + ("assignedTo" to person), waitingFor = null)
 
     /**
      * After STALE_REVISION: the fresh model becomes the base. An edit stays only where the stored
@@ -208,7 +261,7 @@ data class TaskEditor(
      */
     fun reloaded(fresh: EditorModel): TaskEditor {
         val kept = { field: String -> (fresh.draft[field] ?: "null") == base(field) }
-        return TaskEditor(fresh, edited.filterKeys(kept), inputs.filterKeys(kept), resolved.filterKeys(kept), waitingFor = waitingFor)
+        return TaskEditor(fresh, edited.filterKeys(kept), inputs.filterKeys(kept), resolved.filterKeys(kept), waitingFor = waitingFor, view = view)
     }
 
     /** The draft's own state, without the model: the edits with their bases, the typed text, and the open prompt. */
@@ -231,8 +284,16 @@ data class TaskEditor(
 private fun pickedDay(pickerMillis: Long): String =
     SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(pickerMillis))
 
-/** The picker's hour and minute as the draft's time part (core's `yyyy-MM-ddTHH:mm`). */
-private fun pickedTime(hour: Int, minute: Int) = "T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
+/** The picker's hour and minute as core's pickTime takes them, `HH:mm`. */
+private fun pickedTime(hour: Int, minute: Int) = "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
+
+/** Where core says the date picker starts (`yyyy-MM-dd`), as the picker's UTC midnight: the reverse of [pickedDay]. */
+private fun pickerStart(coreDate: String): Long? =
+    runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(coreDate)?.time }.getOrNull()
+
+/** Where core says the time picker starts (`HH:mm`), as the picker's hour and minute. */
+private fun pickerClock(coreTime: String): Pair<Int, Int> =
+    coreTime.split(":").mapNotNull { it.toIntOrNull() }.let { if (it.size == 2) it[0] to it[1] else 0 to 0 }
 
 /** RN's editor field glyphs (TaskEditOrganizationField and friends). */
 private val STATUS_ICONS = mapOf("inbox" to Lucide.Inbox, "next" to Lucide.ArrowRight, "waiting" to Lucide.CirclePause,
@@ -256,11 +317,11 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     var confirmLeave by rememberSaveable { mutableStateOf(false) }
     var help by rememberSaveable { mutableStateOf(false) }
     var picker by rememberSaveable { mutableStateOf<String?>(null) }
-    // A date pick: the field, and whether a time follows (RN's clock button). Then the time pick for the day chosen.
+    // The open date picker (a date field, or "until" for the recurrence end) and the open time picker (a date field).
     var pickDate by rememberSaveable { mutableStateOf<String?>(null) }
     var pickTime by rememberSaveable { mutableStateOf<String?>(null) }
     // As in the mobile editor: with nothing to save it closes; unsaved edits (typed text core has not resolved included) ask first.
-    val leave = { if (editor.readOnly || !editor.dirty) closeEditor() else confirmLeave = true }
+    val leave = { if (editor.readOnly || (!editor.dirty && !editsPending)) closeEditor() else confirmLeave = true }
     BackHandler(enabled = !failed) { if (!busy) leave() }
     // Core's quick chips and the draft value of restored typed text, whenever no action runs.
     LaunchedEffect(editor.id, busy, failed) { if (!busy && !failed) TYPED_FIELDS.forEach { suggest(it, editor.input(it)) } }
@@ -307,12 +368,12 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
                 EditorInput(editor.text("title"), { editText("title", it.replace(Regex("[\r\n]+"), " ")) }, null, !locked)
             }
             // The Destination row stands for both Project and Area, at the first of them in core's order (RN's destinationFields).
-            val destination = editor.model.sections.flatMap { it.fields }.firstOrNull { it == "project" || it == "area" }
-            val field = @Composable { id: String -> EditorField(model, editor, id, locked, id == destination, { picker = it }, { f, time -> pickDate = "$f:$time" }) }
-            for (section in editor.model.sections) {
+            val destination = editor.view.sections.flatMap { it.fields }.firstOrNull { it == "project" || it == "area" }
+            val field = @Composable { id: String -> EditorField(model, editor, id, locked, id == destination, { picker = it }, { pickDate = it }, { pickTime = it }) }
+            for (section in editor.view.sections) {
                 if (section.titleKey == null) {
                     section.fields.forEach { field(it) }
-                    if (editor.model.showSomedaySection) SomedaySections(model, editor, locked)
+                    if (editor.view.showSomedaySection) SomedaySections(model, editor, locked)
                 } else {
                     CollapsibleSection(editor.id, section) { section.fields.forEach { field(it) } }
                 }
@@ -326,26 +387,29 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
             PickerItem(t("common.none")) { editFields(mapOf("projectId" to "", "areaId" to "")); picker = null }
             // Core finishes the move when it saves: a project clears the area, and a section outside the project is dropped.
             PickerHeading(t("nav.projects"))
-            for (project in editor.model.projects) PickerItem(project.title, "destination-project") { editFields(mapOf("projectId" to project.id)); picker = null }
+            for (project in editor.view.projects) PickerItem(project.title, "destination-project") { editFields(mapOf("projectId" to project.id)); picker = null }
             PickerHeading(t("taskEdit.areaLabel"))
-            for (area in editor.model.areas) PickerItem(area.title) { editFields(mapOf("projectId" to "", "areaId" to area.id)); picker = null }
+            for (area in editor.view.areas) PickerItem(area.title) { editFields(mapOf("projectId" to "", "areaId" to area.id)); picker = null }
         }
         "section" -> PickerDialog(t("taskEdit.sectionLabel"), { picker = null }) {
             PickerItem(t("taskEdit.noSectionOption")) { editFields(mapOf("sectionId" to "")); picker = null }
-            for (section in editor.model.projectSections) PickerItem(section.title) { editFields(mapOf("sectionId" to section.id)); picker = null }
+            for (section in editor.view.projectSections) PickerItem(section.title) { editFields(mapOf("sectionId" to section.id)); picker = null }
         }
     }
 
-    pickDate?.let { request ->
-        val (target, time) = request.split(":").let { it[0] to (it[1] == "true") }
-        val state = rememberDatePickerState()
+    pickDate?.let { target ->
+        // The picker starts where core says: the field's date (else today), or the recurrence end.
+        val start = if (target == "until") editor.view.fields.recurrence.getString("until") else editor.view.fields.dates.getValue(target).pickerDate
+        val state = rememberDatePickerState(initialSelectedDateMillis = pickerStart(start))
         DatePickerDialog(
             onDismissRequest = { pickDate = null },
             confirmButton = {
                 TextButton(onClick = {
                     state.selectedDateMillis?.let { pickerMillis ->
                         val day = pickedDay(pickerMillis)
-                        if (time) pickTime = "$target:$day" else pickDay(target, day)
+                        // Core keeps an existing time on a new day, and moves a relative start with a due date.
+                        editDraft(if (target == "until") recurrenceEdit(JSONObject().put("kind", "until").put("date", day))
+                            else JSONObject().put("type", "pickDate").put("field", target).put("date", day))
                     }
                     pickDate = null
                 }, enabled = state.selectedDateMillis != null) { Text(t("common.ok")) }
@@ -353,13 +417,18 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
             dismissButton = { TextButton(onClick = { pickDate = null }) { Text(t("common.cancel")) } },
         ) { DatePicker(state) }
     }
-    pickTime?.let { request ->
-        val (target, day) = request.split(":").let { it[0] to it[1] }
-        // RN opens its time picker on the draft's date, which for a date-only value is midnight.
-        val state = rememberTimePickerState(initialHour = 0, initialMinute = 0)
+    pickTime?.let { target ->
+        // The time picker starts on core's time for the field: its time, else now.
+        val (hour, minute) = pickerClock(editor.view.fields.dates.getValue(target).pickerTime)
+        val state = rememberTimePickerState(initialHour = hour, initialMinute = minute)
         AlertDialog(
             onDismissRequest = { pickTime = null },
-            confirmButton = { TextButton(onClick = { pickDay(target, day + pickedTime(state.hour, state.minute)); pickTime = null }) { Text(t("common.ok")) } },
+            confirmButton = {
+                TextButton(onClick = {
+                    editDraft(JSONObject().put("type", "pickTime").put("field", target).put("time", pickedTime(state.hour, state.minute)))
+                    pickTime = null
+                }) { Text(t("common.ok")) }
+            },
             dismissButton = { TextButton(onClick = { pickTime = null }) { Text(t("common.cancel")) } },
             text = { TimePicker(state) },
         )
@@ -390,25 +459,25 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     }
 }
 
-/**
- * A picked date or date-and-time for [field]. RN's date controls write only the date field, and a start date
- * or a cleared due date also drops a relative start (use-task-edit-dates.ts); the rest is core's at save.
- */
-private fun InboxViewModel.pickDay(field: String, value: String) =
-    editFields(if (field == "startTime") mapOf(field to value, "relativeStartOffset" to null) else mapOf(field to value))
+/** A recurrence control's edit for core's editTaskDraft. */
+private fun recurrenceEdit(edit: JSONObject) = JSONObject().put("type", "recurrence").put("edit", edit)
+
+/** A date control's value (a quick date, Date only, or '' to clear) for core's editTaskDraft, which runs the date's cascades. */
+private fun InboxViewModel.setDate(field: String, value: String) =
+    editDraft(JSONObject().put("type", "date").put("field", field).put("value", value))
 
 /** One field with RN's control for it. A field whose control is not built shows its value read-only. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, locked: Boolean, destination: Boolean,
-                        openPicker: (String) -> Unit, pickDate: (String, Boolean) -> Unit) = with(model) {
+                        openPicker: (String) -> Unit, pickDate: (String) -> Unit, pickTime: (String) -> Unit) = with(model) {
     val c = LocalTheme.current.colors
     when (id) {
         "status" -> FormGroup {
             FieldHeading(Lucide.ListTodo, t("taskEdit.statusLabel"))
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
                 maxItemsInEachRow = 3) {
-                for (status in editor.model.statuses) {
+                for (status in editor.view.statuses) {
                     val active = editor.text("status") == status
                     // RN's requestStatusChange: moving to Waiting first asks who or what it waits for.
                     val choose = { if (status == "waiting" && !active) openWaitingPrompt() else editFields(mapOf("status" to status)) }
@@ -425,33 +494,32 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
             val project = editor.text("projectId")
             val area = editor.text("areaId")
             val value = when {
-                project.isNotEmpty() -> editor.model.projects.firstOrNull { it.id == project }?.title ?: t("taskEdit.noProjectOption")
-                area.isNotEmpty() -> editor.model.areas.firstOrNull { it.id == area }?.title ?: t("taskEdit.noAreaOption")
+                project.isNotEmpty() -> editor.view.projects.firstOrNull { it.id == project }?.title ?: t("taskEdit.noProjectOption")
+                area.isNotEmpty() -> editor.view.areas.firstOrNull { it.id == area }?.title ?: t("taskEdit.noAreaOption")
                 else -> t("common.none")
             }
             CompactRow(Lucide.Folder, t("task.destination"), value, !locked) { openPicker("destination") }
         }
         "section" -> if (editor.text("projectId").isNotEmpty()) FormGroup {
             FieldHeading(Lucide.Layers, t("taskEdit.sectionLabel"))
-            // Core lists the loaded project's sections; after a project change the section waits for the next open.
-            val sameProject = editor.text("projectId") == editor.model.draft["projectId"]?.let { draftValueText(it) }
-            val section = editor.model.projectSections.firstOrNull { it.id == editor.text("sectionId") }
+            // Core lists the sections of the draft's project, read again after each edit.
+            val section = editor.view.projectSections.firstOrNull { it.id == editor.text("sectionId") }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DateButton(section?.title ?: t("taskEdit.noSectionOption"), t("taskEdit.sectionLabel"), !locked && sameProject, Modifier.weight(1f)) { openPicker("section") }
-                if (editor.text("sectionId").isNotEmpty() && sameProject) SmallButton(Lucide.X, "${t("common.clear")} ${t("taskEdit.sectionLabel")}", !locked) {
+                DateButton(section?.title ?: t("taskEdit.noSectionOption"), t("taskEdit.sectionLabel"), !locked, Modifier.weight(1f)) { openPicker("section") }
+                if (editor.text("sectionId").isNotEmpty()) SmallButton(Lucide.X, "${t("common.clear")} ${t("taskEdit.sectionLabel")}", !locked) {
                     editFields(mapOf("sectionId" to ""))
                 }
             }
         }
         "priority" -> FormGroup {
             FieldHeading(Lucide.Flag, t("taskEdit.priorityLabel"))
-            ChoiceChips(editor, "priority", editor.model.priorities, !locked, t("taskEdit.priorityLabel"), { t("priority.$it") }) { value, color ->
+            ChoiceChips(editor, "priority", editor.view.priorities, !locked, t("taskEdit.priorityLabel"), { t("priority.$it") }) { value, color ->
                 Icon(Lucide.Flag, null, tint = LocalTheme.current.priority(value) ?: color, modifier = Modifier.size(12.dp))
             }
         }
         "energyLevel" -> FormGroup {
             FieldHeading(Lucide.BatteryCharging, t("taskEdit.energyLevel"))
-            ChoiceChips(editor, "energyLevel", editor.model.energyLevels, !locked, t("taskEdit.energyLevel"), { t("energyLevel.$it") }) { value, color ->
+            ChoiceChips(editor, "energyLevel", editor.view.energyLevels, !locked, t("taskEdit.energyLevel"), { t("energyLevel.$it") }) { value, color ->
                 Icon(ENERGY_ICONS[value] ?: Lucide.BatteryMedium, null, tint = color, modifier = Modifier.size(14.dp))
             }
         }
@@ -459,18 +527,30 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
             FieldHeading(Lucide.Hourglass, t("taskEdit.timeEstimateLabel"))
             val current = editor.text("timeEstimate")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((value, label) in editor.model.timeEstimates) {
+                for ((value, label) in editor.view.timeEstimates) {
                     Chip(current == value, !locked, "${t("taskEdit.timeEstimateLabel")}: $label", { editFields(mapOf("timeEstimate" to value)) }) { color ->
                         if (value.isEmpty()) Icon(Lucide.CircleSlash, null, tint = color, modifier = Modifier.size(16.dp))
                         else Text(label, style = rnText(14, 400), color = color)
                     }
                 }
-                // A custom estimate core does not list is shown selected; its input is not built.
-                if (current.isNotEmpty() && editor.model.timeEstimates.none { it.first == current }) {
-                    Chip(true, false, "${t("taskEdit.timeEstimateLabel")}: ${t("recurrence.custom")}", {}) { color ->
-                        Text(t("recurrence.custom"), style = rnText(14, 400), color = color)
-                    }
+                val estimate = editor.view.fields.timeEstimate
+                val customLabel = estimate.getString("customLabel")
+                Chip(estimate.getBoolean("customSelected"), !locked, "${t("taskEdit.timeEstimateLabel")}: $customLabel",
+                    { editFields(mapOf("timeEstimate" to estimate.getString("customValue"))) }) { color ->
+                    Text(customLabel, style = rnText(14, 400), color = color)
                 }
+            }
+            val estimate = editor.view.fields.timeEstimate
+            if (estimate.getBoolean("customSelected")) {
+                // RN's custom input: core parses the typed text ("2h30", "45"); text that does not parse keeps the estimate.
+                TypedInput(estimate.getString("customText"), "${t("taskEdit.timeEstimateLabel")}: ${estimate.getString("customLabel")}", !locked) {
+                    editDraft(JSONObject().put("type", "timeEstimate").put("text", it))
+                }
+            }
+            if (editor.view.fields.timeSpent) {
+                FieldHeading(Lucide.History, t("taskEdit.timeSpentLabel"), Modifier.padding(top = 12.dp))
+                val spent = (editor.value("timeSpentMinutes") as? Number)?.toInt()?.toString() ?: ""
+                TypedInput(spent, t("taskEdit.timeSpentLabel"), !locked) { editDraft(JSONObject().put("type", "timeSpent").put("text", it)) }
             }
         }
         "contexts", "tags" -> FormGroup {
@@ -505,92 +585,245 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
             EditorInput(editor.text("description"), { editText("description", it) }, t("taskEdit.descriptionPlaceholder"), !locked,
                 singleLine = false, minHeight = 100, description = t("taskEdit.descriptionLabel"))
         }
-        "dueDate" -> FormGroup {
-            val label = t("taskEdit.dueDateLabel")
-            val due = editor.text("dueDate")
-            if (due.isEmpty()) {
-                CompactRow(Lucide.CalendarDays, label, t("common.notSet"), !locked) { pickDate(id, false) }
+        "dueDate", "startTime", "reviewAt" -> FormGroup {
+            val part = editor.view.fields.dates.getValue(id)
+            val label = t(when (id) { "dueDate" -> "taskEdit.dueDateLabel"; "startTime" -> "taskEdit.startDateLabel"; else -> "taskEdit.reviewDateLabel" })
+            val icon = when (id) { "dueDate" -> Lucide.CalendarDays; "startTime" -> Lucide.Calendar; else -> Lucide.CalendarClock }
+            if (id == "dueDate" && part.value.isEmpty()) {
+                // RN's compact due row while no due date is set.
+                CompactRow(icon, label, part.label, !locked) { pickDate(id) }
             } else {
-                FieldHeading(Lucide.CalendarDays, label)
-                DateRow(id, label, due, locked, pickDate) { editFields(mapOf("dueDate" to "", "relativeStartOffset" to null)) }
-            }
-            // RN's reminder controls: Skip reminders, and Repeat reminder shown read-only (its choices are not in core's model).
-            if (due.isNotEmpty() || editor.text("startTime").isNotEmpty()) {
-                val skip = editor.flag("suppressMindwtrReminders")
-                SwitchRow(t("taskEdit.suppressMindwtrReminders"), t("taskEdit.suppressMindwtrRemindersHint"), skip, !locked) {
-                    editFields(mapOf("suppressMindwtrReminders" to !skip))
-                }
-                val repeat = (editor.value("repeatReminderMinutes") as? Number)?.toInt()
-                if (due.isNotEmpty() && !skip && repeat != null && repeat > 0) {
-                    ReadOnlyRow(t("taskEdit.repeatReminderLabel"), t("taskEdit.repeatReminderEveryMinutes").replace("{count}", "$repeat"))
+                FieldHeading(icon, label)
+                // RN's date row: core's label, the clock (not for review), Date only when it has a time, and Clear.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DateButton(part.label, label, !locked, Modifier.weight(1f)) { pickDate(id) }
+                    if (part.value.isNotEmpty()) {
+                        if (id != "reviewAt") SmallButton(Lucide.Clock, "${t("calendar.changeTime")} $label", !locked) { pickTime(id) }
+                        if (part.hasTime) SmallTextButton(t("taskEdit.dateOnly"), "${t("taskEdit.dateOnly")} $label", !locked) { setDate(id, part.dateOnly) }
+                        SmallButton(Lucide.CalendarX, "${t("common.clear")} $label", !locked) { setDate(id, "") }
+                    }
                 }
             }
-        }
-        "startTime" -> FormGroup {
-            val label = t("taskEdit.startDateLabel")
-            FieldHeading(Lucide.Calendar, label)
-            DateRow(id, label, editor.text("startTime"), locked, pickDate) { editFields(mapOf("startTime" to "", "relativeStartOffset" to null)) }
-            // A relative start (core's offset before the due date) is shown read-only; its editor is not built.
-            (editor.value("relativeStartOffset") as? JSONObject)?.let { offset ->
-                val unit = t(when (offset.optString("unit")) {
-                    "minute" -> "taskEdit.relativeStartMinutesShort"; "hour" -> "taskEdit.relativeStartHoursShort"
-                    "week" -> "taskEdit.relativeStartWeeksShort"; else -> "taskEdit.relativeStartDaysShort"
-                })
-                ReadOnlyRow(t("taskEdit.startModeRelative"), "${kotlin.math.abs(offset.optInt("amount"))} $unit ${t("taskEdit.relativeStartBeforeDue")}")
+            QuickDateChips(label, part.quickDates, !locked) { setDate(id, it) }
+            if (id != "reviewAt" && editor.view.fields.dateIssue.isNotEmpty()) {
+                Text(editor.view.fields.dateIssue, style = rnText(12, 600), color = c.warning, modifier = Modifier.padding(top = 8.dp))
             }
-        }
-        "reviewAt" -> FormGroup {
-            val label = t("taskEdit.reviewDateLabel")
-            FieldHeading(Lucide.CalendarClock, label)
-            DateRow(id, label, editor.text("reviewAt"), locked, pickDate, clock = false) { editFields(mapOf("reviewAt" to "")) }
+            if (id == "startTime") editor.view.fields.relativeStart?.let { RelativeStart(model, it, locked) }
+            if (id == "dueDate") Reminders(model, editor, locked)
         }
         "recurrence" -> FormGroup {
             FieldHeading(Lucide.Repeat, t("taskEdit.recurrenceLabel"))
-            val rule = editor.text("recurrence")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((value, key) in editor.model.recurrences) {
-                    // A new rule starts without the old rule's details; the rule's detail editors are not built.
-                    Chip(rule == value, !locked, "${t("taskEdit.recurrenceLabel")}: ${t(key)}", {
-                        if (value != rule) editFields(if (value.isEmpty()) mapOf("recurrence" to "", "recurrenceStrategy" to "strict", "recurrenceRRule" to "")
-                            else mapOf("recurrence" to value, "recurrenceRRule" to ""))
-                    }) { color -> Text(t(key), style = rnText(14, 400), color = color) }
-                }
-            }
-            if (rule.isNotEmpty() && rule == editor.model.draft["recurrence"]?.let { draftValueText(it) }) {
-                if (rule == "daily") ReadOnlyRow(t("recurrence.repeatEvery"), "${editor.model.dailyInterval} ${t("recurrence.dayUnit")}")
-                if (rule == "monthly") ReadOnlyRow(t("taskEdit.recurrenceLabel"),
-                    t(if (editor.model.monthlyPattern == "custom") "recurrence.custom" else "recurrence.monthlyOnDay"))
-            }
-            if (rule.isNotEmpty()) {
-                val fluid = editor.text("recurrenceStrategy") == "fluid"
-                Row(Modifier.padding(top = 8.dp)) {
-                    Chip(fluid, !locked, t("recurrence.afterCompletion"), { editFields(mapOf("recurrenceStrategy" to if (fluid) "strict" else "fluid")) }, toggle = true) { color ->
-                        Text(t("recurrence.afterCompletion"), style = rnText(14, 400), color = color)
-                    }
-                }
-                val future = editor.flag("showFutureRecurrence")
-                SwitchRow(t("recurrence.showFutureInCalendar"), t("recurrence.showFutureInCalendarHint"), future, !locked) {
-                    editFields(mapOf("showFutureRecurrence" to !future))
-                }
-            }
+            RecurrenceField(model, editor, locked, pickDate)
         }
         // Read-only: the checklist and attachment editors are not built.
-        "checklist" -> if (editor.model.checklist.isNotEmpty()) FormGroup {
+        "checklist" -> if (editor.view.checklist.isNotEmpty()) FormGroup {
             FieldHeading(Lucide.ListChecks, t(if (editor.text("status") == "reference") "taskEdit.tab.list" else "taskEdit.checklist"))
-            for ((title, done) in editor.model.checklist) Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            for ((title, done) in editor.view.checklist) Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (done) Lucide.Check else Lucide.Circle, null, tint = if (done) c.tint else c.secondaryText, modifier = Modifier.size(16.dp))
                 Text(title, style = rnText(15, 400), color = if (done) c.secondaryText else c.text, modifier = Modifier.padding(start = 8.dp))
             }
         }
-        "attachments" -> if (editor.model.attachments.isNotEmpty()) FormGroup {
+        "attachments" -> if (editor.view.attachments.isNotEmpty()) FormGroup {
             FieldHeading(Lucide.Paperclip, t("attachments.title"))
-            for (title in editor.model.attachments) Text(title, style = rnText(14, 500), color = c.text, modifier = Modifier.padding(vertical = 4.dp))
+            for (title in editor.view.attachments) Text(title, style = rnText(14, 500), color = c.text, modifier = Modifier.padding(vertical = 4.dp))
         }
         else -> Unit
     }
 }
 
-private fun draftValueText(literal: String) = draftValue(literal) as? String ?: ""
+
+/** RN's QuickDateChips: core's presets for the field; a tap writes core's value (the selected chip, and No date, clear it). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun QuickDateChips(fieldLabel: String, chips: List<QuickDate>, enabled: Boolean, choose: (String) -> Unit) {
+    val c = LocalTheme.current.colors
+    FlowRow(Modifier.padding(top = 8.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (chip in chips) {
+            val shape = RoundedCornerShape(999.dp)
+            Box(Modifier.weight(1f).widthIn(min = 92.dp).heightIn(min = 34.dp).clip(shape).background(if (chip.selected) c.tint else c.filterBg)
+                .border(1.dp, if (chip.selected) c.tint else c.border, shape)
+                .semantics { contentDescription = "$fieldLabel: ${chip.label}" }
+                .selectable(selected = chip.selected, enabled = enabled, role = Role.Tab) { choose(chip.value) }
+                .padding(horizontal = 10.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
+                Text(chip.label, style = rnText(12, 600), color = if (chip.selected) c.onTint else c.secondaryText, textAlign = TextAlign.Center, maxLines = 2)
+            }
+        }
+    }
+}
+
+/** RN's start mode: Absolute or Relative, then the lead time and its unit; core computes the start (relativeStart edit). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RelativeStart(model: InboxViewModel, state: JSONObject, locked: Boolean) = with(model) {
+    val c = LocalTheme.current.colors
+    val active = state.getBoolean("active")
+    val amount = state.getInt("amount")
+    val unit = state.getString("unit")
+    val relative = { newAmount: Any, newUnit: String ->
+        editDraft(JSONObject().put("type", "relativeStart").put("amount", newAmount).put("unit", newUnit))
+    }
+    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip(!active, !locked, t("taskEdit.startModeAbsolute"), { editFields(mapOf("relativeStartOffset" to null)) }) { color ->
+            Text(t("taskEdit.startModeAbsolute"), style = rnText(14, 400), color = color)
+        }
+        Chip(active, !locked, t("taskEdit.startModeRelative"), { relative(amount, unit) }) { color ->
+            Text(t("taskEdit.startModeRelative"), style = rnText(14, 400), color = color)
+        }
+    }
+    if (active) {
+        Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.widthIn(min = 74.dp, max = 74.dp)) { TypedInput("$amount", t("taskEdit.relativeStartAmount"), !locked) { relative(it, unit) } }
+            Text(t("taskEdit.relativeStartBeforeDue"), style = rnText(14, 400), color = c.secondaryText, modifier = Modifier.padding(start = 8.dp))
+        }
+        FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (option in state.getJSONArray("units").objects()) {
+                val value = option.getString("unit")
+                val unitLabel = option.getString("label")
+                Chip(value == unit, !locked, unitLabel, { relative(amount, value) }) { color ->
+                    Text(unitLabel, style = rnText(14, 400), color = color)
+                }
+            }
+        }
+    }
+}
+
+/** RN's reminder controls under the due date, as core decides them: Skip reminders, and Repeat reminder with core's intervals. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Reminders(model: InboxViewModel, editor: TaskEditor, locked: Boolean) = with(model) {
+    val c = LocalTheme.current.colors
+    val reminders = editor.view.fields.reminders
+    if (reminders.getBoolean("showSkip")) {
+        val skip = editor.flag("suppressMindwtrReminders")
+        SwitchRow(t("taskEdit.suppressMindwtrReminders"), t("taskEdit.suppressMindwtrRemindersHint"), skip, !locked) {
+            editFields(mapOf("suppressMindwtrReminders" to !skip))
+        }
+    }
+    if (!reminders.getBoolean("showRepeat")) return
+    var expanded by rememberSaveable(editor.id) { mutableStateOf(false) }
+    val options = reminders.getJSONArray("repeatOptions").objects()
+    val on = options.any { it.getBoolean("selected") && !it.isNull("value") }
+    val label = reminders.getString("repeatLabel")
+    val value = reminders.getString("repeatValueLabel")
+    val shape = RoundedCornerShape(10.dp)
+    Row(Modifier.padding(top = 8.dp).fillMaxWidth().clip(shape).background(if (on) c.filterBg else c.cardBg)
+        .border(1.dp, if (expanded || on) c.tint else c.border, shape)
+        .clickable(enabled = !locked, role = Role.Button) { expanded = !expanded }.semantics { contentDescription = "$label: $value" }
+        .padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = rnText(13, 600), color = c.text, modifier = Modifier.weight(1f), maxLines = 1)
+        Text(value, style = rnText(13, 400), color = if (on) c.tint else c.secondaryText, maxLines = 1)
+    }
+    if (expanded) FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (option in options) {
+            val text = option.getString("label")
+            Chip(option.getBoolean("selected"), !locked, text, {
+                editFields(mapOf("repeatReminderMinutes" to (if (option.isNull("value")) null else option.getInt("value"))))
+                expanded = false
+            }) { color -> Text(text, style = rnText(14, 400), color = color) }
+        }
+    }
+}
+
+/** RN's recurrence field: the rule, its interval and days, the monthly pattern, the ends, the strategy, and the calendar preview switch. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RecurrenceField(model: InboxViewModel, editor: TaskEditor, locked: Boolean, pickDate: (String) -> Unit) = with(model) {
+    val c = LocalTheme.current.colors
+    val rule = editor.text("recurrence")
+    val details = editor.view.fields.recurrence
+    val edit = { recurrence: JSONObject -> editDraft(recurrenceEdit(recurrence)) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, key) in editor.view.recurrences) {
+            // Core carries the count, the end date, and tokens the editor does not own across a rule change.
+            Chip(rule == value, !locked, "${t("taskEdit.recurrenceLabel")}: ${t(key)}", {
+                if (value != rule) edit(JSONObject().put("kind", "rule").put("rule", value))
+            }) { color -> Text(t(key), style = rnText(14, 400), color = color) }
+        }
+    }
+    if (rule.isEmpty()) return
+    val unit = when (rule) { "daily" -> "recurrence.dayUnit"; "weekly" -> "recurrence.weekUnit"; "monthly" -> "recurrence.monthUnit"; else -> "recurrence.yearUnit" }
+    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(t("recurrence.repeatEvery"), style = rnText(13, 600), color = c.secondaryText)
+        Box(Modifier.padding(horizontal = 8.dp).widthIn(min = 64.dp, max = 80.dp)) {
+            TypedInput("${details.getInt("interval")}", t("recurrence.repeatEvery"), !locked) { edit(JSONObject().put("kind", "interval").put("text", it)) }
+        }
+        Text(t(unit), style = rnText(13, 600), color = c.secondaryText)
+    }
+    if (rule == "weekly") Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (day in details.getJSONArray("weekdays").objects()) {
+            val on = day.getBoolean("selected")
+            val short = day.getString("label")
+            val long = day.getString("longLabel")
+            Box(Modifier.size(44.dp).clip(CircleShape).background(if (on) c.tint else c.cardBg).border(1.dp, if (on) c.tint else c.border, CircleShape)
+                .semantics { contentDescription = long }
+                .toggleable(value = on, enabled = !locked, role = Role.Checkbox) { edit(JSONObject().put("kind", "weekday").put("day", day.getString("day"))) },
+                contentAlignment = Alignment.Center) {
+                Text(short, style = rnText(12, 600), color = if (on) c.onTint else c.text)
+            }
+        }
+    }
+    if (rule == "monthly") Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val custom = editor.view.monthlyPattern == "custom"
+        Chip(!custom, !locked, t("recurrence.monthlyOnDay"), { edit(JSONObject().put("kind", "monthlyOnDay")) }) { color ->
+            Text(t("recurrence.monthlyOnDay"), style = rnText(14, 400), color = color)
+        }
+        // RN's Custom opens its custom monthly dialog, which is not built: a custom rule shows here, read-only.
+        if (custom) Chip(true, false, t("recurrence.custom"), {}) { color -> Text(t("recurrence.custom"), style = rnText(14, 400), color = color) }
+    }
+    Text(t("recurrence.endsLabel"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(top = 8.dp))
+    val ends = details.getString("ends")
+    FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((mode, key) in listOf("never" to "recurrence.endsNever", "until" to "recurrence.endsOnDate", "count" to "recurrence.endsAfterCount")) {
+            Chip(ends == mode, !locked, t(key), {
+                edit(JSONObject().put("kind", "ends").put("ends", mode))
+                if (mode == "until") pickDate("until")
+            }) { color -> Text(t(key), style = rnText(14, 400), color = color) }
+        }
+    }
+    if (ends == "until") Box(Modifier.padding(top = 8.dp)) {
+        DateButton(details.getString("untilLabel"), t("recurrence.endsOnDate"), !locked, Modifier.fillMaxWidth()) { pickDate("until") }
+    }
+    if (ends == "count") Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.widthIn(min = 64.dp, max = 80.dp)) {
+            TypedInput("${details.getInt("count")}", t("recurrence.endsAfterCount"), !locked) { edit(JSONObject().put("kind", "count").put("text", it)) }
+        }
+        Text(t("recurrence.occurrenceUnit"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(start = 8.dp))
+    }
+    val fluid = editor.text("recurrenceStrategy") == "fluid"
+    Row(Modifier.padding(top = 8.dp)) {
+        Chip(fluid, !locked, t("recurrence.afterCompletion"), { edit(JSONObject().put("kind", "strategy")) }, toggle = true) { color ->
+            Text(t("recurrence.afterCompletion"), style = rnText(14, 400), color = color)
+        }
+    }
+    val future = editor.flag("showFutureRecurrence")
+    SwitchRow(t("recurrence.showFutureInCalendar"), t("recurrence.showFutureInCalendarHint"), future, !locked) {
+        editFields(mapOf("showFutureRecurrence" to !future))
+    }
+}
+
+/**
+ * A small number or text input whose value core owns (an interval, a count, a lead time, a custom estimate):
+ * the typed text stays while the field is edited, each change goes to core, and core's value shows again
+ * when it changes.
+ */
+@Composable
+private fun TypedInput(coreValue: String, description: String, enabled: Boolean, send: (String) -> Unit) {
+    var text by remember(coreValue) { mutableStateOf(coreValue) }
+    EditorInput(text, { text = it; send(it) }, null, enabled, singleLine = true, description = description)
+}
+
+/** RN's clearDateBtn with a text label (Date only). */
+@Composable
+private fun SmallTextButton(text: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+    val c = LocalTheme.current.colors
+    val shape = RoundedCornerShape(8.dp)
+    Box(Modifier.padding(start = 8.dp).heightIn(min = 44.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        Box(Modifier.clip(shape).background(c.filterBg).border(1.dp, c.border, shape).padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(text, style = rnText(12, 600), color = c.secondaryText)
+        }
+    }
+}
 
 /** RN's Someday section picker (SomedaySectionPicker): No section, then core's sections, as chips. Its "New section…" is not built. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -601,7 +834,7 @@ private fun SomedaySections(model: InboxViewModel, editor: TaskEditor, locked: B
         Text(t("viewSections.somedaySection").uppercase(), style = rnText(14, 400), color = LocalTheme.current.colors.secondaryText,
             modifier = Modifier.padding(bottom = 8.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (choice in editor.model.somedaySections) {
+            for (choice in editor.view.somedaySections) {
                 // Core marks the loaded choice; after a tap, the choice whose value the draft now holds.
                 val selected = if (editor.edited.containsKey("viewSectionIds")) draftValue(choice.viewSectionIds).toString() == current else choice.selected
                 Chip(selected, !locked, choice.title, { editFields(mapOf("viewSectionIds" to draftValue(choice.viewSectionIds))) }) { color ->
@@ -723,21 +956,6 @@ private fun CompactRow(icon: ImageVector, label: String, value: String, enabled:
     }
 }
 
-/**
- * RN's date row: the date button, RN's clock button (date, then time), and Clear. The value is the
- * draft as core holds it (`yyyy-MM-dd` or `yyyy-MM-ddTHH:mm`); Kotlin never formats or parses it.
- */
-@Composable
-private fun DateRow(field: String, label: String, value: String, locked: Boolean, pickDate: (String, Boolean) -> Unit, clock: Boolean = true, clear: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        DateButton(value.ifEmpty { t("common.notSet") }, label, !locked, Modifier.weight(1f)) { pickDate(field, false) }
-        if (value.isNotEmpty()) {
-            if (clock) SmallButton(Lucide.Clock, "${t("calendar.changeTime")} $label", !locked) { pickDate(field, true) }
-            SmallButton(Lucide.CalendarX, "${t("common.clear")} $label", !locked, clear)
-        }
-    }
-}
-
 @Composable
 private fun DateButton(text: String, label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
@@ -770,16 +988,6 @@ private fun SwitchRow(label: String, hint: String, on: Boolean, enabled: Boolean
         .toggleable(value = on, enabled = enabled, role = Role.Switch, onValueChange = { onToggle() }).padding(12.dp)) {
         Text(label, style = rnText(13, 600), color = c.text)
         Text(hint, style = rnText(12, 400, 16), color = c.secondaryText, modifier = Modifier.padding(top = 4.dp))
-    }
-}
-
-/** A value whose editor is not built, shown as core holds it. */
-@Composable
-private fun ReadOnlyRow(label: String, value: String) {
-    val c = LocalTheme.current.colors
-    Row(Modifier.padding(top = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.weight(1f))
-        Text(value, style = rnText(13, 600), color = c.text)
     }
 }
 

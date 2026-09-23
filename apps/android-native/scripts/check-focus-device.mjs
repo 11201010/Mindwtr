@@ -300,7 +300,8 @@ try {
     nodes = await waitFor('the date picker', (current) => button(current, 'OK') && todayCell(current));
     check(new RegExp(`(^|\\D)${day}(\\D|$)`).test(label(todayCell(nodes))), `(b) the picker marks today, day ${day} ("${label(todayCell(nodes)).trim()}")`);
     await tapExpecting(todayCell(nodes), (current) => button(current, 'OK')?.enabled === 'true', 'OK enabled', 10_000);
-    await tapExpecting(button(await screen(), 'OK'), (current) => described(current, 'Due Date') === today, `Due Date: ${today}`);
+    // The row shows core's label for the day; the stored value is checked after Save.
+    await tapExpecting(button(await screen(), 'OK'), (current) => ![undefined, 'Not set'].includes(described(current, 'Due Date')), 'core\'s due date label');
     const beforeDue = stored(first);
     await tapSave();
     await focusList('Focus after Save');
