@@ -181,7 +181,7 @@ describe('ProjectSelector', () => {
                 position: 'fixed',
                 top: '284px',
                 bottom: 'auto',
-                left: '0px',
+                left: '8px',
                 width: '320px',
             });
         });
@@ -214,7 +214,7 @@ describe('ProjectSelector', () => {
                 position: 'fixed',
                 top: 'auto',
                 bottom: '164px',
-                left: '0px',
+                left: '8px',
                 width: '320px',
             });
         });

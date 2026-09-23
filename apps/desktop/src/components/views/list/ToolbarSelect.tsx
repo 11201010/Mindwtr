@@ -85,7 +85,7 @@ export function ToolbarSelect({ active = false, label, icon, value, options, onC
 
     const selectValue = (next: string) => {
         closeDropdown();
-        if (next !== value) onChange(next);
+        if (!pill || next !== value) onChange(next);
     };
 
     const focusOption = (direction: 1 | -1) => {

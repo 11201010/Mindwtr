@@ -466,10 +466,10 @@ describe('TaskItemDisplay', () => {
             </LanguageProvider>
         );
 
-        const statusSelect = getByRole('combobox', { name: 'task.aria.status' }) as HTMLSelectElement;
-        expect([...statusSelect.options].map((option) => option.value)).toContain('reference');
-
-        fireEvent.change(statusSelect, { target: { value: 'reference' } });
+        fireEvent.click(getByRole('combobox', { name: 'task.aria.status' }));
+        const referenceOption = getByRole('option', { name: 'status.reference' });
+        expect(referenceOption).toBeInTheDocument();
+        fireEvent.click(referenceOption);
         expect(onStatusChange).toHaveBeenCalledWith('reference');
     });
 

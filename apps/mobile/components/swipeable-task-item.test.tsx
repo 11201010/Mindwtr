@@ -1564,7 +1564,15 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     });
 
     expect(hapticsMocks.impactAsync).toHaveBeenCalledWith('medium');
-    expect(doneAction.props.accessibilityHint).toBe('Long-press to complete with a different time');
+    expect(doneAction.props.accessibilityHint).toBe('Change Status');
+
+    const menuDoneAction = tree.root.find((node) => (
+      node.props.accessibilityLabel === 'Done' && typeof node.props.onLongPress === 'function'
+    ));
+    expect(menuDoneAction.props.accessibilityHint).toBe('Long-press to complete with a different time');
+    renderer.act(() => {
+      menuDoneAction.props.onLongPress();
+    });
 
     const picker = tree.root.findByType('CompletedAtPicker' as any);
     expect(picker.props.showTimeSpent).toBe(true);

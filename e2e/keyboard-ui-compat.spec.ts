@@ -189,7 +189,7 @@ test('direct toolbar controls and disclosures keep keyboard focus and shortcut s
     ))).toBe('compact');
     await expect(page.getByRole('button', { name: 'Hide details', exact: true })).toBeVisible();
     await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Discard unsaved changes?', exact: true })
+    await page.getByRole('dialog', { name: 'Unsaved changes', exact: true })
         .getByRole('button', { name: 'Discard', exact: true })
         .click();
     await expect(editor).toHaveCount(0);

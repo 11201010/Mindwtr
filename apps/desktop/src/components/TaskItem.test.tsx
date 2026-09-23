@@ -1935,14 +1935,13 @@ describe('TaskItem', () => {
     });
 
     it('includes archived in the task status selector', () => {
-        const { getByLabelText } = render(
+        const { getByLabelText, getByRole } = render(
             <LanguageProvider>
                 <TaskItem task={mockTask} />
             </LanguageProvider>
         );
-        const statusSelect = getByLabelText(/task status/i) as HTMLSelectElement;
-        const archivedOption = Array.from(statusSelect.options).find((option) => option.value === 'archived');
-        expect(archivedOption).toBeTruthy();
+        fireEvent.click(getByLabelText(/task status/i));
+        expect(getByRole('option', { name: 'Archived' })).toBeInTheDocument();
     });
 
     it('prompts for assigned to when changing status to waiting', async () => {
@@ -1967,11 +1966,12 @@ describe('TaskItem', () => {
             </LanguageProvider>
         );
 
-        const statusSelect = getByLabelText(/task status/i) as HTMLSelectElement;
+        const statusSelect = getByLabelText(/task status/i) as HTMLButtonElement;
         statusSelect.focus();
         expect(statusSelect).toHaveFocus();
 
-        fireEvent.change(statusSelect, { target: { value: 'waiting' } });
+        fireEvent.click(statusSelect);
+        fireEvent.click(getByRole('option', { name: 'Waiting' }));
 
         expect(getByText('Who/what are you waiting for?')).toBeInTheDocument();
         expect(statusSelect).not.toHaveFocus();
@@ -2019,7 +2019,8 @@ describe('TaskItem', () => {
                 <TaskItem task={guardedTask} project={activeProject} />
             </LanguageProvider>
         );
-        fireEvent.change(view.getByLabelText(/task status/i), { target: { value: 'waiting' } });
+        fireEvent.click(view.getByLabelText(/task status/i));
+        fireEvent.click(view.getByRole('option', { name: 'Waiting' }));
         fireEvent.change(view.getByPlaceholderText('Who is this waiting for?'), { target: { value: 'Alex' } });
         const staleSave = view.getByRole('button', { name: 'Save' });
         const archivedProject = { ...activeProject, status: 'archived' as const };
@@ -2085,7 +2086,8 @@ describe('TaskItem', () => {
                 <TaskItem task={guardedTask} project={activeProject} />
             </LanguageProvider>
         );
-        fireEvent.change(view.getByLabelText(/task status/i), { target: { value: 'waiting' } });
+        fireEvent.click(view.getByLabelText(/task status/i));
+        fireEvent.click(view.getByRole('option', { name: 'Waiting' }));
         fireEvent.change(view.getByPlaceholderText('Who is this waiting for?'), { target: { value: 'Alex' } });
         fireEvent.click(view.getByRole('button', { name: 'Save' }));
         expect(moveTask).toHaveBeenCalledWith(guardedTask.id, 'waiting');

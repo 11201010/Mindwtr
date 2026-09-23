@@ -1164,7 +1164,12 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                                     pill
                                     value={task.status}
                                     label={t('task.aria.status')}
-                                    onChange={(status) => onStatusChange(status as TaskStatus)}
+                                    onChange={(status) => {
+                                        if (status === 'waiting' && task.status !== 'waiting') {
+                                            (document.activeElement as HTMLElement | null)?.blur();
+                                        }
+                                        onStatusChange(status as TaskStatus);
+                                    }}
                                     triggerClassName={STATUS_PILL_CLASSES[task.status]}
                                     options={(['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'] as TaskStatus[])
                                         .map((status) => ({ value: status, label: t(`status.${status}`) }))}
