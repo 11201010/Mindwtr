@@ -28,7 +28,12 @@ import { SECTION_SQLITE_COLUMNS, SECTION_SQLITE_MIGRATION_COLUMNS, sectionFromSq
 import { AREA_SQLITE_COLUMNS, AREA_SQLITE_MIGRATION_COLUMNS, areaFromSqliteRow, areaToSqliteRow } from './area-sync-schema';
 import { PERSON_SQLITE_COLUMNS, PERSON_SQLITE_MIGRATION_COLUMNS, personFromSqliteRow, personToSqliteRow } from './person-sync-schema';
 import { fromJson, toJson, toStringArray } from './entity-sync-schema';
-import { DEFAULT_TOMBSTONE_RETENTION_DAYS, isEntityTombstoneExpired, type EntityTombstoneKind } from './sync-tombstones';
+import {
+    DEFAULT_TOMBSTONE_RETENTION_DAYS,
+    ENTITY_FOREIGN_KEY_CHILDREN,
+    isEntityTombstoneExpired,
+    type EntityTombstoneKind,
+} from './sync-tombstones';
 
 export interface SqliteClient {
     run(sql: string, params?: unknown[]): Promise<void>;
@@ -301,6 +306,12 @@ const TOMBSTONE_KIND_BY_TABLE: Record<SqliteTombstoneTable, EntityTombstoneKind>
     people: 'person',
 };
 
+// Every foreign key in sqlite-schema.ts, keyed by the table it points at, as
+// [child table, child column]. Shared with the tombstone purge; a test compares
+// it with PRAGMA foreign_key_list.
+const SQLITE_FOREIGN_KEY_CHILDREN: Partial<Record<SqliteEntityTable, ReadonlyArray<readonly [string, string]>>> =
+    ENTITY_FOREIGN_KEY_CHILDREN;
+
 const EMPTY_SNAPSHOT_REFUSAL = 'Refusing to overwrite existing data with an empty snapshot; local data left untouched';
 
 const createTempIdTableName = (table: SqliteEntityTable): string => {
@@ -385,9 +396,11 @@ export class SqliteAdapter {
     // after a successful COMMIT.
     private lastSavedFingerprints: { tables: Map<string, Map<string, string>>; settingsJson: string | null } | null = null;
     // Rows this adapter has actually observed or successfully written. Snapshot
-    // omission may physically delete only one of these rows, and only while its
-    // database version still matches. This keeps a stale full snapshot from
-    // deleting rows added or advanced by another process between read and save.
+    // omission may physically delete only one of these rows, only while its
+    // database version still matches, only while it is a tombstone, and only
+    // while no row references it by foreign key. This keeps a stale full snapshot
+    // from deleting rows added or advanced by another process between read and
+    // save, live rows the snapshot never saw, or children through FK actions.
     private lastKnownRowVersions: Map<SqliteEntityTable, Map<string, SqliteKnownRowVersion>> | null = null;
     // PRAGMA data_version is a connection-local epoch that advances when another
     // connection commits. It gives guarded automation writes an O(1) stale-read
@@ -1217,15 +1230,17 @@ export class SqliteAdapter {
             sqlCount: 0,
         };
         let expiredTombstonesPruned = 0;
-        const runTimed = async (sql: string, args?: unknown[]) => {
+        const keptLiveRows: Array<{ table: SqliteEntityTable; count: number }> = [];
+        const timed = async <T>(statement: () => Promise<T>): Promise<T> => {
             const statementStartedAt = Date.now();
             try {
-                return await this.client.run(sql, args);
+                return await statement();
             } finally {
                 stats.sqlMs += Date.now() - statementStartedAt;
                 stats.sqlCount += 1;
             }
         };
+        const runTimed = (sql: string, args?: unknown[]) => timed(() => this.client.run(sql, args));
         this.lastSavedFingerprints = null;
         const beginStartedAt = Date.now();
         await runTimed('BEGIN IMMEDIATE');
@@ -1348,9 +1363,14 @@ export class SqliteAdapter {
                 }
             };
 
-            const syncIds = async (table: SqliteEntityTable, ids: string[]) => {
+            // Mindwtr deletes by tombstone, so a LIVE row missing from the snapshot
+            // means the snapshot is stale (for example a startup snapshot saved before
+            // the SQLite load applied), never that the user deleted it. Omission may
+            // prune only tombstones; a kept live row comes back on the next load.
+            // Returns the kept live rows (every column for saved_filters, else ids).
+            const syncIds = async (table: SqliteEntityTable, ids: string[]): Promise<Record<string, unknown>[]> => {
                 const knownRows = previousKnownRows?.get(table);
-                if (!knownRows) return;
+                if (!knownRows) return [];
                 const keptIds = new Set(ids);
                 const removedRows: Array<[string, number | null, number | null, string | null]> = [];
                 for (const [id, version] of knownRows) {
@@ -1358,8 +1378,8 @@ export class SqliteAdapter {
                         removedRows.push([id, version.rowId, version.rev, version.updatedAt]);
                     }
                 }
-                if (removedRows.length === 0) return;
-                stats.removedRows += removedRows.length;
+                if (removedRows.length === 0) return [];
+                let keptLive: Record<string, unknown>[] = [];
                 const tempTable = createTempIdTableName(table);
                 try {
                     await runTimed(`CREATE TEMP TABLE ${tempTable} (id TEXT PRIMARY KEY, rowId INTEGER, rev INTEGER, updatedAt TEXT)`);
@@ -1373,16 +1393,33 @@ export class SqliteAdapter {
                     const revGuard = table === 'saved_filters'
                         ? ''
                         : `AND known.rev IS ${table}.rev`;
-                    await runTimed(
-                        `DELETE FROM ${table}
-                         WHERE EXISTS (
+                    const observedUnchanged = `EXISTS (
                            SELECT 1 FROM ${tempTable} known
                            WHERE known.id = ${table}.id
                              AND (known.rowId IS NULL OR known.rowId = ${table}.rowid)
                              ${revGuard}
                              AND known.updatedAt IS ${table}.updatedAt
-                         )`
+                         )`;
+                    keptLive = await timed(() => this.client.all<Record<string, unknown>>(
+                        `SELECT ${table === 'saved_filters' ? 'rowid AS _rowid, *' : 'id'} FROM ${table}
+                         WHERE COALESCE(${table}.deletedAt, '') = '' AND ${observedUnchanged}`
+                    ));
+                    if (keptLive.length > 0) keptLiveRows.push({ table, count: keptLive.length });
+                    // A referenced parent waits until no row points at it: its
+                    // ON DELETE CASCADE / SET NULL would delete or rewrite that
+                    // child without a revision bump.
+                    const unreferenced = (SQLITE_FOREIGN_KEY_CHILDREN[table] ?? [])
+                        .map(([child, column]) => ` AND NOT EXISTS (SELECT 1 FROM ${child} WHERE ${child}.${column} = ${table}.id)`)
+                        .join('');
+                    await runTimed(
+                        `DELETE FROM ${table} WHERE COALESCE(${table}.deletedAt, '') <> '' AND ${observedUnchanged}${unreferenced}`
                     );
+                    const deleted = await timed(() => this.client.get<{ count?: unknown }>('SELECT changes() AS count'));
+                    const deletedCount = Number(deleted?.count);
+                    // A client that cannot report changes() keeps the old estimate.
+                    stats.removedRows += Number.isSafeInteger(deletedCount)
+                        ? deletedCount
+                        : removedRows.length - keptLive.length;
                 } finally {
                     try {
                         await runTimed(`DROP TABLE ${tempTable}`);
@@ -1394,6 +1431,7 @@ export class SqliteAdapter {
                         });
                     }
                 }
+                return keptLive;
             };
 
             saveStep = 'areas';
@@ -1525,11 +1563,22 @@ export class SqliteAdapter {
                 { updatedAt: 9 },
             );
             saveStep = 'sync-saved-filter-ids';
-            await syncIds('saved_filters', savedFilters.map((filter) => filter.id));
+            // The table mirrors settings.savedFilters, which this save rewrites.
+            // A kept live filter goes back into that list too, so the next load
+            // (which reads the list, or the table when there is no list) still
+            // shows it and the two copies never disagree. It also stays known,
+            // so a second stale save before a reload keeps it again.
+            const keptFilterRows = await syncIds('saved_filters', savedFilters.map((filter) => filter.id));
+            const knownFilterVersions = nextKnownRows.get('saved_filters');
+            const keptFilters = keptFilterRows.flatMap((row) => {
+                knownFilterVersions?.set(String(row.id), this.knownRowVersionFromRow(row));
+                const filter = this.mapSavedFilterRow(row);
+                return filter ? [filter] : [];
+            });
 
             const settingsForSave = { ...(data.settings ?? {}) };
             if (Array.isArray(rawSavedFilters)) {
-                settingsForSave.savedFilters = savedFilters;
+                settingsForSave.savedFilters = keptFilters.length > 0 ? [...savedFilters, ...keptFilters] : savedFilters;
             } else {
                 delete settingsForSave.savedFilters;
             }
@@ -1568,6 +1617,17 @@ export class SqliteAdapter {
                 context: buildSqliteSaveFailureContext(data, saveStep),
             });
             throw error;
+        }
+        for (const { table, count } of keptLiveRows) {
+            logWarn('SQLite save kept live rows the snapshot omitted', {
+                scope: 'sqlite',
+                category: 'storage',
+                context: {
+                    releaseCheck: 'v1.3.3/sqlite-kept-omitted-live-rows',
+                    table,
+                    count,
+                },
+            });
         }
         if (expiredTombstonesPruned > 0) {
             logInfo('SQLite final tombstone expiry persisted', {

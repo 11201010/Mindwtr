@@ -77,6 +77,36 @@ const pruneSavedFilterTombstones = (
     };
 };
 
+/**
+ * Every reference between synced entities, keyed by the collection it points at,
+ * as [child collection, child field]. These names are also the SQLite tables and
+ * columns of the foreign keys in sqlite-schema.ts. An expired parent tombstone
+ * stays while any remaining entity, in any state, still references it: the purge
+ * below and the SQLite adapter's prune both follow this map, so the store and the
+ * database agree and a kept parent is not purged again on every load (#718 class).
+ */
+export const ENTITY_FOREIGN_KEY_CHILDREN = {
+    sections: [['tasks', 'sectionId']],
+    projects: [['tasks', 'projectId'], ['sections', 'projectId']],
+    areas: [['tasks', 'areaId'], ['projects', 'areaId']],
+} as const satisfies Record<string, ReadonlyArray<readonly [string, string]>>;
+
+type ReferencingCollections = { tasks: readonly Task[]; sections?: readonly Section[]; projects?: readonly Project[] };
+
+const collectReferencedIds = (
+    parent: keyof typeof ENTITY_FOREIGN_KEY_CHILDREN,
+    remaining: ReferencingCollections,
+): Set<string> => {
+    const ids = new Set<string>();
+    for (const [child, field] of ENTITY_FOREIGN_KEY_CHILDREN[parent]) {
+        for (const item of remaining[child] ?? []) {
+            const value = (item as unknown as Record<string, unknown>)[field];
+            if (typeof value === 'string' && value) ids.add(value);
+        }
+    }
+    return ids;
+};
+
 export type PurgeExpiredTombstonesOptions = {
     /**
      * Sections the remote document dropped while still holding their parent
@@ -146,20 +176,17 @@ export const purgeExpiredTombstones = (
         nextTasks.push(task);
     }
 
-    const nextProjects: Project[] = [];
-    for (const project of data.projects) {
-        if (isEntityTombstoneExpired('project', project, cutoffMs)) {
-            removedProjectTombstones += 1;
-            continue;
-        }
-        const pruned = pruneAttachmentTombstones(project.attachments, cutoffMs);
-        removedAttachmentTombstones += pruned.removed;
-        nextProjects.push(pruned.removed > 0 ? { ...project, attachments: pruned.next } : project);
-    }
+    // Children before parents (tasks, sections, projects, areas), so a parent is
+    // kept only for a child that itself survives this pass, and an expired child
+    // and its expired parent both go in one pass.
     const restorableArchivedProjectIds = new Set(
-        nextProjects.filter((project) => project.status === 'archived' && !project.purgedAt)
-            .map((project) => project.id),
+        data.projects.filter((project) => (
+            project.status === 'archived'
+            && !project.purgedAt
+            && !isEntityTombstoneExpired('project', project, cutoffMs)
+        )).map((project) => project.id),
     );
+    const referencedSectionIds = collectReferencedIds('sections', { tasks: nextTasks });
     const nextSections: Section[] = [];
     for (const section of data.sections) {
         if (isEntityTombstoneExpired('section', section, cutoffMs)) {
@@ -170,8 +197,10 @@ export const purgeExpiredTombstones = (
                 nextSections.push(section);
                 continue;
             }
-            removedSectionTombstones += 1;
-            continue;
+            if (!referencedSectionIds.has(section.id)) {
+                removedSectionTombstones += 1;
+                continue;
+            }
         }
         nextSections.push(section);
     }
@@ -185,9 +214,23 @@ export const purgeExpiredTombstones = (
             },
         });
     }
+
+    const referencedProjectIds = collectReferencedIds('projects', { tasks: nextTasks, sections: nextSections });
+    const nextProjects: Project[] = [];
+    for (const project of data.projects) {
+        if (isEntityTombstoneExpired('project', project, cutoffMs) && !referencedProjectIds.has(project.id)) {
+            removedProjectTombstones += 1;
+            continue;
+        }
+        const pruned = pruneAttachmentTombstones(project.attachments, cutoffMs);
+        removedAttachmentTombstones += pruned.removed;
+        nextProjects.push(pruned.removed > 0 ? { ...project, attachments: pruned.next } : project);
+    }
+
+    const referencedAreaIds = collectReferencedIds('areas', { tasks: nextTasks, projects: nextProjects });
     const nextAreas: Area[] = [];
     for (const area of data.areas) {
-        if (isEntityTombstoneExpired('area', area, cutoffMs)) {
+        if (isEntityTombstoneExpired('area', area, cutoffMs) && !referencedAreaIds.has(area.id)) {
             removedAreaTombstones += 1;
             continue;
         }

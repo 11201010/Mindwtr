@@ -22,7 +22,7 @@ import type {
 import { areSyncPayloadsEqual } from './sync-helpers';
 import { computeRemoteSyncDocumentFingerprint, toRemoteSyncDocument } from './sync-document';
 import { restoreSectionFromProjectArchive, restoreTaskFromProjectArchive } from './store-helpers';
-import { purgeExpiredTombstones } from './sync-tombstones';
+import { ENTITY_FOREIGN_KEY_CHILDREN, purgeExpiredTombstones } from './sync-tombstones';
 import { buildTaskViewSectionUpdates, buildTaskViewSectionUndoUpdates } from './view-sections';
 
 const require = createRequire(import.meta.url);
@@ -1230,6 +1230,7 @@ describeSqlite('SqliteAdapter', () => {
                     revBy: 'device-a',
                 },
                 {
+                    // A tombstone: omission may prune only tombstones.
                     id: 'task-remove',
                     title: 'Original',
                     status: 'next',
@@ -1237,6 +1238,7 @@ describeSqlite('SqliteAdapter', () => {
                     contexts: [],
                     createdAt: now,
                     updatedAt: now,
+                    deletedAt: now,
                     rev: 1,
                     revBy: 'device-a',
                 },
@@ -1498,6 +1500,14 @@ describeSqlite('SqliteAdapter', () => {
         expect(loaded.tasks[0]?.areaId).toBe('area-linked-1');
         expect(loaded.projects[0]?.areaId).toBe('area-linked-1');
         expect(loaded.sections[0]?.projectId).toBe('proj-linked-1');
+
+        // Tombstone the linked rows first: omission prunes only tombstones.
+        await adapter.saveData({
+            ...linkedData,
+            tasks: linkedData.tasks.map((task) => ({ ...task, deletedAt: now })),
+            projects: linkedData.projects.map((project) => ({ ...project, deletedAt: now })),
+            sections: linkedData.sections.map((section) => ({ ...section, deletedAt: now })),
+        });
 
         // Delete every linked row in one save (the area survives so the save
         // is not an all-empty snapshot, which the #852 backstop refuses).
@@ -2641,12 +2651,15 @@ describeSqlite('SqliteAdapter incremental saveData', () => {
     });
 
     it('removes dropped rows only when their observed database version still matches', async () => {
-        const data = baseData();
+        const base = baseData();
+        // task-2 is a tombstone at the same version: omission prunes only tombstones.
+        const data = { ...base, tasks: [base.tasks[0], { ...base.tasks[1], deletedAt: '2026-07-01T08:00:00.000Z' }] };
         await adapter.saveData(data);
         statements = [];
         await adapter.saveData({ ...data, tasks: [data.tasks[0]] });
         const deletes = statements.filter(({ sql }) => sql.startsWith('DELETE FROM tasks'));
         expect(deletes).toHaveLength(1);
+        expect(deletes[0].sql).toContain("COALESCE(tasks.deletedAt, '') <> ''");
         expect(deletes[0].sql).toContain('known.rev IS tasks.rev');
         expect(deletes[0].sql).toContain('known.updatedAt IS tasks.updatedAt');
         expect(deletes[0].sql).not.toContain('NOT IN');
@@ -2663,7 +2676,20 @@ describeSqlite('SqliteAdapter incremental saveData', () => {
         expect(rows).toEqual([{ id: 'task-1' }]);
     });
 
-    it('prunes a task created through saveTask when a later snapshot omits it', async () => {
+    it('prunes a tombstone written through saveTask when a later snapshot omits it', async () => {
+        const data = baseData();
+        await adapter.saveData(data);
+        await adapter.saveTask({
+            id: 'task-3', title: 'Incremental', status: 'inbox', tags: [], contexts: [],
+            createdAt: '2026-07-01T10:00:00.000Z', updatedAt: '2026-07-01T10:00:00.000Z',
+            deletedAt: '2026-07-01T10:00:00.000Z', rev: 1, revBy: 'dev-a',
+        });
+        await adapter.saveData(data);
+        const rows = allSql<{ id: string }>(db, 'SELECT id FROM tasks ORDER BY id');
+        expect(rows).toEqual([{ id: 'task-1' }, { id: 'task-2' }]);
+    });
+
+    it('keeps a live task written through saveTask when a later snapshot omits it', async () => {
         const data = baseData();
         await adapter.saveData(data);
         await adapter.saveTask({
@@ -2672,7 +2698,8 @@ describeSqlite('SqliteAdapter incremental saveData', () => {
         });
         await adapter.saveData(data);
         const rows = allSql<{ id: string }>(db, 'SELECT id FROM tasks ORDER BY id');
-        expect(rows).toEqual([{ id: 'task-1' }, { id: 'task-2' }]);
+        expect(rows).toEqual([{ id: 'task-1' }, { id: 'task-2' }, { id: 'task-3' }]);
+        expect(adapter.getLastSaveDataStats()).toMatchObject({ removedRows: 0 });
     });
 
     it('falls back to a full write after a failed save', async () => {
@@ -2802,5 +2829,330 @@ describe('SqliteAdapter empty-snapshot backstop (#852)', () => {
         await adapter.saveData(emptyData);
 
         expect(run.mock.calls.map(([sql]) => String(sql))).toContain('BEGIN IMMEDIATE');
+    });
+});
+
+describeSqlite('SqliteAdapter omission never deletes a live row', () => {
+    const at = '2026-09-20T08:00:00.000Z';
+    const KEPT_LIVE_MESSAGE = 'SQLite save kept live rows the snapshot omitted';
+    let db: Database;
+    let adapter: SqliteAdapter;
+    let logs: LogPayload[];
+
+    const task = (id: string, overrides: Partial<Task> = {}): Task => ({
+        id, title: `Task ${id}`, status: 'next', tags: [], contexts: [],
+        createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a', ...overrides,
+    });
+    const doc = (tasks: Task[], settings: AppData['settings'] = {}): AppData => ({
+        tasks, projects: [], sections: [], areas: [], people: [], settings,
+    });
+    const taskRow = (id: string) => getSql(db, 'SELECT * FROM tasks WHERE id = ?', [id]);
+    const taskIds = () => allSql<{ id: string }>(db, 'SELECT id FROM tasks ORDER BY id').map((row) => row.id);
+    const keptLiveLogs = () => logs.filter((entry) => entry.message === KEPT_LIVE_MESSAGE);
+    // Another process (or the canonical load path) wrote these rows; this adapter
+    // only learns about them through getData.
+    const seed = async (data: AppData) => new SqliteAdapter(createClient(db)).saveData(data);
+
+    beforeEach(() => {
+        if (!RuntimeDatabase) throw new Error('No compatible sqlite runtime available for tests');
+        db = new RuntimeDatabase(':memory:');
+        adapter = new SqliteAdapter(createClient(db));
+        logs = [];
+        setLogger((payload) => { logs.push(payload); });
+    });
+
+    afterEach(() => {
+        setLogger(consoleLogger);
+        db.close();
+    });
+
+    it('keeps a live row a stale snapshot omits and logs it once (startup snapshot race)', async () => {
+        // SQLite holds X; the AsyncStorage startup snapshot predates it.
+        await seed(doc([task('w'), task('x')]));
+        const startupSnapshot = doc([task('w')]);
+        // The canonical load observes X, then core discards its result.
+        expect((await adapter.getData()).tasks.map((item) => item.id)).toEqual(['w', 'x']);
+        const storedX = taskRow('x');
+
+        // A quick-add builds its full save from the snapshot state.
+        await adapter.saveData({ ...startupSnapshot, tasks: [...startupSnapshot.tasks, task('y')] });
+
+        expect(taskIds()).toEqual(['w', 'x', 'y']);
+        expect(taskRow('x')).toEqual(storedX);
+        expect(keptLiveLogs()).toHaveLength(1);
+        expect(keptLiveLogs()[0]).toMatchObject({
+            level: 'warn',
+            scope: 'sqlite',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.3/sqlite-kept-omitted-live-rows', table: 'tasks', count: 1 },
+        });
+        expect(JSON.stringify(keptLiveLogs())).not.toMatch(/Task x|"x"/);
+        expect(adapter.getLastSaveDataStats()).toMatchObject({ removedRows: 0 });
+    });
+
+    it('still prunes an omitted tombstone that is unchanged since the read (tombstone expiry)', async () => {
+        await seed(doc([task('live'), task('gone', { deletedAt: '2025-01-01T00:00:00.000Z' })]));
+        const loaded = await adapter.getData();
+        const cleaned = purgeExpiredTombstones(loaded, '2026-09-20T00:00:00.000Z').data;
+        expect(cleaned.tasks.map((item) => item.id)).toEqual(['live']);
+
+        await adapter.saveData(cleaned);
+
+        expect(taskIds()).toEqual(['live']);
+        expect(keptLiveLogs()).toEqual([]);
+        expect(adapter.getLastSaveDataStats()).toMatchObject({ removedRows: 1 });
+    });
+
+    it('keeps a row another writer tombstoned after the read, then prunes it once observed', async () => {
+        // Decision: CAS as today. The row changed since the read, so omission
+        // leaves it; it is a tombstone now, so the kept-live line does not fire.
+        await seed(doc([task('w'), task('x')]));
+        await adapter.getData();
+        await new SqliteAdapter(createClient(db)).saveTask(
+            task('x', { deletedAt: '2026-09-20T09:00:00.000Z', updatedAt: '2026-09-20T09:00:00.000Z', rev: 2 }),
+        );
+
+        await adapter.saveData(doc([task('w')]));
+        expect(taskRow('x')).toMatchObject({ deletedAt: '2026-09-20T09:00:00.000Z', rev: 2 });
+        expect(keptLiveLogs()).toEqual([]);
+        // removedRows counts the DELETE's real changes, not the omitted candidates.
+        expect(adapter.getLastSaveDataStats()).toMatchObject({ removedRows: 0 });
+
+        await adapter.getData();
+        await adapter.saveData(doc([task('w')]));
+        expect(taskIds()).toEqual(['w']);
+        expect(keptLiveLogs()).toEqual([]);
+    });
+
+    it('applies the rule to every entity table', async () => {
+        const area = { id: 'area-1', name: 'Home', order: 0, createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a' };
+        const project = { id: 'project-1', title: 'Garden', status: 'active' as const, color: '#2563EB', order: 0, createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a' };
+        const section = { id: 'section-1', projectId: 'project-1', title: 'Beds', order: 0, createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a' };
+        const person = { id: 'person-1', name: 'Sam', createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a' };
+        await seed({ tasks: [task('w')], projects: [project], sections: [section], areas: [area], people: [person], settings: {} });
+        await adapter.getData();
+
+        await adapter.saveData(doc([task('w')]));
+
+        const loaded = await adapter.getData();
+        expect(loaded.projects.map((item) => item.id)).toEqual(['project-1']);
+        expect(loaded.sections.map((item) => item.id)).toEqual(['section-1']);
+        expect(loaded.areas.map((item) => item.id)).toEqual(['area-1']);
+        expect(loaded.people?.map((item) => item.id)).toEqual(['person-1']);
+        expect(keptLiveLogs().map((entry) => entry.context)).toEqual(
+            ['sections', 'projects', 'areas', 'people'].map((table) => ({
+                releaseCheck: 'v1.3.3/sqlite-kept-omitted-live-rows', table, count: 1,
+            })),
+        );
+    });
+
+    it('restores a backup that lacks a live row by tombstoning it, not by omission', async () => {
+        await seed(doc([task('kept'), task('not-in-backup')]));
+        const current = await adapter.getData();
+        const restored = prepareRestoredBackupDataForSync(doc([task('kept', { title: 'From backup' })]), {
+            previousData: current,
+            restoredAt: '2026-09-21T08:00:00.000Z',
+        });
+
+        await adapter.saveData(restored);
+
+        const loaded = await adapter.getData();
+        expect(loaded.tasks.find((item) => item.id === 'kept')).toMatchObject({ title: 'From backup' });
+        expect(loaded.tasks.find((item) => item.id === 'not-in-backup')).toMatchObject({
+            deletedAt: '2026-09-21T08:00:00.000Z',
+        });
+        expect(keptLiveLogs()).toEqual([]);
+    });
+
+    it('keeps a live saved filter a stale list omits, in the table and in the settings list', async () => {
+        const filter = (id: string, overrides: Record<string, unknown> = {}) => ({
+            id, name: `Filter ${id}`, view: 'focus', criteria: { contexts: ['@desk'] }, createdAt: at, updatedAt: at,
+            ...overrides,
+        });
+        await seed(doc([task('w')], { savedFilters: [filter('a'), filter('b'), filter('gone', { deletedAt: at })] }));
+        await adapter.getData();
+        const staleList = doc([task('w')], { savedFilters: [filter('a')] });
+
+        // Two stale saves before any reload: B survives both, the tombstone prunes.
+        await adapter.saveData(staleList);
+        await adapter.saveData(staleList);
+
+        expect(allSql<{ id: string }>(db, 'SELECT id FROM saved_filters ORDER BY id').map((row) => row.id))
+            .toEqual(['a', 'b']);
+        const storedSettings = JSON.parse(getSql<{ data: string }>(db, 'SELECT data FROM settings WHERE id = 1')!.data);
+        expect(storedSettings.savedFilters.map((item: { id: string }) => item.id)).toEqual(['a', 'b']);
+        const reloaded = await adapter.getData();
+        expect(reloaded.settings.savedFilters?.map((item) => item.id)).toEqual(['a', 'b']);
+        expect(keptLiveLogs().map((entry) => entry.context)).toEqual([1, 2].map(() => ({
+            releaseCheck: 'v1.3.3/sqlite-kept-omitted-live-rows', table: 'saved_filters', count: 1,
+        })));
+
+        await adapter.saveData(reloaded);
+        expect(await adapter.getData()).toEqual(reloaded);
+        expect(keptLiveLogs()).toHaveLength(2);
+    });
+
+    it('keeps saved filters in the table when the snapshot carries no list', async () => {
+        const filter = { id: 'a', name: 'Filter a', view: 'focus', criteria: {}, createdAt: at, updatedAt: at };
+        await seed(doc([task('w')], { savedFilters: [filter] }));
+        await adapter.getData();
+
+        await adapter.saveData(doc([task('w')]));
+
+        expect((await adapter.getData()).settings.savedFilters?.map((item) => item.id)).toEqual(['a']);
+        expect(keptLiveLogs().map((entry) => entry.context)).toEqual([{
+            releaseCheck: 'v1.3.3/sqlite-kept-omitted-live-rows', table: 'saved_filters', count: 1,
+        }]);
+    });
+
+    describe('referenced parents', () => {
+        const old = '2025-01-01T00:00:00.000Z';
+        const area = (overrides: Record<string, unknown> = {}) => ({
+            id: 'area-1', name: 'Home', order: 0, createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a', ...overrides,
+        });
+        const project = (overrides: Record<string, unknown> = {}) => ({
+            id: 'project-1', title: 'Garden', status: 'active' as const, color: '#2563EB', order: 0,
+            createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a', ...overrides,
+        });
+        const section = (overrides: Record<string, unknown> = {}) => ({
+            id: 'section-1', projectId: 'project-1', title: 'Beds', order: 0,
+            createdAt: at, updatedAt: at, rev: 1, revBy: 'device-a', ...overrides,
+        });
+        const ids = (table: string) => allSql<{ id: string }>(db, `SELECT id FROM ${table} ORDER BY id`).map((row) => row.id);
+
+        it('lists every schema foreign key the prune guard covers', async () => {
+            await adapter.getData();
+            const foreignKeys = ['tasks', 'projects', 'sections', 'areas', 'people', 'saved_filters'].flatMap((table) =>
+                allSql<{ table: string; from: string }>(db, `PRAGMA foreign_key_list(${table})`)
+                    .map((key) => `${table}.${key.from} -> ${key.table}`));
+            // A new foreign key must also go into ENTITY_FOREIGN_KEY_CHILDREN (sync-tombstones.ts),
+            // which both the purge and the adapter's prune read.
+            const guarded = Object.entries(ENTITY_FOREIGN_KEY_CHILDREN).flatMap(([parent, children]) =>
+                children.map(([child, column]) => `${child}.${column} -> ${parent}`));
+            expect(foreignKeys.sort()).toEqual(guarded.sort());
+            expect(foreignKeys).toHaveLength(5);
+        });
+
+        it('keeps an omitted tombstoned project while an omitted live section references it', async () => {
+            await seed({ ...doc([task('w')]), projects: [project({ deletedAt: at })], sections: [section()] });
+            await adapter.getData();
+
+            await adapter.saveData(doc([task('w')]));
+
+            expect(ids('projects')).toEqual(['project-1']);
+            expect(ids('sections')).toEqual(['section-1']);
+            expect(keptLiveLogs().map((entry) => entry.context)).toEqual([{
+                releaseCheck: 'v1.3.3/sqlite-kept-omitted-live-rows', table: 'sections', count: 1,
+            }]);
+        });
+
+        it('keeps an expired project tombstone until its fresh section tombstone expires, then prunes both', async () => {
+            await seed({
+                ...doc([task('w')]),
+                projects: [project({ deletedAt: old, updatedAt: old })],
+                sections: [section({ deletedAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' })],
+            });
+            const loaded = await adapter.getData();
+            // The purge keeps the referenced project (same rule as the adapter).
+            const cleaned = purgeExpiredTombstones(loaded, '2026-09-20T00:00:00.000Z').data;
+            expect(cleaned.projects.map((item) => item.id)).toEqual(['project-1']);
+            expect(cleaned.sections.map((item) => item.id)).toEqual(['section-1']);
+
+            // A document that still omits it (a <=1.3.2 purge) cannot delete it either.
+            await adapter.saveData({ ...cleaned, projects: [] });
+            expect(ids('projects')).toEqual(['project-1']);
+            expect(ids('sections')).toEqual(['section-1']);
+
+            const later = purgeExpiredTombstones(await adapter.getData(), '2026-12-31T00:00:00.000Z').data;
+            expect([later.projects, later.sections]).toEqual([[], []]);
+            await adapter.saveData(later);
+            expect([ids('projects'), ids('sections')]).toEqual([[], []]);
+            expect(adapter.getLastSaveDataStats()).toMatchObject({ removedRows: 2 });
+            expect(keptLiveLogs()).toEqual([]);
+        });
+
+        it('converges: purge, save and load of an expired parent a live task references never rewrite', async () => {
+            await seed({
+                ...doc([task('w'), task('child', { projectId: 'project-1' })]),
+                projects: [project({ deletedAt: old, updatedAt: old })],
+            });
+            const writes: string[] = [];
+            const base = createClient(db);
+            const recorded = new SqliteAdapter({
+                ...base,
+                run: async (sql: string, params: unknown[] = []) => {
+                    if (/^(INSERT|DELETE|CREATE TEMP|UPDATE)/.test(sql.trim())) writes.push(sql);
+                    return base.run(sql, params);
+                },
+            });
+            const cycle = async () => {
+                const loaded = await recorded.getData();
+                const cleaned = purgeExpiredTombstones(loaded, '2026-09-20T00:00:00.000Z').data;
+                expect(cleaned).toEqual(loaded);
+                writes.length = 0;
+                await recorded.saveData(cleaned);
+                return [...writes];
+            };
+
+            await cycle();
+            const baseline = await recorded.getData();
+            expect(await cycle()).toEqual([]);
+            expect(await cycle()).toEqual([]);
+            expect(await recorded.getData()).toEqual(baseline);
+            expect(ids('projects')).toEqual(['project-1']);
+            expect(logs.filter((entry) => entry.level === 'warn')).toEqual([]);
+        });
+
+        it('keeps a tombstoned area a live task references, without touching the task', async () => {
+            await seed({ ...doc([task('w', { areaId: 'area-1' })]), areas: [area({ deletedAt: at })] });
+            await adapter.getData();
+            const storedTask = taskRow('w');
+
+            await adapter.saveData(doc([task('w', { areaId: 'area-1' })]));
+
+            expect(ids('areas')).toEqual(['area-1']);
+            expect(taskRow('w')).toEqual(storedTask);
+            expect(taskRow('w')).toMatchObject({ areaId: 'area-1', rev: 1 });
+        });
+
+        it('prunes a tombstoned parent chain only after its last child is gone', async () => {
+            // Covers tasks.projectId, tasks.sectionId and projects.areaId.
+            const child = task('child', { projectId: 'project-1', sectionId: 'section-1' });
+            await seed({
+                ...doc([task('w'), child]),
+                areas: [area({ deletedAt: at })],
+                projects: [project({ areaId: 'area-1', deletedAt: at })],
+                sections: [section({ deletedAt: at })],
+            });
+            await adapter.getData();
+            const storedChild = taskRow('child');
+
+            await adapter.saveData(doc([task('w'), child]));
+            expect([ids('areas'), ids('projects'), ids('sections')]).toEqual([['area-1'], ['project-1'], ['section-1']]);
+            expect(taskRow('child')).toEqual(storedChild);
+
+            await adapter.saveData(doc([task('w'), { ...child, deletedAt: at, rev: 2 }]));
+            await adapter.getData();
+            await adapter.saveData(doc([task('w')]));
+            expect([ids('tasks'), ids('areas'), ids('projects'), ids('sections')]).toEqual([['w'], [], [], []]);
+            expect(adapter.getLastSaveDataStats()).toMatchObject({ removedRows: 4 });
+        });
+    });
+
+    it('is idempotent: load, save, load gives no entity diffs for a derived or a stale document', async () => {
+        await seed(doc([task('w'), task('x'), task('t', { deletedAt: at })]));
+
+        const first = await adapter.getData();
+        await adapter.saveData(first);
+        expect(await adapter.getData()).toEqual(first);
+
+        // Stale document: X survives unchanged, and once the caller reloads the
+        // next cycle converges with no further kept rows.
+        await adapter.saveData(doc([task('w')]));
+        const afterStale = await adapter.getData();
+        expect(afterStale.tasks.find((item) => item.id === 'x')).toEqual(first.tasks.find((item) => item.id === 'x'));
+        await adapter.saveData(afterStale);
+        expect(await adapter.getData()).toEqual(afterStale);
+        expect(keptLiveLogs()).toHaveLength(1);
     });
 });

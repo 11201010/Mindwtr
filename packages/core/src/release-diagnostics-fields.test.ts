@@ -56,6 +56,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // derived-token-timestamps reuses releaseCheck below.
     // sqlite-snapshot-append reuses releaseCheck and count below.
     // sqlite-snapshot-statements reuses releaseCheck and count below.
+    // sqlite-kept-omitted-live-rows: SQLite table name; reuses releaseCheck and count below.
+    'table',
     // ai-request-stop-once (desktop/mobile AI configuration adapters)
     'provider', 'timeoutMs',
     // sync-attachment-copy-elision reuses releaseCheck and count below.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AppData, Project, Section } from './types';
+import type { AppData, Area, Project, Section, Task } from './types';
 import { isEntityTombstoneExpired, purgeExpiredTombstones } from './sync-tombstones';
 
 const nowIso = '2026-04-08T00:00:00.000Z';
@@ -404,5 +404,69 @@ describe('purgeExpiredTombstones', () => {
 
         expect(result.removedSavedFilterTombstones).toBe(1);
         expect(result.data.settings.savedFilters?.map((filter) => filter.id)).toEqual(['filter-recent', 'filter-active']);
+    });
+});
+
+describe('purgeExpiredTombstones keeps referenced parents', () => {
+    const expired = '2025-01-01T00:00:00.000Z';
+    const fresh = '2026-04-01T00:00:00.000Z';
+    const area = (id: string, fields: Partial<Area> = {}): Area => ({
+        id, name: id, order: 0, createdAt: expired, updatedAt: expired, ...fields,
+    });
+    const project = (id: string, fields: Partial<Project> = {}): Project => ({
+        id, title: id, status: 'active', color: '#94a3b8', order: 0, tagIds: [],
+        createdAt: expired, updatedAt: expired, ...fields,
+    });
+    const section = (id: string, projectId: string, fields: Partial<Section> = {}): Section => ({
+        id, projectId, title: id, order: 0, createdAt: expired, updatedAt: expired, ...fields,
+    });
+    const task = (id: string, fields: Partial<Task> = {}): Task => ({
+        id, title: id, status: 'next', tags: [], contexts: [], createdAt: expired, updatedAt: expired, ...fields,
+    });
+    const doc = (fields: Partial<AppData>): AppData => ({
+        tasks: [], projects: [], sections: [], areas: [], people: [], settings: {}, ...fields,
+    });
+
+    it.each([
+        ['project <- live task', doc({ projects: [project('p', { deletedAt: expired })], tasks: [task('t', { projectId: 'p' })] })],
+        ['project <- fresh section tombstone', doc({
+            projects: [project('p', { deletedAt: expired })], sections: [section('s', 'p', { deletedAt: fresh })],
+        })],
+        ['section <- fresh task tombstone', doc({
+            projects: [project('p')], sections: [section('s', 'p', { deletedAt: expired })],
+            tasks: [task('t', { projectId: 'p', sectionId: 's', deletedAt: fresh })],
+        })],
+        ['area <- live task', doc({ areas: [area('a', { deletedAt: expired })], tasks: [task('t', { areaId: 'a' })] })],
+        ['area <- live project', doc({ areas: [area('a', { deletedAt: expired })], projects: [project('p', { areaId: 'a' })] })],
+    ])('keeps an expired parent while a remaining entity references it: %s', (_label, data) => {
+        const first = purgeExpiredTombstones(data, nowIso);
+        const second = purgeExpiredTombstones(first.data, nowIso);
+
+        expect(first.data).toEqual(data);
+        expect(second.data).toEqual(first.data);
+        expect([first.removedProjectTombstones, first.removedSectionTombstones, first.removedAreaTombstones])
+            .toEqual([0, 0, 0]);
+    });
+
+    it('drops a parent chain in the pass where its last child expires', () => {
+        // area <- project <- section <- task; the task tombstone expires last.
+        const data = doc({
+            areas: [area('a', { deletedAt: expired })],
+            projects: [project('p', { areaId: 'a', deletedAt: expired })],
+            sections: [section('s', 'p', { deletedAt: expired })],
+            tasks: [task('t', { projectId: 'p', sectionId: 's', deletedAt: fresh })],
+        });
+
+        const beforeChildExpires = purgeExpiredTombstones(data, nowIso);
+        expect(beforeChildExpires.data).toEqual(data);
+
+        const afterChildExpires = purgeExpiredTombstones(beforeChildExpires.data, '2026-12-31T00:00:00.000Z');
+        expect(afterChildExpires.data).toMatchObject({ tasks: [], sections: [], projects: [], areas: [] });
+        expect([
+            afterChildExpires.removedTaskTombstones,
+            afterChildExpires.removedSectionTombstones,
+            afterChildExpires.removedProjectTombstones,
+            afterChildExpires.removedAreaTombstones,
+        ]).toEqual([1, 1, 1, 1]);
     });
 });
