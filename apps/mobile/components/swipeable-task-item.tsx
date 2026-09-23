@@ -2,21 +2,18 @@ import { Swipeable } from 'react-native-gesture-handler';
 import {
     formatTaskMarkedDoneMessage,
     getFocusStarBlockedText,
-    formatRecurrenceLabel,
     formatI18nTemplate,
     getProjectNextActionPromptData,
-    hasTimeComponent,
-    isTaskActionable,
     isTaskFinished,
     normalizeFocusTaskLimit,
     buildQuickAddParseOptions,
     buildTaskMovePatch,
+    buildTaskRowMeta,
     flushPendingSave,
+    getDateFormattingConfig,
     parseProjectNextActionInput,
-    resolveFeatureFlags,
-    safeFormatDate,
-    safeParseDate,
-    safeParseDueDate,
+    resolveTaskRowFeatures,
+    resolveTaskRowLookup,
     shallow,
     tFallback,
     undoTaskCompletion,
@@ -24,7 +21,7 @@ import {
 } from '@mindwtr/core';
 import type { Area, Project, ProjectSequenceTaskCue, Section, Task, TaskMoveDestination, TaskStatus } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { ArrowRight, Check, RotateCcw, Trash2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -205,7 +202,7 @@ export const SwipeableTaskItem = React.memo(SwipeableTaskItemRow, areRowPropsEqu
 
 function StoreBackedSwipeableTaskItem(props: Omit<SwipeableTaskItemInnerProps, 'rowContext'>) {
     const rowContext = useTaskStore((state): SwipeableTaskItemRowContext => {
-        const resolvedFeatureFlags = resolveFeatureFlags(state.settings);
+        const features = resolveTaskRowFeatures(state.settings);
         return {
             addTask: state.addTask,
             updateTask: state.updateTask,
@@ -215,11 +212,10 @@ function StoreBackedSwipeableTaskItem(props: Omit<SwipeableTaskItemInnerProps, '
             areas: state.areas,
             focusedCount: state.getFocusedCount(),
             focusTaskLimit: normalizeFocusTaskLimit(state.settings?.gtd?.focusTaskLimit),
-            prioritiesEnabled: resolvedFeatureFlags.priorities,
-            timeEstimatesEnabled: resolvedFeatureFlags.timeEstimates,
-            timeSpentEnabled: resolvedFeatureFlags.pomodoro
-                && state.settings?.gtd?.pomodoro?.linkTask === true,
-            showTaskAge: state.settings?.appearance?.showTaskAge === true,
+            prioritiesEnabled: features.priorities,
+            timeEstimatesEnabled: features.timeEstimates,
+            timeSpentEnabled: features.timeSpent,
+            showTaskAge: features.taskAge,
         };
     }, shallow);
     return <SwipeableTaskItemInner {...props} rowContext={rowContext} />;
@@ -288,19 +284,69 @@ function SwipeableTaskItemInner({
         timeSpentEnabled,
         showTaskAge,
     } = rowContext;
-    const canShowFocusToggle = !interactionDisabled
-        && showFocusToggle
-        && isTaskActionable(task);
     const isReference = task.status === 'reference';
     const {
         addChecklistItem,
         cancelPendingChecklist,
-        checklistProgress,
         localChecklist,
         showChecklist,
         toggleChecklist,
         toggleChecklistItem,
     } = useSwipeableChecklist(task, updateTask, interactionDisabled);
+    // The lookups scan the project and area lists, so they rerun only when a container changes.
+    const lookup = useMemo(() => resolveTaskRowLookup(
+        { projectId: task.projectId, areaId: task.areaId, sectionId: task.sectionId },
+        projects,
+        areas,
+        sectionById,
+    ), [areas, projects, sectionById, task.areaId, task.projectId, task.sectionId]);
+    // Urgency and age read the clock: a render in a new minute recomputes them.
+    const minuteKey = Math.floor(Date.now() / 60_000);
+    // The configuration the root layout applied, so labels match the rest of the app.
+    const dateFormatting = getDateFormattingConfig();
+    const meta = useMemo(() => {
+        void minuteKey;
+        return buildTaskRowMeta({
+            task: { ...task, checklist: localChecklist },
+            lookup,
+            features: {
+                priorities: prioritiesEnabled,
+                timeEstimates: timeEstimatesEnabled,
+                timeSpent: timeSpentEnabled,
+                taskAge: showTaskAge,
+            },
+            language,
+            dateFormatting,
+            t,
+            hideProjectMeta,
+            hideContexts,
+            hideChecklistProgress,
+            projectDeadlineLabel,
+            sequenceCue,
+            sequenceLabel,
+        });
+    }, [
+        dateFormatting,
+        hideChecklistProgress,
+        hideContexts,
+        hideProjectMeta,
+        language,
+        localChecklist,
+        lookup,
+        minuteKey,
+        prioritiesEnabled,
+        projectDeadlineLabel,
+        sequenceCue,
+        sequenceLabel,
+        showTaskAge,
+        t,
+        task,
+        timeEstimatesEnabled,
+        timeSpentEnabled,
+    ]);
+    const canShowFocusToggle = !interactionDisabled
+        && showFocusToggle
+        && meta.canFocus;
     const [showStatusMenu, setShowStatusMenu] = useState(false);
     const [showDestinationPicker, setShowDestinationPicker] = useState(false);
     const [projectNextActionPrompt, setProjectNextActionPrompt] = useState<ProjectNextActionPromptState | null>(null);
@@ -573,7 +619,6 @@ function SwipeableTaskItemInner({
     };
 
     const leftAction = getLeftAction();
-    const recurrenceLabel = formatRecurrenceLabel({ recurrence: task.recurrence, t });
     const swipeAccessibilityHint = interactionDisabled
         ? (allowInspectionWhenDisabled
             ? tFallback(t, 'projects.archivedTaskInspectionHint', 'Double-tap to inspect this task. Reactivate the project to edit it.')
@@ -636,56 +681,6 @@ function SwipeableTaskItemInner({
             </CompactText>
         </AppPressable>
     );
-
-    const referenceProject = isReference && task.projectId
-        ? projects.find((candidate) => candidate.id === task.projectId)
-        : undefined;
-    const referenceAreaId = task.areaId || referenceProject?.areaId;
-    const referenceArea = isReference && referenceAreaId
-        ? areas.find((candidate) => candidate.id === referenceAreaId)
-        : undefined;
-    const visibleAttachmentCount = isReference
-        ? (task.attachments ?? []).filter((attachment) => !attachment.deletedAt).length
-        : 0;
-    const accessibilityLabel = isReference ? [
-        task.title,
-        referenceProject
-            ? `${tFallback(t, 'taskEdit.projectLabel', 'Project')}: ${referenceProject.title}`
-            : null,
-        referenceArea
-            ? `${tFallback(t, 'taskEdit.areaLabel', 'Area')}: ${referenceArea.name}`
-            : null,
-        task.assignedTo
-            ? `${tFallback(t, 'taskEdit.assignedTo', 'Assigned To')}: ${task.assignedTo}`
-            : null,
-        ...(task.tags ?? []),
-        visibleAttachmentCount > 0
-            ? `${tFallback(t, 'attachments.title', 'Attachments')}: ${visibleAttachmentCount}`
-            : null,
-    ].filter(Boolean).join('. ') : [
-        task.title,
-        `${tFallback(t, 'taskEdit.statusLabel', 'Status')}: ${t(`status.${task.status}`)}`,
-        (() => {
-            const start = safeParseDate(task.startTime);
-            if (!start) return null;
-            const hasTime = hasTimeComponent(task.startTime);
-            return `${tFallback(t, 'taskEdit.startDateLabel', 'Start')}: ${safeFormatDate(start, hasTime ? 'Pp' : 'P')}`;
-        })(),
-        (() => {
-            const due = safeParseDueDate(task.dueDate);
-            if (!due) return null;
-            const hasTime = hasTimeComponent(task.dueDate);
-            return `${tFallback(t, 'taskEdit.dueDateLabel', 'Due')}: ${safeFormatDate(due, hasTime ? 'Pp' : 'P')}`;
-        })(),
-        // The strip is the only priority signal on a mobile row, so the level
-        // has to reach screen readers as text, not color alone.
-        prioritiesEnabled && task.priority
-            ? `${tFallback(t, 'taskEdit.priorityLabel', 'Priority')}: ${t(`priority.${task.priority}`)}`
-            : null,
-        sequenceCue === 'available' ? sequenceLabel : null,
-        projectDeadlineLabel,
-        recurrenceLabel ? `${tFallback(t, 'taskEdit.recurrenceLabel', 'Recurrence')}: ${recurrenceLabel}` : null,
-    ].filter(Boolean).join('. ');
 
     const handlePress = () => {
         if (interactionDisabled) {
@@ -793,14 +788,8 @@ function SwipeableTaskItemInner({
         <SwipeableTaskItemContent
             accessibilityActions={accessibilityActions}
             accessibilityHint={swipeAccessibilityHint}
-            accessibilityLabel={accessibilityLabel}
-            areas={areas}
             canShowFocusToggle={canShowFocusToggle}
-            checklistProgress={checklistProgress}
-            hideChecklistProgress={hideChecklistProgress || isReference}
-            hideContexts={hideContexts}
-            hideProjectMeta={hideProjectMeta}
-            hideStatusBadge={hideStatusBadge || isReference}
+            hideStatusBadge={hideStatusBadge}
             hideDetails={hideDetails}
             statusBadgeAsIcon={statusBadgeAsIcon}
             isDark={isDark}
@@ -809,8 +798,8 @@ function SwipeableTaskItemInner({
             showFocusHighlight={showFocusHighlight}
             interactionDisabled={interactionDisabled}
             allowInspectionWhenDisabled={allowInspectionWhenDisabled}
-            language={language}
             localChecklist={localChecklist}
+            meta={meta}
             onAccessibilityAction={handleAccessibilityAction}
             onAddChecklistItem={addChecklistItem}
             onContextPress={onContextPress}
@@ -824,26 +813,16 @@ function SwipeableTaskItemInner({
             onPress={handlePress}
             onProjectPress={onProjectPress}
             onTagPress={onTagPress}
-            projectDeadlineLabel={projectDeadlineLabel}
             footerContent={footerContent}
-            recurrenceLabel={recurrenceLabel}
             onToggleChecklist={toggleChecklist}
             onToggleChecklistItem={toggleChecklistItem}
             onToggleFocus={toggleFocus}
             focusToggleDisabledLabel={task.isFocusedToday ? undefined : focusToggleDisabledLabel}
-            projects={projects}
-            sectionById={sectionById}
             selectionMode={selectionMode}
             sequenceCue={sequenceCue}
             showChecklist={!isReference && showChecklist}
-            showTaskAge={showTaskAge}
             t={t}
-            task={{
-                ...task,
-                priority: prioritiesEnabled ? task.priority : undefined,
-                timeEstimate: timeEstimatesEnabled ? task.timeEstimate : undefined,
-                timeSpentMinutes: timeSpentEnabled ? task.timeSpentMinutes : undefined,
-            }}
+            task={task}
             tc={tc}
         />
     );

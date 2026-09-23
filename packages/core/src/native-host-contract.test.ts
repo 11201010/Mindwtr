@@ -9,13 +9,16 @@ import * as focusDerivation from './focus-sections';
 import * as projectTaskListModel from './project-task-list-model';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
+import { configureDateFormatting } from './date';
+import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
 import { isTaskActionable } from './task-status';
 import { splitTodayTasksByStartTime } from './task-utils';
-import { getEnglishI18nValue, getTranslator } from './i18n';
+import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
 import { getTranslationsSync } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import { zhHans } from './i18n/locales/zh-Hans';
-import type { Area, Project, Section, Task } from './types';
+import type { Language } from './i18n/i18n-types';
+import type { AppSettings, Area, Project, Section, Task } from './types';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
 const projectParity = JSON.parse(
@@ -80,6 +83,12 @@ describe('native host contract', () => {
         vi.restoreAllMocks();
     });
 
+    // Inbox and project pages carry a minute in their revision; paging tests keep one minute.
+    const freezeClock = () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10, 0));
+    };
+
     const activateWith = async (tasks: Task[], projects: Project[] = []) => {
         getData.mockResolvedValue({ tasks, projects, sections: [], areas: [], people: [], settings: {} });
         const host = createNativeHostContract();
@@ -141,6 +150,7 @@ describe('native host contract', () => {
     it('pages deterministic visible Inbox rows and rejects a stale revision after order or membership changes', async () => {
         const host = createNativeHostContract();
         expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        freezeClock();
         useTaskStore.setState({ _allTasks: [
             task('later', '2026-09-03T00:00:00.000Z'),
             task('first', '2026-09-01T00:00:00.000Z'),
@@ -155,6 +165,7 @@ describe('native host contract', () => {
         expect(first.value.rows[0]).toEqual({
             id: 'first', title: 'first', status: 'inbox', priority: null, dueDate: null,
             startTime: null, isFocusedToday: false, projectTitle: null, hasNotes: false, revealDate: null, laterToday: false,
+            meta: expect.objectContaining({ parts: [], statusLabel: 'Inbox' }),
         });
         expect(host.getInboxWindow({ offset: 2, limit: 2, revision: first.value.revision }))
             .toMatchObject({ ok: true, value: { rows: [{ id: 'later' }], total: 3 } });
@@ -310,6 +321,7 @@ describe('native host contract', () => {
             useTaskStore.setState({
                 _allTasks: projectParity.tasks, _allProjects: projectParity.projects, _allSections: projectParity.sections,
             });
+            freezeClock();
             return host;
         };
         const detail = (host: ReturnType<typeof createNativeHostContract>, projectId: string, limit = NATIVE_HOST_MAX_WINDOW) => {
@@ -352,6 +364,7 @@ describe('native host contract', () => {
                 row: {
                     id: 'live-a1', title: 'Sketch', status: 'next', priority: null, dueDate: null, startTime: null,
                     isFocusedToday: false, projectTitle: 'Launch', hasNotes: false, revealDate: null, laterToday: false,
+                    meta: expect.objectContaining({ statusLabel: 'Next', accessibilityLabel: 'Sketch. Status: Next' }),
                 },
                 sectionId: 'sec-a',
                 sequenceCue: null,
@@ -1119,6 +1132,215 @@ describe('native host contract', () => {
         expect(host.getFocus({ limit: 1 })).toEqual(first);
         expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: first.value.revision }).ok).toBe(true);
         expect(derive).toHaveBeenCalledTimes(1);
+    });
+
+    describe('task row meta', () => {
+        const NOW = new Date(2026, 8, 23, 10, 0);
+        const sections: Section[] = [{
+            id: 's-1', projectId: 'p-seq', title: 'Phase 1', order: 0,
+            createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+        }];
+        const activateMeta = async (settings: AppSettings) => {
+            getData.mockResolvedValue({
+                tasks: [],
+                projects: [
+                    project('p-seq', 'active', 0, { title: 'Launch', areaId: 'a-work', isSequential: true }),
+                    project('p-due', 'active', 6, { title: 'Taxes', areaId: 'a-work', dueDate: '2026-09-20' }),
+                    project('p-review', 'active', 1, { title: 'Garden', reviewAt: '2026-09-20T09:00:00' }),
+                    project('p-review-early', 'active', 2, { title: 'Budget', reviewAt: '2026-09-10' }),
+                    project('p-review-later', 'active', 3, { title: 'Travel', reviewAt: '2026-09-30' }),
+                    project('p-review-archived', 'archived', 4, { reviewAt: '2026-09-10' }),
+                    project('p-review-deleted', 'active', 5, { reviewAt: '2026-09-10', deletedAt: '2026-09-11T00:00:00.000Z' }),
+                ],
+                sections,
+                areas: [area('a-work', 'Work', 0, { color: '#22c55e' })],
+                people: [],
+                settings,
+            });
+            const host = createNativeHostContract();
+            expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+            // Set after the load, whose migrations would promote a dated Inbox task.
+            useTaskStore.setState({
+                _allTasks: [
+                    task('inbox-due', '2026-09-02T10:00:00', {
+                        dueDate: '2026-09-21', contexts: ['@home', '@phone'], tags: ['#bills'],
+                        checklist: [{ id: 'c1', title: 'One', isCompleted: true }, { id: 'c2', title: 'Two', isCompleted: false }],
+                    }),
+                    task('seq-first', '2026-09-03T10:00:00', {
+                        status: 'next', projectId: 'p-seq', sectionId: 's-1', order: 0, startTime: '2026-09-22T09:00',
+                    }),
+                    task('seq-second', '2026-09-04T10:00:00', { status: 'next', projectId: 'p-seq', order: 1 }),
+                    task('boosted', '2026-09-05T10:00:00', { status: 'next', projectId: 'p-due' }),
+                ],
+            });
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(NOW);
+            return host;
+        };
+        // What the mobile row computes with the date configuration its root layout applies.
+        const mobileMeta = (id: string, settings: AppSettings, language: Language, systemLocale: string | null, options = {}) => {
+            const state = useTaskStore.getState();
+            const rowTask = state._allTasks.find((candidate) => candidate.id === id)!;
+            return buildTaskRowMeta({
+                ...options,
+                task: rowTask,
+                lookup: resolveTaskRowLookup(rowTask, state.projects, state.areas, state._sectionsById),
+                features: resolveTaskRowFeatures(state.settings),
+                language,
+                dateFormatting: {
+                    language: settings.language || language,
+                    dateFormat: settings.dateFormat,
+                    calendarSystem: settings.calendarSystem,
+                    timeFormat: settings.timeFormat,
+                    systemLocale,
+                },
+                t: getTranslator(language),
+                now: NOW,
+            });
+        };
+        afterEach(() => configureDateFormatting());
+
+        it('formats every row with the user date settings and language, with each view like mobile', async () => {
+            const settings: AppSettings = {
+                language: 'de', dateFormat: 'dmy', timeFormat: '24h',
+                appearance: { showTaskAge: true },
+            };
+            const host = await activateMeta(settings);
+            expect(await host.setLanguage({ storedLanguage: 'de', systemLocale: 'de-DE' })).toMatchObject({ ok: true });
+            // Rows format with the stored settings, whatever the process-wide configuration is.
+            configureDateFormatting({ language: 'fa', dateFormat: 'ymd', calendarSystem: 'jalali', systemLocale: 'fa-IR' });
+
+            const inbox = host.getInboxWindow({ offset: 0, limit: 10 });
+            if (!inbox.ok) throw new Error('Inbox query failed');
+            const inboxMeta = inbox.value.rows[0].meta;
+            expect(inboxMeta).toEqual(mobileMeta('inbox-due', settings, 'de', 'de-DE', { hideChecklistProgress: true }));
+            expect(inboxMeta.parts).toEqual([
+                { kind: 'context', text: '@home', overflowCount: 1, detail: false },
+                { kind: 'tag', text: '#bills', overflowCount: 0, detail: true },
+                { kind: 'due', text: '21.09.2026', tone: 'overdue', detail: false },
+            ]);
+            expect(inboxMeta).toMatchObject({ ageLabel: '3 weeks old', statusLabel: 'Eingang', canFocus: true });
+
+            const detail = host.getProjectDetail({ projectId: 'p-seq', offset: 0, limit: 10 });
+            if (!detail.ok) throw new Error('Project detail failed');
+            const firstRow = detail.value.items.find((item) => item.type === 'task' && item.row.id === 'seq-first');
+            if (firstRow?.type !== 'task') throw new Error('Missing project row');
+            expect(firstRow.row.meta).toEqual(mobileMeta('seq-first', settings, 'de', 'de-DE', {
+                hideProjectMeta: true, sequenceCue: 'available', sequenceLabel: getTranslator('de')('projects.availableNextAction'),
+            }));
+            expect(firstRow.row.meta.parts.map(({ kind }) => kind)).toEqual(['start']);
+            expect(firstRow.row.meta.parts[0].text).toBe(`${getTranslator('de')('taskEdit.startDateLabel')}: 22.09.2026 09:00`);
+            expect(firstRow.row.meta.accessibilityLabel).toContain(getTranslator('de')('projects.availableNextAction'));
+
+            const focus = host.getFocus({ limit: 10 });
+            if (!focus.ok) throw new Error('Focus query failed');
+            const focusRows = focus.value.sections.flatMap(({ rows }) => rows);
+            const deadline = tFallback(getTranslator('de'), 'focus.projectOverdue', 'Project overdue');
+            expect(focusRows.find(({ id }) => id === 'boosted')?.meta)
+                .toEqual(mobileMeta('boosted', settings, 'de', 'de-DE', { projectDeadlineLabel: deadline }));
+            expect(focusRows.find(({ id }) => id === 'boosted')?.meta.parts).toEqual([
+                { kind: 'project', text: 'Taxes', projectId: 'p-due', dotColor: '#22c55e', detail: false },
+                { kind: 'projectDeadline', text: deadline, detail: false },
+            ]);
+            expect(focusRows.find(({ id }) => id === 'seq-first')?.meta)
+                .toEqual(mobileMeta('seq-first', settings, 'de', 'de-DE'));
+            expect(focusRows.find(({ id }) => id === 'seq-first')?.meta.parts[0])
+                .toEqual({ kind: 'project', text: 'Launch · Phase 1', projectId: 'p-seq', dotColor: '#22c55e', detail: false });
+        });
+
+        it('refreshes Inbox and project pages when settings, language, or the local day change', async () => {
+            const host = await activateMeta({});
+            const inbox = () => {
+                const result = host.getInboxWindow({ offset: 0, limit: 1 });
+                if (!result.ok) throw new Error('Inbox query failed');
+                return result.value;
+            };
+            const project = () => {
+                const result = host.getProjectDetail({ projectId: 'p-seq', offset: 0, limit: 1 });
+                if (!result.ok) throw new Error('Project detail failed');
+                return result.value;
+            };
+            const focus = () => {
+                const result = host.getFocus({ limit: 10 });
+                if (!result.ok) throw new Error('Focus query failed');
+                return result.value;
+            };
+            const dueText = () => inbox().rows[0].meta.parts.find(({ kind }) => kind === 'due')?.text;
+            const first = { inbox: inbox(), project: project(), focus: focus() };
+            expect(dueText()).toBe('09/21/2026');
+            expect(inbox().revision).toBe(first.inbox.revision);
+
+            useTaskStore.setState({ settings: { dateFormat: 'ymd' } });
+            const ymd = { inbox: inbox(), project: project(), focus: focus() };
+            expect(dueText()).toBe('2026-09-21');
+            expect(ymd.inbox.revision).not.toBe(first.inbox.revision);
+            expect(ymd.project.revision).not.toBe(first.project.revision);
+            expect(ymd.focus.revision).not.toBe(first.focus.revision);
+            expect(host.getInboxWindow({ offset: 1, limit: 1, revision: first.inbox.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+
+            expect(await host.setLanguage({ storedLanguage: 'en', systemLocale: 'en-GB' })).toMatchObject({ ok: true });
+            const british = { inbox: inbox(), project: project() };
+            expect(british.inbox.revision).not.toBe(ymd.inbox.revision);
+            expect(british.project.revision).not.toBe(ymd.project.revision);
+
+            vi.setSystemTime(new Date(2026, 8, 24, 0, 0, 1));
+            const tomorrow = { inbox: inbox(), project: project() };
+            expect(tomorrow.inbox.revision).not.toBe(british.inbox.revision);
+            expect(tomorrow.project.revision).not.toBe(british.project.revision);
+            expect(host.getProjectDetail({ projectId: 'p-seq', offset: 1, limit: 1, revision: british.project.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        });
+
+        it('refreshes Inbox and project pages when a timed due date passes within the day', async () => {
+            const host = await activateMeta({});
+            useTaskStore.setState({ _allTasks: [
+                task('inbox-timed', '2026-09-20T10:00:00', { dueDate: '2026-09-23T10:01' }),
+                task('project-timed', '2026-09-20T10:00:00', { status: 'next', projectId: 'p-seq', dueDate: '2026-09-23T10:01' }),
+            ] });
+            const read = () => {
+                const inbox = host.getInboxWindow({ offset: 0, limit: 1 });
+                const project = host.getProjectDetail({ projectId: 'p-seq', offset: 0, limit: 10 });
+                if (!inbox.ok || !project.ok) throw new Error('Query failed');
+                const projectRow = project.value.items.find((item) => item.type === 'task' && item.row.id === 'project-timed');
+                return {
+                    inbox: inbox.value,
+                    project: project.value,
+                    tones: [inbox.value.rows[0].meta, projectRow?.type === 'task' ? projectRow.row.meta : null]
+                        .map((meta) => meta?.parts.find((part) => part.kind === 'due')),
+                };
+            };
+            const before = read();
+            expect(before.tones).toMatchObject([{ tone: 'dueSoon' }, { tone: 'dueSoon' }]);
+
+            vi.setSystemTime(new Date(2026, 8, 23, 10, 2, 0));
+            const after = read();
+            expect(after.tones).toMatchObject([{ tone: 'overdue' }, { tone: 'overdue' }]);
+            expect(after.inbox.revision).not.toBe(before.inbox.revision);
+            expect(after.project.revision).not.toBe(before.project.revision);
+            expect(host.getInboxWindow({ offset: 1, limit: 1, revision: before.inbox.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(host.getProjectDetail({ projectId: 'p-seq', offset: 1, limit: 1, revision: before.project.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+
+            vi.setSystemTime(new Date(2026, 8, 23, 10, 2, 59));
+            expect(read().inbox.revision).toBe(after.inbox.revision);
+        });
+
+        it('lists Focus review projects like mobile: due, live, not archived, earliest first', async () => {
+            const host = await activateMeta({});
+            const focus = host.getFocus({ limit: 10 });
+            if (!focus.ok) throw new Error('Focus query failed');
+            const state = useTaskStore.getState();
+            expect(focus.value.reviewProjects.map(({ id }) => id)).toEqual(['p-review-early', 'p-review']);
+            expect(focus.value.reviewProjects.map(({ id }) => id))
+                .toEqual(focusDerivation.getReviewDueProjects(state.projects, NOW).map(({ id }) => id));
+            expect(focus.value.reviewProjects[1]).toEqual({
+                id: 'p-review', title: 'Garden', status: 'active', isFocused: false, color: '#123456',
+                activeTaskCount: 0, nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: false,
+                reviewDateLabel: '09/20/2026',
+            });
+        });
     });
 
     it('queries 5,000 tasks and serves the same revision from cache', async () => {

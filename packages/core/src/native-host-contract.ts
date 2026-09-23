@@ -1,4 +1,4 @@
-import { isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection } from './area-filter';
+import { isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, resolveAreaFilterSelection } from './area-filter';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
@@ -11,12 +11,23 @@ import {
 } from './project-task-list-model';
 import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
 import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
-import { hasTimeComponent, safeParseDate } from './date';
-import { buildFocusPools, buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists, type FocusTaskSection, type FocusTaskSectionKey } from './focus-sections';
+import { createDateFormatter, hasTimeComponent, safeParseDate, type DateFormattingConfig } from './date';
+import { getProjectDeadlineBoostLabel } from './focus-grouping';
+import {
+    buildFocusPools,
+    buildFocusTaskSections,
+    DEFAULT_FOCUS_SORT_BY,
+    deriveFocusTaskLists,
+    getReviewDueProjects,
+    type FocusTaskSection,
+    type FocusTaskSectionKey,
+} from './focus-sections';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isTaskActionable } from './task-status';
-import { getEnglishI18nValue, getTranslator } from './i18n';
+import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup, type TaskRowMeta, type TaskRowMetaInput } from './task-row-meta';
+import type { ProjectDeadlineBoost } from './task-utils';
+import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
 import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
@@ -68,6 +79,13 @@ export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
     hasNotes: boolean;
     revealDate: string | null;
     laterToday: boolean;
+    /**
+     * The React Native row's labels and meta line, formatted with the user's date
+     * settings and language. Render `meta.parts` in order. Inbox and project detail
+     * hide detail parts, the age and the description (mobile lists always do);
+     * Focus shows them only with its details toggle on (off by default).
+     */
+    meta: TaskRowMeta;
 };
 export type NativeInboxRow = NativeTaskRow;
 export type NativeInboxWindow = {
@@ -86,7 +104,13 @@ export type NativeFocusSection = {
 export type NativeFocusView = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
+    /** Mobile hides a section whose total is 0: no header, no rows. */
     sections: NativeFocusSection[];
+    /**
+     * "Projects to review" (string key agenda.reviewDueProjects), shown after the
+     * task sections and hidden when empty; its header count is this length.
+     */
+    reviewProjects: NativeReviewProjectRow[];
 };
 export type NativeProjectRow = Pick<Project, 'id' | 'title' | 'status'> & {
     isFocused: boolean;
@@ -95,6 +119,10 @@ export type NativeProjectRow = Pick<Project, 'id' | 'title' | 'status'> & {
     nextActionId: string | null;
     nextActionTitle: string | null;
     focusedWithoutNextAction: boolean;
+};
+export type NativeReviewProjectRow = NativeProjectRow & {
+    /** The review date, formatted like the mobile Focus row. */
+    reviewDateLabel: string | null;
 };
 export type NativeProjectGroup = {
     areaId: string | null;
@@ -134,7 +162,10 @@ export const sortAreasForDisplay = (areas: Area[]): Area[] => [...areas]
     .filter((area) => !area.deletedAt)
     .sort((a, b) => a.order !== b.order ? a.order - b.order : a.name.localeCompare(b.name));
 
-const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>): NativeTaskRow => ({
+// The per-row view options mobile passes to the row.
+type RowMetaOptions = Omit<TaskRowMetaInput, 'task' | 'lookup' | 'features' | 'language' | 'dateFormatting' | 't' | 'now'>;
+
+const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>, meta: TaskRowMeta): NativeTaskRow => ({
     id: task.id,
     title: task.title,
     status: task.status,
@@ -146,7 +177,29 @@ const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>): Native
     hasNotes: typeof task.description === 'string' && task.description.length > 0,
     revealDate: null,
     laterToday: false,
+    meta,
 });
+
+const toNativeProjectRow = (
+    project: Project,
+    summaries: ReturnType<ReturnType<typeof useTaskStore.getState>['getDerivedState']>['projectTaskSummaryById'],
+): NativeProjectRow => {
+    const summary = summaries.get(project.id);
+    const nextAction = summary?.nextAction;
+    const activeTaskCount = summary?.activeTaskCount ?? 0;
+    const isFocused = project.isFocused === true;
+    return {
+        id: project.id,
+        title: project.title,
+        status: project.status,
+        isFocused,
+        color: project.color ?? null,
+        activeTaskCount,
+        nextActionId: nextAction?.id ?? null,
+        nextActionTitle: nextAction?.title ?? null,
+        focusedWithoutNextAction: isFocused && !nextAction && activeTaskCount > 0,
+    };
+};
 
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({
     ok: false,
@@ -171,6 +224,7 @@ const normalizeEditorValue = (field: keyof NativeEditableFields, value: unknown)
 export function createNativeHostContract() {
     const processId = generateUUID();
     let language: Language = 'en';
+    let systemLocale: string | null = null;
     let translate = getTranslator(language);
     let readyAdapter: StorageAdapter | null = null;
     let generation = 0;
@@ -189,6 +243,8 @@ export function createNativeHostContract() {
     let cachedFocusProjectTitles = new Map<string, string>();
     let cachedRevealDates = new Map<string, string>();
     let cachedLaterTodayIds = new Set<string>();
+    let cachedDeadlineBoosts = new Map<string, ProjectDeadlineBoost>();
+    let cachedReviewProjects: Project[] = [];
     let cachedProjectsRevision = '';
     let cachedProjects: NativeProjectsView | null = null;
     let cachedProjectDetailKey = '';
@@ -230,9 +286,38 @@ export function createNativeHostContract() {
         return settingsGeneration;
     };
 
-    const focusRevision = (now: Date) => {
-        const storeRevision = revision();
-        return `${storeRevision}:${settingsRevision()}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}:${language}`;
+    // Row labels read the date settings (the settings generation), the language
+    // and locale, and the clock: urgency tones cross thresholds within a day.
+    const displayRevision = (now: Date) => (
+        `${settingsRevision()}:${language}:${systemLocale ?? ''}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}`
+    );
+
+    const focusRevision = (now: Date) => `${revision()}:${displayRevision(now)}`;
+
+    // The configuration mobile's root layout applies to its dates.
+    const dateFormatting = (): DateFormattingConfig => {
+        const settings = useTaskStore.getState().settings;
+        return {
+            language: settings.language || language,
+            dateFormat: settings.dateFormat,
+            calendarSystem: settings.calendarSystem,
+            timeFormat: settings.timeFormat,
+            systemLocale,
+        };
+    };
+
+    const rowMeta = (task: Task, now: Date, options: RowMetaOptions = {}): TaskRowMeta => {
+        const state = useTaskStore.getState();
+        return buildTaskRowMeta({
+            ...options,
+            task,
+            lookup: resolveTaskRowLookup(task, state.projects, state.areas, state._sectionsById),
+            features: resolveTaskRowFeatures(state.settings),
+            language,
+            dateFormatting: dateFormatting(),
+            t: translate,
+            now,
+        });
     };
 
     const focusSections = (currentRevision: string, now: Date): FocusTaskSection[] => {
@@ -252,6 +337,11 @@ export function createNativeHostContract() {
                 sortOrder: undefined,
             });
             const schedule = splitTodayTasksByStartTime(lists.schedule, now);
+            cachedDeadlineBoosts = lists.projectDeadlineBoosts;
+            const areaById = new Map(state.areas.map((area) => [area.id, area]));
+            cachedReviewProjects = getReviewDueProjects(state.projects.filter((project) => (
+                !project.deletedAt && projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById)
+            )), now);
             cachedLaterTodayIds = new Set(schedule.laterToday.map((task) => task.id));
             cachedFocusSections = buildFocusTaskSections(lists, (key) => {
                 const value = translate(key);
@@ -268,9 +358,14 @@ export function createNativeHostContract() {
         return cachedFocusSections;
     };
 
-    const focusRows = (section: FocusTaskSection, offset: number, limit: number): NativeTaskRow[] => (
+    const focusRows = (section: FocusTaskSection, offset: number, limit: number, now: Date): NativeTaskRow[] => (
         section.items.slice(offset, offset + limit).map((task) => ({
-            ...toNativeTaskRow(task, cachedFocusProjectTitles),
+            ...toNativeTaskRow(task, cachedFocusProjectTitles, rowMeta(task, now, {
+                projectDeadlineLabel: getProjectDeadlineBoostLabel(
+                    cachedDeadlineBoosts.get(task.id),
+                    (key, fallback) => tFallback(translate, key, fallback),
+                ),
+            })),
             revealDate: section.key === 'upcoming' ? cachedRevealDates.get(task.id) ?? null : null,
             laterToday: section.key === 'schedule' && cachedLaterTodayIds.has(task.id),
         }))
@@ -351,6 +446,7 @@ export function createNativeHostContract() {
                 await loadTranslations('en');
                 await loadTranslations(nextLanguage);
                 language = nextLanguage;
+                systemLocale = input.systemLocale;
                 translate = getTranslator(language);
                 return { ok: true, value: { language } };
             } catch (error) {
@@ -425,7 +521,8 @@ export function createNativeHostContract() {
                 || (input.revision !== undefined && typeof input.revision !== 'string')) {
                 return fail('INVALID_INPUT', 'A valid offset, bounded limit, and revision for later pages are required');
             }
-            const currentRevision = revision();
+            const now = new Date();
+            const currentRevision = `${revision()}:${displayRevision(now)}`;
             if (input.revision !== undefined && input.revision !== currentRevision) {
                 return fail('STALE_REVISION', 'Inbox changed; restart paging from offset zero');
             }
@@ -443,7 +540,10 @@ export function createNativeHostContract() {
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision: currentRevision,
                     total: cachedInbox.length,
-                    rows: cachedInbox.slice(input.offset, input.offset + input.limit).map((task) => toNativeTaskRow(task, cachedProjectTitles)),
+                    // Mobile's Inbox list hides checklist progress.
+                    rows: cachedInbox.slice(input.offset, input.offset + input.limit).map((task) => (
+                        toNativeTaskRow(task, cachedProjectTitles, rowMeta(task, now, { hideChecklistProgress: true }))
+                    )),
                 },
             };
         },
@@ -456,16 +556,23 @@ export function createNativeHostContract() {
             }
             const now = new Date();
             const currentRevision = focusRevision(now);
+            const sections = focusSections(currentRevision, now).map((section) => ({
+                key: section.key,
+                title: section.title,
+                total: section.items.length,
+                rows: focusRows(section, 0, input.limit, now),
+            }));
+            const summaries = useTaskStore.getState().getDerivedState().projectTaskSummaryById;
+            const formatDate = createDateFormatter(dateFormatting());
             return {
                 ok: true,
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision: currentRevision,
-                    sections: focusSections(currentRevision, now).map((section) => ({
-                        key: section.key,
-                        title: section.title,
-                        total: section.items.length,
-                        rows: focusRows(section, 0, input.limit),
+                    sections,
+                    reviewProjects: cachedReviewProjects.map((project) => ({
+                        ...toNativeProjectRow(project, summaries),
+                        reviewDateLabel: project.reviewAt ? formatDate(project.reviewAt, 'P') : null,
                     })),
                 },
             };
@@ -494,23 +601,7 @@ export function createNativeHostContract() {
                         areaName: area?.name ?? null,
                         areaColor: area?.color ?? null,
                         areaIcon: area?.icon ?? null,
-                        projects: group.projects.map((project): NativeProjectRow => {
-                            const summary = summaries.get(project.id);
-                            const nextAction = summary?.nextAction;
-                            const activeTaskCount = summary?.activeTaskCount ?? 0;
-                            const isFocused = project.isFocused === true;
-                            return {
-                                id: project.id,
-                                title: project.title,
-                                status: project.status,
-                                isFocused,
-                                color: project.color ?? null,
-                                activeTaskCount,
-                                nextActionId: nextAction?.id ?? null,
-                                nextActionTitle: nextAction?.title ?? null,
-                                focusedWithoutNextAction: isFocused && !nextAction && activeTaskCount > 0,
-                            };
-                        }),
+                        projects: group.projects.map((project) => toNativeProjectRow(project, summaries)),
                     };
                 };
                 cachedProjects = {
@@ -535,8 +626,9 @@ export function createNativeHostContract() {
                 || (input.revision !== undefined && typeof input.revision !== 'string')) {
                 return fail('INVALID_INPUT', 'A project ID, valid offset, bounded limit, and revision for later pages are required');
             }
-            // Feature settings change the resolved sort; titles are translated.
-            const currentRevision = `${revision()}:${settingsRevision()}:${language}`;
+            // Feature settings change the resolved sort; titles and row labels are translated.
+            const now = new Date();
+            const currentRevision = `${revision()}:${displayRevision(now)}`;
             if (input.revision !== undefined && input.revision !== currentRevision) {
                 return fail('STALE_REVISION', 'Project changed; restart paging from offset zero');
             }
@@ -555,7 +647,12 @@ export function createNativeHostContract() {
                             ? { type: 'section', id: item.id, title: item.title, count: item.count, muted: item.muted === true }
                             : {
                                 type: 'task',
-                                row: toNativeTaskRow(item.task, detail.projectTitles),
+                                // Mobile's project list hides the project name on its rows.
+                                row: toNativeTaskRow(item.task, detail.projectTitles, rowMeta(item.task, now, {
+                                    hideProjectMeta: true,
+                                    sequenceCue: detail.cues.get(item.task.id),
+                                    sequenceLabel: tFallback(translate, 'projects.availableNextAction', 'Available next action'),
+                                })),
                                 sectionId: item.reorderSectionId ?? null,
                                 sequenceCue: detail.cues.get(item.task.id) ?? null,
                             }
@@ -593,7 +690,7 @@ export function createNativeHostContract() {
                     revision: currentRevision,
                     key: section.key,
                     total: section.items.length,
-                    rows: focusRows(section, input.offset, input.limit),
+                    rows: focusRows(section, input.offset, input.limit, now),
                 },
             };
         },

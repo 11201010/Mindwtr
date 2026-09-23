@@ -3,25 +3,20 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer from 'react-test-renderer';
 import { AccessibilityInfo, Alert, Text } from 'react-native';
 
+import { getTaskAgeLabel, safeFormatDate } from '@mindwtr/core';
 import { SwipeableTaskItem, readTaskRowRenderCount, type TaskRowActions } from './swipeable-task-item';
 import { TaskEditDestinationPicker } from './task-edit/TaskEditDestinationPicker';
 import { TaskEditModal } from './task-edit-modal';
 
 vi.mock('./task-edit-modal', () => ({ TaskEditModal: vi.fn(() => null) }));
 
-const { addTask, updateTask, restoreTask, undoTaskCompletion, showToast, getChecklistProgress, getTaskAgeLabel, getTaskStaleness, safeFormatDate, safeParseDate, storeState } = vi.hoisted(() => ({
+const { addTask, updateTask, restoreTask, undoTaskCompletion, showToast, getTaskStaleness, storeState } = vi.hoisted(() => ({
   addTask: vi.fn(),
   updateTask: vi.fn(),
   restoreTask: vi.fn(),
   undoTaskCompletion: vi.fn(),
   showToast: vi.fn(),
-  getChecklistProgress: vi.fn((_value: any): any => null),
-  getTaskAgeLabel: vi.fn(() => '3 weeks old'),
   getTaskStaleness: vi.fn(() => 'stale'),
-  safeFormatDate: vi.fn((_value: unknown, formatStr: string): string => (
-    formatStr === 'Pp' ? 'May 12, 2026, 8:30 AM' : ''
-  )),
-  safeParseDate: vi.fn((value?: string | null) => (value ? new Date(value) : null)),
   storeState: {
     addTask: vi.fn(),
     updateTask: vi.fn(),
@@ -118,15 +113,13 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
   storeState.addTask = addTask;
   storeState.updateTask = updateTask;
   storeState.restoreTask = restoreTask;
-  // Only display formatters are doubled, so rendered text stays deterministic.
-  // Everything else is real core on purpose: the stubs this replaced included a
-  // `getTaskDateCoherenceIssues` hardcoded to one fixture's dates.
+  // Core is real on purpose: the stubs this replaced included a
+  // `getTaskDateCoherenceIssues` hardcoded to one fixture's dates. The row's
+  // labels come from core's buildTaskRowMeta, which formats inside core where a
+  // mock of this module cannot reach, so date and age expectations below are
+  // computed with the same real formatters.
   return mockCore(importOriginal, () => storeState, {
-    getChecklistProgress,
-    getTaskAgeLabel,
     getTaskStaleness,
-    safeFormatDate,
-    safeParseDate,
     undoTaskCompletion,
   });
 });
@@ -263,13 +256,7 @@ describe('SwipeableTaskItem', () => {
     updateTask.mockResolvedValue({ success: true });
     restoreTask.mockResolvedValue({ success: true });
     undoTaskCompletion.mockResolvedValue(undefined);
-    getTaskAgeLabel.mockReturnValue('3 weeks old');
     getTaskStaleness.mockReturnValue('stale');
-    getChecklistProgress.mockReturnValue(null);
-    safeFormatDate.mockImplementation((_value: unknown, formatStr: string) => (
-      formatStr === 'Pp' ? 'May 12, 2026, 8:30 AM' : ''
-    ));
-    safeParseDate.mockImplementation((value?: string | null) => (value ? new Date(value) : null));
   });
 
   it('keeps inbox row titles width-constrained without the focus toggle', () => {
@@ -891,14 +878,14 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       );
     });
 
-    expect(hasText(tree, 'Start: May 12, 2026, 8:30 AM')).toBe(true);
+    const start = safeFormatDate('2026-05-12T08:30:00.000Z', 'Pp');
+    expect(hasText(tree, `Start: ${start}`)).toBe(true);
 
     const row = tree.root.find((node) => (
       node.props.accessibilityRole === 'button'
-      && node.props.accessibilityLabel === 'Client call. Status: Next. Start: May 12, 2026, 8:30 AM'
+      && node.props.accessibilityLabel === `Client call. Status: Next. Start: ${start}`
     ));
     expect(row).toBeTruthy();
-    expect(safeFormatDate).toHaveBeenCalledWith(expect.any(Date), 'Pp');
   });
 
   // Urgency is derived by core from the due date against the clock — there is no
@@ -906,7 +893,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
   // it back, so every case shared a single past due date and the assertion only
   // ever proved the stub returned what it was handed.
   it('colors due date metadata by urgency', () => {
-    safeFormatDate.mockReturnValue('Due date');
     const hoursFromNow = (hours: number) => (
       new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
     );
@@ -942,10 +928,13 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       return tree;
     };
 
-    expect(getTextColor(renderDueTask('normal', hoursFromNow(24 * 10)), 'Due date')).toBe('#999999');
-    expect(getTextColor(renderDueTask('upcoming', hoursFromNow(48)), 'Due date')).toBe('#f59e0b');
-    expect(getTextColor(renderDueTask('urgent', hoursFromNow(12)), 'Due date')).toBe('#f59e0b');
-    expect(getTextColor(renderDueTask('overdue', hoursFromNow(-24)), 'Due date')).toBe('#b91c1c');
+    const dueColor = (label: string, dueDate: string) => (
+      getTextColor(renderDueTask(label, dueDate), safeFormatDate(dueDate, 'Pp'))
+    );
+    expect(dueColor('normal', hoursFromNow(24 * 10))).toBe('#999999');
+    expect(dueColor('upcoming', hoursFromNow(48))).toBe('#f59e0b');
+    expect(dueColor('urgent', hoursFromNow(12))).toBe('#f59e0b');
+    expect(dueColor('overdue', hoursFromNow(-24))).toBe('#b91c1c');
   });
 
   it('navigates from project, context, and tag meta labels', () => {
@@ -1080,12 +1069,11 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       );
     });
 
-    expect(hasText(tree, '3 weeks old')).toBe(false);
+    expect(hasText(tree, getTaskAgeLabel('2026-01-01T00:00:00.000Z')!)).toBe(false);
   });
 
   it('shows task age when enabled in appearance settings', () => {
     storeState.settings = { features: {}, appearance: { showTaskAge: true } };
-    getTaskAgeLabel.mockReturnValue('2 days old');
     getTaskStaleness.mockReturnValue('fresh');
 
     let tree!: renderer.ReactTestRenderer;
@@ -1115,7 +1103,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       );
     });
 
-    expect(hasText(tree, '2 days old')).toBe(true);
+    expect(hasText(tree, getTaskAgeLabel('2026-01-01T00:00:00.000Z')!)).toBe(true);
   });
 
   it('renders compact description markdown without raw block or inline markers', () => {
@@ -1158,7 +1146,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
 
   it('keeps essential date metadata with hideDetails while hiding description and task age', () => {
     storeState.settings = { features: {}, appearance: { showTaskAge: true } };
-    getTaskAgeLabel.mockReturnValue('2 days old');
     getTaskStaleness.mockReturnValue('fresh');
     const renderRow = (hideDetails: boolean) => {
       let tree!: renderer.ReactTestRenderer;
@@ -1193,17 +1180,19 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       return tree;
     };
 
+    const start = `Start: ${safeFormatDate('2026-05-12T08:30:00.000Z', 'Pp')}`;
+    const age = getTaskAgeLabel('2026-01-01T00:00:00.000Z')!;
     const shown = renderRow(false);
     expect(hasText(shown, 'Client call')).toBe(true);
     expect(hasText(shown, 'Prep the deck')).toBe(true);
-    expect(hasText(shown, 'Start: May 12, 2026, 8:30 AM')).toBe(true);
-    expect(hasText(shown, '2 days old')).toBe(true);
+    expect(hasText(shown, start)).toBe(true);
+    expect(hasText(shown, age)).toBe(true);
 
     const hidden = renderRow(true);
     expect(hasText(hidden, 'Client call')).toBe(true);
     expect(hasText(hidden, 'Prep the deck')).toBe(false);
-    expect(hasText(hidden, 'Start: May 12, 2026, 8:30 AM')).toBe(true);
-    expect(hasText(hidden, '2 days old')).toBe(false);
+    expect(hasText(hidden, start)).toBe(true);
+    expect(hasText(hidden, age)).toBe(false);
   });
 
   it('shows the completion date and time for completed tasks', () => {
@@ -1235,7 +1224,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       );
     });
 
-    expect(hasText(tree, 'Completed: May 12, 2026, 8:30 AM')).toBe(true);
+    expect(hasText(tree, `Completed: ${safeFormatDate('2026-05-12T08:30:00.000Z', 'Pp')}`)).toBe(true);
   });
 
   it('shows cancellation time without exposing the completion-time editor', () => {
@@ -1267,7 +1256,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       );
     });
 
-    expect(hasText(tree, 'Cancelled: May 12, 2026, 8:30 AM')).toBe(true);
+    expect(hasText(tree, `Cancelled: ${safeFormatDate('2026-05-12T08:30:00.000Z', 'Pp')}`)).toBe(true);
     expect(hasText(tree, 'Completed:')).toBe(false);
     expect(tree.root.findAllByProps({ accessibilityLabel: 'Edit completion time' })).toHaveLength(0);
   });
@@ -1367,7 +1356,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       'taskEdit.dueDateLabel': 'Échéance',
       'status.next': 'Suivante',
     };
-    safeFormatDate.mockReturnValue('12 mai 2026');
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -1401,7 +1389,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       node.props.accessibilityRole === 'button'
       && node.props.accessibilityLabel?.includes('Statut: Suivante')
     ));
-    expect(taskButton.props.accessibilityLabel).toContain('Échéance: 12 mai 2026');
+    expect(taskButton.props.accessibilityLabel).toContain(`Échéance: ${safeFormatDate('2026-05-12', 'P')}`);
     expect(taskButton.props.accessibilityHint).toBe(
       'Touchez deux fois pour modifier. Les autres actions sont dans le menu.'
     );
@@ -2051,16 +2039,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
     } as any;
     storeState.tasks = [task];
-    getChecklistProgress.mockImplementation((value: any) => {
-      const checklist = value?.checklist ?? [];
-      if (!checklist.length) return null;
-      const completed = checklist.filter((entry: any) => entry.isCompleted).length;
-      return {
-        completed,
-        total: checklist.length,
-        percent: completed / checklist.length,
-      };
-    });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -2126,7 +2104,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       updatedAt: '2026-05-12T08:30:00.000Z',
     } as any;
     storeState._allTasks = [task];
-    getChecklistProgress.mockReturnValue({ completed: 0, total: 1, percent: 0 });
     const onPress = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
@@ -2200,7 +2177,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
     } as any;
     storeState._allTasks = [task];
-    getChecklistProgress.mockReturnValue({ completed: 0, total: 1, percent: 0 });
     const onPress = vi.fn();
     const onStatusChange = vi.fn();
     const onDelete = vi.fn();
@@ -2259,11 +2235,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     } as any;
-    getChecklistProgress.mockReturnValue({
-      completed: 0,
-      total: 1,
-      percent: 0,
-    });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -2303,11 +2274,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     } as any;
-    getChecklistProgress.mockReturnValue({
-      completed: 0,
-      total: 1,
-      percent: 0,
-    });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -2426,7 +2392,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       appearance: { showTaskAge: true },
       gtd: { pomodoro: { linkTask: true } },
     } as any;
-    getChecklistProgress.mockReturnValue({ completed: 0, total: 1, percent: 0 });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -2511,16 +2476,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     } as any;
     storeState.tasks = [];
     storeState._allTasks = [task];
-    getChecklistProgress.mockImplementation((value: any) => {
-      const checklist = value?.checklist ?? [];
-      if (!checklist.length) return null;
-      const completed = checklist.filter((entry: any) => entry.isCompleted).length;
-      return {
-        completed,
-        total: checklist.length,
-        percent: completed / checklist.length,
-      };
-    });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -2582,16 +2537,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     } as any;
     storeState.tasks = [task];
     storeState._allTasks = [task];
-    getChecklistProgress.mockImplementation((value: any) => {
-      const checklist = value?.checklist ?? [];
-      if (!checklist.length) return null;
-      const completed = checklist.filter((entry: any) => entry.isCompleted).length;
-      return {
-        completed,
-        total: checklist.length,
-        percent: completed / checklist.length,
-      };
-    });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -2672,7 +2617,6 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     } as any;
     storeState.tasks = [task];
     storeState._allTasks = [task];
-    getChecklistProgress.mockReturnValue({ completed: 0, total: 1, percent: 0 });
 
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {

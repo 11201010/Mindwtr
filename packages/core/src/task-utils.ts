@@ -1417,9 +1417,8 @@ export function getCalendarPlanningCandidates<T extends Task>(
 /**
  * Calculate the age of a task in days
  */
-export function getTaskAgeDays(createdAt: string): number {
+export function getTaskAgeDays(createdAt: string, now: Date = new Date()): number {
     const created = new Date(createdAt);
-    const now = new Date();
     const diffMs = now.getTime() - created.getTime();
     return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
@@ -1428,8 +1427,8 @@ export function getTaskAgeDays(createdAt: string): number {
  * Get a human-readable age string for a task
  * Returns null for tasks < 1 day old (to avoid clutter)
  */
-export function getTaskAgeLabel(createdAt: string, lang: Language = 'en'): string | null {
-    const days = getTaskAgeDays(createdAt);
+export function getTaskAgeLabel(createdAt: string, lang: Language = 'en', now: Date = new Date()): string | null {
+    const days = getTaskAgeDays(createdAt, now);
     const isChinese = lang === 'zh' || lang === 'zh-Hant';
 
     if (days < 1) return null;
@@ -1467,11 +1466,10 @@ export function getTaskStaleness(createdAt: string): 'fresh' | 'aging' | 'stale'
  * Get the urgency level of a task based on due date
  * Returns: 'overdue' | 'urgent' (24h) | 'upcoming' (72h) | 'normal' | 'done'
  */
-export function getTaskUrgency(task: Partial<Task>): 'overdue' | 'urgent' | 'upcoming' | 'normal' | 'done' {
+export function getTaskUrgency(task: Partial<Task>, now: Date = new Date()): 'overdue' | 'urgent' | 'upcoming' | 'normal' | 'done' {
     if (!isTaskActionable(task)) return 'done';
     if (!task.dueDate) return 'normal';
 
-    const now = new Date();
     const due = safeParseDueDate(task.dueDate);
     if (!due) return 'normal';
     const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);

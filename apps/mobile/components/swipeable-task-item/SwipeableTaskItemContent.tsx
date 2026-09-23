@@ -1,27 +1,14 @@
-import React, { type ReactNode, useMemo, useRef, useState } from 'react';
+import React, { type ReactNode, useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Check, CircleDot, History, Hourglass, ListChecks, Paperclip, Repeat, UserRound } from 'lucide-react-native';
 import { useThemeTokens } from '../../hooks/use-theme-tokens';
 import { useStatusColors } from '../../hooks/use-status-colors';
 import {
-    getInlineMarkdownPreview,
-    getTaskAgeLabel,
-    getTaskDateCoherenceIssues,
-    getTaskUrgency,
     formatI18nTemplate,
-    formatTimeEstimateLabel,
-    formatTimeSpentLabel,
-    hasTimeComponent,
-    isTaskCancelled,
-    isTaskCompleted,
-    resolveTaskTextDirection,
-    safeFormatDate,
-    safeParseDate,
-    safeParseDueDate,
     tFallback,
     TASK_PRIORITY_COLORS,
 } from '@mindwtr/core';
-import type { Area, Language, Project, ProjectSequenceTaskCue, Section, Task } from '@mindwtr/core';
+import type { ProjectSequenceTaskCue, Task, TaskRowMeta, TaskRowMetaPart } from '@mindwtr/core';
 import type { ThemeColors } from '../../hooks/use-theme-colors';
 import { AppPressable } from '../app-pressable';
 import { FocusStarIcon } from '../FocusStarIcon';
@@ -32,16 +19,11 @@ import { CompactText } from '@/components/compact-text';
 interface SwipeableTaskItemContentProps {
     accessibilityActions: { label: string; name: string }[];
     accessibilityHint: string;
-    accessibilityLabel: string;
     canShowFocusToggle: boolean;
     /** When set, the star renders disabled with this as its label. */
     focusToggleDisabledLabel?: string;
-    checklistProgress: { completed: number; percent: number; total: number } | null;
-    hideChecklistProgress: boolean;
-    hideContexts: boolean;
-    hideProjectMeta: boolean;
     hideStatusBadge: boolean;
-    /** Title-only row: suppress the description preview and metadata parts row. */
+    /** Title-only row: suppress the description preview, task age and detail meta parts. */
     hideDetails: boolean;
     /** Render the status control as a compact icon button (no status-name label) for single-status lists */
     statusBadgeAsIcon: boolean;
@@ -49,10 +31,11 @@ interface SwipeableTaskItemContentProps {
     isHighlighted: boolean;
     isMultiSelected: boolean;
     showFocusHighlight: boolean;
-    language: string;
     localChecklist: Task['checklist'];
     interactionDisabled?: boolean;
     allowInspectionWhenDisabled?: boolean;
+    /** The row's labels and meta line, computed by core. */
+    meta: TaskRowMeta;
     onAccessibilityAction: (event: { nativeEvent: { actionName: string } }) => void;
     onAddChecklistItem: (title: string) => void;
     onContextPress?: (context: string) => void;
@@ -65,45 +48,20 @@ interface SwipeableTaskItemContentProps {
     onToggleChecklist: () => void;
     onToggleChecklistItem: (index: number) => void;
     onToggleFocus: () => void;
-    projects: Project[];
-    sectionById: Map<string, Section>;
-    projectDeadlineLabel?: string;
     footerContent?: ReactNode;
-    recurrenceLabel?: string;
     sequenceCue?: ProjectSequenceTaskCue;
-    areas: Area[];
     selectionMode: boolean;
     showChecklist: boolean;
-    showTaskAge: boolean;
     t: (key: string) => string;
     task: Task;
     tc: ThemeColors;
 }
 
-const COLLAPSED_META_KEYS = new Set([
-    'project',
-    'area',
-    'project-deadline',
-    'context',
-    'completed',
-    'cancelled',
-    'due',
-    'start',
-    'date-issue',
-    'checklist',
-]);
-
 export function SwipeableTaskItemContent({
     accessibilityActions,
     accessibilityHint,
-    accessibilityLabel,
-    areas,
     canShowFocusToggle,
     focusToggleDisabledLabel,
-    checklistProgress,
-    hideChecklistProgress,
-    hideContexts,
-    hideProjectMeta,
     hideStatusBadge,
     hideDetails,
     statusBadgeAsIcon,
@@ -113,8 +71,8 @@ export function SwipeableTaskItemContent({
     showFocusHighlight,
     interactionDisabled = false,
     allowInspectionWhenDisabled = false,
-    language,
     localChecklist,
+    meta,
     onAccessibilityAction,
     onAddChecklistItem,
     onContextPress,
@@ -127,34 +85,14 @@ export function SwipeableTaskItemContent({
     onToggleChecklist,
     onToggleChecklistItem,
     onToggleFocus,
-    projects,
-    sectionById,
-    projectDeadlineLabel,
     footerContent,
-    recurrenceLabel,
     sequenceCue,
     selectionMode,
     showChecklist,
-    showTaskAge,
     t,
     task,
     tc,
 }: SwipeableTaskItemContentProps) {
-    const { area, project, projectColor, section } = useMemo(() => {
-        const activeProject = task.projectId ? projects.find((item) => item.id === task.projectId) : undefined;
-        const projectArea = activeProject?.areaId
-            ? areas.find((area) => area.id === activeProject.areaId)
-            : undefined;
-        const taskArea = task.areaId
-            ? areas.find((candidate) => candidate.id === task.areaId)
-            : undefined;
-        return {
-            area: taskArea ?? projectArea,
-            project: activeProject,
-            projectColor: projectArea?.color,
-            section: task.sectionId ? sectionById.get(task.sectionId) : undefined,
-        };
-    }, [areas, projects, sectionById, task.areaId, task.projectId, task.sectionId]);
     const isReference = task.status === 'reference';
 
     // Draft text lives here, not in useSwipeableChecklist: it must never reach the
@@ -162,78 +100,14 @@ export function SwipeableTaskItemContent({
     const [checklistDraft, setChecklistDraft] = useState('');
     const checklistDraftRef = useRef<TextInput>(null);
 
-    const resolvedDirection = resolveTaskTextDirection(task);
-    const textDirection = resolvedDirection === 'rtl' ? 'rtl' : 'ltr';
-    const textAlign = resolvedDirection === 'rtl' ? 'right' : 'left';
-    const timeEstimateLabel = (() => {
-        if (!task.timeEstimate) return null;
-        return formatTimeEstimateLabel(task.timeEstimate);
-    })();
-    const dueLabel = (() => {
-        const due = safeParseDueDate(task.dueDate);
-        if (!due) return null;
-        const hasTime = hasTimeComponent(task.dueDate);
-        return safeFormatDate(due, hasTime ? 'Pp' : 'P');
-    })();
-    const dueColor = (() => {
-        const urgency = getTaskUrgency(task);
-        if (urgency === 'overdue') return tc.danger;
-        if (urgency === 'urgent' || urgency === 'upcoming') return tc.warning;
-        return tc.secondaryText;
-    })();
-    const startLabel = (() => {
-        const start = safeParseDate(task.startTime);
-        if (!start) return null;
-        const hasTime = hasTimeComponent(task.startTime);
-        return safeFormatDate(start, hasTime ? 'Pp' : 'P');
-    })();
-    const startDateLabel = tFallback(t, 'taskEdit.startDateLabel', 'Start');
-    const dateIssueLabel = getTaskDateCoherenceIssues(task).some((issue) => issue.code === 'start_after_due')
-        ? tFallback(t, 'task.dateIssue.startAfterDue', 'Starts after due date')
-        : null;
-    const terminalTimestamp = (() => {
-        if (isTaskCancelled(task)) {
-            if (!task.cancelledAt) return null;
-            return {
-                key: 'cancelled',
-                label: tFallback(t, 'task.cancelled', 'Cancelled'),
-                timestamp: safeFormatDate(task.cancelledAt, 'Pp', task.cancelledAt),
-                editable: false,
-            };
-        }
-        if (!isTaskCompleted(task)) return null;
-        const completionTimestamp = task.completedAt || task.updatedAt;
-        if (!completionTimestamp) return null;
-        return {
-            key: 'completed',
-            label: tFallback(t, 'list.done', 'Completed'),
-            timestamp: safeFormatDate(completionTimestamp, 'Pp', completionTimestamp),
-            editable: true,
-        };
-    })();
-    const ageLabel = getTaskAgeLabel(task.createdAt, language as Language);
+    const textDirection = meta.textDirection;
+    const textAlign = textDirection === 'rtl' ? 'right' : 'left';
     // Age is detail: the Focus "hide details" toggle drops it with the rest.
-    const showAge = showTaskAge
-        && !hideDetails
-        && task.status !== 'done'
-        && task.status !== 'reference'
-        && !!ageLabel;
+    const ageLabel = hideDetails ? null : meta.ageLabel;
+    const descriptionPreview = hideDetails ? null : meta.descriptionPreview;
     const statusColors = useStatusColors()[task.status];
     const isAvailableNextAction = sequenceCue === 'available';
-    const descriptionPreview = useMemo(
-        () => getInlineMarkdownPreview(task.description ?? ''),
-        [task.description],
-    );
-    const metaParts: ReactNode[] = [];
-    const collapsedMetaParts: ReactNode[] = [];
     const canNavigateMeta = !selectionMode;
-
-    // Items are separated by the row's gap alone. A "·" between them used to be
-    // its own node, so a wrapped line could start with a lone dot (#1161).
-    const addMetaPart = (node: ReactNode, key: string) => {
-        metaParts.push(node);
-        if (COLLAPSED_META_KEYS.has(key)) collapsedMetaParts.push(node);
-    };
 
     const renderMetaItem = ({
         accessibilityLabel: metaAccessibilityLabel,
@@ -272,292 +146,220 @@ export function SwipeableTaskItemContent({
         );
     };
 
-    if (!hideProjectMeta && project) {
-        const projectLabel = section ? `${project.title} · ${section.title}` : project.title;
-        addMetaPart(
-            renderMetaItem({
-                key: 'project',
-                onPress: canNavigateMeta && onProjectPress ? () => onProjectPress(project.id) : undefined,
-                accessibilityLabel: formatI18nTemplate(
-                    tFallback(t, 'task.aria.openProject', 'Open project {name}'),
-                    { name: projectLabel },
-                ),
-                children: (
-                    <>
-                        <View style={[styles.projectDot, { backgroundColor: projectColor || tc.tint }]} />
+    // Items are separated by the row's gap alone. A "·" between them used to be
+    // its own node, so a wrapped line could start with a lone dot (#1161).
+    const renderMetaPart = (part: TaskRowMetaPart): ReactNode => {
+        switch (part.kind) {
+            case 'project':
+                return renderMetaItem({
+                    key: 'project',
+                    onPress: canNavigateMeta && onProjectPress ? () => onProjectPress(part.projectId) : undefined,
+                    accessibilityLabel: formatI18nTemplate(
+                        tFallback(t, 'task.aria.openProject', 'Open project {name}'),
+                        { name: part.text },
+                    ),
+                    children: (
+                        <>
+                            <View style={[styles.projectDot, { backgroundColor: part.dotColor || tc.tint }]} />
+                            <CompactText
+                                style={[styles.metaText, { color: tc.secondaryText }]}
+                                numberOfLines={2}
+                            >
+                                {part.text}
+                            </CompactText>
+                        </>
+                    ),
+                });
+            case 'area':
+                return (
+                    <View key="area" style={styles.inlineMetaItem}>
+                        <View style={[styles.projectDot, { backgroundColor: part.dotColor || tc.tint }]} />
                         <CompactText
                             style={[styles.metaText, { color: tc.secondaryText }]}
                             numberOfLines={2}
                         >
-                            {projectLabel}
+                            {part.text}
                         </CompactText>
-                    </>
-                ),
-            }),
-            'project'
-        );
-    }
-
-    // A task filed straight under an area (no project) names the area, like the
-    // desktop row does; a project already carries its area through the dot (#1246).
-    if ((isReference || !project) && area) {
-        addMetaPart(
-            <View key="area" style={styles.inlineMetaItem}>
-                <View style={[styles.projectDot, { backgroundColor: area.color || tc.tint }]} />
-                <CompactText
-                    style={[styles.metaText, { color: tc.secondaryText }]}
-                    numberOfLines={2}
-                >
-                    {area.name}
-                </CompactText>
-            </View>,
-            'area'
-        );
-    }
-
-    if (!isReference && projectDeadlineLabel) {
-        addMetaPart(
-            <CompactText
-                key="project-deadline"
-                style={[styles.metaText, styles.projectDeadlineText]}
-                numberOfLines={2}
-            >
-                {projectDeadlineLabel}
-            </CompactText>,
-            'project-deadline'
-        );
-    }
-
-    if (!isReference && !hideContexts && task.contexts?.length) {
-        const context = task.contexts[0];
-        const moreContexts = task.contexts.length - 1;
-        addMetaPart(
-            renderMetaItem({
-                key: 'context',
-                onPress: canNavigateMeta && onContextPress ? () => onContextPress(context) : undefined,
-                accessibilityLabel: formatI18nTemplate(
-                    tFallback(t, 'task.aria.openContext', 'Open context {name}'),
-                    { name: context },
-                ),
-                children: (
-                    <>
-                        <CompactText
-                            style={[styles.metaText, styles.contextText]}
-                            numberOfLines={2}
-                        >
-                            {context}
-                        </CompactText>
-                        {moreContexts > 0 && (
-                            <CompactText style={[styles.metaText, { color: tc.secondaryText }]}>+{moreContexts}</CompactText>
-                        )}
-                    </>
-                ),
-            }),
-            'context'
-        );
-    }
-
-    if (isReference && task.assignedTo?.trim()) {
-        addMetaPart(
-            renderMetaItem({
-                key: 'assigned-to',
-                children: (
-                    <>
-                        <UserRound size={12} color={tc.secondaryText} strokeWidth={2} />
-                        <CompactText
-                            style={[styles.metaText, { color: tc.secondaryText }]}
-                            numberOfLines={2}
-                        >
-                            {task.assignedTo.trim()}
-                        </CompactText>
-                    </>
-                ),
-            }),
-            'assigned-to'
-        );
-    }
-
-    if (task.tags?.length) {
-        const tag = task.tags[0];
-        const moreTags = task.tags.length - 1;
-        addMetaPart(
-            renderMetaItem({
-                key: 'tag',
-                onPress: canNavigateMeta && onTagPress ? () => onTagPress(tag) : undefined,
-                accessibilityLabel: formatI18nTemplate(
-                    tFallback(t, 'task.aria.openTag', 'Open tag {name}'),
-                    { name: tag },
-                ),
-                children: (
-                    <>
-                        <CompactText
-                            style={[styles.metaText, styles.tagText]}
-                            numberOfLines={2}
-                        >
-                            {tag}
-                        </CompactText>
-                        {moreTags > 0 && (
-                            <CompactText style={[styles.metaText, { color: tc.secondaryText }]}>+{moreTags}</CompactText>
-                        )}
-                    </>
-                ),
-            }),
-            'tag'
-        );
-    }
-
-    if (!isReference && terminalTimestamp) {
-        addMetaPart(
-            renderMetaItem({
-                key: terminalTimestamp.key,
-                onPress: terminalTimestamp.editable && canNavigateMeta && onEditCompletedAt ? onEditCompletedAt : undefined,
-                accessibilityLabel: terminalTimestamp.editable
-                    ? tFallback(t, 'task.editCompletedAt', 'Edit completion time')
-                    : undefined,
-                children: (
+                    </View>
+                );
+            case 'projectDeadline':
+                return (
                     <CompactText
+                        key="project-deadline"
+                        style={[styles.metaText, styles.projectDeadlineText]}
+                        numberOfLines={2}
+                    >
+                        {part.text}
+                    </CompactText>
+                );
+            case 'context':
+            case 'tag': {
+                const isContext = part.kind === 'context';
+                const onNamePress = isContext ? onContextPress : onTagPress;
+                return renderMetaItem({
+                    key: part.kind,
+                    onPress: canNavigateMeta && onNamePress ? () => onNamePress(part.text) : undefined,
+                    accessibilityLabel: formatI18nTemplate(
+                        isContext
+                            ? tFallback(t, 'task.aria.openContext', 'Open context {name}')
+                            : tFallback(t, 'task.aria.openTag', 'Open tag {name}'),
+                        { name: part.text },
+                    ),
+                    children: (
+                        <>
+                            <CompactText
+                                style={[styles.metaText, isContext ? styles.contextText : styles.tagText]}
+                                numberOfLines={2}
+                            >
+                                {part.text}
+                            </CompactText>
+                            {part.overflowCount > 0 && (
+                                <CompactText style={[styles.metaText, { color: tc.secondaryText }]}>+{part.overflowCount}</CompactText>
+                            )}
+                        </>
+                    ),
+                });
+            }
+            case 'assignedTo':
+                return renderMetaItem({
+                    key: 'assigned-to',
+                    children: (
+                        <>
+                            <UserRound size={12} color={tc.secondaryText} strokeWidth={2} />
+                            <CompactText
+                                style={[styles.metaText, { color: tc.secondaryText }]}
+                                numberOfLines={2}
+                            >
+                                {part.text}
+                            </CompactText>
+                        </>
+                    ),
+                });
+            case 'completed':
+            case 'cancelled': {
+                const editable = part.kind === 'completed';
+                return renderMetaItem({
+                    key: part.kind,
+                    onPress: editable && canNavigateMeta && onEditCompletedAt ? onEditCompletedAt : undefined,
+                    accessibilityLabel: editable
+                        ? tFallback(t, 'task.editCompletedAt', 'Edit completion time')
+                        : undefined,
+                    children: (
+                        <CompactText
+                            style={[styles.metaText, { color: tc.secondaryText }]}
+                        >
+                            {part.text}
+                        </CompactText>
+                    ),
+                });
+            }
+            case 'due': {
+                const dueColor = part.tone === 'overdue'
+                    ? tc.danger
+                    : part.tone === 'dueSoon' ? tc.warning : tc.secondaryText;
+                return (
+                    <CompactText
+                        key="due"
+                        style={[styles.metaText, styles.dueText, { color: dueColor }]}
+                    >
+                        {part.text}
+                    </CompactText>
+                );
+            }
+            case 'start':
+                return (
+                    <CompactText
+                        key="start"
                         style={[styles.metaText, { color: tc.secondaryText }]}
                     >
-                        {`${terminalTimestamp.label}: ${terminalTimestamp.timestamp}`}
+                        {part.text}
                     </CompactText>
-                ),
-            }),
-            terminalTimestamp.key
-        );
-    }
-
-    if (!isReference && dueLabel) {
-        addMetaPart(
-            <CompactText
-                key="due"
-                style={[styles.metaText, styles.dueText, { color: dueColor }]}
-            >
-                {dueLabel}
-            </CompactText>,
-            'due'
-        );
-    }
-
-    if (!isReference && startLabel) {
-        addMetaPart(
-            <CompactText
-                key="start"
-                style={[styles.metaText, { color: tc.secondaryText }]}
-            >
-                {`${startDateLabel}: ${startLabel}`}
-            </CompactText>,
-            'start'
-        );
-    }
-
-    if (!isReference && dateIssueLabel) {
-        addMetaPart(
-            <CompactText
-                key="date-issue"
-                style={[styles.metaText, styles.dateIssueText]}
-                numberOfLines={1}
-            >
-                {dateIssueLabel}
-            </CompactText>,
-            'date-issue'
-        );
-    }
-
-    if (!isReference && recurrenceLabel) {
-        addMetaPart(
-            renderMetaItem({
-                key: 'recurrence',
-                children: (
-                    <>
-                        <Repeat size={12} color={tc.secondaryText} strokeWidth={2} />
-                        <CompactText
-                            key="recurrence-label"
-                            style={[styles.metaText, { color: tc.secondaryText }]}
-                            numberOfLines={2}
-                        >
-                            {recurrenceLabel}
-                        </CompactText>
-                    </>
-                ),
-            }),
-            'recurrence'
-        );
-    }
-
-    if (!isReference && timeEstimateLabel) {
-        addMetaPart(
-            <Text key="estimate" style={[styles.metaText, { color: tc.secondaryText }]}>
-                {timeEstimateLabel}
-            </Text>,
-            'estimate'
-        );
-    }
-
-    const timeSpentLabel = formatTimeSpentLabel(task.timeSpentMinutes);
-    if (!isReference && timeSpentLabel) {
-        addMetaPart(
-            renderMetaItem({
-                key: 'time-spent',
-                children: (
-                    <>
-                        <History size={12} color={tc.secondaryText} strokeWidth={2} />
-                        <CompactText
-                            style={[styles.metaText, { color: tc.secondaryText }]}
-                            accessibilityLabel={`${tFallback(t, 'taskEdit.timeSpentLabel', 'Time Spent')}: ${timeSpentLabel}`}
-                        >
-                            {timeSpentLabel}
-                        </CompactText>
-                    </>
-                ),
-            }),
-            'time-spent'
-        );
-    }
-
-    if (!hideChecklistProgress && checklistProgress) {
-        addMetaPart(
-            <Pressable
-                key="checklist"
-                onPress={onToggleChecklist}
-                hitSlop={4}
-                accessibilityRole="button"
-                accessibilityLabel={t('checklist.progress')}
-                style={styles.inlineMetaButton}
-            >
-                <View style={styles.inlineMetaItem}>
-                    <ListChecks size={13} color={tc.secondaryText} strokeWidth={2} />
-                    <Text style={[styles.metaText, { color: tc.secondaryText }]}>
-                        {checklistProgress.completed}/{checklistProgress.total}
+                );
+            case 'dateIssue':
+                return (
+                    <CompactText
+                        key="date-issue"
+                        style={[styles.metaText, styles.dateIssueText]}
+                        numberOfLines={1}
+                    >
+                        {part.text}
+                    </CompactText>
+                );
+            case 'recurrence':
+                return renderMetaItem({
+                    key: 'recurrence',
+                    children: (
+                        <>
+                            <Repeat size={12} color={tc.secondaryText} strokeWidth={2} />
+                            <CompactText
+                                key="recurrence-label"
+                                style={[styles.metaText, { color: tc.secondaryText }]}
+                                numberOfLines={2}
+                            >
+                                {part.text}
+                            </CompactText>
+                        </>
+                    ),
+                });
+            case 'estimate':
+                return (
+                    <Text key="estimate" style={[styles.metaText, { color: tc.secondaryText }]}>
+                        {part.text}
                     </Text>
-                </View>
-            </Pressable>,
-            'checklist'
-        );
-    }
-
-    const visibleAttachmentCount = (task.attachments ?? []).filter((attachment) => !attachment.deletedAt).length;
-    if (isReference && visibleAttachmentCount > 0) {
-        addMetaPart(
-            renderMetaItem({
-                key: 'attachments',
-                children: (
-                    <>
-                        <Paperclip size={12} color={tc.secondaryText} strokeWidth={2} />
-                        <CompactText
-                            style={[styles.metaText, { color: tc.secondaryText }]}
-                            accessibilityLabel={`${tFallback(t, 'attachments.title', 'Attachments')}: ${visibleAttachmentCount}`}
-                        >
-                            {visibleAttachmentCount}
-                        </CompactText>
-                    </>
-                ),
-            }),
-            'attachments'
-        );
-    }
+                );
+            case 'timeSpent':
+                return renderMetaItem({
+                    key: 'time-spent',
+                    children: (
+                        <>
+                            <History size={12} color={tc.secondaryText} strokeWidth={2} />
+                            <CompactText
+                                style={[styles.metaText, { color: tc.secondaryText }]}
+                                accessibilityLabel={part.accessibilityLabel}
+                            >
+                                {part.text}
+                            </CompactText>
+                        </>
+                    ),
+                });
+            case 'checklist':
+                return (
+                    <Pressable
+                        key="checklist"
+                        onPress={onToggleChecklist}
+                        hitSlop={4}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('checklist.progress')}
+                        style={styles.inlineMetaButton}
+                    >
+                        <View style={styles.inlineMetaItem}>
+                            <ListChecks size={13} color={tc.secondaryText} strokeWidth={2} />
+                            <Text style={[styles.metaText, { color: tc.secondaryText }]}>
+                                {part.completed}/{part.total}
+                            </Text>
+                        </View>
+                    </Pressable>
+                );
+            case 'attachments':
+                return renderMetaItem({
+                    key: 'attachments',
+                    children: (
+                        <>
+                            <Paperclip size={12} color={tc.secondaryText} strokeWidth={2} />
+                            <CompactText
+                                style={[styles.metaText, { color: tc.secondaryText }]}
+                                accessibilityLabel={part.accessibilityLabel}
+                            >
+                                {part.text}
+                            </CompactText>
+                        </>
+                    ),
+                });
+        }
+    };
 
     const { isMaterial, shape } = useThemeTokens();
-    const visibleMetaParts = hideDetails ? collapsedMetaParts : metaParts;
+    const visibleMetaParts = (hideDetails ? meta.parts.filter((part) => !part.detail) : meta.parts).map(renderMetaPart);
 
     return (
         <AppPressable
@@ -578,7 +380,7 @@ export function SwipeableTaskItemContent({
             onLongPress={onLongPress}
             delayLongPress={300}
             disabled={interactionDisabled && !allowInspectionWhenDisabled}
-            accessibilityLabel={accessibilityLabel}
+            accessibilityLabel={meta.accessibilityLabel}
             accessibilityHint={accessibilityHint}
             accessibilityRole="button"
             accessibilityState={(interactionDisabled && !allowInspectionWhenDisabled) || selectionMode
@@ -590,9 +392,9 @@ export function SwipeableTaskItemContent({
             accessibilityActions={accessibilityActions}
             onAccessibilityAction={onAccessibilityAction}
         >
-            {!isReference && task.priority && (
+            {meta.priority && (
                 <View
-                    style={[styles.priorityStrip, { backgroundColor: TASK_PRIORITY_COLORS[task.priority] }]}
+                    style={[styles.priorityStrip, { backgroundColor: TASK_PRIORITY_COLORS[meta.priority] }]}
                     testID="task-priority-strip"
                     pointerEvents="none"
                 />
@@ -644,7 +446,7 @@ export function SwipeableTaskItemContent({
                         </Pressable>
                     )}
                 </View>
-                {!hideDetails && descriptionPreview ? (
+                {descriptionPreview ? (
                     <MarkdownInlineText
                         markdown={descriptionPreview}
                         tc={tc}
@@ -727,14 +529,14 @@ export function SwipeableTaskItemContent({
                         )}
                     </View>
                 )}
-                {showAge && (
+                {ageLabel && (
                     <View style={styles.staleRow}>
                         <Hourglass size={11} color={tc.secondaryText} accessible={false} />
                         <Text style={[styles.staleText, { color: tc.secondaryText }]}>{ageLabel}</Text>
                     </View>
                 )}
             </View>
-            {!hideStatusBadge && (
+            {!hideStatusBadge && meta.statusLabel !== null && (
                 <Pressable
                     disabled={interactionDisabled}
                     onPress={interactionDisabled ? undefined : (event) => {
@@ -752,7 +554,7 @@ export function SwipeableTaskItemContent({
                     }
                     accessibilityLabel={formatI18nTemplate(
                         tFallback(t, 'task.aria.changeStatus', 'Change status. Current status: {status}'),
-                        { status: t(`status.${task.status}`) },
+                        { status: meta.statusLabel },
                     )}
                     accessibilityHint={tFallback(
                         t,
@@ -766,7 +568,7 @@ export function SwipeableTaskItemContent({
                         <CircleDot size={20} color={statusColors.text} strokeWidth={2} />
                     ) : (
                         <Text style={[styles.statusText, { color: statusColors.text }]}>
-                            {t(`status.${task.status}`)}
+                            {meta.statusLabel}
                         </Text>
                     )}
                 </Pressable>

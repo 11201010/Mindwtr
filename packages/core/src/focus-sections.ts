@@ -298,3 +298,19 @@ export function buildFocusTaskSections(
     }
     return sections;
 }
+
+/**
+ * Focus's "Projects to review" list, shown after the task sections: live,
+ * non-archived projects whose review date has come, earliest review first,
+ * then by title. Pass the projects the screen's area filter keeps.
+ */
+export function getReviewDueProjects(projects: readonly Project[], now: Date): Project[] {
+    return projects
+        .filter((project) => project.status !== 'archived' && isDueForReview(project.reviewAt, now))
+        .sort((a, b) => {
+            const aReview = safeParseDate(a.reviewAt)?.getTime() ?? Number.POSITIVE_INFINITY;
+            const bReview = safeParseDate(b.reviewAt)?.getTime() ?? Number.POSITIVE_INFINITY;
+            if (aReview !== bReview) return aReview - bReview;
+            return a.title.localeCompare(b.title);
+        });
+}

@@ -3,6 +3,8 @@ import { isValid, parseISO } from 'date-fns';
 import {
     canUseJalaliCalendar,
     configureDateFormatting,
+    createDateFormatter,
+    getDateFormattingConfig,
     isActiveDateFormatDayFirst,
     isLocaleDateDayFirst,
     formatCalendarInputDate,
@@ -274,6 +276,19 @@ describe('date utils', () => {
         configureDateFormatting({ language: 'uk', dateFormat: 'dmy', timeFormat: 'system', systemLocale: 'uk-UA' });
         expect(safeFormatDate('2026-08-08', 'PP')).toBe('8 серп. 2026 р.');
         expect(safeFormatDate('2026-08-08', 'PPPP')).toContain('серпня');
+        configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
+    });
+
+    it('formats with an explicit configuration without touching the configured one', () => {
+        const german = { language: 'de', dateFormat: 'dmy', timeFormat: '24h', systemLocale: 'de-DE' };
+        configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
+        expect(createDateFormatter(german)('2026-08-08T14:05', 'Pp')).toBe('08.08.2026 14:05');
+        expect(safeFormatDate('2026-08-08T14:05', 'Pp')).toBe('08/08/2026, 2:05 PM');
+        expect(getDateFormattingConfig()).toEqual({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
+        configureDateFormatting(german);
+        expect(safeFormatDate('2026-08-08T14:05', 'Pp')).toBe(createDateFormatter(german)('2026-08-08T14:05', 'Pp'));
+        expect(createDateFormatter({ language: 'fa', calendarSystem: 'jalali' })('2026-08-08', 'P')).toBe('1405/05/17');
+        expect(createDateFormatter({})(undefined, 'P', 'none')).toBe('none');
         configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
     });
 

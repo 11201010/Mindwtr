@@ -97,11 +97,31 @@ const LOCALE_TAG_BY_LANGUAGE: Record<Language, string> = {
     uk: 'uk-UA',
 };
 
-let activeLocale: Locale = DEFAULT_LOCALE;
-let activeDateFormatSetting: DateFormatSetting = 'system';
-let activeTimeFormatSetting: TimeFormatSetting = 'system';
-let activeCalendarSystem: CalendarSystemSetting = 'gregorian';
-let activeLanguage: Language = 'en';
+/** What `configureDateFormatting` takes: the user's date settings, language and device locale. */
+export type DateFormattingConfig = {
+    language?: string | null;
+    dateFormat?: string | null;
+    calendarSystem?: string | null;
+    timeFormat?: string | null;
+    systemLocale?: string | null;
+};
+type ResolvedDateFormatting = {
+    locale: Locale;
+    dateFormat: DateFormatSetting;
+    timeFormat: TimeFormatSetting;
+    calendarSystem: CalendarSystemSetting;
+    language: Language;
+};
+export type DateFormatter = (dateStr: string | Date | undefined | null, formatStr: string, fallback?: string) => string;
+
+let active: ResolvedDateFormatting = {
+    locale: DEFAULT_LOCALE,
+    dateFormat: 'system',
+    timeFormat: 'system',
+    calendarSystem: 'gregorian',
+    language: 'en',
+};
+let activeConfig: Readonly<DateFormattingConfig> = {};
 
 const normalizeLocaleTag = (value?: string | null): string => String(value || '').trim().replace(/_/g, '-');
 
@@ -155,12 +175,12 @@ const resolveLocaleFromSystem = (systemLocale?: string | null, fallback: Languag
     return DATE_LOCALE_BY_LANGUAGE[fallback] ?? DEFAULT_LOCALE;
 };
 
-const normalizeLocalizedFormatTokens = (formatStr: string): string => {
+const normalizeLocalizedFormatTokens = (formatStr: string, formatting: ResolvedDateFormatting): string => {
     let result = formatStr;
-    const resolvedDateToken = activeDateFormatSetting === 'ymd' ? 'yyyy-MM-dd' : null;
-    const resolvedTimeToken = activeTimeFormatSetting === '24h'
+    const resolvedDateToken = formatting.dateFormat === 'ymd' ? 'yyyy-MM-dd' : null;
+    const resolvedTimeToken = formatting.timeFormat === '24h'
         ? 'HH:mm'
-        : activeTimeFormatSetting === '12h'
+        : formatting.timeFormat === '12h'
             ? 'hh:mm a'
             : null;
 
@@ -388,13 +408,7 @@ export function resolveDateLocaleTag(params: {
     return LOCALE_TAG_BY_LANGUAGE[language] ?? 'en-US';
 }
 
-export function configureDateFormatting(params: {
-    language?: string | null;
-    dateFormat?: string | null;
-    calendarSystem?: string | null;
-    timeFormat?: string | null;
-    systemLocale?: string | null;
-} = {}): void {
+const resolveDateFormatting = (params: DateFormattingConfig): ResolvedDateFormatting => {
     const language = normalizeLanguage(params.language);
     const dateFormat = normalizeDateFormatSetting(params.dateFormat);
     const timeFormat = normalizeTimeFormatSetting(params.timeFormat);
@@ -403,22 +417,23 @@ export function configureDateFormatting(params: {
         language: params.language,
         systemLocale,
     });
-    activeDateFormatSetting = dateFormat;
-    activeTimeFormatSetting = timeFormat;
-    activeCalendarSystem = calendarSystem;
-    activeLanguage = language;
+    const locale = dateFormat === 'mdy'
+        ? enUS
+        : dateFormat === 'dmy'
+            ? (language === 'en' ? enGB : DATE_LOCALE_BY_LANGUAGE[language])
+            : resolveLocaleFromSystem(systemLocale, language);
+    return { locale, dateFormat, timeFormat, calendarSystem, language };
+};
 
-    if (dateFormat === 'mdy') {
-        activeLocale = enUS;
-    } else if (dateFormat === 'dmy') {
-        activeLocale = language === 'en' ? enGB : DATE_LOCALE_BY_LANGUAGE[language];
-    } else if (dateFormat === 'ymd') {
-        activeLocale = resolveLocaleFromSystem(systemLocale, language);
-    } else {
-        activeLocale = resolveLocaleFromSystem(systemLocale, language);
-    }
+export function configureDateFormatting(params: DateFormattingConfig = {}): void {
+    active = resolveDateFormatting(params);
+    activeConfig = { ...params };
+    setDefaultOptions({ locale: active.locale });
+}
 
-    setDefaultOptions({ locale: activeLocale });
+/** The configuration `configureDateFormatting` last applied ({} before the first call). */
+export function getDateFormattingConfig(): Readonly<DateFormattingConfig> {
+    return activeConfig;
 }
 
 // The one test for "does this locale put the day before the month": format a
@@ -440,9 +455,9 @@ const isDayFirstLocale = (locale: Locale): boolean => {
  * the resolved locale's short-date order (#1006).
  */
 export function isActiveDateFormatDayFirst(): boolean {
-    if (activeDateFormatSetting === 'dmy') return true;
-    if (activeDateFormatSetting === 'mdy' || activeDateFormatSetting === 'ymd') return false;
-    return isDayFirstLocale(activeLocale);
+    if (active.dateFormat === 'dmy') return true;
+    if (active.dateFormat === 'mdy' || active.dateFormat === 'ymd') return false;
+    return isDayFirstLocale(active.locale);
 }
 
 /**
@@ -458,7 +473,7 @@ export function isLocaleDateDayFirst(systemLocale?: string | null, fallback: Lan
 
 /** The app language quick-add's locale date parsing is keyed off (#1059). */
 export function getActiveLanguage(): Language {
-    return activeLanguage;
+    return active.language;
 }
 
 /**
@@ -496,16 +511,31 @@ export function safeFormatDate(
     formatStr: string,
     fallback: string = ''
 ): string {
+    return formatDateWith(active, dateStr, formatStr, fallback);
+}
+
+/** `safeFormatDate` under an explicit configuration, leaving the configured one alone. */
+export function createDateFormatter(config: DateFormattingConfig): DateFormatter {
+    const formatting = resolveDateFormatting(config);
+    return (dateStr, formatStr, fallback = '') => formatDateWith(formatting, dateStr, formatStr, fallback);
+}
+
+function formatDateWith(
+    formatting: ResolvedDateFormatting,
+    dateStr: string | Date | undefined | null,
+    formatStr: string,
+    fallback: string,
+): string {
     if (!dateStr) return fallback;
 
     try {
         const date = typeof dateStr === 'string' ? safeParseDate(dateStr) : dateStr;
         if (!date || !isValid(date)) return fallback;
-        const normalizedFormat = normalizeLocalizedFormatTokens(formatStr);
-        if (activeCalendarSystem === 'jalali' && hasLocalizedDateToken(formatStr)) {
+        const normalizedFormat = normalizeLocalizedFormatTokens(formatStr, formatting);
+        if (formatting.calendarSystem === 'jalali' && hasLocalizedDateToken(formatStr)) {
             return formatJalali(date, normalizedFormat, { locale: jalaliFaIR });
         }
-        return format(date, normalizedFormat, { locale: activeLocale });
+        return format(date, normalizedFormat, { locale: formatting.locale });
     } catch {
         return fallback;
     }

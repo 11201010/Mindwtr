@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { generateUUID, getChecklistProgress, Task, useTaskStore } from '@mindwtr/core';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { generateUUID, Task, useTaskStore } from '@mindwtr/core';
 import { logError } from '../../lib/app-log';
 import { settleStoreAction } from '../store-action-result';
 
@@ -139,15 +139,9 @@ export function useSwipeableChecklist(
         });
     }, [interactionDisabled, scheduleChecklistUpdate, task.id]);
 
-    const checklistProgress = useMemo(
-        () => getChecklistProgress({ ...task, checklist: localChecklist }),
-        [task, localChecklist]
-    );
-
     return {
         addChecklistItem,
         cancelPendingChecklist,
-        checklistProgress,
         localChecklist,
         showChecklist,
         toggleChecklist,

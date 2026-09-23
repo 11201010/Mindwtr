@@ -37,6 +37,7 @@ import {
   FOCUS_SORT_OPTIONS,
   buildFocusTaskGroups,
   getProjectDeadlineBoostLabel,
+  getReviewDueProjects,
   removeAdvancedFilterCriteriaChip,
   shouldShowTaskForStart,
   generateUUID,
@@ -50,11 +51,9 @@ import {
   useTaskStore,
   getAdvancedReviewDate,
   isTaskActionable,
-  isDueForReview,
   isTaskDateCoherent,
   isTodayScheduleCandidate,
   safeFormatDate,
-  safeParseDate,
   safeParseDueDate,
   getTaskMetadataFilterVisibility,
   hasTimeComponent,
@@ -845,15 +844,7 @@ export default function FocusScreen() {
   }, [futureStartTick, localDayKey, schedule]);
   const reviewDueProjects = useMemo(() => {
     void localDayKey;
-    const now = new Date();
-    return visibleProjects
-      .filter((project) => project.status !== 'archived' && isDueForReview(project.reviewAt, now))
-      .sort((a, b) => {
-        const aReview = safeParseDate(a.reviewAt)?.getTime() ?? Number.POSITIVE_INFINITY;
-        const bReview = safeParseDate(b.reviewAt)?.getTime() ?? Number.POSITIVE_INFINITY;
-        if (aReview !== bReview) return aReview - bReview;
-        return a.title.localeCompare(b.title);
-      });
+    return getReviewDueProjects(visibleProjects, new Date());
   }, [localDayKey, visibleProjects]);
 
   // Manual focusOrder is a full-list concept. focusedTasks derives from
