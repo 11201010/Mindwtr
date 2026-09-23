@@ -21,12 +21,20 @@ internal object ProcessCoreHost {
     @Volatile private var boots = 0
 
     /**
-     * A failed command's exact retry, with the screen it failed on. It lives
-     * next to the host so a new screen in this process (the old one finished)
-     * reopens on the same retry instead of a locked, empty Inbox. In memory
-     * only: after process death the saved draft and capture UUID cover retry.
+     * A failed command's exact retry, with the screen it failed on (and the
+     * editor draft, for a failed update). It lives next to the host so a new
+     * screen in this process (the old one finished) reopens on the same retry
+     * instead of a locked, empty Inbox. In memory only: after process death the
+     * saved capture draft and UUID, or the saved editor draft and its base,
+     * cover retry.
      */
-    data class PendingFailure(val action: FailedAction, val error: String, val rows: List<InboxRow>, val total: Int)
+    data class PendingFailure(
+        val action: FailedAction,
+        val error: String,
+        val rows: List<InboxRow>,
+        val total: Int,
+        val editor: TaskEditor? = null,
+    )
 
     @Volatile var failure: PendingFailure? = null
         private set

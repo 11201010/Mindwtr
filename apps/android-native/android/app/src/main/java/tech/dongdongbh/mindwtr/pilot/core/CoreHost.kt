@@ -101,8 +101,15 @@ class CoreHost(private val databaseFile: File) {
 
     fun completeTask(id: String): JSONObject = callAsync("complete", id)
 
+    /** Core's editor reply for one task: its seven fields as stored, plus the choices core allows. */
+    fun taskEditor(id: String): JSONObject = callAsync("editor", id)
+
+    /** [baseJson] and [patchJson] go to core's updateTask unchanged; core decides everything. */
+    fun updateTask(id: String, baseJson: String, patchJson: String): JSONObject =
+        callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
+
     /**
-     * Debug-build fault injection for `scripts/check-lifecycle-device.sh`.
+     * Debug-build fault injection for `scripts/check-lifecycle-device.mjs` and `scripts/check-editor-device.mjs`.
      * Read once per task command, on the engine thread. Release builds return
      * "" before reading anything, so no property can reach them.
      */
@@ -120,7 +127,7 @@ class CoreHost(private val databaseFile: File) {
     }
 
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
-        val command = method == "create" || method == "complete"
+        val command = method in setOf("create", "complete", "update")
         if (command) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")

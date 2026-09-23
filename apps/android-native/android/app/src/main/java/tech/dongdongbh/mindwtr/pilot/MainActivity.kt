@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,7 +34,8 @@ class MainActivity : ComponentActivity() {
         model.attach()
         setContent {
             MaterialTheme { with(model) {
-                Column(Modifier.fillMaxSize().padding(24.dp)) {
+                val open = editor
+                if (open != null && !loading) TaskEditorScreen(model, open) else Column(Modifier.fillMaxSize().padding(24.dp)) {
                     Text("Inbox · $total", style = MaterialTheme.typography.headlineSmall)
                     if (loading) {
                         CircularProgressIndicator(Modifier.padding(top = 16.dp))
@@ -56,7 +58,9 @@ class MainActivity : ComponentActivity() {
                         LazyColumn(modifier = Modifier.weight(1f)) {
                             items(rows, key = { it.id }) { task ->
                                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(task.title, Modifier.weight(1f))
+                                    Text(task.title, Modifier.weight(1f).clickable(
+                                        enabled = writable && !busy && failedAction == null, onClickLabel = "Edit task",
+                                    ) { openEditor(task.id) })
                                     Button(onClick = { complete(task.id) }, enabled = writable && !busy &&
                                         (failedAction == null || failedAction == FailedAction("complete", task.id)),
                                         modifier = Modifier.semantics { contentDescription = "Complete ${task.title}" }) { Text("Complete") }

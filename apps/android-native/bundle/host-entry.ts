@@ -97,7 +97,7 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
-const taskResult = <T>(operation: 'create' | 'complete', result: Parameters<typeof unwrap<T>>[0]): T => {
+const taskResult = <T>(operation: 'create' | 'complete' | 'update', result: Parameters<typeof unwrap<T>>[0]): T => {
     const meta = {
         scope: 'native-android',
         category: 'storage' as const,
@@ -108,6 +108,13 @@ const taskResult = <T>(operation: 'create' | 'complete', result: Parameters<type
         else logWarn('Native Android task command', meta);
     } catch { /* a diagnostic sink must not change a durable acknowledgment */ }
     return unwrap(result);
+};
+
+// After a failed save the store holds changes that are not on disk. Reads
+// wait for the exact retry, so no screen treats those changes as stored.
+const requireSaved = () => {
+    const failure = useTaskStore.getState().persistenceFailure;
+    if (failure) throw new Error(`SAVE_FAILED: ${failure.message}`);
 };
 
 globalThis.MindwtrHost = {
@@ -143,10 +150,19 @@ globalThis.MindwtrHost = {
     },
     window(offset: number, limit: number, revision: string): string {
         return submit(async () => {
-            const failure = useTaskStore.getState().persistenceFailure;
-            if (failure) throw new Error(`SAVE_FAILED: ${failure.message}`);
+            requireSaved();
             return unwrap(contract.getInboxWindow({ offset, limit, revision: revision || undefined }));
         });
+    },
+    editor(id: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getTaskEditor({ id }));
+        });
+    },
+    /** `json` is `{ id, base, patch }`, passed to core unchanged. */
+    update(json: string): string {
+        return submit(async () => taskResult('update', await contract.updateTask(JSON.parse(json))));
     },
     create(title: string, captureId: string): string {
         return submit(async () => taskResult('create', await contract.createInboxTask({ title, captureId })));

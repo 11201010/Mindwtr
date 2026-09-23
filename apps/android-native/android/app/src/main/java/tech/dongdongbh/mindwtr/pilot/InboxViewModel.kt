@@ -14,7 +14,17 @@ import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.util.UUID
 
 data class InboxRow(val id: String, val title: String)
-data class FailedAction(val kind: String, val id: String, val title: String = "")
+/** A command whose outcome is unknown; only this exact command may run again. */
+data class FailedAction(
+    val kind: String,
+    val id: String,
+    val title: String = "",
+    val base: Map<String, String?> = emptyMap(),
+    val patch: Map<String, String?> = emptyMap(),
+)
+
+/** Core refused the update before writing anything, so there is no retry to hold. */
+private val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
 private data class InboxPage(val revision: String, val total: Int, val rows: List<InboxRow>) {
     companion object {
         fun parse(json: JSONObject): InboxPage {
@@ -29,9 +39,10 @@ private data class InboxPage(val revision: String, val total: Int, val rows: Lis
 }
 
 /**
- * Inbox screen state. It survives Activity recreation, so a command that ends
- * after rotation updates the new screen. Only the capture draft survives
- * process death; rows reload from core. It never closes the process host.
+ * Inbox and editor screen state. It survives Activity recreation, so a command
+ * that ends after rotation updates the new screen. The capture draft and the
+ * editor draft survive process death; rows reload from core. It never closes
+ * the process host.
  */
 class InboxViewModel(app: Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
     var loading by mutableStateOf(true); private set
@@ -45,6 +56,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var rows by mutableStateOf<List<InboxRow>>(emptyList()); private set
     private var revision = ""
     var total by mutableStateOf(0); private set
+    /** The open editor, if any. Its base is the reply it was opened (or reloaded) with, even after process death. */
+    var editor by mutableStateOf(saved.get<String>("editor")?.let { source ->
+        runCatching { TaskEditor.restore(source, saved.get<String>("editorEdited")!!) }.getOrNull()
+    }); private set
+    /** The last save was refused as stale; the screen offers Reload. */
+    var conflict by mutableStateOf(false); private set
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
@@ -89,9 +106,18 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         saved["submittedTitle"] = submitted
     }
 
+    // ponytail: saves core's whole reply, project list included, in instance state (Binder limit ~1 MB).
+    // If project lists grow to thousands, save only the fields and fetch the choices again on restore.
+    private fun keepEditor(value: TaskEditor?) {
+        editor = value
+        saved["editor"] = value?.reply?.source
+        saved["editorEdited"] = value?.let { json(it.edited) }
+    }
+
     private fun restore(pending: ProcessCoreHost.PendingFailure) {
         val action = pending.action
         if (action.kind == "create") setCapture(action.title, action.id, action.title)
+        pending.editor?.let(::keepEditor)
         rows = pending.rows
         total = pending.total
         failedAction = action
@@ -137,6 +163,45 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         ui { failedAction = null }
     }
 
+    fun openEditor(id: String) = perform { runtime ->
+        val reply = EditorReply(runtime.taskEditor(id).toString())
+        ui { keepEditor(TaskEditor.open(reply)) }
+    }
+
+    fun editField(field: String, value: String?) { editor?.let { keepEditor(it.edit(field, value)) } }
+
+    fun editText(field: String, text: String) { editor?.let { keepEditor(it.editText(field, text)) } }
+
+    fun closeEditor() {
+        keepEditor(null)
+        error = null
+        conflict = false
+    }
+
+    fun updateAction(current: TaskEditor) = FailedAction("update", current.id, base = current.base, patch = current.patch)
+
+    /** Sends only the changed fields with their loaded values. Nothing changed: close, no call. */
+    fun saveEditor() {
+        val current = editor ?: return
+        if (current.patch.isEmpty()) { closeEditor(); return }
+        val action = updateAction(current)
+        perform(action) { runtime ->
+            runtime.updateTask(current.id, json(current.base), json(current.patch))
+            acknowledged(action)
+            ui { closeEditor() }
+            val page = InboxPage.parse(runtime.inboxWindow(0, 50, ""))
+            ui { applyPage(page, false) }
+        }
+    }
+
+    fun reloadEditor() {
+        val id = editor?.id ?: return
+        perform { runtime ->
+            val fresh = EditorReply(runtime.taskEditor(id).toString())
+            ui { editor?.let { keepEditor(it.reloaded(fresh)) } }
+        }
+    }
+
     fun refresh() = perform { runtime ->
         val page = InboxPage.parse(runtime.inboxWindow(0, 50, ""))
         ui { applyPage(page, false) }
@@ -165,18 +230,21 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (busy || runtime == null || (failedAction != null && failedAction != action)) return
         busy = true
         error = null
+        conflict = false
         Thread({
             try { work(runtime) }
             catch (failure: Throwable) {
                 Log.e(CoreHost.TAG, "Core action failed", failure)
                 val message = failure.message ?: failure.javaClass.simpleName
-                val failed = if (action != null || failure.message?.startsWith("SAVE_FAILED") == true) {
+                val refused = action?.kind == "update" && UPDATE_REFUSALS.any { message.startsWith(it) }
+                val failed = if ((action != null && !refused) || message.startsWith("SAVE_FAILED")) {
                     action ?: FailedAction("storage", "")
                 } else null
                 // Recorded before the UI update so a screen opening now still finds it.
-                if (failed != null) ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, rows, total))
+                if (failed != null) ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, rows, total, editor))
                 ui {
                     error = message
+                    conflict = message.startsWith("STALE_REVISION")
                     if (failed != null) failedAction = failed
                 }
             } finally {
