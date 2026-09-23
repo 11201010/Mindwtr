@@ -37,9 +37,33 @@ for (const field of ['draft', 'captureId', 'submittedTitle']) assert.match(model
 for (const file of [activity, model]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
 }
-const kotlinFiles = [activity, model, owner, coreHost, sqliteBridge];
+const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
+const kotlinFiles = [activity, model, owner, coreHost, sqliteBridge, guard];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
-assert.match(owner, /val runtime = CoreHost\(File\(app\.filesDir, "mindwtr-native-dev\.db"\)\)/);
+// The dev build keeps its own database. The upgradetest build gets the RN database only from the
+// guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
+assert.match(owner, /val database = if \(BuildConfig\.RN_STORAGE\) \{\s*\/\/[^\n]*\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*File\(app\.filesDir, "mindwtr-native-dev\.db"\)\s*\}\s*val runtime = CoreHost\(database\)/);
+assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
+assert.match(guard, /val database = File\(dataDir, "files\/SQLite\/mindwtr\.db"\)/);
+// Missing database with RN state, then the json-ahead marker, then quick_check; only a clear result may create the folder.
+const decision = guard.slice(guard.indexOf('private fun blockedReason'));
+const order = ['"database-missing"', 'return "json-ahead"', 'queryCopy(database, scratch)', '"database-unreadable"'].map((text) => decision.indexOf(text));
+assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `guard order ${order}`);
+assert(guard.indexOf('check(blocked == null)') < guard.indexOf('.mkdirs()\n        return database'));
+assert.match(guard, /\/\/ ponytail: copies the whole database on every boot\. Skip it once a native-owned\s*\/\/ marker proves the last shutdown was clean\./);
+// RKStorage and the RN database are only read as bytes: SQLite writes -wal/-shm even through a
+// read-only connection, and a failed read-write open can checkpoint the WAL into the file on close.
+const originalUses = [...guard.matchAll(/\b(asyncStorage|database|file|source)\.(\w+)/g)].map(([, name, member]) => `${name}.${member}`);
+assert.deepEqual([...new Set(originalUses)].sort(), ['asyncStorage.exists', 'database.exists', 'database.parentFile', 'file.name', 'file.path', 'source.copyTo', 'source.exists']);
+assert.equal(guard.match(/BundledSQLiteDriver\(\)\.open\(/g).length, 1);
+assert.match(guard, /BundledSQLiteDriver\(\)\.open\(File\(scratch, file\.name\)\.path\)/);
+assert.match(guard, /queryCopy\(asyncStorage, scratch\)/);
+assert.match(guard, /for \(suffix in listOf\("", "-wal", "-journal"\)\)/);
+assert.match(guard, /PRAGMA quick_check/);
+const guardLog = /Log\.i\(CoreHost\.TAG, ("[\s\S]*?")\)\n/.exec(guard)?.[1] ?? '';
+assert.match(guardLog, /releaseCheck=v1\.3\.3\/native-android-legacy-json-ahead-guard/);
+assert.match(guardLog, /outcome=\$\{if \(blocked == null\) "clear" else "blocked"\}/);
+for (const [, name] of guardLog.matchAll(/(\w+)=/g)) assert.doesNotMatch(name, /key|pass|user/i);
 assert.equal(owner.match(/close\(\)/g).length, 1);
 assert.match(owner, /catch \(failure: Throwable\) \{\s*runCatching \{ runtime\.close\(\) \}/);
 assert.match(activity, /model\.attach\(\)/);
@@ -49,7 +73,7 @@ assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ ho
 assert.match(model, /runtime\.createInboxTask\(title, id\)\s+acknowledged\(action\)/);
 assert.match(model, /runtime\.completeTask\(id\)\s+acknowledged\(action\)/);
 assert.equal(model.match(/clearFailure/g).length, 1);
-assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db)/);
+assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db"|SQLite\/mindwtr\.db")/);
 assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
@@ -157,4 +181,5 @@ assert.equal(brokenBoot.ok, false);
 assert.match(brokenBoot.error, /disk I\/O error/);
 assert.equal(brokenStorage.activationCount, 0);
 console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
+console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
 console.log('Boot gates, second-read failure, failed-save refresh, and diagnostic acknowledgment passed');

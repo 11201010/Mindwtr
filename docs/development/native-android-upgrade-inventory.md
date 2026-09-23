@@ -200,18 +200,38 @@ Class names below are fixed. Android launchers, widget hosts, tiles and alarms p
 
 Priority order. "Seed" means: create this state with a real signed RN release build before installing the native build over it.
 
-1. **Signing and version.** Locally, install the latest RN GitHub APK and `-foss.apk`, then install the native build signed with the same key over each. Assert the update succeeds without uninstall, and `versionCode` is higher. Test Play-signed and F-Droid-signed updates on their own channels, because only Google and F-Droid hold those keys.
-2. **Database in place.** Seed tasks, projects, areas, people, sections, saved filters, tombstones, calendar rows and FTS search hits. Kill the RN app mid-write so the `-wal` file holds committed rows. Assert the native app opens `files/SQLite/mindwtr.db`, shows every row, search works, `deviceId` is unchanged, and `PRAGMA journal_mode` is `wal`.
-3. **JSON-ahead recovery.** Seed `mindwtr-data` plus `mindwtr-data:json-ahead-of-sqlite` with edits not in SQLite. Assert the edits appear after upgrade and the marker is cleared.
-4. **Unsynced work.** Seed `pendingRemoteWriteAt`, an attachment with `pendingContentUpload`, files in `pending-captures/` (all four kinds) and `quick-capture-audio/`, and an open widget check-off. Assert every item lands once, and the next sync pushes it.
+1. **Signing and version.** Locally, install the latest RN GitHub APK and `-foss.apk`, then install the native build signed with the same key over each. Assert the update succeeds without uninstall, and `versionCode` is higher. Test Play-signed and F-Droid-signed updates on their own channels, because only Google and F-Droid hold those keys. *Harness, in part:* RN 152 → native 153 → RN 154 updates in place with one harness key. Channel keys are not covered.
+2. **Database in place.** Seed tasks, projects, areas, people, sections, saved filters, tombstones, calendar rows and FTS search hits. Kill the RN app mid-write so the `-wal` file holds committed rows. Assert the native app opens `files/SQLite/mindwtr.db`, shows every row, search works, `deviceId` is unchanged, and `PRAGMA journal_mode` is `wal`. *Harness, in part:* tasks, a project, a completed task and one synced setting, read with the `-wal` file; every RN row and `deviceId` kept; the `.prewrite` checkpoint holds the pre-upgrade rows. Not covered: areas, people, sections, saved filters, tombstones, calendar rows, search.
+3. **JSON-ahead recovery.** Seed `mindwtr-data` plus `mindwtr-data:json-ahead-of-sqlite` with edits not in SQLite. Assert the edits appear after upgrade and the marker is cleared. *Harness, fail-closed half only:* with the marker present, the native app writes nothing. The import is a later task.
+4. **Unsynced work.** Seed `pendingRemoteWriteAt`, an attachment with `pendingContentUpload`, files in `pending-captures/` (all four kinds) and `quick-capture-audio/`, and an open widget check-off. Assert every item lands once, and the next sync pushes it. *Harness, in part:* one queued capture stays byte-identical through the native app, and the RN recovery build imports it once. The native app does not drain the queue yet.
 5. **Credentials.** Configure WebDAV, self-hosted cloud, Dropbox and sync encryption, plus one AI key. Assert the native app syncs without asking for anything. Also seed one legacy plain AsyncStorage secret. Assert it moves to secure storage and the plain copy is gone. Never log values.
 6. **Attachments.** Seed attachments, including one interrupted install with a `.mindwtr-install-*` journal. Assert files open, stored URIs resolve, and the journal is resolved, not deleted.
 7. **OS components.** Place all four widget kinds (including a legacy `widget.TasksWidget` from a 1.2.7 install), pin two shortcuts, add the Quick Settings tile, enable the persistent capture notification, send a capture intent with the saved token. Assert all still work after the update.
 8. **Reminders and jobs.** Seed future reminders and a Pomodoro alarm. Assert each fires exactly once after the update and after a reboot, and that `EXPO_BACKGROUND_WORKER` is gone.
 9. **File Sync grant.** Seed File Sync on a SAF folder. Assert sync works with no folder re-pick.
 10. **Device-local settings.** Seed theme, language, view state, calendar push target and AI consent. Assert the ones the native UI supports survive.
-11. **Failure cases.** Unreadable DB page, oversized `mindwtr-data`, missing Keystore key with a present SecureStore entry, denied permissions, and a kill during the first native start. Assert the app never saves an empty snapshot over real data (roadmap §5).
-12. **Recovery.** Install a newer RN recovery build over the native build after native edits. Assert it opens the DB and keeps those edits.
+11. **Failure cases.** Unreadable DB page, oversized `mindwtr-data`, missing Keystore key with a present SecureStore entry, denied permissions, and a kill during the first native start. Assert the app never saves an empty snapshot over real data (roadmap §5). *Harness, in part:* a damaged tasks page, with or without WAL frames, and a missing database each leave every file unchanged.
+12. **Recovery.** Install a newer RN recovery build over the native build after native edits. Assert it opens the DB and keeps those edits. *Harness:* scenario 4 covers one native capture. It is BLOCKED until the RN recovery source carries the fix for the RN startup snapshot bug (task `mobile-drain-after-canonical`).
+
+### Harness
+
+Two scripts under `apps/android-native/scripts/` run the first real old-install → native → RN upgrade on a phone:
+
+```sh
+node apps/android-native/scripts/build-upgrade-harness.mjs
+node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial>
+```
+
+- **Package:** everything installs as the throwaway `tech.dongdongbh.mindwtr.upgradetest`. The device script refuses any other APK, and it uninstalls only this package.
+- **APKs:** the real RN app from tag `v1.3.2`, pinned to commit `ee82a9e3e` (versionCode 152), changed only by `upgradetest-rn-identity.patch` (package, own URL scheme, no analytics or feedback endpoint, and a debuggable manifest so `adb run-as` works); the native `upgradetest` build type (153), which opens `files/SQLite/mindwtr.db`; and an RN recovery build (154) from the pinned `RECOVERY_COMMIT` in the build script, with only `versionCode` raised. One harness key, kept in `/home/dd/.mindwtr-harness/`, signs all three. The RN APKs are cached there by source commit.
+- **Seeding:** RN writes all data through its own code. The script queues captures in `files/pending-captures/`, which RN imports at launch, and turns on one synced setting in RN's Settings screen. Every install uses `-g`, so no permission dialog appears.
+- **Scenario 1, happy upgrade:** the native Inbox shows the RN tasks, and one native capture is stored once. Every pre-upgrade row of every core table, the settings row included, keeps every pre-upgrade column. Every non-database file keeps its SHA-256, and `mindwtr.db.prewrite` holds the pre-upgrade rows exactly.
+- **Scenario 2, unsaved RN work:** the script injects the `json-ahead` marker into `RKStorage`. The native app shows `Storage unavailable`, keeps commands off, and changes no file.
+- **Scenario 3 and 3b, damaged database:** the script damages the tasks table's root page, once with an empty WAL and once with WAL frames still in `-wal`. The native app checks a byte copy first, shows `Storage unavailable`, and leaves `mindwtr.db` and `-wal` byte-identical.
+- **Scenario 4, recovery:** RN 154 over the native build opens the database, shows the native capture, and keeps every pre-upgrade row. While the recovery source is still v1.3.2, a failure prints BLOCKED and does not fail the run.
+- **Scenario 5, missing database:** the script deletes the database files and keeps the other RN state. The native app shows `Storage unavailable` and creates nothing.
+
+**Accepted gap:** the `.prewrite` checkpoint is made before core's `ensureSchema` runs. So an additive schema change can be committed even when row validation then fails. Recovery is the checkpoint, and an RN recovery build reads additive schema.
 
 ## (b) Open UNKNOWNs
 

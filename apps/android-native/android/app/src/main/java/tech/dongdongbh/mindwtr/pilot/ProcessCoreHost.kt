@@ -3,6 +3,7 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import android.util.Log
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import java.io.File
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
@@ -61,7 +62,13 @@ internal object ProcessCoreHost {
     }
 
     private fun start(app: Application): CoreHost {
-        val runtime = CoreHost(File(app.filesDir, "mindwtr-native-dev.db"))
+        val database = if (BuildConfig.RN_STORAGE) {
+            // Nothing opens the RN database until the guard passes; it returns files/SQLite/mindwtr.db.
+            LegacyRnStoreGuard.requireClear(app.dataDir, File(app.cacheDir, "legacy-rn-guard"))
+        } else {
+            File(app.filesDir, "mindwtr-native-dev.db")
+        }
+        val runtime = CoreHost(database)
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() })
             return runtime

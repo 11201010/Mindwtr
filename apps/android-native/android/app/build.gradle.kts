@@ -14,6 +14,17 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "native-dev"
+        // false: the isolated dev database. Only the upgradetest build type opens the RN app's storage.
+        buildConfigField("boolean", "RN_STORAGE", "false")
+    }
+
+    buildTypes {
+        // Upgrade harness only (scripts/check-upgrade-device.mjs): installs in place over the
+        // RN v1.3.2 harness build, package tech.dongdongbh.mindwtr.upgradetest, and opens its files.
+        create("upgradetest") {
+            initWith(getByName("debug"))
+            buildConfigField("boolean", "RN_STORAGE", "true")
+        }
     }
 
     // BuildConfig.DEBUG gates the lifecycle check's fault hooks.
@@ -26,6 +37,14 @@ android {
 
     kotlinOptions { jvmTarget = "17" }
 
+}
+
+// A build type cannot replace applicationId; the variant API can. 152 = RN v1.3.2, 154 = RN recovery build.
+androidComponents {
+    onVariants(selector().withBuildType("upgradetest")) { variant ->
+        variant.applicationId.set("tech.dongdongbh.mindwtr.upgradetest")
+        variant.outputs.forEach { it.versionCode.set(153) }
+    }
 }
 
 dependencies {

@@ -12,9 +12,10 @@
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { button, check, connect, field, hasText, Stopped } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -42,30 +43,13 @@ const work = resolve(app, 'android/build/lifecycle-check');
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 const titles = { a: `81${run}`, b: `82${run}`, c1: `83${run}`, c2: `84${run}`, c3: `85${run}`, d: `86${run}` };
 
-class Stopped extends Error {}
-const adbRaw = (...args) => execFileSync(adbBin, ['-s', serial, ...args], { maxBuffer: 64 << 20 });
-const sh = (command) => adbRaw('shell', command).toString('utf8').replace(/\r/g, '').trim();
-const fail = (message) => { throw new Error(message); };
-const check = (condition, message) => { if (!condition) fail(message); console.log(`ok - ${message}`); };
+const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
 // ---- device state ----
-const home = sh('cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
-    .split('\n').pop().split('/')[0];
-const front = () => sh('dumpsys activity activities').split('\n')
-    .find((line) => /topResumedActivity|mResumedActivity/.test(line)) ?? '';
-const requireAppFront = () => {
-    if (!front().includes(`${PKG}/`)) throw new Stopped(`the dev app is not in front: ${front().trim()}`);
-};
-const launch = () => {
-    const current = front();
-    if (!current.includes(`${PKG}/`) && !current.includes(`${home}/`)) {
-        throw new Stopped(`another app is in front; not launching over it: ${current.trim()}`);
-    }
-    sh(`am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${ACTIVITY}`);
-};
-const pid = () => { try { return sh(`pidof ${PKG}`); } catch { return ''; } };
-const logs = (processId) => adbRaw('logcat', '-d', `--pid=${processId}`, '-s', `${TAG}:*`).toString('utf8');
+const launch = () => device.launch(ACTIVITY);
+const logs = (processId) => device.logs(processId, TAG);
 const count = (text, needle) => text.split('\n').filter((line) => line.includes(needle)).length;
 const boots = (processId) => count(logs(processId), 'Core host boot started');
 const recreations = (processId) => logs(processId).split('\n')
@@ -78,62 +62,9 @@ const rotate = (rotation) => {
 };
 
 // ---- UI ----
-const decode = (value) => value.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-const screen = async () => {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-        try {
-            sh(`uiautomator dump ${UI_FILE}`);
-            const xml = adbRaw('exec-out', 'cat', UI_FILE).toString('utf8');
-            if (xml.includes('<hierarchy')) {
-                return [...xml.matchAll(/<node [^>]*>/g)].map(([tag]) => Object.fromEntries(
-                    [...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, decode(value)]),
-                ));
-            }
-        } catch { /* the hierarchy is briefly unavailable during recreation */ }
-        await sleep(500);
-    }
-    return fail('uiautomator dump failed');
-};
-const field = (nodes) => nodes.find((node) => node.class === 'android.widget.EditText');
-const box = (node) => node.bounds.match(/\d+/g).map(Number);
-// A Compose button's label is a child node; the enabled state is on the clickable node around it.
-const button = (nodes, label) => {
-    const labelNode = nodes.find((node) => node.text === label || node['content-desc'] === label);
-    if (!labelNode) return undefined;
-    const [x1, y1, x2, y2] = box(labelNode);
-    return nodes.filter((node) => node.clickable === 'true').filter((node) => {
-        const [left, top, right, bottom] = box(node);
-        return left <= x1 && top <= y1 && right >= x2 && bottom >= y2;
-    }).sort((a, b) => {
-        const area = (node) => { const [l, t, r, bt] = box(node); return (r - l) * (bt - t); };
-        return area(a) - area(b);
-    })[0];
-};
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
-const hasText = (nodes, text) => nodes.some((node) => node.text === text && node.class !== 'android.widget.EditText');
 const hasError = (nodes) => nodes.some((node) => node.text?.includes('Injected commit failure'));
-const waitFor = async (description, predicate, timeoutMs = 30_000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        const nodes = await screen();
-        if (predicate(nodes)) return nodes;
-        await sleep(500);
-    }
-    return fail(`timed out waiting for ${description}`);
-};
 const loaded = () => waitFor('the Inbox to load', (nodes) => field(nodes) && Number.isFinite(header(nodes)), 60_000);
-const tap = async (node) => {
-    requireAppFront();
-    const [x1, y1, x2, y2] = box(node);
-    sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
-    await sleep(400);
-};
-const type = async (title) => {
-    await tap(field(await screen()));
-    requireAppFront();
-    sh(`input text ${title}`);
-    await waitFor(`the draft ${title} in the field`, (nodes) => field(nodes)?.text === title, 10_000);
-};
 const tapAdd = async () => tap(button(await screen(), 'Add'));
 const busyField = (nodes) => field(nodes)?.enabled === 'false';
 
@@ -145,7 +76,7 @@ const pullDatabase = () => {
     const present = sh(`run-as ${PKG} ls files`).split(/\s+/);
     for (const suffix of ['', '-wal', '-shm']) {
         const name = `mindwtr-native-dev.db${suffix}`;
-        if (present.includes(name)) writeFileSync(resolve(dir, name), adbRaw('exec-out', 'run-as', PKG, 'cat', `files/${name}`));
+        if (present.includes(name)) device.pull(`files/${name}`, resolve(dir, name));
     }
     return resolve(dir, 'mindwtr-native-dev.db');
 };
