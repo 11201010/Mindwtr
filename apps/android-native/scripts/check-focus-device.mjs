@@ -23,7 +23,11 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, connect, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, box, button, check, connect, fail, field, hasText, Stopped } from './device.mjs';
+// Focus section titles as core renders them in English (core's dictionary, not literals).
+const { en } = await import(resolve(import.meta.dirname, '../../../packages/core/src/i18n/locales/en.ts'));
+const NEXT_ACTIONS = en['focus.nextActions'];
+const TODAY = en['focus.schedule'];
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -44,7 +48,8 @@ if (apkPackage !== PKG) {
 const ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
-const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms'];
+// `language` is cleared so the app shows core's text for the phone's language (English on the test phone).
+const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language'];
 const work = resolve(app, 'android/build/focus-check');
 // Digits only: some phone keyboards hold typed letters in a composition strip.
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
@@ -52,7 +57,7 @@ const first = `71${run}`;
 const second = `72${run}`;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type } = device;
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, swipe, signature, toTop } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
 // ---- device state ----
@@ -85,7 +90,7 @@ const goHome = async () => {
 
 // ---- UI ----
 const inboxCount = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
-const inEditor = (nodes) => hasText(nodes, 'Edit task');
+const inEditor = (nodes) => hasText(nodes, 'Edit Task');
 // A Compose Tab is selectable, not clickable: find it as the smallest focusable node around its label.
 const tab = (nodes, name) => {
     const label = nodes.find((node) => node.text === name && node.class === 'android.widget.TextView');
@@ -122,10 +127,14 @@ const showTab = async (name) => {
     await waitFor(`the ${name} tab`, (current) => tabSelected(current, name), 10_000);
 };
 const hasError = (nodes) => nodes.some((node) => node.text?.includes('Injected commit failure'));
-/** Taps the control labelled [label] until [done] holds; a once-a-minute refresh can briefly disable it. */
+/** Taps the control labelled [label] until [done] holds; a tap can land while the list still moves, so tap again. */
 const tapUntil = async (label, description, done) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const control = button(await screen(), label);
+        const nodes = await screen();
+        // The last tap took effect after the wait ran out: tapping again would be a second command
+        // (after a failure, its exact retry), so stop here.
+        if (attempt > 0 && done(nodes)) return nodes;
+        const control = button(nodes, label);
         if (!control && attempt > 0) break; // the first tap took effect; only the wait is left
         await tap(control ?? fail(`no control labelled ${label}`));
         try { return await waitFor(description, done, 8_000); } catch { /* tap again */ }
@@ -148,38 +157,15 @@ const choose = async (label, value) => {
     await waitFor(`${label}: ${value}`, (nodes) => shown(nodes, label) === value);
 };
 
-/** Swipes the list one step: 'up' scrolls toward the top. Returns the new hierarchy. */
-const swipe = async (nodes, direction) => {
-    // A list that fits on one screen is not scrollable: nothing to swipe, same hierarchy.
-    const list = nodes.find((node) => node.scrollable === 'true');
-    if (!list) return nodes;
-    requireAppFront();
-    const [x1, y1, x2, y2] = box(list);
-    const x = Math.round((x1 + x2) / 2);
-    const [low, high] = [Math.round(y2 - (y2 - y1) * 0.15), Math.round(y1 + (y2 - y1) * 0.15)];
-    sh(`input swipe ${x} ${direction === 'up' ? high : low} ${x} ${direction === 'up' ? low : high} 300`);
-    await sleep(500);
-    return screen();
-};
-const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
-const toTop = async () => {
-    let nodes = await screen();
-    for (let step = 0; step < 30; step += 1) {
-        const next = await swipe(nodes, 'up');
-        if (signature(next) === signature(nodes)) return next;
-        nodes = next;
-    }
-    return nodes;
-};
 /**
  * Scrolls Focus from the top until [title] is on screen. An enabled
- * "Load more <section>" on the way is tapped, since sections page by 50.
+ * "More <section>" (core's `common.more`) on the way is tapped, since sections page by 50.
  */
 const findRow = async (title) => {
     let nodes = await toTop();
     for (let step = 0; step < 80; step += 1) {
         if (rowNode(nodes, title)) return nodes;
-        const more = nodes.find((node) => node['content-desc']?.startsWith('Load more ') && button(nodes, node['content-desc'])?.enabled === 'true');
+        const more = nodes.find((node) => node['content-desc']?.startsWith('More ') && button(nodes, node['content-desc'])?.enabled === 'true');
         if (more) {
             await tap(button(nodes, more['content-desc']));
             nodes = await waitFor('Load more to finish', (current) => !current.some((node) => node['content-desc'] === more['content-desc']
@@ -208,7 +194,7 @@ const openFromInbox = async (title) => {
             await tap(row);
             return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
         }
-        const more = button(nodes, 'Load more');
+        const more = button(nodes, 'More');
         if (!more) break;
         await tap(more);
         await sleep(1500);
@@ -285,7 +271,7 @@ try {
         check(found.length === 1, `captured ${title} once`);
         ids[title] = found[0].id;
         await openFromInbox(title);
-        await choose('Status', 'next');
+        await choose('Status', 'Next');
         await tap(button(await screen(), 'Save'));
         await inbox();
         expectStored(title, { status: 'next', dueDate: null }, `${title} stored as next`);
@@ -294,8 +280,8 @@ try {
     // (a) Both appear under core's "Next actions" in Focus.
     await showTab('Focus');
     await focusList();
-    await expectSection(first, 'Next actions', '(a)');
-    await expectSection(second, 'Next actions', '(a)');
+    await expectSection(first, NEXT_ACTIONS, '(a)');
+    await expectSection(second, NEXT_ACTIONS, '(a)');
 
     // (b) The editor opens from Focus, and Cancel and Save both return to Focus.
     await openFromFocus(first);
@@ -306,7 +292,7 @@ try {
     await openFromFocus(first);
     const today = sh('date +%Y-%m-%d');
     const day = Number(sh('date +%d'));
-    await tapStarting('Due date: ');
+    await tapStarting('Due Date: ');
     const label = (node) => `${node.text ?? ''} ${node['content-desc'] ?? ''}`;
     const todayCell = (current) => current.find((node) => node.clickable === 'true' && /\bToday\b/.test(label(node)));
     nodes = await waitFor('the date picker', (current) => button(current, 'OK') && todayCell(current));
@@ -314,19 +300,19 @@ try {
     await tap(todayCell(nodes));
     await waitFor('OK enabled', (current) => button(current, 'OK')?.enabled === 'true', 10_000);
     await tap(button(await screen(), 'OK'));
-    await waitFor(`Due date: ${today}`, (current) => shown(current, 'Due date') === today);
+    await waitFor(`Due Date: ${today}`, (current) => shown(current, 'Due Date') === today);
     const beforeDue = stored(first);
     await tap(button(await screen(), 'Save'));
     await focusList('Focus after Save');
     check(true, '(b) Save returned to Focus');
     const due = expectStored(first, { status: 'next', dueDate: today, rev: beforeDue.rev + 1 }, `(b) due date ${today} stored in one write`);
-    nodes = await expectSection(first, 'Today', '(b)');
+    nodes = await expectSection(first, TODAY, '(b)');
 
     // (c) Complete from Focus: the row leaves, core's Today total drops by one, and done is stored once.
-    const todayTotal = sectionTotal(nodes, 'Today');
+    const todayTotal = sectionTotal(nodes, TODAY);
     const savedBefore = completes(processId, 'saved');
-    nodes = await tapUntil(`Complete ${first}`, `${first} to leave Focus`,
-        (current) => !rowNode(current, first) && sectionTotal(current, 'Today') === todayTotal - 1);
+    nodes = await tapUntil(`Done ${first}`, `${first} to leave Focus`,
+        (current) => !rowNode(current, first) && sectionTotal(current, TODAY) === todayTotal - 1);
     check(true, `(c) ${first} left Focus; Today total ${todayTotal} -> ${todayTotal - 1}`);
     expectStored(first, { status: 'done', dueDate: today, rev: due.rev + 1 }, '(c) done stored in one write');
     check(completes(processId, 'saved') === savedBefore + 1, '(c) task-command log shows one operation=complete saved');
@@ -334,10 +320,10 @@ try {
     // (d) Rotation keeps the Focus tab and its rows, on the same process and host.
     await rotate(1);
     await focusList('Focus after rotation');
-    await expectSection(second, 'Next actions', '(d) landscape: Focus tab kept;');
+    await expectSection(second, NEXT_ACTIONS, '(d) landscape: Focus tab kept;');
     await rotate(0);
     await focusList('Focus after rotating back');
-    await expectSection(second, 'Next actions', '(d) portrait: Focus tab kept;');
+    await expectSection(second, NEXT_ACTIONS, '(d) portrait: Focus tab kept;');
     check(pid() === processId && boots(processId) === 1, '(d) same process, one host boot');
 
     // (e) Home, process death, relaunch: the Focus tab comes back.
@@ -349,20 +335,25 @@ try {
     await focusList('the restored Focus tab');
     processId = pid();
     check(boots(processId) === 1, '(e) Focus tab restored after process death, one host boot');
-    nodes = await expectSection(second, 'Next actions', '(e)');
+    nodes = await expectSection(second, NEXT_ACTIONS, '(e)');
 
     // (f) A failed Complete from Focus keeps only its exact retry across rotation, Back, and a new screen.
     const beforeFailure = stored(second);
     setProp('fail_commit', '1');
-    nodes = await tapUntil(`Complete ${second}`, 'the failed Complete', hasError);
+    nodes = await tapUntil(`Done ${second}`, 'the failed Complete', hasError);
     const failedFocus = async (description, labelText) => {
+        // At the top of the list nothing overlaps the pinned failure text, so the tree reports it there.
+        await toTop();
         await waitFor(description, (current) => tabSelected(current, 'Focus') && hasError(current));
         const current = await findRow(second);
-        check(tabSelected(current, 'Focus') && hasError(current), `(f${labelText}) Focus tab shows the failure`);
-        check(button(current, `Complete ${second}`)?.enabled === 'true', `(f${labelText}) exact retry allowed`);
-        const others = current.filter((node) => node['content-desc']?.startsWith('Complete ') && node['content-desc'] !== `Complete ${second}`)
+        // After a scroll, Compose can report a partly scrolled-out row's full bounds over the pinned failure
+        // text, so the accessibility tree omits that text although it stays on screen (screenshot-verified,
+        // U04 follow-up). The failure was asserted above; here the owed retry itself is the evidence.
+        check(tabSelected(current, 'Focus'), `(f${labelText}) Focus tab kept`);
+        check(button(current, `Done ${second}`)?.enabled === 'true', `(f${labelText}) exact retry allowed`);
+        const others = current.filter((node) => node['content-desc']?.startsWith('Done ') && node['content-desc'] !== `Done ${second}`)
             .map((node) => button(current, node['content-desc'])).filter(Boolean);
-        check(others.every((node) => node.enabled === 'false'), `(f${labelText}) ${others.length} other Complete buttons blocked`);
+        check(others.every((node) => node.enabled === 'false'), `(f${labelText}) ${others.length} other Done buttons blocked`);
         check(tab(current, 'Inbox')?.enabled === 'true', `(f${labelText}) tabs still work`);
     };
     await failedFocus('the failure', '');
@@ -388,8 +379,10 @@ try {
     await failedFocus('the failure on a new screen', ' on a new screen');
     check(pid() === processId && boots(processId) === 1, '(f) same process and host');
     expectStored(second, { status: 'next', rev: beforeFailure.rev }, '(f) still nothing stored before the retry');
+    // Reads wait while the retry is owed, so no read failure can have replaced the Done retry.
+    check(!logs(processId).includes('lock=storage'), '(f) no read failed while the retry was owed (log has no lock=storage)');
     setProp('fail_commit', '');
-    nodes = await tapUntil(`Complete ${second}`, 'the retry', (current) => !hasError(current) && !rowNode(current, second));
+    nodes = await tapUntil(`Done ${second}`, 'the retry', (current) => !hasError(current) && !rowNode(current, second));
     expectStored(second, { status: 'done', rev: beforeFailure.rev + 1 }, '(f) retry stored done once');
     check(completes(processId, 'failed') >= 1 && completes(processId, 'saved') >= 1, '(f) task-command log shows the failed and the saved complete');
 
@@ -397,7 +390,7 @@ try {
     nodes = await toTop();
     let more;
     for (let step = 0; step < 80 && !more; step += 1) {
-        more = nodes.find((node) => node['content-desc']?.startsWith('Load more '));
+        more = nodes.find((node) => node['content-desc']?.startsWith('More '));
         if (more) break;
         const next = await swipe(nodes, 'down');
         if (signature(next) === signature(nodes)) break;
@@ -406,11 +399,11 @@ try {
     if (!more) {
         console.log('skip - (g) no Focus section has more than 50 rows in the development data');
     } else {
-        const section = more['content-desc'].slice('Load more '.length);
+        const section = more['content-desc'].slice('More '.length);
         const moreTop = box(more)[1];
         // Row titles as their Complete buttons name them; a row the window added sits where Load more was.
-        const rowTitles = (current) => current.filter((node) => node['content-desc']?.startsWith('Complete '))
-            .map((node) => ({ title: node['content-desc'].slice('Complete '.length), top: box(node)[1] }));
+        const rowTitles = (current) => current.filter((node) => node['content-desc']?.startsWith('Done '))
+            .map((node) => ({ title: node['content-desc'].slice('Done '.length), top: box(node)[1] }));
         const before = new Set(rowTitles(nodes).map(({ title }) => title));
         const addedRow = (current) => rowTitles(current).find(({ title, top }) => !before.has(title) && top >= moreTop - 5);
         nodes = await tapUntil(more['content-desc'], `rows after Load more ${section}`, addedRow);
@@ -432,7 +425,7 @@ try {
     await showTab('Inbox');
     nodes = await inbox();
     processId = pid();
-    check(boots(processId) === 1 && !nodes.some((node) => node.text?.startsWith('Storage unavailable')), 'relaunch: boot validation passed');
+    check(boots(processId) === 1 && !bootFailure(nodes), 'relaunch: boot validation passed');
     expectStored(first, { status: 'done' }, `relaunch: ${first} done`);
     expectStored(second, { status: 'done' }, `relaunch: ${second} done`);
     console.log('Focus device check passed');

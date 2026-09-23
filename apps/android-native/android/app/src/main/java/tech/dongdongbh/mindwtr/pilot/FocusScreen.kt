@@ -51,7 +51,7 @@ data class FocusView(val revision: String, val sections: List<FocusSection>) {
 
 /**
  * Focus as core sent it, in one list. Each section title stays pinned while its
- * rows scroll. "Later today" goes before the first row core flags `laterToday`.
+ * rows scroll. Core's "Later today" label goes before the first row core flags `laterToday`.
  */
 @Composable
 fun FocusList(model: InboxViewModel, modifier: Modifier) {
@@ -67,6 +67,7 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
         }
     }
     with(model) {
+        val more = t("common.more")
         LazyColumn(modifier) {
             for (section in focus?.sections.orEmpty()) {
                 stickyHeader(key = "title:${section.key}") {
@@ -77,14 +78,14 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
                 val laterToday = section.rows.indexOfFirst { it.laterToday }
                 section.rows.forEachIndexed { index, task ->
                     if (index == laterToday) item(key = "later:${section.key}") {
-                        Text("Later today", style = MaterialTheme.typography.titleSmall,
+                        Text(t("agenda.laterToday"), style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(top = 8.dp).semantics { heading() })
                     }
                     item(key = "${section.key}:${task.id}") { TaskRowItem(model, task) }
                 }
                 if (section.rows.size < section.total) item(key = "more:${section.key}") {
                     Button(onClick = { loadMoreFocus(section.key) }, enabled = writable && !busy && failedAction == null,
-                        modifier = Modifier.semantics { contentDescription = "Load more ${section.title}" }) { Text("Load more") }
+                        modifier = Modifier.semantics { contentDescription = "$more ${section.title}" }) { Text(more) }
                 }
             }
         }

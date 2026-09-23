@@ -40,7 +40,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, check, connect, fail, field, hasText, Stopped } from './device.mjs';
 
 const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
@@ -307,8 +307,9 @@ const liveInbox = (tasks) => tasks.filter((task) => task.status === 'inbox' && !
 
 // ---- UI ----
 const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
-const unavailable = (nodes) => nodes.find((node) => node.text?.startsWith('Storage unavailable'))?.text;
-const nativeScreen = () => waitFor('the native screen', (nodes) => Boolean(field(nodes)), 60_000);
+// A failed boot shows only its message (tagged `boot-failure`) and no command control.
+const unavailable = bootFailure;
+const nativeScreen = () => waitFor('the native screen', (nodes) => Boolean(field(nodes)) || unavailable(nodes) !== undefined, 60_000);
 const autoCleanSwitch = (nodes) => nodes.find((node) => node.class === 'android.widget.Switch' && node['content-desc'] === AUTO_CLEAN_LABEL);
 const nativeGuardLog = () => device.logs(pid(), TAG).split('\n').find((line) => line.includes(GUARD)) ?? '';
 // The JS host's log `extra` is a JSON string, so its quotes arrive escaped.
@@ -323,12 +324,9 @@ const expectBlocked = async (label, reason, message) => {
     install(APKS.native153, true);
     device.launch(NATIVE_ACTIVITY);
     const nodes = await nativeScreen();
-    check((unavailable(nodes) ?? '').startsWith(`Storage unavailable: ${message}`), `(${label}) native app shows: ${unavailable(nodes)}`);
+    check((unavailable(nodes) ?? '').startsWith(message), `(${label}) native app shows: ${unavailable(nodes)}`);
     check(nativeGuardLog().includes(`${GUARD} outcome=blocked reason=${reason}`), `(${label}) guard logged outcome=blocked reason=${reason}`);
-    await type(`9${run}`);
-    const typed = await screen();
-    check(button(typed, 'Add')?.enabled === 'false', `(${label}) Add stays disabled with a typed draft`);
-    check(button(typed, 'Refresh')?.enabled === 'false', `(${label}) Refresh is disabled`);
+    check(!field(nodes) && !nodes.some((node) => node.package === PKG && node.clickable === 'true'), `(${label}) no capture field and no control is offered`);
     await stopApp();
 };
 

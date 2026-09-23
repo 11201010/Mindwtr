@@ -128,7 +128,24 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
         callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
 
     /**
-     * Debug-build fault injection for `scripts/check-lifecycle-device.mjs` and `scripts/check-editor-device.mjs`.
+     * Core's setLanguage: [stored] is RN's saved language ("" for none), [system] the device locale tag.
+     * A debug build lets `debug.mindwtr.native.language` replace [stored] for the language check.
+     */
+    fun language(stored: String, system: String): JSONObject =
+        callAsync("language", debugFault("language").ifEmpty { stored }, system)
+
+    /** Core's getStrings for [keys], in the language core chose. */
+    fun strings(keys: List<String>): JSONObject = callAsync("strings", JSONArray(keys).toString())
+
+    /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
+    fun projects(): JSONObject = callAsync("projects")
+
+    /** Core's getProjectDetail. A changed project fails with "STALE_REVISION: …". */
+    fun projectDetail(id: String, offset: Int, limit: Int, revision: String): JSONObject =
+        callAsync("projectDetail", id, offset, limit, revision)
+
+    /**
+     * Debug-build fault injection for the device checks, and the language override at boot.
      * Read once per task command, on the engine thread. Release builds return
      * "" before reading anything, so no property can reach them.
      */

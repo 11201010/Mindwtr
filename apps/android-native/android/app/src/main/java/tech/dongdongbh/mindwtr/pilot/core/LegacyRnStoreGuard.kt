@@ -41,6 +41,8 @@ internal object LegacyRnStoreGuard {
     private const val JSON_AHEAD = "mindwtr-data:json-ahead-of-sqlite"
     private const val RECONCILED = "mindwtr-data:sqlite-json-reconcile-v1"
     private const val BACKUP_VERSION = "mindwtr-data:startup-backup-version"
+    /** RN's device-local language choice (core's LANGUAGE_STORAGE_KEY); core's setLanguage validates it. */
+    private const val LANGUAGE = "mindwtr-language"
     /** RN's `getLegacyJson` order: the first present name holds the backup. */
     private val BACKUP_NAMES = listOf("mindwtr-data", "focus-gtd-data", "gtd-todo-data", "gtd-data")
     private const val MAX_BACKUP_BYTES = 64L * 1024 * 1024
@@ -53,10 +55,13 @@ internal object LegacyRnStoreGuard {
         "database-unreadable" to "The previous app version's database failed its integrity check",
     )
 
-    /** The RN database, and what RN left in AsyncStorage: [bootState] as JSON, and the backup text ("" when absent). */
-    class Opened(val database: File, val bootState: String, val backup: String)
+    /** The RN database, and what RN left in AsyncStorage: [bootState] as JSON, the backup text ("" when absent), and RN's language. */
+    class Opened(val database: File, val bootState: String, val backup: String, val language: String?)
 
-    private class RnState(val jsonAhead: Boolean, val reconciled: Boolean, val backupVersion: String?, val backupBytes: Long, val backup: String?)
+    private class RnState(
+        val jsonAhead: Boolean, val reconciled: Boolean, val backupVersion: String?, val backupBytes: Long, val backup: String?,
+        val language: String? = null,
+    )
 
     /** Returns the RN database to open and the RN state, or throws before anything has opened the database. */
     fun requireClear(dataDir: File, scratch: File): Opened {
@@ -90,12 +95,12 @@ internal object LegacyRnStoreGuard {
             .put("reconciled", state.reconciled)
             .put("backupVersion", state.backupVersion ?: JSONObject.NULL)
             .put("backupPresent", state.backup != null)
-        return Opened(database, bootState.toString(), state.backup ?: "")
+        return Opened(database, bootState.toString(), state.backup ?: "", state.language)
     }
 
     /** The AsyncStorage reads RN's startup makes. The backup is passed on as text and never parsed here. */
     private fun readState(asyncStorage: File, scratch: File): RnState = queryCopy(asyncStorage, scratch) { copy ->
-        val names = BACKUP_NAMES + listOf(JSON_AHEAD, RECONCILED, BACKUP_VERSION)
+        val names = BACKUP_NAMES + listOf(JSON_AHEAD, RECONCILED, BACKUP_VERSION, LANGUAGE)
         val sizes = HashMap<String, Long>()
         copy.prepare("SELECT key, length(CAST(value AS BLOB)) FROM catalystLocalStorage " +
             "WHERE value IS NOT NULL AND key IN (${names.joinToString(", ") { "?" }})").use { statement ->
@@ -119,6 +124,7 @@ internal object LegacyRnStoreGuard {
             backupVersion = if (BACKUP_VERSION in sizes) value(BACKUP_VERSION) else null,
             backupBytes = backupBytes,
             backup = backupName?.takeIf { backupBytes <= MAX_BACKUP_BYTES }?.let(value),
+            language = if (LANGUAGE in sizes) value(LANGUAGE) else null,
         )
     }
 

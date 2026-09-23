@@ -5,6 +5,7 @@ import android.util.Log
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
 
@@ -22,7 +23,7 @@ internal object ProcessCoreHost {
 
     /**
      * A failed command's exact retry, with the screen it failed on: the list
-     * (Inbox or Focus) and its rows, and the editor draft for a failed update.
+     * (Inbox, Focus, or Projects) and its rows, and the editor draft for a failed update.
      * It lives next to the host so a new screen in this process (the old one
      * finished) reopens on the same retry instead of a locked, empty list. In
      * memory only: after process death the saved capture draft and UUID, or the
@@ -36,12 +37,18 @@ internal object ProcessCoreHost {
         val editor: TaskEditor? = null,
         val screen: Screen = Screen.Inbox,
         val focus: FocusView? = null,
+        val projects: ProjectsView? = null,
+        val project: ProjectDetail? = null,
     )
 
     @Volatile var failure: PendingFailure? = null
         private set
 
-    @Synchronized fun recordFailure(pending: PendingFailure) { failure = pending }
+    /** A read's storage failure never replaces an owed command: that command's exact retry is what recovers. */
+    @Synchronized fun recordFailure(pending: PendingFailure) {
+        if (pending.action.kind == "storage" && failure?.action?.kind.let { it != null && it != "storage" }) return
+        failure = pending
+    }
 
     /** Called only after [action] itself succeeds. */
     @Synchronized fun clearFailure(action: FailedAction) {
@@ -82,11 +89,18 @@ internal object ProcessCoreHost {
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir })
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
+            setLanguage(runtime, legacy?.language)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
             throw failure
         }
+    }
+
+    /** Core's setLanguage, then the label map read again in that language. Screens render only after this. */
+    private fun setLanguage(runtime: CoreHost, stored: String?) {
+        runtime.language(stored ?: "", Locale.getDefault().toLanguageTag())
+        Labels.load(runtime.strings(LABEL_KEYS))
     }
 
     fun logHostReuse(reason: String, attaches: Int, inFlight: Boolean) {

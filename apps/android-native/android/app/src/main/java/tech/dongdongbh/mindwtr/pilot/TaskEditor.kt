@@ -121,38 +121,42 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) {
 
         Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Edit task", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                TextButton(onClick = leave, enabled = !busy && !failed) { Text(if (editor.readOnly) "Close" else "Cancel") }
+                Text(t("taskEdit.editTask"), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = leave, enabled = !busy && !failed) { Text(t(if (editor.readOnly) "common.close" else "common.cancel")) }
                 if (!editor.readOnly) {
                     Button(onClick = model::saveEditor,
-                        enabled = writable && !busy && (failedAction == null || failedAction == updateAction(editor))) { Text("Save") }
+                        enabled = writable && !busy && (failedAction == null || failedAction == updateAction(editor))) { Text(t("common.save")) }
                 }
             }
-            if (editor.readOnly) Text("Read-only: this task's project is archived.", Modifier.padding(top = 8.dp))
+            if (editor.readOnly) Text(t("projects.archivedReadOnlyHint"), Modifier.padding(top = 8.dp))
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
-            if (conflict) {
-                Text("Reload takes the stored values of the fields named above and keeps your other edits.",
-                    Modifier.padding(top = 4.dp))
-                Button(onClick = model::reloadEditor, enabled = !busy && !failed) { Text("Reload") }
-            }
+            // Core has no key for "Reload": its "Try again" takes the stored values of the fields core named and keeps the other edits.
+            if (conflict) Button(onClick = model::reloadEditor, enabled = !busy && !failed) { Text(t("common.retry")) }
             // The field being typed into stays above the keyboard.
             Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState())) {
-                OutlinedTextField(editor.edited["title"] ?: "", { editText("title", it) }, label = { Text("Title") },
+                OutlinedTextField(editor.edited["title"] ?: "", { editText("title", it) }, label = { Text(t("taskEdit.titleLabel")) },
                     enabled = !locked, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                OutlinedTextField(editor.edited["description"] ?: "", { editText("description", it) }, label = { Text("Notes") },
+                OutlinedTextField(editor.edited["description"] ?: "", { editText("description", it) },
+                    label = { Text(t("taskEdit.descriptionLabel")) },
                     minLines = 3, enabled = !locked, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                Choice("Status", editor.edited["status"] ?: "none", editor.reply.statuses.map { it to it }, !locked) {
-                    editField("status", it)
-                }
-                Choice("Priority", editor.edited["priority"] ?: "none",
-                    listOf(null to "none") + editor.reply.priorities.map { it to it }, !locked) { editField("priority", it) }
+                // Status and priority values show core's label for the value core sent; the value itself is saved.
+                val none = t("common.none")
+                val status = editor.edited["status"]
+                Choice(t("taskEdit.statusLabel"), status?.let { t("status.$it") } ?: none,
+                    editor.reply.statuses.map { it to t("status.$it") }, !locked) { editField("status", it) }
+                val priority = editor.edited["priority"]
+                Choice(t("taskEdit.priorityLabel"), priority?.let { t("priority.$it") } ?: none,
+                    listOf(null to none) + editor.reply.priorities.map { it to t("priority.$it") }, !locked) { editField("priority", it) }
+                val noProject = t("taskEdit.noProjectOption")
                 val projectId = editor.edited["projectId"]
                 val projectTitle = projectId?.let { id -> editor.reply.projects.firstOrNull { it.first == id }?.second ?: id }
-                Choice("Project", projectTitle ?: "none", listOf(null to "none") + editor.reply.projects, !locked) {
+                Choice(t("taskEdit.projectLabel"), projectTitle ?: noProject, listOf(null to noProject) + editor.reply.projects, !locked) {
                     editField("projectId", it)
                 }
-                DateChoice("Start date", editor.edited["startTime"], !locked, { picking = "startTime" }) { editField("startTime", null) }
-                DateChoice("Due date", editor.edited["dueDate"], !locked, { picking = "dueDate" }) { editField("dueDate", null) }
+                DateChoice(t("taskEdit.startDateLabel"), editor.edited["startTime"], !locked, { picking = "startTime" }) {
+                    editField("startTime", null)
+                }
+                DateChoice(t("taskEdit.dueDateLabel"), editor.edited["dueDate"], !locked, { picking = "dueDate" }) { editField("dueDate", null) }
             }
         }
 
@@ -164,22 +168,22 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) {
                     TextButton(onClick = {
                         state.selectedDateMillis?.let { pickerMillis -> editField(field, pickedDay(pickerMillis)) }
                         picking = null
-                    }, enabled = state.selectedDateMillis != null) { Text("OK") }
+                    }, enabled = state.selectedDateMillis != null) { Text(t("common.ok")) }
                 },
-                dismissButton = { TextButton(onClick = { picking = null }) { Text("Cancel") } },
+                dismissButton = { TextButton(onClick = { picking = null }) { Text(t("common.cancel")) } },
             ) { DatePicker(state) }
         }
 
         if (confirmLeave) {
             AlertDialog(
                 onDismissRequest = { confirmLeave = false },
-                title = { Text("Discard unsaved changes?") },
-                text = { Text("Your changes will be lost if you leave now.") },
-                confirmButton = { TextButton(onClick = { confirmLeave = false; saveEditor() }) { Text("Save") } },
+                title = { Text(t("taskEdit.discardChanges")) },
+                text = { Text(t("taskEdit.discardChangesDesc")) },
+                confirmButton = { TextButton(onClick = { confirmLeave = false; saveEditor() }) { Text(t("common.save")) } },
                 dismissButton = {
                     Row {
-                        TextButton(onClick = { confirmLeave = false }) { Text("Cancel") }
-                        TextButton(onClick = { confirmLeave = false; closeEditor() }) { Text("Discard") }
+                        TextButton(onClick = { confirmLeave = false }) { Text(t("common.cancel")) }
+                        TextButton(onClick = { confirmLeave = false; closeEditor() }) { Text(t("common.discard")) }
                     }
                 },
             )
@@ -202,9 +206,11 @@ private fun Choice(label: String, shown: String, options: List<Pair<String?, Str
 /** Shows the value exactly as stored, date-only or with a time. Picking sets a date-only value; Clear sets null. */
 @Composable
 private fun DateChoice(label: String, value: String?, enabled: Boolean, onPick: () -> Unit, onClear: () -> Unit) {
+    val shown = value ?: t("common.notSet")
+    val clear = t("common.clear")
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedButton(onClick = onPick, enabled = enabled, modifier = Modifier.weight(1f)) { Text("$label: ${value ?: "none"}") }
+        OutlinedButton(onClick = onPick, enabled = enabled, modifier = Modifier.weight(1f)) { Text("$label: $shown") }
         TextButton(onClick = onClear, enabled = enabled && value != null,
-            modifier = Modifier.semantics { contentDescription = "Clear ${label.lowercase()}" }) { Text("Clear") }
+            modifier = Modifier.semantics { contentDescription = "$clear $label" }) { Text(clear) }
     }
 }

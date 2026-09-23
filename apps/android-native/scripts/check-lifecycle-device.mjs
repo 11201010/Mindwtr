@@ -4,7 +4,8 @@
 //
 // Installs the debug APK with `install -r` (existing development data stays),
 // then drives capture through rotation, process death, force-stop, and an
-// injected commit failure. It asserts through the app's own database copy
+// injected commit failure, and checks that the landscape Inbox scrolls as one
+// list with at least three task rows in view. It asserts through the app's own database copy
 // (.db, -wal and -shm pulled together), the UI hierarchy, and logcat. It
 // touches only the development package (it refuses any other APK), never
 // launches over another app, and restores rotation and clears its debug
@@ -15,7 +16,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, check, connect, doneButtons, field, hasText, Stopped } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -36,7 +37,8 @@ if (apkPackage !== PKG) {
 const ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
-const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms'];
+// `language` is cleared so the app shows core's text for the phone's language (English on the test phone).
+const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language'];
 const work = resolve(app, 'android/build/lifecycle-check');
 // Digits only: some phone keyboards hold typed letters in a composition strip.
 // Time plus a random part keeps every run's titles unique; the run also asserts none exist yet.
@@ -44,7 +46,7 @@ const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padSt
 const titles = { a: `81${run}`, b: `82${run}`, c1: `83${run}`, c2: `84${run}`, c3: `85${run}`, d: `86${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
-const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, reveal } = device;
+const { sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, reveal, swipe, toTop } = device;
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 
 // ---- device state ----
@@ -131,10 +133,15 @@ try {
     nodes = await waitFor('save b after rotation', (current) => header(current) === total + 1 && field(current)?.text === '');
     total += 1;
     // The header already proves the landscape Activity received the save. Look for the row
-    // after rotating back (another recreation): a landscape Inbox shows about one row.
+    // after rotating back (another recreation).
     check(rowsTitled(titles.b) === 1, '(b) exactly one stored row for the capture');
     check(pid() === processId && boots(processId) === 1, '(b) same process, no second host boot');
     setProp('delay_before_ms', '');
+    // Landscape: the header and capture row are list items, so one drag scrolls them away and rows fill the screen.
+    console.log(`info - (b) landscape shows ${doneButtons(nodes).length} full task rows below the header and capture row`);
+    const scrolled = await swipe(nodes, 'down');
+    check(doneButtons(scrolled).length >= 3, `(b) landscape shows ${doneButtons(scrolled).length} full task rows after one drag (at least 3)`);
+    await toTop();
     rotate(0);
     await waitFor('rotation back', () => recreations(processId).length > recreatedBefore + 1, 15_000);
     await loaded();
@@ -210,10 +217,10 @@ try {
     const failedState = (current, label) => {
         check(field(current)?.text === titles.d && field(current)?.enabled === 'false', `(d${label}) draft kept and locked`);
         check(button(current, 'Add')?.enabled === 'true', `(d${label}) exact retry allowed`);
-        check(button(current, 'Refresh')?.enabled === 'false', `(d${label}) Refresh blocked`);
-        const completes = current.filter((node) => node['content-desc']?.startsWith('Complete '))
+        check(!button(current, 'Try again'), `(d${label}) no read retry offered while the capture's retry is owed`);
+        const completes = current.filter((node) => node['content-desc']?.startsWith('Done '))
             .map((node) => button(current, node['content-desc'])).filter(Boolean); // a clipped edge row has no match
-        check(completes.length > 0 && completes.every((node) => node.enabled === 'false'), `(d${label}) Complete blocked`);
+        check(completes.length > 0 && completes.every((node) => node.enabled === 'false'), `(d${label}) Done blocked`);
     };
     failedState(nodes, '');
     check(rowsTitled(titles.d) === 0, '(d) failed commit stored nothing');
@@ -247,7 +254,8 @@ try {
     await tapAdd();
     nodes = await waitFor('retry d', (current) => header(current) === total + 1 && field(current)?.text === '');
     total += 1;
-    check(!hasError(nodes) && button(nodes, 'Refresh')?.enabled === 'true', '(d) retry cleared the failure');
+    check(!hasError(nodes) && doneButtons(nodes).some((node) => button(nodes, node['content-desc'])?.enabled === 'true'),
+        '(d) retry cleared the failure: Done works again');
     check(rowsTitled(titles.d) === 1 && boots(processId) === 1, '(d) exactly one row, still one host');
 
     // (e) Relaunch: boot validation passes and the counts match.
@@ -257,7 +265,7 @@ try {
     launch();
     nodes = await loaded();
     processId = pid();
-    check(boots(processId) === 1 && !nodes.some((node) => node.text?.startsWith('Storage unavailable')), '(e) boot validation passed');
+    check(boots(processId) === 1 && !bootFailure(nodes), '(e) boot validation passed');
     check(header(nodes) === total, `(e) Inbox total is ${total}`);
     for (const [name, title] of Object.entries(titles)) check(rowsTitled(title) === 1, `(e) ${name} stored once`);
     console.log('Lifecycle device check passed');

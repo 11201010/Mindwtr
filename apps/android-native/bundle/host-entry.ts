@@ -236,6 +236,27 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getTaskEditor({ id }));
         });
     },
+    /** Core's setLanguage. "" is no stored language. Labels are not stored data, so no failed save blocks them. */
+    language(stored: string, system: string): string {
+        return submit(async () => unwrap(await contract.setLanguage({ storedLanguage: stored || null, systemLocale: system || null })));
+    },
+    /** `keysJson` is a JSON array of core i18n keys. */
+    strings(keysJson: string): string {
+        return submit(async () => unwrap(contract.getStrings({ keys: JSON.parse(keysJson) as string[] })));
+    },
+    projects(): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjects());
+        });
+    },
+    /** Core refuses a stale `revision`; Kotlin then reads the project again from offset 0. */
+    projectDetail(id: string, offset: number, limit: number, revision: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectDetail({ projectId: id, offset, limit, revision: revision || undefined }));
+        });
+    },
     /** `json` is `{ id, base, patch }`, passed to core unchanged. */
     update(json: string): string {
         return submit(async () => taskResult('update', await contract.updateTask(JSON.parse(json))));

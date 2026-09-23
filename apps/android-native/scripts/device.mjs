@@ -26,6 +26,17 @@ export const button = (nodes, label) => {
     })[0];
 };
 export const hasText = (nodes, text) => nodes.some((node) => node.text === text && node.class !== 'android.widget.EditText');
+/** The message of a failed boot: the app then shows only this text, tagged for tests, and no command control. */
+export const bootFailure = (nodes) => nodes.find((node) => /(^|\/)boot-failure$/.test(node['resource-id'] ?? ''))?.text;
+/** Task rows with a Done button fully inside the list: core's `common.done` label, then the title. */
+export const doneButtons = (nodes) => {
+    const list = nodes.find((node) => node.scrollable === 'true');
+    const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
+    return nodes.filter((node) => node['content-desc']?.startsWith('Done ')).filter((node) => {
+        const [, t, , b] = box(node);
+        return t >= top && b <= bottom;
+    });
+};
 
 export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/dd/Android/Sdk/platform-tools/adb' }) {
     const adbRaw = (...args) => execFileSync(adb, ['-s', serial, ...args], { maxBuffer: 64 << 20 });
@@ -76,8 +87,33 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
         await sleep(400);
     };
+    /** Swipes the app's list one step: 'up' scrolls toward the top. A list that fits is not scrollable: same hierarchy. */
+    const swipe = async (nodes, direction) => {
+        const list = nodes.find((node) => node.scrollable === 'true');
+        if (!list) return nodes;
+        requireAppFront();
+        const [x1, y1, x2, y2] = box(list);
+        const x = Math.round((x1 + x2) / 2);
+        const [low, high] = [Math.round(y2 - (y2 - y1) * 0.15), Math.round(y1 + (y2 - y1) * 0.15)];
+        // A moderate drag: a fast one flings past rows on a short (landscape) list.
+        sh(`input swipe ${x} ${direction === 'up' ? high : low} ${x} ${direction === 'up' ? low : high} 500`);
+        await sleep(400);
+        return screen();
+    };
+    const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
+    /** Scrolls the list to its first item (the Inbox header and capture row are list items). */
+    const toTop = async () => {
+        let nodes = await screen();
+        for (let step = 0; step < 60; step += 1) {
+            const next = await swipe(nodes, 'up');
+            if (signature(next) === signature(nodes)) return next;
+            nodes = next;
+        }
+        return nodes;
+    };
     const type = async (title) => {
-        await tap(field(await screen()));
+        const nodes = await screen();
+        await tap(field(nodes) ?? field(await toTop()) ?? fail('no text field on screen'));
         requireAppFront();
         sh(`input text ${title}`);
         await waitFor(`the draft ${title} in the field`, (nodes) => field(nodes)?.text === title, 10_000);
@@ -87,26 +123,13 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
      * step may have left the list scrolled past the row), then forward. The list grows with every run.
      */
     const reveal = async (text, swipes = 150) => {
-        const signature = (nodes) => nodes.map((node) => `${node.text}|${node.bounds}`).join('\n');
-        const step = async (nodes, towardTop) => {
-            const list = nodes.find((node) => node.scrollable === 'true');
-            if (!list) return nodes;
-            requireAppFront();
-            const [x1, y1, x2, y2] = box(list);
-            const x = Math.round((x1 + x2) / 2);
-            const [low, high] = [Math.round(y2 - (y2 - y1) * 0.15), Math.round(y1 + (y2 - y1) * 0.15)];
-            // A moderate drag: a fast one flings past rows on a short (landscape) list.
-            sh(`input swipe ${x} ${towardTop ? high : low} ${x} ${towardTop ? low : high} 500`);
-            await sleep(400);
-            return screen();
-        };
         let nodes = await screen();
         for (const towardTop of [true, false]) {
-            for (let swipe = 0; swipe < swipes && !hasText(nodes, text); swipe += 1) {
-                let next = await step(nodes, towardTop);
+            for (let step = 0; step < swipes && !hasText(nodes, text); step += 1) {
+                let next = await swipe(nodes, towardTop ? 'up' : 'down');
                 if (signature(next) === signature(nodes)) {
-                    // At the bottom of a paged list: load the next window and keep going.
-                    const more = towardTop ? undefined : button(next, 'Load more');
+                    // At the bottom of a paged list: load the next window (core's `common.more`) and keep going.
+                    const more = towardTop ? undefined : button(next, 'More');
                     if (!more || more.enabled !== 'true') break;
                     requireAppFront();
                     const [l, t, r, b] = box(more);
@@ -122,5 +145,5 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, type, reveal, pull };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, logs, screen, waitFor, tap, type, swipe, signature, toTop, reveal, pull };
 }
