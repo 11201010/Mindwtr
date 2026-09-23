@@ -52,6 +52,7 @@ import { dispatchNavigateEvent } from '../lib/navigation-events';
 import { followCreatedTaskAfterEdit, resolveViewForTask } from '../lib/created-task-follow';
 import { Dialog, DialogBody } from './ui/Dialog';
 import { useUiStore } from '../store/ui-store';
+import { runAfterTaskEditExit } from './Task/task-edit-session';
 import {
     QUICK_ADD_NATIVE_TARGET_MAIN,
     QUICK_ADD_NATIVE_TARGET_WINDOW,
@@ -931,16 +932,18 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
     };
 
     const openCreatedTaskForEditing = useCallback((taskId: string, props: Partial<Task>) => {
-        setHighlightTask(taskId);
-        setEditingTaskId(taskId);
-        const view = resolveViewForTask({ ...props, status: props.status ?? 'inbox' });
-        if (view === 'projects' && props.projectId) {
-            setProjectView({ selectedProjectId: props.projectId });
-        }
-        dispatchNavigateEvent(view);
-        // The editor may file the task elsewhere (a status, a project); follow it
-        // there instead of leaving the user on a list it just left (#1243).
-        followCreatedTaskAfterEdit(taskId, view);
+        runAfterTaskEditExit(() => {
+            setHighlightTask(taskId);
+            setEditingTaskId(taskId);
+            const view = resolveViewForTask({ ...props, status: props.status ?? 'inbox' });
+            if (view === 'projects' && props.projectId) {
+                setProjectView({ selectedProjectId: props.projectId });
+            }
+            dispatchNavigateEvent(view);
+            // The editor may file the task elsewhere (a status, a project); follow it
+            // there instead of leaving the user on a list it just left (#1243).
+            followCreatedTaskAfterEdit(taskId, view);
+        });
     }, [setEditingTaskId, setHighlightTask, setProjectView]);
 
     const buildQuickAddCaptureInput = useCallback(({

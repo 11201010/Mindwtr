@@ -44,6 +44,7 @@ import { fetchExternalCalendarEvents, summarizeExternalCalendarWarnings } from '
 import { useUiStore } from '../../../store/ui-store';
 import { getWorkspaceCache } from '../../../lib/workspace-cache';
 import { ShareCardDialog } from '../../ShareCardDialog';
+import { runAfterTaskEditExit } from '../../Task/task-edit-session';
 
 type ReviewStep = 'inbox' | 'stale' | 'calendar' | 'waiting' | 'contexts' | 'projects' | 'someday' | 'completed';
 type ReviewStepDefinition = {
@@ -74,6 +75,7 @@ function SummaryRow({ good, text }: { good: boolean; text: string }) {
 
 export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps) {
     const { t, language } = useLanguage();
+    const closeReview = useCallback(() => runAfterTaskEditExit(onClose), [onClose]);
     const [shareCardReviewDate] = useState(() => {
         try {
             return new Intl.DateTimeFormat(language, {
@@ -275,12 +277,12 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
             if (event.defaultPrevented || shareCardOpen) return;
             if (event.key === 'Escape') {
                 event.preventDefault();
-                onClose();
+                closeReview();
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [onClose, shareCardOpen]);
+    }, [closeReview, shareCardOpen]);
 
     useEffect(() => {
         if (sandboxMode) return;
@@ -313,16 +315,18 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
     }, [sandboxMode]);
 
     const nextStep = () => {
-        if (nextStepId) setCurrentStep(nextStepId);
+        if (nextStepId) runAfterTaskEditExit(() => setCurrentStep(nextStepId));
     };
 
     const prevStep = () => {
-        if (previousStepId) setCurrentStep(previousStepId);
+        if (previousStepId) runAfterTaskEditExit(() => setCurrentStep(previousStepId));
     };
 
     const finishReview = () => {
-        getWorkspaceCache()?.removeItem(WEEKLY_REVIEW_STEP_STORAGE_KEY);
-        onClose();
+        runAfterTaskEditExit(() => {
+            getWorkspaceCache()?.removeItem(WEEKLY_REVIEW_STEP_STORAGE_KEY);
+            onClose();
+        });
     };
 
     const renderStepRail = () => (
@@ -532,7 +536,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         void createProjectTaskFromPrompt(value).then((taskId) => {
             // The new task renders as a TaskItem in the project step; claiming
             // editingTaskId opens its inline editor without leaving the review.
-            if (taskId) setEditingTaskId(taskId);
+            if (taskId) runAfterTaskEditExit(() => setEditingTaskId(taskId));
         });
     };
 
@@ -1095,7 +1099,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
     return (
         <>
         <Dialog
-            onClose={onClose}
+            onClose={closeReview}
             label={t('review.title')}
             panelClassName="max-w-4xl mx-4 max-h-[85vh] bg-card rounded-lg border-border shadow-xl"
         >
@@ -1105,7 +1109,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                     {t('review.title')}
                 </h3>
                 <button
-                    onClick={onClose}
+                    onClick={closeReview}
                     className="p-1.5 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
                     aria-label={t('common.close')}
                 >

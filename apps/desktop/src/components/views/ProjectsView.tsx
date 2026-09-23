@@ -77,6 +77,7 @@ import {
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { usePersistedViewState } from '../../hooks/usePersistedViewState';
 import { getWorkspaceCache } from '../../lib/workspace-cache';
+import { runAfterTaskEditExit } from '../Task/task-edit-session';
 
 const projectsViewDndMeasuring = {
     droppable: {
@@ -182,8 +183,11 @@ export function ProjectsView() {
     const showToast = useUiStore((state) => state.showToast);
     const { requestConfirmation, confirmModal } = useConfirmDialog();
     const setSelectedProjectId = useCallback(
-        (value: string | null) => setProjectView({ selectedProjectId: value }),
-        [setProjectView]
+        (value: string | null) => {
+            if (value === selectedProjectId) return;
+            runAfterTaskEditExit(() => setProjectView({ selectedProjectId: value }));
+        },
+        [selectedProjectId, setProjectView]
     );
     const [isCreating, setIsCreating] = useState(false);
     const [newProjectTitle, setNewProjectTitle] = useState('');

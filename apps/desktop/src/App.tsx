@@ -53,6 +53,7 @@ import { Dialog, DialogBody, DialogFooter } from './components/ui/Dialog';
 import { useLanguage } from './contexts/language-context';
 import { KeybindingProvider } from './contexts/keybinding-context';
 import { QuickAddModal } from './components/QuickAddModal';
+import { runAfterTaskEditExit } from './components/Task/task-edit-session';
 import { CloseBehaviorModal } from './components/CloseBehaviorModal';
 import { PersistenceFailureBanner } from './components/PersistenceFailureBanner';
 import { startDesktopNotifications, stopDesktopNotifications } from './lib/notification-service';
@@ -1285,24 +1286,28 @@ function App() {
 
     const handleViewChange = useCallback((view: string) => {
         const nextView = view === 'obsidian' && !useObsidianStore.getState().config.enabled ? 'settings' : view;
-        if (nextView !== 'settings') {
-            setSettingsInitialPage(undefined);
-            setSettingsOnboardingHintPage(undefined);
-        }
-        if (!sandboxMode) {
-            persistLastView(nextView, useUiStore.getState().projectView.selectedProjectId);
-        }
-        writeViewToUrl(nextView);
-        setCurrentView(nextView);
-        if (nextView === 'settings') {
-            beginSettingsOpenTrace('handleViewChange');
-        }
-        // Settings can still suspend on its first render after a preload.
-        // Keep the current screen visible, just as for the other lazy routes.
-        startTransition(() => {
-            setActiveView(nextView);
-        });
-    }, [sandboxMode, startTransition]);
+        const changeView = () => {
+            if (nextView !== 'settings') {
+                setSettingsInitialPage(undefined);
+                setSettingsOnboardingHintPage(undefined);
+            }
+            if (!sandboxMode) {
+                persistLastView(nextView, useUiStore.getState().projectView.selectedProjectId);
+            }
+            writeViewToUrl(nextView);
+            setCurrentView(nextView);
+            if (nextView === 'settings') {
+                beginSettingsOpenTrace('handleViewChange');
+            }
+            // Settings can still suspend on its first render after a preload.
+            // Keep the current screen visible, just as for the other lazy routes.
+            startTransition(() => {
+                setActiveView(nextView);
+            });
+        };
+        if (nextView === currentView) changeView();
+        else runAfterTaskEditExit(changeView);
+    }, [currentView, sandboxMode, startTransition]);
 
     useEffect(() => {
         if (!viewSettingsHydrated || isLoading || timelineEnabled) return;

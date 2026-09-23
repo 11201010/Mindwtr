@@ -36,13 +36,13 @@ import { TaskItemEditor } from './Task/TaskItemEditor';
 import { TaskItemDisplay } from './Task/TaskItemDisplay';
 import { TaskItemEditorSurface } from './Task/TaskItemEditorSurface';
 import { TaskItemFieldRenderer } from './Task/TaskItemFieldRenderer';
-import { releaseTaskEditSession, tryClaimTaskEditSession } from './Task/task-edit-session';
+import { registerTaskEditExitRequest, releaseTaskEditSession, runAfterTaskEditExit, tryClaimTaskEditSession } from './Task/task-edit-session';
 import { TaskAttachmentOverlays } from './Task/TaskAttachmentOverlays';
 import { TaskRecurrenceOverlay } from './Task/TaskRecurrenceOverlay';
 import { ProjectNextActionPrompt } from './Task/ProjectNextActionPrompt';
-import { ConfirmModal } from './ConfirmModal';
 import { PromptModal } from './PromptModal';
-import { getDialogFocusableElements } from './ui/Dialog';
+import { Dialog, DialogBody, DialogFooter, getDialogFocusableElements } from './ui/Dialog';
+import { Button } from './ui/Button';
 import { deleteTaskWithUndo, duplicateTaskAndReveal, TaskQuickActionMenuHost } from './Task/useTaskQuickActionMenuProps';
 import {
     getRecurrenceRuleValue,
@@ -61,6 +61,7 @@ import { dispatchNavigateEvent } from '../lib/navigation-events';
 import { usePomodoroStore } from '../store/pomodoro-store';
 import { dispatchContextsTokenSelection } from '../lib/contexts-view-state';
 import { reportError } from '../lib/report-error';
+import { logInfo } from '../lib/app-log';
 import { registerUndoableAction } from '../lib/undo-registry';
 import { undoTaskCompletion } from '../lib/undo-task-completion';
 import { createSomedaySection } from '../lib/someday-section-actions';
@@ -242,7 +243,10 @@ export const TaskItem = memo(function TaskItem({
         task,
         resetAttachmentState,
     });
-    const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+    const [showExitConfirm, setShowExitConfirm] = useState(false);
+    const [isSavingExit, setIsSavingExit] = useState(false);
+    const pendingExitActionRef = useRef<(() => void) | null>(null);
+    const releaseExitRequestRef = useRef<(() => void) | null>(null);
     const [showWaitingAssignmentPrompt, setShowWaitingAssignmentPrompt] = useState(false);
     // Read lazily when the prompt opens: the editor-scoped assignedToOptions
     // are only loaded while editing, and this prompt also opens outside edits.
@@ -530,12 +534,15 @@ export const TaskItem = memo(function TaskItem({
     const editSessionOwnerRef = useRef<object>({});
     const startEditing = useCallback(() => {
         if (effectiveReadOnly || isEditing) return;
-        if (!tryClaimTaskEditSession(task.id, editSessionOwnerRef.current)) return;
-        resetEditState();
-        setTaskExpanded(task.id, false);
-        setAutoFocusTitle(true);
-        setIsEditing(true);
-        setEditingTaskId(task.id);
+        runAfterTaskEditExit(() => {
+            if (!taskRootRef.current?.isConnected) return;
+            if (!tryClaimTaskEditSession(task.id, editSessionOwnerRef.current)) return;
+            resetEditState();
+            setTaskExpanded(task.id, false);
+            setAutoFocusTitle(true);
+            setIsEditing(true);
+            setEditingTaskId(task.id);
+        });
     }, [effectiveReadOnly, isEditing, resetEditState, setEditingTaskId, setTaskExpanded, task.id]);
 
     const handleCreateProject = useCallback(async (title: string) => {
@@ -795,9 +802,11 @@ export const TaskItem = memo(function TaskItem({
     const taskArea = currentTaskArea;
     const projectColor = currentProjectColor;
     const handleOpenProject = useCallback((projectId: string) => {
-        setHighlightTask(task.id);
-        setSelectedProjectId(projectId);
-        dispatchNavigateEvent('projects');
+        runAfterTaskEditExit(() => {
+            setHighlightTask(task.id);
+            setSelectedProjectId(projectId);
+            dispatchNavigateEvent('projects');
+        });
     }, [setHighlightTask, setSelectedProjectId, task.id]);
     const handleDuplicateTask = useCallback(
         () => duplicateTaskAndReveal(task, { t }),
@@ -1276,6 +1285,60 @@ export const TaskItem = memo(function TaskItem({
         () => isTaskDraftDirty(draft, task) || areDraftAttachmentsDirty(editAttachments, task),
         [draft, editAttachments, task],
     );
+    const recordExitDecision = useCallback((outcome: 'saved' | 'discarded' | 'stayed') => {
+        void logInfo('Task editor exit decided', {
+            scope: 'ui',
+            extra: { releaseCheck: 'v1.3.3/side-peek-unsaved-exit', outcome },
+        });
+    }, []);
+    const stayInEditor = useCallback(() => {
+        pendingExitActionRef.current = null;
+        setShowExitConfirm(false);
+        recordExitDecision('stayed');
+    }, [recordExitDecision]);
+    const finishEditorExit = useCallback((outcome: 'saved' | 'discarded') => {
+        const action = pendingExitActionRef.current;
+        pendingExitActionRef.current = null;
+        releaseExitRequestRef.current?.();
+        setShowExitConfirm(false);
+        handleDiscardChanges();
+        recordExitDecision(outcome);
+        action?.();
+    }, [handleDiscardChanges, recordExitDecision]);
+    const requestEditorExit = useCallback((action: () => void) => {
+        if (pendingExitActionRef.current) return;
+        if (!hasPendingEdits()) {
+            releaseExitRequestRef.current?.();
+            handleDiscardChanges();
+            action();
+            return;
+        }
+        pendingExitActionRef.current = action;
+        setShowExitConfirm(true);
+    }, [handleDiscardChanges, hasPendingEdits]);
+    useEffect(() => {
+        if (!isEditing) return;
+        const release = registerTaskEditExitRequest(requestEditorExit);
+        releaseExitRequestRef.current = release;
+        return () => {
+            release();
+            if (releaseExitRequestRef.current === release) releaseExitRequestRef.current = null;
+        };
+    }, [isEditing, requestEditorExit]);
+    const saveAndExitEditor = useCallback(async () => {
+        if (isSavingExit) return;
+        setIsSavingExit(true);
+        try {
+            const result = await handleSubmit(undefined, { keepEditing: true });
+            if (result && !result.success) return;
+            await flushPendingSave();
+            finishEditorExit('saved');
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : t('task.updateFailed'), 'error');
+        } finally {
+            setIsSavingExit(false);
+        }
+    }, [finishEditorExit, handleSubmit, isSavingExit, showToast, t]);
     const taskEditorPresentationSetting = settings?.gtd?.taskEditor?.presentation;
     const resolvedEditorPresentation: TaskEditorPresentation = editorPresentation
         ?? (taskEditorPresentationSetting === 'modal' ? 'modal' : 'inline');
@@ -1304,13 +1367,7 @@ export const TaskItem = memo(function TaskItem({
         }, 0);
         return () => clearTimeout(timer);
     }, [isEditing, isModalEditor]);
-    const handleEditorCancel = useCallback(() => {
-        if (hasPendingEdits()) {
-            setShowDiscardConfirm(true);
-            return;
-        }
-        handleDiscardChanges();
-    }, [handleDiscardChanges, hasPendingEdits]);
+    const handleEditorCancel = useCallback(() => requestEditorExit(() => {}), [requestEditorExit]);
     // Clicking outside an untouched inline editor closes it — there is nothing
     // to lose, so no Save/Cancel trip to the bottom of the form. Once any field
     // differs from the task, the editor stays until an explicit Save/Cancel/Esc.
@@ -1744,19 +1801,26 @@ export const TaskItem = memo(function TaskItem({
                     onConfirm={applyWaitingAssignment}
                 />
             )}
-            {showDiscardConfirm && (
-                <ConfirmModal
-                    isOpen
-                    title={tFallback(t, 'taskEdit.discardChanges', 'Discard unsaved changes?')}
-                    description={tFallback(t, 'taskEdit.discardChangesDesc', 'Your changes will be lost if you leave now.')}
-                    confirmLabel={tFallback(t, 'common.discard', 'Discard')}
-                    cancelLabel={t('common.cancel')}
-                    onCancel={() => setShowDiscardConfirm(false)}
-                    onConfirm={() => {
-                        setShowDiscardConfirm(false);
-                        handleDiscardChanges();
-                    }}
-                />
+            {showExitConfirm && (
+                <Dialog onClose={isSavingExit ? () => {} : stayInEditor} label={tFallback(t, 'taskEdit.unsavedChanges', 'Unsaved changes')}>
+                    <DialogBody className="px-6 pt-6 pb-4">
+                        <h2 className="text-lg font-semibold">{tFallback(t, 'taskEdit.unsavedChanges', 'Unsaved changes')}</h2>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                            {tFallback(t, 'taskEdit.saveOrDiscardChanges', 'Save your changes before leaving?')}
+                        </p>
+                    </DialogBody>
+                    <DialogFooter className="flex justify-end gap-2 px-6 pb-6">
+                        <Button variant="ghost" onClick={stayInEditor} disabled={isSavingExit}>
+                            {tFallback(t, 'common.stay', 'Stay')}
+                        </Button>
+                        <Button variant="destructive-ghost" onClick={() => finishEditorExit('discarded')} disabled={isSavingExit}>
+                            {tFallback(t, 'common.discard', 'Discard')}
+                        </Button>
+                        <Button onClick={() => void saveAndExitEditor()} loading={isSavingExit}>
+                            {t('common.save')}
+                        </Button>
+                    </DialogFooter>
+                </Dialog>
             )}
             {completedAtPrompt && (
                 <PromptModal

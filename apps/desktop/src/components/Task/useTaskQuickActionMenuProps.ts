@@ -24,6 +24,7 @@ import { reportError } from '../../lib/report-error';
 import { registerUndoableAction } from '../../lib/undo-registry';
 import { undoTaskCompletion } from '../../lib/undo-task-completion';
 import { useUiStore } from '../../store/ui-store';
+import { runAfterTaskEditExit } from './task-edit-session';
 import { formatTaskMarkedDoneMessage, formatTaskMovedMessage } from '@mindwtr/core';
 import { TaskQuickActionMenu, type TaskQuickActionMenuProps } from './TaskQuickActionMenu';
 import { useTaskItemProjectContext } from './useTaskItemProjectContext';
@@ -94,19 +95,21 @@ export async function duplicateTaskAndReveal(
             useUiStore.getState().showToast(result.error || t('task.duplicateFailed'), 'error');
             return;
         }
-        useTaskStore.getState().setHighlightTask(result.id);
-        if (task.projectId) {
-            useUiStore.getState().setProjectView({ selectedProjectId: task.projectId });
-            dispatchNavigateEvent('projects');
-        } else if (isTaskFinished(task)) {
-            // The copy goes to the Inbox to be re-clarified, so it is never in the
-            // Done/Archived list it was made from. Without this the duplicate
-            // succeeds somewhere the user cannot see and the click reads as a
-            // no-op (#950).
-            dispatchNavigateEvent('inbox');
-        }
-        useUiStore.getState().setTaskExpanded(result.id, false);
-        useUiStore.getState().setEditingTaskId(result.id);
+        runAfterTaskEditExit(() => {
+            useTaskStore.getState().setHighlightTask(result.id!);
+            if (task.projectId) {
+                useUiStore.getState().setProjectView({ selectedProjectId: task.projectId });
+                dispatchNavigateEvent('projects');
+            } else if (isTaskFinished(task)) {
+                // The copy goes to the Inbox to be re-clarified, so it is never in the
+                // Done/Archived list it was made from. Without this the duplicate
+                // succeeds somewhere the user cannot see and the click reads as a
+                // no-op (#950).
+                dispatchNavigateEvent('inbox');
+            }
+            useUiStore.getState().setTaskExpanded(result.id!, false);
+            useUiStore.getState().setEditingTaskId(result.id!);
+        });
     } catch (error) {
         reportError('Failed to duplicate task', error);
         useUiStore.getState().showToast(t('task.duplicateFailed'), 'error');
