@@ -36,6 +36,12 @@ function collectCodeSlugs({ file, source }) {
     const slug = match[2] ?? constants.get(match[3]);
     if (slug !== undefined) sites.push({ file, slug });
   }
+  // A conditional value (`releaseCheck: queued ? 'a' : 'b'`) emits either literal.
+  for (const match of source.matchAll(
+    /\breleaseCheck\s*:\s*[^,{}?\r\n]+\?\s*(['"])([^'"\r\n]*)\1\s*:\s*(['"])([^'"\r\n]*)\3/g,
+  )) {
+    sites.push({ file, slug: match[2] }, { file, slug: match[4] });
+  }
   // Native Rust diagnostics put the field inside a log message rather than
   // a JavaScript object. Only count log macros, not unused string constants.
   if (file.endsWith(".rs")) {
@@ -103,6 +109,16 @@ describe("release diagnostics ledger", () => {
       { file, slug: "v1.2.8/constant-check" },
       { file, slug: "v1.2.8/typed-check" },
       { file, slug: "v1.2.8/literal-check" },
+    ]);
+  });
+
+  it("resolves both literals of a conditional releaseCheck value", () => {
+    const file = "apps/example.ts";
+    expect(collectCodeSlugs({ file, source: `
+      logInfo('accepted', { releaseCheck: queued ? 'v1.3.3/queued-check' : 'v1.3.0/plain-check' });
+    ` })).toEqual([
+      { file, slug: "v1.3.3/queued-check" },
+      { file, slug: "v1.3.0/plain-check" },
     ]);
   });
 

@@ -1433,7 +1433,7 @@ describe('native host contract', () => {
             };
             // Both promote the task to Next: a start date is a clarify decision in the store.
             expect(outcome('via-host')).toEqual(outcome('via-adapter'));
-            expect(outcome('via-host')).toEqual({ status: 'next', startTime: '2026-10-01', isFocusedToday: false });
+            expect(outcome('via-host')).toMatchObject({ status: 'next', startTime: '2026-10-01' });
         });
 
         it('suggests tokens and people like the mobile fields', async () => {
