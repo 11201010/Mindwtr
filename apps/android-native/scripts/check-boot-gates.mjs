@@ -16,9 +16,20 @@ const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/d
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
 assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrentWrites: true \}\)/);
 assert.match(sqliteBridge, /PRAGMA synchronous = FULL/);
+// Nothing writes the RN database before its .prewrite snapshot: the open sets only foreign_keys (a connection
+// setting), and WAL (which rewrites a rollback-journal header) and synchronous follow VACUUM INTO or the
+// validated existing snapshot.
+const bridgeOpen = sqliteBridge.slice(sqliteBridge.indexOf('private val connection'), sqliteBridge.indexOf('private val statements'));
+assert.deepEqual(bridgeOpen.match(/PRAGMA [^"]*/g), ['PRAGMA foreign_keys = ON']);
+const bridgeCheckpoint = sqliteBridge.slice(sqliteBridge.indexOf('fun ensureRecoveryCheckpoint'), sqliteBridge.indexOf('private fun syncCheckpoint'));
+const pragmaOrder = ['checkIntegrity(connection)', 'syncCheckpoint(checkpointFile)', 'exec("VACUUM INTO', 'syncDirectory(checkpointFile.parentFile!!)',
+    'exec("PRAGMA journal_mode = WAL")', 'exec("PRAGMA synchronous = FULL")'].map((text) => bridgeCheckpoint.indexOf(text));
+assert(pragmaOrder.every((index, i) => index > (i ? pragmaOrder[i - 1] : -1)), `SQLite pragma order ${pragmaOrder}`);
+assert.equal(sqliteBridge.match(/journal_mode|synchronous =/g).length, 2);
+assert.doesNotMatch(bridgeCheckpoint, /\breturn\b/);
 assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\)[\s\S]*?syncDirectory/);
 assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('engine.evaluate(bundle'));
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot")'));
+assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup)'));
 const source = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot', name), 'utf8');
 const activity = source('MainActivity.kt');
 const model = source('InboxViewModel.kt');
@@ -50,23 +61,49 @@ for (const file of [activity, model, editorUi, focusUi]) {
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const kotlinFiles = [activity, model, owner, editorUi, focusUi, coreHost, sqliteBridge, guard];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
-// The dev build keeps its own database. The upgradetest build gets the RN database only from the
-// guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val database = if \(BuildConfig\.RN_STORAGE\) \{\s*\/\/[^\n]*\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*File\(app\.filesDir, "mindwtr-native-dev\.db"\)\s*\}\s*val runtime = CoreHost\(database\)/);
+// The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
+// only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)/);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
-assert.match(guard, /val database = File\(dataDir, "files\/SQLite\/mindwtr\.db"\)/);
-// Missing database with RN state, then the json-ahead marker, then quick_check; only a clear result may create the folder.
-const decision = guard.slice(guard.indexOf('private fun blockedReason'));
-const order = ['"database-missing"', 'return "json-ahead"', 'queryCopy(database, scratch)', '"database-unreadable"'].map((text) => decision.indexOf(text));
+assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
+assert.match(guard, /val database = File\(dataDir, DATABASE\)/);
+// AsyncStorage first (unreadable, then an oversized backup), then a missing database with RN state and
+// no backup, then quick_check; only a clear result may create the folder. json-ahead no longer blocks.
+const decision = guard.slice(guard.indexOf('fun requireClear'), guard.indexOf('private fun readState'));
+const order = ['"async-storage-unreadable"', '"json-too-large"', '"database-missing"', 'queryCopy(database, scratch)', '"database-unreadable"']
+    .map((text) => decision.indexOf(text));
 assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `guard order ${order}`);
-assert(guard.indexOf('check(blocked == null)') < guard.indexOf('.mkdirs()\n        return database'));
+assert.match(decision, /state\.backup == null && hasRnState\(dataDir, asyncStorage\)\) "database-missing"/);
+assert.doesNotMatch(guard, /"json-ahead"/);
+assert(guard.indexOf('check(blocked == null)') < guard.indexOf('database.parentFile!!.mkdirs()'));
 assert.match(guard, /\/\/ ponytail: copies the whole database on every boot\. Skip it once a native-owned\s*\/\/ marker proves the last shutdown was clean\./);
 // RKStorage and the RN database are only read as bytes: SQLite writes -wal/-shm even through a
 // read-only connection, and a failed read-write open can checkpoint the WAL into the file on close.
 const originalUses = [...guard.matchAll(/\b(asyncStorage|database|file|source)\.(\w+)/g)].map(([, name, member]) => `${name}.${member}`);
-assert.deepEqual([...new Set(originalUses)].sort(), ['asyncStorage.exists', 'database.exists', 'database.parentFile', 'file.name', 'file.path', 'source.copyTo', 'source.exists']);
-assert.equal(guard.match(/BundledSQLiteDriver\(\)\.open\(/g).length, 1);
+assert.deepEqual([...new Set(originalUses)].sort(), ['asyncStorage.exists', 'asyncStorage.path', 'database.exists', 'database.parentFile',
+    'file.name', 'file.path', 'source.copyTo', 'source.exists', 'source.name']);
+assert.equal(guard.match(/BundledSQLiteDriver\(\)\.open\(/g).length, 2);
 assert.match(guard, /BundledSQLiteDriver\(\)\.open\(File\(scratch, file\.name\)\.path\)/);
+// The one read-write open of an original is RKStorage in commitRnState, after its byte checkpoint, and it
+// only deletes the json-ahead marker and sets the reconcile flag, in one transaction.
+const commit = guard.slice(guard.indexOf('fun commitRnState'), guard.indexOf('private fun ensureRnStateCheckpoint'));
+assert(commit.indexOf('ensureRnStateCheckpoint(asyncStorage') > 0
+    && commit.indexOf('ensureRnStateCheckpoint(asyncStorage') < commit.indexOf('BundledSQLiteDriver().open(asyncStorage.path)'));
+assert.equal(guard.match(/asyncStorage\.path\)/g).length, 1);
+assert.deepEqual(commit.match(/"(BEGIN IMMEDIATE|COMMIT|ROLLBACK|DELETE FROM[^"]*|INSERT[^"]*|PRAGMA[^"]*)"/g), [
+    '"PRAGMA synchronous = FULL"', '"BEGIN IMMEDIATE"', '"DELETE FROM catalystLocalStorage WHERE key = ?"',
+    '"INSERT OR REPLACE INTO catalystLocalStorage VALUES (?, ?)"', '"COMMIT"', '"ROLLBACK"']);
+assert.match(commit, /bindText\(1, JSON_AHEAD\)[\s\S]*bindText\(1, RECONCILED\)\s*it\.bindText\(2, "1"\)/);
+// The checkpoint: each file synced, the folder synced, then promoted by rename, then the parent synced.
+const rnCheckpoint = guard.slice(guard.indexOf('private fun ensureRnStateCheckpoint'), guard.indexOf('private fun hasRnState'));
+assert.match(rnCheckpoint, /if \(!checkpoint\.exists\(\)\)[\s\S]*listOf\("", "-wal", "-journal", "-shm"\)[\s\S]*syncFile\(source\.copyTo[\s\S]*syncDirectory\(partial\)[\s\S]*renameTo\(checkpoint\)[\s\S]*syncDirectory\(checkpoint\.parentFile!!\)/);
+assert.match(guard, /RN_STATE_CHECKPOINT = "files\/SQLite\/RKStorage\.prewrite"/);
+// Kotlin reads, JS decides: no merge, and the backup is passed on as text, never parsed.
+assert.doesNotMatch(code(kotlinFiles.join('\n')), /merge|JSONObject\((state\.)?backup|JSONArray\((state\.)?backup/i);
+assert.match(guard, /return Opened\(database, bootState\.toString\(\), state\.backup \?: ""\)/);
+assert.match(coreHost, /LegacyRnStoreGuard\.commitRnState\(checkNotNull\(rnDataDir\)/);
+assert.equal(kotlinFiles.join('\n').match(/commitRnState\(/g).length, 2, 'defined once, called once from the guarded bridge callback');
 assert.match(guard, /queryCopy\(asyncStorage, scratch\)/);
 assert.match(guard, /for \(suffix in listOf\("", "-wal", "-journal"\)\)/);
 assert.match(guard, /PRAGMA quick_check/);
@@ -94,7 +131,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 6);
+assert.equal(bridgeCallbacks.length, 7);
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
 assert.match(coreHost, /setProperty\("log", guarded \{ args -> runCatching \{/);
 assert.match(coreHost, /try \{ work\(args\) \} catch \(error: Throwable\) \{ NATIVE_ERROR \+/);
@@ -172,13 +209,31 @@ assert.match(model, /screen = target\s+saved\["screen"\] = target\.name/);
 
 const fakeCore = `
 export class SqliteAdapter {
-  async getData() { return globalThis.fakeDataSequence.shift() || globalThis.fakeData; }
+  async getData() {
+    globalThis.events.push('load');
+    globalThis.lastLoaded = globalThis.fakeDataSequence.shift() || globalThis.fakeData;
+    return globalThis.lastLoaded;
+  }
+  async saveData(data) {
+    globalThis.events.push('save');
+    if (globalThis.saveError) throw new Error(globalThis.saveError);
+    globalThis.fakeData = globalThis.afterSave || data;
+  }
 }
+export function planLegacyJsonImport(state, current, sqliteHasData) {
+  globalThis.events.push('plan');
+  globalThis.planInputs.push(JSON.stringify([state, current.tasks.length, sqliteHasData]));
+  return globalThis.plan;
+}
+export async function sqliteHasAnyData() { return globalThis.sqliteHasData; }
+// Core compares every persisted field; the fake compares the whole snapshot.
+export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export function createNativeHostContract() {
   return {
     async activate() {
+      globalThis.events.push('activate');
       await globalThis.adapter.getData();
       globalThis.activationCount++;
       globalThis.saveCount++;
@@ -209,7 +264,8 @@ export function createNativeHostContract() {
   };
 }
 export const useTaskStore = { getState: () => ({
-  _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+  _allTasks: globalThis.lastLoaded ? globalThis.lastLoaded.tasks : [],
+  _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
   persistenceFailure: globalThis.persistenceFailure,
 }) };
 export function logInfo() { throw new Error('diagnostic sink failed'); }
@@ -226,16 +282,21 @@ const makeState = (taskCount, fakeDataSequence = []) => {
     const state = {
         fakeData: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
+        events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
         createCount: 0, completeCount: 0, persistenceFailure: null, editorInputs: [], updateInputs: [], focusInputs: [],
         focusWindowResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Focus changed; restart paging' } },
         updateResult: { ok: true, value: { id: 't', changed: true } },
         __mindwtrNative: {
             sqlAll(sql) {
-                if (sql.includes('COUNT(*)') && sql.includes('tasks')) return JSON.stringify([{ n: taskCount }]);
+                // 'auto': the tasks count matches the load, as a real database would.
+                if (sql.includes('COUNT(*)') && sql.includes('tasks')) {
+                    return JSON.stringify([{ n: taskCount === 'auto' ? state.lastLoaded.tasks.length : taskCount }]);
+                }
                 if (sql.includes('COUNT(*)')) return '[{"n":0}]';
                 return '[]';
             },
             sqlRun() {}, sqlExec() {},
+            rnStateCommit(change) { state.events.push(`commit:${change}`); return state.commitResult; },
         },
     };
     vm.runInNewContext(built.outputFiles[0].text, state);
@@ -298,6 +359,101 @@ for (const blocked of [ready.MindwtrHost.focus(50), ready.MindwtrHost.focusWindo
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
 }
 assert.equal(ready.focusInputs.length, 2);
+// The RN legacy import runs after the validated load and before activation. RN state changes only
+// after the saved import is read back, and a failed RN state change never fails the boot.
+const bootBody = hostEntry.slice(hostEntry.indexOf('boot(legacyState: string, legacyBackup: string): string {'), hostEntry.indexOf('    window('));
+const bootOrder = ['await adapter.getData();', 'await importLegacyJson(adapter,', 'contract.activate('].map((text) => bootBody.indexOf(text));
+assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `boot order ${bootOrder}`);
+const importBody = hostEntry.slice(hostEntry.indexOf('const importLegacyJson'), hostEntry.indexOf('// After a failed save'));
+const importOrder = ['adapter.latestData', 'planLegacyJsonImport(', 'legacyImportMismatch(plan.merged, loaded)', 'await adapter.saveData(plan.merged)',
+    'legacyImportMismatch(plan.merged, await adapter.getData())', 'Legacy import not confirmed', 'native().rnStateCommit(',
+    "if (rnState === 'failed') throw new Error("].map((text) => importBody.indexOf(text));
+assert(importOrder.every((index, i) => index > (i ? importOrder[i - 1] : -1)), `import order ${importOrder}`);
+// A failed RN state change fails the boot closed: the catch only records it, and the throw is unconditional on the log.
+assert.match(importBody, /catch \(error\) \{\s*rnState = 'failed';\s*rnFailure = [^\n]*\s*\}/);
+assert.equal(importBody.match(/rnState = 'failed'/g).length, 1);
+assert.equal(hostEntry.match(/saveData\(/g).length, 1, 'the import is the host\'s only direct save');
+assert.equal(hostEntry.match(/rnStateCommit\(/g).length, 2, 'bridge type and one call');
+const legacyLine = /extra: Record<string, string> = \{([\s\S]*?)\};/.exec(importBody)?.[1] ?? '';
+assert(legacyLine.includes("releaseCheck: 'v1.3.3/native-android-legacy-json-import'"));
+// Field names (the counts come from core's plan) are listed in packages/core/src/release-diagnostics-fields.test.ts.
+for (const [, name] of legacyLine.matchAll(/(\w+):/g)) assert.doesNotMatch(name, /key|pass|user/i);
+
+const legacyState = (overrides = {}) => JSON.stringify({ jsonAhead: true, reconciled: true, backupVersion: '2', backupPresent: true, ...overrides });
+const current = { tasks: [{ id: 'rn' }], projects: [], sections: [], areas: [], people: [], settings: {} };
+const merged = { ...current, tasks: [{ id: 'rn' }, { id: 'json-only' }] };
+const importPlan = { outcome: 'imported', path: 'json-ahead', merged, clearJsonAhead: true, setReconciled: false,
+    counts: { backupTasks: 2, sqliteTasks: 1, mergedTasks: 2, tasksFromBackup: 1 } };
+const legacyBoot = async ({ plan = importPlan, overrides = {}, backup = '{"tasks":[]}', setup = () => {} } = {}) => {
+    const legacy = makeState('auto', [current]);
+    legacy.plan = plan;
+    setup(legacy);
+    return { legacy, result: await poll(legacy, legacy.MindwtrHost.boot(legacyState(overrides), backup)) };
+};
+const commitOf = (clearJsonAhead, setReconciled) => `commit:${JSON.stringify({ clearJsonAhead, setReconciled })}`;
+
+assert.equal(ready.events.includes('plan'), false, 'the dev database never plans an import');
+{
+    const { legacy, result } = await legacyBoot();
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(legacy.events.slice(0, 7), ['load', 'plan', 'save', 'load', commitOf(true, false), 'activate', 'load']);
+    assert.deepEqual(JSON.parse(legacy.planInputs[0]), [
+        { jsonAhead: true, reconciled: true, backupVersion: '2', backupJson: '{"tasks":[]}' }, 1, true]);
+}
+{
+    const { legacy } = await legacyBoot({ overrides: { backupPresent: false, backupVersion: null } });
+    assert.deepEqual(JSON.parse(legacy.planInputs[0])[0], { jsonAhead: true, reconciled: true, backupVersion: null, backupJson: null });
+}
+{
+    const failed = makeState(5, [current]);
+    failed.plan = importPlan;
+    const result = await poll(failed, failed.MindwtrHost.boot(legacyState(), '{}'));
+    assert.match(result.error, /Incomplete tasks load/);
+    assert.deepEqual(failed.events, ['load'], 'a failed validated load plans, saves, and commits nothing');
+}
+{
+    const { legacy, result } = await legacyBoot({ setup: (state) => { state.afterSave = current; } });
+    assert.match(result.error, /Legacy import not confirmed: tasks/);
+    assert.deepEqual(legacy.events, ['load', 'plan', 'save', 'load'], 'an unconfirmed import changes no RN state and never activates');
+}
+{
+    // Every id is there, but one imported field did not persist.
+    const lost = { ...merged, tasks: [{ id: 'rn' }, { id: 'json-only', title: 'lost' }] };
+    const { legacy, result } = await legacyBoot({ setup: (state) => { state.afterSave = lost; } });
+    assert.match(result.error, /Legacy import not confirmed/);
+    assert.deepEqual(legacy.events, ['load', 'plan', 'save', 'load'], 'a content mismatch changes no RN state and never activates');
+}
+{
+    // The retry after a failed RN state change: the import is already saved, so only the RN state change runs.
+    const { legacy, result } = await legacyBoot({ setup: (state) => { state.fakeDataSequence = [merged]; state.fakeData = merged; } });
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(legacy.events.slice(0, 4), ['load', 'plan', commitOf(true, false), 'activate']);
+}
+{
+    const { legacy, result } = await legacyBoot({ setup: (state) => { state.saveError = 'disk full'; } });
+    assert.match(result.error, /disk full/);
+    assert.deepEqual(legacy.events, ['load', 'plan', 'save']);
+}
+{
+    // A failed RN state change (the RKStorage checkpoint included) fails closed: the import stays, nothing activates.
+    const { legacy, result } = await legacyBoot({ setup: (state) => { state.commitResult = '!MindwtrNativeError:Cannot create the RN state checkpoint'; } });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /^Cannot update the previous app version's saved state: Cannot create the RN state checkpoint$/);
+    assert.deepEqual(legacy.events, ['load', 'plan', 'save', 'load', commitOf(true, false)], 'no activation after a failed RN state change');
+    assert.equal(legacy.activationCount, 0);
+}
+{
+    const plan = { outcome: 'abandoned', path: 'json-ahead', reason: 'backup-corrupt', clearJsonAhead: true, setReconciled: true };
+    const { legacy, result } = await legacyBoot({ plan, setup: (state) => { state.fakeData = current; } });
+    assert.equal(result.ok, true);
+    assert.deepEqual(legacy.events.slice(0, 3), ['load', 'plan', commitOf(true, true)], 'an abandoned backup saves nothing');
+}
+{
+    const plan = { outcome: 'none', clearJsonAhead: false, setReconciled: false };
+    const { legacy, result } = await legacyBoot({ plan, setup: (state) => { state.fakeData = current; } });
+    assert.equal(result.ok, true);
+    assert.deepEqual(legacy.events.slice(0, 3), ['load', 'plan', 'activate'], 'nothing to import: no save, no RN state change');
+}
 const brokenStorage = makeState(0);
 brokenStorage.__mindwtrNative.sqlAll = () => '!MindwtrNativeError:disk I/O error';
 const brokenBoot = await poll(brokenStorage, brokenStorage.MindwtrHost.boot());
@@ -308,4 +464,5 @@ console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-
 console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
 console.log('Editor: reads and writes only through CoreHost, patch of changed fields only, no Kotlin date parsing');
 console.log('Focus: reads only through CoreHost, core order and flags only, stale windows restart, blocked after a failed save');
+console.log('RN legacy import: after the validated load, confirmed by a re-read before RN state changes; RKStorage checkpointed first');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

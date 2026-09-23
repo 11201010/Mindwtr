@@ -72,15 +72,16 @@ internal object ProcessCoreHost {
     }
 
     private fun start(app: Application): CoreHost {
-        val database = if (BuildConfig.RN_STORAGE) {
-            // Nothing opens the RN database until the guard passes; it returns files/SQLite/mindwtr.db.
+        // Nothing opens the RN database until the guard passes; it returns files/SQLite/mindwtr.db
+        // and what RN left in AsyncStorage, which the JS host imports as RN's next launch would.
+        val legacy = if (BuildConfig.RN_STORAGE) {
             LegacyRnStoreGuard.requireClear(app.dataDir, File(app.cacheDir, "legacy-rn-guard"))
         } else {
-            File(app.filesDir, "mindwtr-native-dev.db")
+            null
         }
-        val runtime = CoreHost(database)
+        val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir })
         try {
-            runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() })
+            runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }

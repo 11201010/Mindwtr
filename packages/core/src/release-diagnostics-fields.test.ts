@@ -108,6 +108,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // font-family-applied (apps/desktop/src/App.tsx, #1244) — the chosen font's name, and
     // whether the renderer found a real bold face for it or is faking one.
     'family', 'boldFace',
+    // native-android-legacy-json-import reuses releaseCheck, outcome, path, and reason above.
+    'rnState', 'backupTasks', 'sqliteTasks', 'mergedTasks', 'tasksFromBackup',
     // ios-share-capture (mobile incoming share host and capture form)
     'stage', 'type', 'providerReady', 'dataReady', 'disabled',
     'fileCount', 'candidateCount', 'attachedCount', 'skippedCount',

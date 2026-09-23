@@ -26,52 +26,48 @@ class SqliteBridge(databaseFile: File) {
     private val checkpointFile = File(databaseFile.parentFile, "${databaseFile.name}.prewrite")
 
     private val connection: SQLiteConnection = BundledSQLiteDriver().open(databaseFile.absolutePath).apply {
-        // Write-ahead logging, the same journal mode the app uses. A committed
-        // row can still live in the -wal file, so anything that inspects this
-        // database must close it first or copy .db, -wal and -shm together.
-        prepare("PRAGMA journal_mode = WAL").use { it.step() }
-        prepare("PRAGMA synchronous = FULL").use { it.step() }
+        // A connection setting: it writes nothing to the file.
         prepare("PRAGMA foreign_keys = ON").use { it.step() }
     }
 
     /** Prepared statements are reused: re-preparing the same SQL is pure waste. */
     private val statements = HashMap<String, SQLiteStatement>()
 
-    /** Run before core schema setup or any task write. Never replace the first snapshot. */
+    /**
+     * Run before core schema setup or any task write. Never replace the first snapshot.
+     * The journal settings come only after the snapshot exists: switching a
+     * rollback-journal database to WAL rewrites its header.
+     */
     fun ensureRecoveryCheckpoint() {
         checkIntegrity(connection)
         if (checkpointFile.exists()) {
             BundledSQLiteDriver().open(checkpointFile.absolutePath).use(::checkIntegrity)
             syncCheckpoint(checkpointFile)
-            return
+        } else {
+            val partial = File(checkpointFile.parentFile, "${checkpointFile.name}.building")
+            if (partial.exists()) check(partial.delete()) { "Cannot remove incomplete recovery checkpoint" }
+            try {
+                val path = partial.absolutePath.replace("'", "''")
+                exec("VACUUM INTO '$path'")
+                BundledSQLiteDriver().open(partial.absolutePath).use(::checkIntegrity)
+                syncFile(partial)
+                check(partial.renameTo(checkpointFile)) { "Cannot promote recovery checkpoint" }
+                syncDirectory(checkpointFile.parentFile!!)
+            } catch (error: Throwable) {
+                partial.delete()
+                throw error
+            }
         }
-        val partial = File(checkpointFile.parentFile, "${checkpointFile.name}.building")
-        if (partial.exists()) check(partial.delete()) { "Cannot remove incomplete recovery checkpoint" }
-        try {
-            val path = partial.absolutePath.replace("'", "''")
-            exec("VACUUM INTO '$path'")
-            BundledSQLiteDriver().open(partial.absolutePath).use(::checkIntegrity)
-            syncFile(partial)
-            check(partial.renameTo(checkpointFile)) { "Cannot promote recovery checkpoint" }
-            syncDirectory(checkpointFile.parentFile!!)
-        } catch (error: Throwable) {
-            partial.delete()
-            throw error
-        }
+        // Write-ahead logging, the same journal mode the app uses. A committed
+        // row can still live in the -wal file, so anything that inspects this
+        // database must close it first or copy .db, -wal and -shm together.
+        exec("PRAGMA journal_mode = WAL")
+        exec("PRAGMA synchronous = FULL")
     }
 
     private fun syncCheckpoint(file: File) {
         syncFile(file)
         syncDirectory(file.parentFile!!)
-    }
-
-    private fun syncFile(file: File) {
-        RandomAccessFile(file, "r").use { it.fd.sync() }
-    }
-
-    private fun syncDirectory(directory: File) {
-        val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
-        try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
     }
 
     private fun checkIntegrity(database: SQLiteConnection) {
@@ -168,4 +164,14 @@ class SqliteBridge(databaseFile: File) {
         const val COLUMN_FLOAT = 2
         const val COLUMN_BLOB = 4
     }
+}
+
+/** Also used for the RN state checkpoint (LegacyRnStoreGuard). */
+internal fun syncFile(file: File) {
+    RandomAccessFile(file, "r").use { it.fd.sync() }
+}
+
+internal fun syncDirectory(directory: File) {
+    val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
+    try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
 }

@@ -16,8 +16,12 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
-/** QuickJS and SQLite share one worker thread; Compose never enters either runtime. */
-class CoreHost(private val databaseFile: File) {
+/**
+ * QuickJS and SQLite share one worker thread; Compose never enters either runtime.
+ * [rnDataDir] is set only when [databaseFile] is the React Native app's database:
+ * then the JS host may apply RN's AsyncStorage change after it imported RN's backup.
+ */
+class CoreHost(private val databaseFile: File, private val rnDataDir: File? = null) {
     companion object {
         const val TAG = "MindwtrNativeDev"
         /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
@@ -63,7 +67,8 @@ class CoreHost(private val databaseFile: File) {
         functions.getOrPut(method) { host.getJSFunction(method) }.call(*args)
     }
 
-    fun start(bundle: String): JSONObject = onEngine {
+    /** [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database. */
+    fun start(bundle: String, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
         try {
             val engine = QuickJSContext.create()
             context = engine
@@ -82,11 +87,18 @@ class CoreHost(private val databaseFile: File) {
                     ByteArray(length).also(random::nextBytes).forEach { out.put(it.toInt() and 0xff) }
                 }.toString()
             })
+            // `{ clearJsonAhead, setReconciled }`, decided by core's planLegacyJsonImport after the saved import is read back.
+            bridge.setProperty("rnStateCommit", guarded { args ->
+                val change = JSONObject(args[0] as String)
+                LegacyRnStoreGuard.commitRnState(checkNotNull(rnDataDir) { "No React Native state in this build" },
+                    change.getBoolean("clearJsonAhead"), change.getBoolean("setReconciled"))
+                null
+            })
             // A diagnostic line must never fail the caller: coerce and swallow.
             bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
-            callAsync("boot")
+            callAsync("boot", legacyState, legacyBackup)
         } catch (error: Throwable) {
             closeOnEngine()
             throw error

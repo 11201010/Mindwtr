@@ -103,8 +103,17 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         let nodes = await screen();
         for (const towardTop of [true, false]) {
             for (let swipe = 0; swipe < swipes && !hasText(nodes, text); swipe += 1) {
-                const next = await step(nodes, towardTop);
-                if (signature(next) === signature(nodes)) break;
+                let next = await step(nodes, towardTop);
+                if (signature(next) === signature(nodes)) {
+                    // At the bottom of a paged list: load the next window and keep going.
+                    const more = towardTop ? undefined : button(next, 'Load more');
+                    if (!more || more.enabled !== 'true') break;
+                    requireAppFront();
+                    const [l, t, r, b] = box(more);
+                    sh(`input tap ${Math.round((l + r) / 2)} ${Math.round((t + b) / 2)}`);
+                    await sleep(1500);
+                    next = await screen();
+                }
                 nodes = next;
             }
             if (hasText(nodes, text)) break;

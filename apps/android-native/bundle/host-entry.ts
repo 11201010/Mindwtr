@@ -1,10 +1,13 @@
 import {
     SqliteAdapter,
     createNativeHostContract,
+    legacyImportMismatch,
     logInfo,
     logWarn,
+    planLegacyJsonImport,
     setStorageAdapter,
     splitSqlStatements,
+    sqliteHasAnyData,
     type FocusTaskSectionKey,
     type SqliteClient,
     useTaskStore,
@@ -17,6 +20,7 @@ type NativeBridge = {
     nowMs(): number;
     randomBytes(length: number): string;
     log(line: string): void;
+    rnStateCommit(change: string): string | null;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -111,6 +115,62 @@ const taskResult = <T>(operation: 'create' | 'complete' | 'update', result: Para
     return unwrap(result);
 };
 
+type LegacyState = { jsonAhead: boolean; reconciled: boolean; backupVersion: string | null; backupPresent: boolean };
+
+/**
+ * The React Native app's AsyncStorage backup, imported as RN's next launch would
+ * (core's planLegacyJsonImport). Runs after the validated load. RN's own state
+ * (the json-ahead marker, the reconcile flag) changes only after the validated
+ * re-read holds every imported row and the settings exactly.
+ *
+ * If that RN state change fails, the boot fails closed: no activation, so no
+ * native edit can exist while the marker is still set. Core's merge can let a
+ * tombstone beat a newer live row, so re-importing a stale backup over native
+ * edits could discard them. The next boot plans again, finds the import already
+ * saved, writes nothing to SQLite, and retries only the RN state change.
+ */
+const importLegacyJson = async (adapter: ValidatedSqliteAdapter, state: LegacyState, backup: string): Promise<void> => {
+    const loaded = adapter.latestData;
+    if (!loaded) throw new Error('Native storage load was not validated');
+    const plan = planLegacyJsonImport({
+        jsonAhead: state.jsonAhead,
+        reconciled: state.reconciled,
+        backupVersion: state.backupVersion,
+        backupJson: state.backupPresent ? backup : null,
+    }, loaded, await sqliteHasAnyData(sqlite));
+    if (plan.merged && legacyImportMismatch(plan.merged, loaded)) {
+        await adapter.saveData(plan.merged);
+        const mismatch = legacyImportMismatch(plan.merged, await adapter.getData());
+        if (mismatch) throw new Error(`Legacy import not confirmed: ${mismatch}`);
+    }
+    let rnState = 'unchanged';
+    let rnFailure = '';
+    if (plan.clearJsonAhead || plan.setReconciled) {
+        try {
+            checked(native().rnStateCommit(JSON.stringify({ clearJsonAhead: plan.clearJsonAhead, setReconciled: plan.setReconciled })));
+            rnState = 'updated';
+        } catch (error) {
+            rnState = 'failed';
+            rnFailure = error instanceof Error ? error.message : String(error);
+        }
+    }
+    if (plan.outcome !== 'none') logLegacyImport(plan, rnState);
+    if (rnState === 'failed') throw new Error(`Cannot update the previous app version's saved state: ${rnFailure}`);
+};
+
+const logLegacyImport = (plan: ReturnType<typeof planLegacyJsonImport>, rnState: string): void => {
+    const extra: Record<string, string> = {
+        releaseCheck: 'v1.3.3/native-android-legacy-json-import', outcome: plan.outcome, path: plan.path ?? '', rnState,
+    };
+    if (plan.reason) extra.reason = plan.reason;
+    for (const [name, count] of Object.entries(plan.counts ?? {})) extra[name] = String(count);
+    const meta = { scope: 'native-android', category: 'storage' as const, extra };
+    try {
+        if (rnState === 'failed') logWarn('Native Android legacy JSON import', meta);
+        else logInfo('Native Android legacy JSON import', meta);
+    } catch { /* a diagnostic sink must not fail the boot */ }
+};
+
 // After a failed save the store holds changes that are not on disk. Reads
 // wait for the exact retry, so no screen treats those changes as stored.
 const requireSaved = () => {
@@ -128,13 +188,15 @@ globalThis.MindwtrHost = {
             ? { ok: true, value: slot.value }
             : { ok: false, error: slot.error });
     },
-    boot(): string {
+    /** `legacyState` is "" for the dev database; else LegacyRnStoreGuard's reading of RN's AsyncStorage. */
+    boot(legacyState: string, legacyBackup: string): string {
         return submit(async () => {
             const adapter = new ValidatedSqliteAdapter(sqlite, { rejectConcurrentWrites: true });
             // Core's schema setup may write. Kotlin created and validated the
             // app-private pre-write SQLite snapshot before this method runs.
             setStorageAdapter(adapter);
             await adapter.getData();
+            if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
             unwrap(await contract.activate({ writeSafetyReady: true }));
             const data = adapter.latestData;
             if (!data) throw new Error('Native storage load was not validated');

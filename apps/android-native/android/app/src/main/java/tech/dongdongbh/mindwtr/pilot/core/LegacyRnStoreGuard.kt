@@ -3,76 +3,182 @@ package tech.dongdongbh.mindwtr.pilot.core
 import android.util.Log
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import org.json.JSONObject
 import java.io.File
 
 /**
- * Decides whether this build may open the React Native app's database,
- * before anything opens it. It refuses when:
+ * The only code that touches the React Native app's storage.
  *
- * - the database is missing although RN left other state: opening the path
- *   would create an empty database and show a blank Inbox;
- * - RN set the AsyncStorage marker [MARKER]: a save reached only its JSON
- *   backup (#964), and this build cannot import that backup yet;
- * - AsyncStorage or the database cannot be read, or the database fails
- *   `quick_check`.
+ * [requireClear] decides whether this build may open the RN database, before
+ * anything opens it, and reads what RN left in AsyncStorage for the JS host,
+ * which imports it with core's `planLegacyJsonImport`. It refuses when:
  *
- * It never opens the originals with SQLite. Even a read-only connection writes
- * beside a WAL database: it creates `-wal` and `-shm` when they are missing and
- * updates read marks in `-shm`. A read-write connection that fails a check can
- * also checkpoint the WAL into the file when it closes. So the guard copies the
- * bytes and queries the copy.
+ * - the database is missing, RN left other state, and AsyncStorage holds no
+ *   JSON backup: opening the path would create an empty database and show a
+ *   blank Inbox (with a backup, the host migrates it as RN would);
+ * - AsyncStorage cannot be read, or its JSON backup is over [MAX_BACKUP_BYTES];
+ * - the database cannot be read, or fails `quick_check`.
+ *
+ * It never opens the originals with SQLite to read them. Even a read-only
+ * connection writes beside a WAL database: it creates `-wal` and `-shm` when
+ * they are missing and updates read marks in `-shm`. A read-write connection
+ * that fails a check can also checkpoint the WAL into the file when it closes.
+ * So the guard copies the bytes and queries the copy.
+ *
+ * [commitRnState] is the only write to RN state and the only open of the
+ * original `RKStorage`. The host calls it after the import is saved and read
+ * back, and it copies `RKStorage` byte for byte before it changes anything.
  *
  * It assumes no concurrent writer. Replacing the package kills the RN process,
  * and this process owns exactly one host, so the files cannot change while the
- * guard copies them.
+ * guard copies them or while the host imports.
  */
 internal object LegacyRnStoreGuard {
-    private const val MARKER = "mindwtr-data:json-ahead-of-sqlite"
+    private const val DATABASE = "files/SQLite/mindwtr.db"
+    private const val ASYNC_STORAGE = "databases/RKStorage"
+    /** Beside the database's `.prewrite`. The first copy is kept forever. */
+    private const val RN_STATE_CHECKPOINT = "files/SQLite/RKStorage.prewrite"
+    private const val JSON_AHEAD = "mindwtr-data:json-ahead-of-sqlite"
+    private const val RECONCILED = "mindwtr-data:sqlite-json-reconcile-v1"
+    private const val BACKUP_VERSION = "mindwtr-data:startup-backup-version"
+    /** RN's `getLegacyJson` order: the first present name holds the backup. */
+    private val BACKUP_NAMES = listOf("mindwtr-data", "focus-gtd-data", "gtd-todo-data", "gtd-data")
+    private const val MAX_BACKUP_BYTES = 64L * 1024 * 1024
     /** androidx profileinstaller writes these into any app's files/; they are not RN state. */
     private val PLATFORM_FILES = setOf("profileInstalled", "profileinstaller_profileWrittenFor_lastUpdateTime.dat")
     private val MESSAGES = mapOf(
         "database-missing" to "The previous app version's database is missing, so this build will not start an empty one",
-        "json-ahead" to "Unsaved changes from the previous app version need an import this build cannot do yet",
         "async-storage-unreadable" to "Cannot read the previous app version's saved state",
+        "json-too-large" to "The previous app version's backup is too large to import",
         "database-unreadable" to "The previous app version's database failed its integrity check",
     )
 
-    /** Returns the RN database to open, or throws before anything has opened it. */
-    fun requireClear(dataDir: File, scratch: File): File {
-        val database = File(dataDir, "files/SQLite/mindwtr.db")
-        val asyncStorage = File(dataDir, "databases/RKStorage")
-        val blocked = blockedReason(dataDir, database, asyncStorage, scratch)
+    /** The RN database, and what RN left in AsyncStorage: [bootState] as JSON, and the backup text ("" when absent). */
+    class Opened(val database: File, val bootState: String, val backup: String)
+
+    private class RnState(val jsonAhead: Boolean, val reconciled: Boolean, val backupVersion: String?, val backupBytes: Long, val backup: String?)
+
+    /** Returns the RN database to open and the RN state, or throws before anything has opened the database. */
+    fun requireClear(dataDir: File, scratch: File): Opened {
+        val database = File(dataDir, DATABASE)
+        val asyncStorage = File(dataDir, ASYNC_STORAGE)
+        var state = RnState(false, false, null, 0, null)
+        val blocked = run {
+            if (asyncStorage.exists()) {
+                // A copy without the RN table fails here and counts as unreadable.
+                state = runCatching { readState(asyncStorage, scratch) }.getOrNull() ?: return@run "async-storage-unreadable"
+                if (state.backupBytes > MAX_BACKUP_BYTES) return@run "json-too-large"
+            }
+            if (!database.exists()) return@run if (state.backup == null && hasRnState(dataDir, asyncStorage)) "database-missing" else null
+            // ponytail: copies the whole database on every boot. Skip it once a native-owned
+            // marker proves the last shutdown was clean.
+            val intact = runCatching {
+                queryCopy(database, scratch) { copy ->
+                    copy.prepare("PRAGMA quick_check").use { it.step() && it.getText(0) == "ok" && !it.step() }
+                }
+            }
+            if (intact.getOrDefault(false)) null else "database-unreadable"
+        }
         Log.i(CoreHost.TAG, "Native Android legacy store guard releaseCheck=v1.3.3/native-android-legacy-json-ahead-guard " +
             "outcome=${if (blocked == null) "clear" else "blocked"}${blocked?.let { " reason=$it" } ?: ""}")
         check(blocked == null) { MESSAGES.getValue(blocked!!) }
-        // Only a fresh install gets here without the file. SQLite creates the file, not its folder.
+        // A fresh install, or a missing database with a JSON backup to migrate, gets here without
+        // the file. SQLite creates the file, not its folder.
         database.parentFile!!.mkdirs()
-        return database
+        val bootState = JSONObject()
+            .put("jsonAhead", state.jsonAhead)
+            .put("reconciled", state.reconciled)
+            .put("backupVersion", state.backupVersion ?: JSONObject.NULL)
+            .put("backupPresent", state.backup != null)
+        return Opened(database, bootState.toString(), state.backup ?: "")
     }
 
-    private fun blockedReason(dataDir: File, database: File, asyncStorage: File, scratch: File): String? {
-        if (!database.exists()) return if (hasRnState(dataDir, asyncStorage)) "database-missing" else null
-        if (asyncStorage.exists()) {
-            val marker = runCatching {
-                // A copy without the RN table fails here and counts as unreadable.
-                queryCopy(asyncStorage, scratch) { copy ->
-                    copy.prepare("SELECT 1 FROM catalystLocalStorage WHERE key = ?").use { statement ->
-                        statement.bindText(1, MARKER)
-                        statement.step()
+    /** The AsyncStorage reads RN's startup makes. The backup is passed on as text and never parsed here. */
+    private fun readState(asyncStorage: File, scratch: File): RnState = queryCopy(asyncStorage, scratch) { copy ->
+        val names = BACKUP_NAMES + listOf(JSON_AHEAD, RECONCILED, BACKUP_VERSION)
+        val sizes = HashMap<String, Long>()
+        copy.prepare("SELECT key, length(CAST(value AS BLOB)) FROM catalystLocalStorage " +
+            "WHERE value IS NOT NULL AND key IN (${names.joinToString(", ") { "?" }})").use { statement ->
+            names.forEachIndexed { index, name -> statement.bindText(index + 1, name) }
+            while (statement.step()) sizes[statement.getText(0)] = statement.getLong(1)
+        }
+        val value = { name: String ->
+            copy.prepare("SELECT value FROM catalystLocalStorage WHERE key = ?").use { statement ->
+                statement.bindText(1, name)
+                check(statement.step()) { "AsyncStorage row vanished" }
+                statement.getText(0)
+            }
+        }
+        // ponytail: reads the backup text on every boot, because RN's empty-database path may
+        // need it. Skip it once a native-owned record proves the import is done.
+        val backupName = BACKUP_NAMES.firstOrNull { it in sizes }
+        val backupBytes = backupName?.let { sizes.getValue(it) } ?: 0
+        RnState(
+            jsonAhead = JSON_AHEAD in sizes,
+            reconciled = RECONCILED in sizes,
+            backupVersion = if (BACKUP_VERSION in sizes) value(BACKUP_VERSION) else null,
+            backupBytes = backupBytes,
+            backup = backupName?.takeIf { backupBytes <= MAX_BACKUP_BYTES }?.let(value),
+        )
+    }
+
+    /**
+     * Makes the AsyncStorage change RN's own startup makes after its import:
+     * deletes the json-ahead marker and/or sets the one-time reconcile flag to
+     * '1', in one transaction. Nothing else in `RKStorage` changes, and the JSON
+     * backup is never rewritten. The JS host calls this only after it saved the
+     * import and read it back.
+     *
+     * First, once per install, it copies `RKStorage` and its `-wal`, `-journal`
+     * and `-shm` byte for byte into [RN_STATE_CHECKPOINT] and syncs them. The RN
+     * process is not running after a package replace, so the byte copy is
+     * consistent.
+     */
+    fun commitRnState(dataDir: File, clearJsonAhead: Boolean, setReconciled: Boolean) {
+        val asyncStorage = File(dataDir, ASYNC_STORAGE)
+        check(asyncStorage.exists()) { "The previous app version's saved state is missing" }
+        ensureRnStateCheckpoint(asyncStorage, File(dataDir, RN_STATE_CHECKPOINT))
+        BundledSQLiteDriver().open(asyncStorage.path).use { connection ->
+            connection.prepare("PRAGMA synchronous = FULL").use { it.step() }
+            connection.prepare("BEGIN IMMEDIATE").use { it.step() }
+            try {
+                // AsyncStorage's own removeItem and setItem statements.
+                if (clearJsonAhead) {
+                    connection.prepare("DELETE FROM catalystLocalStorage WHERE key = ?").use { it.bindText(1, JSON_AHEAD); it.step() }
+                }
+                if (setReconciled) {
+                    connection.prepare("INSERT OR REPLACE INTO catalystLocalStorage VALUES (?, ?)").use {
+                        it.bindText(1, RECONCILED)
+                        it.bindText(2, "1")
+                        it.step()
                     }
                 }
-            }
-            if (marker.isFailure) return "async-storage-unreadable"
-            if (marker.getOrThrow()) return "json-ahead"
-        }
-        // ponytail: copies the whole database on every boot. Skip it once a native-owned
-        // marker proves the last shutdown was clean.
-        val intact = runCatching {
-            queryCopy(database, scratch) { copy ->
-                copy.prepare("PRAGMA quick_check").use { it.step() && it.getText(0) == "ok" && !it.step() }
+                connection.prepare("COMMIT").use { it.step() }
+            } catch (error: Throwable) {
+                runCatching { connection.prepare("ROLLBACK").use { it.step() } }
+                throw error
             }
         }
-        return if (intact.getOrDefault(false)) null else "database-unreadable"
+    }
+
+    private fun ensureRnStateCheckpoint(asyncStorage: File, checkpoint: File) {
+        if (!checkpoint.exists()) {
+            val partial = File(checkpoint.path + ".building")
+            partial.deleteRecursively()
+            check(partial.mkdirs()) { "Cannot create the RN state checkpoint" }
+            try {
+                for (suffix in listOf("", "-wal", "-journal", "-shm")) {
+                    val source = File(asyncStorage.path + suffix)
+                    if (source.exists()) syncFile(source.copyTo(File(partial, source.name)))
+                }
+                syncDirectory(partial)
+                check(partial.renameTo(checkpoint)) { "Cannot promote the RN state checkpoint" }
+            } catch (error: Throwable) {
+                partial.deleteRecursively()
+                throw error
+            }
+        }
+        syncDirectory(checkpoint.parentFile!!)
     }
 
     private fun hasRnState(dataDir: File, asyncStorage: File): Boolean =
