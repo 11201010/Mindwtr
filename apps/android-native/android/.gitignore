@@ -1,0 +1,6 @@
+app/src/main/assets/*.js
+app/src/main/assets/*.json
+local.properties
+.gradle/
+build/
+app/build/
