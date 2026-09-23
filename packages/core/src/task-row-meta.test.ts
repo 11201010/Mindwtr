@@ -4,6 +4,7 @@ import { configureDateFormatting } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
 import type { Language } from './i18n/i18n-types';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup, type TaskRowMeta, type TaskRowMetaPart } from './task-row-meta';
+import { getProjectRowStatus } from './project-row-meta';
 import { TASK_PRIORITY_COLORS } from './color-constants';
 import type { Area, Project, Section, Task } from './types';
 
@@ -54,6 +55,10 @@ const fixture = JSON.parse(
     configs: Record<string, Config>;
     views: Record<string, ViewOptions>;
     mobileSnapshot: SnapshotRow[];
+    followupSnapshot: {
+        swipe: Array<{ status: Task['status'] } & TaskRowMeta['swipe']>;
+        project: Array<{ status: Project['status']; cancelledAt: string | null; cancelled: boolean; statusLabel: string }>;
+    };
 };
 
 // How the mobile row drew each part at snapshot time: its text nodes, the first text's
@@ -120,6 +125,30 @@ describe('buildTaskRowMeta parity with the mobile row', () => {
     // The function must format with the configuration it is given, so the global
     // one is set to something no fixture configuration uses.
     beforeEach(() => configureDateFormatting({ language: 'fa', dateFormat: 'mdy', timeFormat: '12h', calendarSystem: 'jalali', systemLocale: 'fa-IR' }));
+
+    it('matches the captured React Native swipe action for every task status', () => {
+        const config = fixture.configs.en;
+        for (const expected of fixture.followupSnapshot.swipe) {
+            const task = { ...fixture.tasks[0], status: expected.status };
+            const meta = buildTaskRowMeta({
+                task,
+                lookup: {},
+                features: resolveTaskRowFeatures(config.settings),
+                language: 'en',
+                dateFormatting: { language: 'en', systemLocale: 'en-US' },
+                t: translators.get('en')!,
+                now: new Date(fixture.now),
+            });
+            expect(meta.swipe).toEqual({ target: expected.target, label: expected.label, icon: expected.icon });
+        }
+    });
+
+    it('matches the captured React Native project status line', () => {
+        for (const expected of fixture.followupSnapshot.project) {
+            expect(getProjectRowStatus({ status: expected.status, cancelledAt: expected.cancelledAt ?? undefined }, translators.get('en')!))
+                .toEqual({ cancelled: expected.cancelled, statusLabel: expected.statusLabel });
+        }
+    });
 
     it('covers every part kind, detail and collapsed views, and several languages', () => {
         const kinds = new Set<string>();

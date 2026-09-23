@@ -11,7 +11,7 @@ import { isTaskActionable, isTaskCancelled, isTaskCompleted } from './task-statu
 import { getChecklistProgress, getTaskAgeLabel, getTaskUrgency } from './task-utils';
 import { resolveTaskTextDirection } from './text-direction';
 import { formatTimeSpentLabel } from './time-spent';
-import type { AppSettings, Area, Project, Section, Task, TaskPriority } from './types';
+import type { AppSettings, Area, Project, Section, Task, TaskPriority, TaskStatus } from './types';
 
 /** The optional features a task row reads, resolved from settings. */
 export type TaskRowFeatures = {
@@ -70,6 +70,7 @@ export type TaskRowMeta = {
     statusLabel: string | null;
     /** Whether the Focus star can show (the view decides whether it offers one). */
     canFocus: boolean;
+    swipe: { target: TaskStatus; label: string; icon: 'restore' | 'done' | 'next' };
     textDirection: 'ltr' | 'rtl';
     accessibilityLabel: string;
 };
@@ -130,6 +131,15 @@ const dueToneFor = (task: Task, now: Date): TaskRowDueTone => {
     const urgency = getTaskUrgency(task, now);
     if (urgency === 'overdue') return 'overdue';
     return urgency === 'urgent' || urgency === 'upcoming' ? 'dueSoon' : 'normal';
+};
+
+const swipeFor = (status: TaskStatus, t: TranslateFn): TaskRowMeta['swipe'] => {
+    if (status === 'done') return { target: 'inbox', label: tFallback(t, 'archived.restoreToInbox', 'Restore'), icon: 'restore' };
+    if (status === 'next' || status === 'waiting') return { target: 'done', label: tFallback(t, 'common.done', 'Done'), icon: 'done' };
+    if (status === 'someday' || status === 'reference' || status === 'inbox') {
+        return { target: 'next', label: tFallback(t, 'status.next', 'Next'), icon: 'next' };
+    }
+    return { target: 'done', label: tFallback(t, 'common.done', 'Done'), icon: 'done' };
 };
 
 /** The React Native task row's meta line and labels, as data. The output depends only on the input. */
@@ -242,6 +252,7 @@ export function buildTaskRowMeta(input: TaskRowMetaInput): TaskRowMeta {
         priority: !isReference && features.priorities ? task.priority ?? null : null,
         statusLabel: isReference ? null : t(`status.${task.status}`),
         canFocus: isTaskActionable(task),
+        swipe: swipeFor(task.status, t),
         textDirection: resolveTaskTextDirection(task),
         accessibilityLabel: isReference
             ? referenceAccessibilityLabel(input, visibleAttachmentCount)

@@ -35,6 +35,13 @@ const projectParity = JSON.parse(
     tasks: Task[];
     mobileSnapshot: Record<string, Array<Record<string, unknown>>>;
 };
+const followupParity = (JSON.parse(
+    readFileSync(new URL('./task-row-meta-parity.fixtures.json', import.meta.url), 'utf8'),
+) as { followupSnapshot: { upcoming: Array<{
+    language: Language; systemLocale: string; revealDate: string; revealLabel: string; focusBlockedLabel: string;
+}>; project: Array<{
+    status: Project['status']; cancelledAt: string | null; cancelled: boolean; statusLabel: string;
+}> } }).followupSnapshot;
 
 const task = (id: string, createdAt: string, extra: Partial<Task> = {}): Task => ({
     id,
@@ -170,7 +177,7 @@ describe('native host contract', () => {
         expect(first.value.rows.map(({ id }) => id)).toEqual(['first', 'middle']);
         expect(first.value.rows[0]).toEqual({
             id: 'first', title: 'first', status: 'inbox', priority: null, dueDate: null,
-            startTime: null, isFocusedToday: false, projectTitle: null, hasNotes: false, revealDate: null, laterToday: false,
+            startTime: null, isFocusedToday: false, projectTitle: null, hasNotes: false, revealDate: null, revealLabel: null, laterToday: false,
             meta: expect.objectContaining({ parts: [], statusLabel: 'Inbox' }),
         });
         expect(host.getInboxWindow({ offset: 2, limit: 2, revision: first.value.revision }))
@@ -318,6 +325,29 @@ describe('native host contract', () => {
         expect(groupCalls).toHaveBeenCalledTimes(3);
     });
 
+    it('exposes the captured React Native project status lines and cancelled flag', async () => {
+        const projects = followupParity.project.map((expected, index) => project(`status-${index}`, expected.status, index, {
+            cancelledAt: expected.cancelledAt ?? undefined,
+        }));
+        const host = await activateWith([], projects);
+        const result = host.getProjects();
+        if (!result.ok) throw new Error('Projects query failed');
+        const rows = [...result.value.active, ...result.value.deferred, ...result.value.archived]
+            .flatMap((group) => group.projects);
+        for (const [index, expected] of followupParity.project.entries()) {
+            expect(rows.find(({ id }) => id === `status-${index}`)).toMatchObject({
+                cancelled: expected.cancelled,
+                statusLabel: expected.statusLabel,
+            });
+        }
+        expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: 'zh-CN' })).toMatchObject({ ok: true });
+        const chinese = host.getProjects();
+        if (!chinese.ok) throw new Error('Chinese Projects query failed');
+        expect(chinese.value.revision).not.toBe(result.value.revision);
+        expect(chinese.value.archived.flatMap(({ projects: items }) => items).find(({ id }) => id === 'status-4')?.statusLabel)
+            .toBe(getTranslator('zh')('projects.cancelled'));
+    });
+
     describe('project detail', () => {
         // The store state mobile's snapshot rendered from; a real load would run
         // migrations (for example auto-archiving old Done tasks) first.
@@ -369,7 +399,7 @@ describe('native host contract', () => {
                 type: 'task',
                 row: {
                     id: 'live-a1', title: 'Sketch', status: 'next', priority: null, dueDate: null, startTime: null,
-                    isFocusedToday: false, projectTitle: 'Launch', hasNotes: false, revealDate: null, laterToday: false,
+                    isFocusedToday: false, projectTitle: 'Launch', hasNotes: false, revealDate: null, revealLabel: null, laterToday: false,
                     meta: expect.objectContaining({ statusLabel: 'Next', accessibilityLabel: 'Sketch. Status: Next' }),
                 },
                 sectionId: 'sec-a',
@@ -1444,6 +1474,46 @@ describe('native host contract', () => {
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
+    it('matches React Native Upcoming reveal text in English and Chinese with explicit date settings', async () => {
+        const host = await activateWith([task('upcoming', '2026-09-01T00:00:00.000Z', {
+            status: 'next', startTime: '2026-09-24',
+        })]);
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        for (const expected of followupParity.upcoming) {
+            expect(await host.setLanguage({ storedLanguage: expected.language, systemLocale: expected.systemLocale })).toMatchObject({ ok: true });
+            configureDateFormatting({ language: expected.language, systemLocale: expected.systemLocale });
+            const rnLabel = safeFormatDate(new Date(2026, 8, 24), 'P');
+            expect(rnLabel).toBe(expected.revealLabel);
+            const sentinel = { language: 'fa', dateFormat: 'ymd', calendarSystem: 'jalali', systemLocale: 'fa-IR' } as const;
+            configureDateFormatting(sentinel);
+            const result = host.getFocus({ limit: 10 });
+            if (!result.ok) throw new Error('Focus query failed');
+            expect(result.value.sections.find(({ key }) => key === 'upcoming')?.rows[0])
+                .toMatchObject({ revealDate: expected.revealDate, revealLabel: rnLabel });
+            expect(getDateFormattingConfig()).toEqual(sentinel);
+        }
+        configureDateFormatting();
+    });
+
+    it('matches React Native Upcoming blocked star text in English and Chinese', async () => {
+        const host = await activateWith([task('upcoming', '2026-09-01T00:00:00.000Z', {
+            status: 'next', startTime: '2026-09-24',
+        })]);
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        useTaskStore.setState({ settings: { gtd: { focusTaskLimit: 99 } } });
+        for (const expected of followupParity.upcoming) {
+            expect(await host.setLanguage({ storedLanguage: expected.language, systemLocale: expected.systemLocale })).toMatchObject({ ok: true });
+            const result = host.getFocus({ limit: 10 });
+            if (!result.ok) throw new Error('Focus query failed');
+            const rnLabel = getFocusStarBlockedText(getTranslator(expected.language), { blockedReason: 'deferred' }, normalizeFocusTaskLimit(99));
+            expect(rnLabel).toBe(expected.focusBlockedLabel);
+            expect(result.value.sections.find(({ key }) => key === 'upcoming')?.focusBlockedLabel).toBe(rnLabel);
+            expect(result.value.sections.filter(({ key }) => key !== 'upcoming').every(({ focusBlockedLabel }) => focusBlockedLabel === null)).toBe(true);
+        }
+    });
+
     it('follows core ordering with priorities enabled and disabled', async () => {
         const now = new Date(2026, 8, 23, 10);
         const items = [
@@ -1751,7 +1821,7 @@ describe('native host contract', () => {
             expect(focus.value.reviewProjects.map(({ id }) => id))
                 .toEqual(focusDerivation.getReviewDueProjects(state.projects, NOW).map(({ id }) => id));
             expect(focus.value.reviewProjects[1]).toEqual({
-                id: 'p-review', title: 'Garden', status: 'active', isFocused: false, focusDisabled: false, color: '#123456',
+                id: 'p-review', title: 'Garden', status: 'active', cancelled: false, statusLabel: 'Active', isFocused: false, focusDisabled: false, color: '#123456',
                 activeTaskCount: 0, nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: false,
                 reviewDateLabel: '09/20/2026',
             });

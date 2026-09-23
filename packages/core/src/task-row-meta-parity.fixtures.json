@@ -5,6 +5,29 @@
     "at a05e0c3cb, before the row meta computation moved to core.",
     "Do not regenerate it from the core function: it is the reference the function must match."
   ],
+  "followupSnapshot": {
+    "source": "React Native rules at HEAD a3526d518 before core-row-followups",
+    "swipe": [
+      { "status": "inbox", "target": "next", "icon": "next", "label": "Next" },
+      { "status": "next", "target": "done", "icon": "done", "label": "Done" },
+      { "status": "waiting", "target": "done", "icon": "done", "label": "Done" },
+      { "status": "someday", "target": "next", "icon": "next", "label": "Next" },
+      { "status": "reference", "target": "next", "icon": "next", "label": "Next" },
+      { "status": "done", "target": "inbox", "icon": "restore", "label": "Restore to Inbox" },
+      { "status": "archived", "target": "done", "icon": "done", "label": "Done" }
+    ],
+    "project": [
+      { "status": "active", "cancelledAt": null, "cancelled": false, "statusLabel": "Active" },
+      { "status": "waiting", "cancelledAt": null, "cancelled": false, "statusLabel": "Waiting" },
+      { "status": "someday", "cancelledAt": null, "cancelled": false, "statusLabel": "Someday" },
+      { "status": "archived", "cancelledAt": null, "cancelled": false, "statusLabel": "Completed" },
+      { "status": "archived", "cancelledAt": "2026-04-02T00:00:00.000Z", "cancelled": true, "statusLabel": "Cancelled" }
+    ],
+    "upcoming": [
+      { "language": "en", "systemLocale": "en-US", "revealDate": "2026-09-24", "revealLabel": "09/24/2026", "focusBlockedLabel": "This task is deferred; change its start date before focusing it." },
+      { "language": "zh", "systemLocale": "zh-CN", "revealDate": "2026-09-24", "revealLabel": "26-09-24", "focusBlockedLabel": "This task is deferred; change its start date before focusing it." }
+    ]
+  },
   "timeZone": "America/New_York",
   "now": "2026-09-23T10:00:00",
   "areas": [

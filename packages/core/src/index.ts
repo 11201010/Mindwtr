@@ -97,6 +97,7 @@ export * from './recurrence';
 export * from './recurrence-constants';
 export * from './review-utils';
 export * from './project-utils';
+export * from './project-row-meta';
 export * from './project-task-list-model';
 export * from './task-row-meta';
 export * from './reference';

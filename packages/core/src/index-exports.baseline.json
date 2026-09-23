@@ -677,6 +677,7 @@
     "getProjectNextActionPromptData",
     "getProjectNextActionState",
     "getProjectReviewReminderIntent",
+    "getProjectRowStatus",
     "getProjectSectionsForView",
     "getProjectedRecurringTaskCalendarDate",
     "getProjectedRecurringTaskId",

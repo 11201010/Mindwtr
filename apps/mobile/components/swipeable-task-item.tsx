@@ -601,24 +601,8 @@ function SwipeableTaskItemInner({
             });
     };
 
-    // Status-aware left swipe action
-    const getLeftAction = (): { label: string; color: string; action: TaskStatus } => {
-        if (task.status === 'done') {
-            return { label: tFallback(t, 'archived.restoreToInbox', 'Restore'), color: statusColors.inbox.text, action: 'inbox' };
-        } else if (task.status === 'next' || task.status === 'waiting') {
-            // A Waiting For item completes when the other person delivers;
-            // the status menu still offers Next for the rarer re-take (#1164).
-            return { label: tFallback(t, 'common.done', 'Done'), color: statusColors.done.text, action: 'done' };
-        } else if (task.status === 'someday' || task.status === 'reference') {
-            return { label: tFallback(t, 'status.next', 'Next'), color: statusColors.next.text, action: 'next' };
-        } else if (task.status === 'inbox') {
-            return { label: tFallback(t, 'status.next', 'Next'), color: statusColors.next.text, action: 'next' };
-        } else {
-            return { label: tFallback(t, 'common.done', 'Done'), color: statusColors.done.text, action: 'done' };
-        }
-    };
-
-    const leftAction = getLeftAction();
+    const leftAction = meta.swipe;
+    const leftActionColor = statusColors[leftAction.target].text;
     const swipeAccessibilityHint = interactionDisabled
         ? (allowInspectionWhenDisabled
             ? tFallback(t, 'projects.archivedTaskInspectionHint', 'Double-tap to inspect this task. Reactivate the project to edit it.')
@@ -632,17 +616,17 @@ function SwipeableTaskItemInner({
             );
 
     const renderLeftActions = () => {
-        const LeftIcon = leftAction.action === 'inbox' ? RotateCcw : leftAction.action === 'done' ? Check : ArrowRight;
+        const LeftIcon = leftAction.icon === 'restore' ? RotateCcw : leftAction.icon === 'done' ? Check : ArrowRight;
         return (
             <AppPressable
-                style={[styles.swipeActionLeft, { backgroundColor: leftAction.color }]}
+                style={[styles.swipeActionLeft, { backgroundColor: leftActionColor }]}
                 pressedColor="rgba(0, 0, 0, 0.18)"
                 onPress={() => {
                     swipeableRef.current?.close();
                     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-                    handleStatusChange(leftAction.action);
+                    handleStatusChange(leftAction.target);
                 }}
-                onLongPress={leftAction.action === 'done' ? () => {
+                onLongPress={leftAction.target === 'done' ? () => {
                     swipeableRef.current?.close();
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
                     setCompletedAtPicker('complete');
@@ -652,7 +636,7 @@ function SwipeableTaskItemInner({
                     { action: leftAction.label },
                 )}
                 accessibilityRole="button"
-                accessibilityHint={leftAction.action === 'done'
+                accessibilityHint={leftAction.target === 'done'
                     ? tFallback(t, 'task.completeBackdateHintMobile', 'Long-press to complete with a different time')
                     : undefined}
             >
@@ -772,7 +756,7 @@ function SwipeableTaskItemInner({
         }
         if (selectionMode) return;
         if (actionName === 'changeStatus') {
-            handleStatusChange(leftAction.action);
+            handleStatusChange(leftAction.target);
             return;
         }
         if (actionName === 'longPressAction' && onLongPressAction) {

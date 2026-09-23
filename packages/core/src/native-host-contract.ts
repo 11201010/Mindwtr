@@ -31,6 +31,7 @@ import {
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import { createDateFormatter, hasTimeComponent, safeParseDate, type DateFormattingConfig } from './date';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
+import { getProjectRowStatus } from './project-row-meta';
 import { getFocusStarBlockedText } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import {
@@ -112,6 +113,7 @@ export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
     projectTitle: string | null;
     hasNotes: boolean;
     revealDate: string | null;
+    revealLabel: string | null;
     laterToday: boolean;
     /**
      * The React Native row's labels and meta line, formatted with the user's date
@@ -134,6 +136,7 @@ export type NativeFocusSection = {
     title: string;
     total: number;
     rows: NativeTaskRow[];
+    focusBlockedLabel: string | null;
 };
 export type NativeFocusView = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
@@ -148,6 +151,8 @@ export type NativeFocusView = {
     reviewProjects: NativeReviewProjectRow[];
 };
 export type NativeProjectRow = Pick<Project, 'id' | 'title' | 'status'> & {
+    cancelled: boolean;
+    statusLabel: string;
     isFocused: boolean;
     focusDisabled: boolean;
     color: string | null;
@@ -212,6 +217,7 @@ const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>, meta: T
     projectTitle: task.projectId ? projectTitles.get(task.projectId) ?? null : null,
     hasNotes: typeof task.description === 'string' && task.description.length > 0,
     revealDate: null,
+    revealLabel: null,
     laterToday: false,
     meta,
 });
@@ -220,6 +226,7 @@ const toNativeProjectRow = (
     project: Project,
     summaries: ReturnType<ReturnType<typeof useTaskStore.getState>['getDerivedState']>['projectTaskSummaryById'],
     focusedProjectCount: number,
+    t: (key: string) => string,
 ): NativeProjectRow => {
     const summary = summaries.get(project.id);
     const nextAction = summary?.nextAction;
@@ -229,6 +236,7 @@ const toNativeProjectRow = (
         id: project.id,
         title: project.title,
         status: project.status,
+        ...getProjectRowStatus(project, t),
         isFocused,
         focusDisabled: !isFocused && focusedProjectCount >= MAX_FOCUSED_PROJECTS,
         color: project.color ?? null,
@@ -327,7 +335,7 @@ export function createNativeHostContract() {
     let cachedFocusRevision = '';
     let cachedFocusSections: FocusTaskSection[] = [];
     let cachedFocusProjectTitles = new Map<string, string>();
-    let cachedRevealDates = new Map<string, string>();
+    let cachedRevealDates = new Map<string, Date>();
     let cachedLaterTodayIds = new Set<string>();
     let cachedDeadlineBoosts = new Map<string, ProjectDeadlineBoost>();
     let cachedReviewProjects: Project[] = [];
@@ -450,24 +458,29 @@ export function createNativeHostContract() {
                     : section
             ));
             cachedFocusProjectTitles = new Map(state.projects.map((project) => [project.id, project.title]));
-            cachedRevealDates = new Map(pools.upcoming.map(({ task, appearsAt }) => [task.id, formatLocalDate(appearsAt)]));
+            cachedRevealDates = new Map(pools.upcoming.map(({ task, appearsAt }) => [task.id, appearsAt]));
             cachedFocusRevision = currentRevision;
         }
         return cachedFocusSections;
     };
 
-    const focusRows = (section: FocusTaskSection, offset: number, limit: number, now: Date): NativeTaskRow[] => (
-        section.items.slice(offset, offset + limit).map((task) => ({
-            ...toNativeTaskRow(task, cachedFocusProjectTitles, rowMeta(task, now, {
-                projectDeadlineLabel: getProjectDeadlineBoostLabel(
-                    cachedDeadlineBoosts.get(task.id),
-                    (key, fallback) => tFallback(translate, key, fallback),
-                ),
-            })),
-            revealDate: section.key === 'upcoming' ? cachedRevealDates.get(task.id) ?? null : null,
-            laterToday: section.key === 'schedule' && cachedLaterTodayIds.has(task.id),
-        }))
-    );
+    const focusRows = (section: FocusTaskSection, offset: number, limit: number, now: Date): NativeTaskRow[] => {
+        const formatDate = createDateFormatter(dateFormatting());
+        return section.items.slice(offset, offset + limit).map((task) => {
+            const appearsAt = section.key === 'upcoming' ? cachedRevealDates.get(task.id) : undefined;
+            return {
+                ...toNativeTaskRow(task, cachedFocusProjectTitles, rowMeta(task, now, {
+                    projectDeadlineLabel: getProjectDeadlineBoostLabel(
+                        cachedDeadlineBoosts.get(task.id),
+                        (key, fallback) => tFallback(translate, key, fallback),
+                    ),
+                })),
+                revealDate: appearsAt ? formatLocalDate(appearsAt) : null,
+                revealLabel: appearsAt ? formatDate(appearsAt, 'P') : null,
+                laterToday: section.key === 'schedule' && cachedLaterTodayIds.has(task.id),
+            };
+        });
+    };
 
     // The mobile project workspace as it opens: the project's saved sort, no
     // search, Show completed off, nothing collapsed. RN TaskList filters its
@@ -739,6 +752,9 @@ export function createNativeHostContract() {
                 title: section.title,
                 total: section.items.length,
                 rows: focusRows(section, 0, input.limit, now),
+                focusBlockedLabel: section.key === 'upcoming'
+                    ? getFocusStarBlockedText(translate, { blockedReason: 'deferred' }, normalizeFocusTaskLimit(useTaskStore.getState().settings.gtd?.focusTaskLimit))
+                    : null,
             }));
             const { projectTaskSummaryById: summaries, focusedProjectCount } = useTaskStore.getState().getDerivedState();
             const formatDate = createDateFormatter(dateFormatting());
@@ -750,7 +766,7 @@ export function createNativeHostContract() {
                     dateLabel: formatDate(now, 'PPPP'),
                     sections,
                     reviewProjects: cachedReviewProjects.map((project) => ({
-                        ...toNativeProjectRow(project, summaries, focusedProjectCount),
+                        ...toNativeProjectRow(project, summaries, focusedProjectCount, translate),
                         reviewDateLabel: project.reviewAt ? formatDate(project.reviewAt, 'P') : null,
                     })),
                 },
@@ -760,7 +776,7 @@ export function createNativeHostContract() {
         getProjects(): NativeHostResult<NativeProjectsView> {
             const ready = readiness();
             if (!ready.ok) return ready;
-            const currentRevision = `${revision()}:${settingsRevision()}`;
+            const currentRevision = `${revision()}:${settingsRevision()}:${language}`;
             if (cachedProjectsRevision !== currentRevision || !cachedProjects) {
                 const state = useTaskStore.getState();
                 const orderedAreas = sortAreasForDisplay(state.areas);
@@ -781,7 +797,7 @@ export function createNativeHostContract() {
                         areaName: area?.name ?? null,
                         areaColor: area?.color ?? null,
                         areaIcon: area?.icon ?? null,
-                        projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount)),
+                        projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount, translate)),
                     };
                 };
                 cachedProjects = {
