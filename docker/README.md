@@ -44,9 +44,9 @@ To build from source instead, clone the repository and run `docker compose -f do
 This HTTP compose file is best for local testing. Mindwtr desktop and mobile clients accept HTTP for localhost, private IPs, and local hostnames. Public URLs should use HTTPS.
 
 `/health` reports only whether the Cloud process can answer HTTP requests. `/ready`
-also verifies that the configured data directory is currently safe and writable;
-the Docker health checks use `/ready` so a storage failure marks the service
-unhealthy without reading or modifying any user dataset.
+also verifies that the configured data directory is currently safe and writable.
+The image supplies its own Docker health check: current images use `/ready`,
+while older images use `/health`. Compose uses the check built into the image.
 
 ## Dropbox sync and the Docker PWA
 
