@@ -58,7 +58,8 @@ const count = (text, needle) => text.split('\n').filter((line) => line.includes(
 const boots = (processId) => count(logs(processId), 'Core host boot started');
 const recreations = (processId) => count(logs(processId), 'reason=activity-recreate');
 const newScreens = (processId) => count(logs(processId), 'reason=new-screen');
-const updates = (processId, outcome) => logs(processId).split('\n').filter((line) => line.includes('native-android-dev-task-command')
+// The log's `extra` is itself a JSON string, so its quotes arrive escaped.
+const updates = (processId, outcome) => logs(processId).replace(/\\/g, '').split('\n').filter((line) => line.includes('native-android-dev-task-command')
     && line.includes('"operation":"update"') && line.includes(`"outcome":"${outcome}"`)).length;
 const setRotation = (rotation) => {
     requireAppFront();
@@ -212,6 +213,15 @@ try {
         startTime: null, description: null, projectId: null, rev: row.rev + 1,
     }, '(a) stored exactly the edited title, priority, and due date in one write');
 
+    // (e) Clearing the due date stores null. Done before the restart steps: an Inbox task
+    // with a past date is moved to Next by core at startup and would leave the Inbox.
+    await openEditor(titleA);
+    await tap(button(await screen(), 'Clear due date'));
+    await waitFor('Due date: none', (current) => shown(current, 'Due date') === 'none');
+    await save();
+    await inbox();
+    row = expectStored({ title: titleA, priority: 'high', dueDate: null, rev: row.rev + 1 }, '(e) cleared due date stored as null');
+
     // (b) Rotation mid-edit keeps the draft; nothing is written.
     await openEditor(titleA);
     await choose('Priority', 'low');
@@ -221,7 +231,7 @@ try {
     nodes = await waitFor('the draft after rotation', (current) => editorShows(current, titleB));
     check(pid() === processId, '(b) landscape: same process, draft title kept');
     await rotate(0);
-    nodes = await waitFor('the draft after rotating back', (current) => editorShows(current, titleB, { Priority: 'low', 'Due date': due }));
+    nodes = await waitFor('the draft after rotating back', (current) => editorShows(current, titleB, { Priority: 'low', 'Due date': 'none' }));
     check(boots(processId) === 1, '(b) portrait: draft title and priority kept, one host boot');
     expectStored({ title: titleA, priority: 'high', rev: row.rev }, '(b) an unsaved draft wrote nothing');
 
@@ -231,12 +241,16 @@ try {
     sh(`run-as ${PKG} kill -9 ${processId}`);
     await waitFor('process death', () => pid() !== processId, 10_000);
     launch();
-    nodes = await waitFor('the restored editor', (current) => editorShows(current, titleB, { Priority: 'low', 'Due date': due }), 60_000);
+    nodes = await waitFor('the restored editor', (current) => editorShows(current, titleB, { Priority: 'low', 'Due date': 'none' }), 60_000);
     processId = pid();
     check(boots(processId) === 1, '(c) editor draft restored after process death, one host boot');
+    // Core's startup pass may promote an Inbox task whose date has passed to Next
+    // (its own write, same rule as the RN app). The editor's save is measured from here.
+    const booted = stored();
+    if (booted.rev !== row.rev) console.log(`note - (c) core wrote the task at startup: status ${row.status} -> ${booted.status}, rev ${row.rev} -> ${booted.rev}`);
     await save();
     await inbox();
-    row = expectStored({ title: titleB, status: 'inbox', priority: 'low', dueDate: due, rev: row.rev + 1 },
+    row = expectStored({ title: titleB, status: booted.status, priority: 'low', dueDate: null, rev: booted.rev + 1 },
         '(c) restored draft saved once');
 
     // (d) A failed commit keeps the draft and only its exact retry, across rotation, Back, and a new screen.
@@ -279,15 +293,7 @@ try {
     await save();
     nodes = await inbox();
     check(!hasError(nodes) && button(nodes, 'Refresh')?.enabled === 'true', '(d) retry cleared the failure');
-    row = expectStored({ title: titleB, priority: 'medium', dueDate: due, rev: row.rev + 1 }, '(d) retry stored the edit once');
-
-    // (e) Clearing the due date stores null.
-    await openEditor(titleB);
-    await tap(button(await screen(), 'Clear due date'));
-    await waitFor('Due date: none', (current) => shown(current, 'Due date') === 'none');
-    await save();
-    await inbox();
-    row = expectStored({ title: titleB, priority: 'medium', dueDate: null, rev: row.rev + 1 }, '(e) cleared due date stored as null');
+    row = expectStored({ title: titleB, priority: 'medium', dueDate: null, rev: row.rev + 1 }, '(d) retry stored the edit once');
 
     // (f) Status reference with a priority: core refuses, the draft stays editable, nothing is written.
     await openEditor(titleB);
@@ -303,7 +309,7 @@ try {
     await tap(button(await waitFor('the discard question', (current) => hasText(current, 'Discard unsaved changes?')), 'Discard'));
     await inbox();
     expectStored({ status: 'inbox', priority: 'medium', rev: row.rev }, '(f) Discard wrote nothing');
-    check(updates(processId, 'saved') >= 3 && updates(processId, 'failed') >= 2,
+    check(updates(processId, 'saved') >= 2 && updates(processId, 'failed') >= 2, // (c) and (d) saves; (d) and (f) failures in this process
         'task-command log shows operation=update saves and failures');
 
     // Relaunch: boot validation passes and the final values stand.
