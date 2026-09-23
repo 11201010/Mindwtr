@@ -54,6 +54,7 @@ class CoreHost(private val databaseFile: File) {
             context = engine
             val database = SqliteBridge(databaseFile)
             sqlite = database
+            database.ensureRecoveryCheckpoint()
             val bridge = engine.createNewJSObject()
             bridge.setProperty("sqlRun") { args -> database.run(args[0] as String, args[1] as String); null }
             bridge.setProperty("sqlAll") { args -> database.all(args[0] as String, args[1] as String) }
@@ -76,8 +77,16 @@ class CoreHost(private val databaseFile: File) {
         }
     }
 
-    private fun callAsync(method: String): JSONObject {
-        val id = call(method) as String
+    fun inboxWindow(offset: Int, limit: Int, revision: String): JSONObject =
+        callAsync("window", offset, limit, revision)
+
+    fun createInboxTask(title: String, captureId: String): JSONObject =
+        callAsync("create", title, captureId)
+
+    fun completeTask(id: String): JSONObject = callAsync("complete", id)
+
+    private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
+        val id = call(method, *args) as String
         val engine = checkNotNull(context)
         val pump = engine.globalObject.getJSFunction("__pumpTimers")
         val nextDelay = engine.globalObject.getJSFunction("__nextTimerDelay")
@@ -88,12 +97,12 @@ class CoreHost(private val databaseFile: File) {
             if (answer != null) {
                 val result = JSONObject(answer)
                 if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
-                return result.getJSONObject("value")
+                return@onEngine result.getJSONObject("value")
             }
             val delay = (nextDelay.call() as? Number)?.toLong() ?: 1L
             if (delay > 0) Thread.sleep(minOf(delay, 25L))
         }
-        throw IllegalStateException("Core boot timed out")
+        throw IllegalStateException("Core $method timed out")
     }
 
     private fun closeOnEngine() {

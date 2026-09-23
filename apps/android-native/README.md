@@ -1,15 +1,18 @@
-# Android native development shell
+# Android native development app
 
-This is an isolated development app (`tech.dongdongbh.mindwtr.nativeclient.dev`). It does not replace or read the React Native app installation.
+This isolated Compose app uses `tech.dongdongbh.mindwtr.nativeclient.dev` and its own private `mindwtr-native-dev.db`. It does not read or replace the React Native app. It shows the first 50 Inbox rows, loads more in windows of at most 50, and calls the shared core contract to capture and complete tasks. The app has no editor, sync, external intents, fixture seeding, or production upgrade path.
 
 From the repository root:
 
 ```sh
 bun install --frozen-lockfile
+node apps/android-native/scripts/build-bundle.mjs
 cd apps/android-native/android
-./gradlew :app:assembleDebug
+./gradlew :app:assembleDebug --offline
 ```
 
-Gradle builds `core-host.js` from current `packages/core` source before packaging. A fresh install opens its private SQLite database through the core adapter and shows `Core ready · 0 tasks`. A load error is shown in the shell. The host exposes no task commands, fixture seeding, sync, or external action intents.
+The build also regenerates `core-host.js` from current core source. Install only the resulting development APK (`android/app/build/outputs/apk/debug/app-debug.apk`) into the isolated development package. A clean install creates an app-private SQLite checkpoint before core schema setup. On later launches, the first checkpoint is retained. The checkpoint file and its directory entry are synced before task writes. Every core data load is checked against storage row counts, including the load during contract activation. A failed check shows `Storage unavailable` and leaves commands disabled. Capture drafts stay visible after save failure and reuse their UUID for an unchanged retry; editing the draft starts a new capture.
 
-This shell is not a tester build. Before a tester build, add a content-free startup success/failure line tagged `extra.releaseCheck` and a matching entry in `docs/release-notes/diagnostics-ledger.md`, then make that line available through Settings › Diagnostics. The shared versioned host contract and safe write/recovery path are the next integration step.
+The checkpoint is a SQLite `VACUUM INTO` snapshot, so it includes committed WAL content. This development app has no other recoverable user data yet. It is not a tester build: its log is only in logcat, and it has no Settings › Diagnostics. A tester build needs that diagnostics screen, upgrade and recovery validation, and the remaining workflows before distribution.
+
+The adapter rejects detected concurrent database writes. Activity rotation and simultaneous host startup have not been validated for a production identity.

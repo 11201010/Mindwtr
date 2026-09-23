@@ -442,12 +442,11 @@
         return String(value);
     };
     ['log', 'warn', 'error', 'info', 'debug'].forEach(function (level) {
-        if (typeof global.console[level] !== 'function') {
-            global.console[level] = function () {
-                var parts = [];
-                for (var i = 0; i < arguments.length; i += 1) parts.push(describe(arguments[i]));
-                global.__hostLog(level + ': ' + parts.join(' '));
-            };
-        }
+        // QuickJS's built-in methods throw when no platform stdout is set.
+        global.console[level] = function () {
+            var parts = [];
+            for (var i = 0; i < arguments.length; i += 1) parts.push(describe(arguments[i]));
+            try { global.__hostLog(level + ': ' + parts.join(' ')); } catch (_error) { /* logging cannot fail a save */ }
+        };
     });
 }(globalThis));

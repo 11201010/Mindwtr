@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/native-android-dev-task-command`** — native Android dev shell `apps/android-native/bundle/host-entry.ts`, after a create or complete command returns from the shared core save path, or when the contract refuses the command. Message: `Native Android task command`; fields: `extra.releaseCheck`, `operation` (`create` or `complete`), `outcome` (`saved` or `failed`). A `saved` line proves the dev shell received durable acknowledgment; `failed` flags refusal for investigation. No task title or identifier is logged. This marker is for the isolated dev app; its tester diagnostics export is not yet wired.
+
 - **`v1.3.3/linux-portal-theme-signal`** — desktop `apps/desktop/src-tauri/src/ui.rs`, after a Linux portal color-scheme change is received and resolved. Message: `Linux portal theme change resolved`; fields: `releaseCheck`, `theme` (`light` or `dark`). Change the system appearance while Mindwtr uses System theme: the log must show the new theme and the app must follow it. This marker proves the signal path ran, not that the webview repainted. No task content or identifiers are logged. (#1270)
 
 ## v1.3.2 (add before tagging, trim in the release after)

@@ -15,7 +15,7 @@ Freeze capability scope at **v1.3.2**, commit **ee82a9e3e9a1d4e0c406f5ffff80e768
 ### Current evidence and limits
 
 - ADR 0029 records an Android pilot with Inbox, editor, and Focus on local branch `experiment/gate2-native-android`, reviewed at `6c74a67e9`. It is not a complete client or a production release. Its injected taps, simplified collation, and partial workflow coverage do not establish hands-on or language readiness.
-- The pilot is not integrated into the main checkout. Bring reviewed pieces into `apps/android-native/` through small changes, not one final rewrite merge.
+- The earlier pilot remains separate. The initial host contract and an isolated Compose development shell are in `apps/android-native/`; bring further reviewed pilot workflows through small changes. On a physical OnePlus CPH2655 (Android 16), the dev package `tech.dongdongbh.mindwtr.nativeclient.dev` captured and completed Inbox tasks across force-stop/relaunch, and refused commands when its recovery checkpoint was deliberately made unreadable. This tests the dev database only; a replacement install over the released app and the full editor/Focus workflows remain open.
 - The proposed full Apple client belongs in `apps/ios-native/`. Existing `apps/mobile/ios-native/` contains support code for the RN app; it is not the new SwiftUI application.
 - The Mac mini enables Apple builds and simulator work. Physical iPhone validation remains required. Android measurements do not prove Apple readiness.
 - Existing Native Platform CI checks the current mobile implementation. Building the new clients, upgrade tests, and their distribution artifacts must be added explicitly.

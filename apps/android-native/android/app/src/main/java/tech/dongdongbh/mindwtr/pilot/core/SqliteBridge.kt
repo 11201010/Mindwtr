@@ -1,11 +1,14 @@
 package tech.dongdongbh.mindwtr.pilot.core
 
+import android.system.Os
+import android.system.OsConstants
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 
 /**
  * The core's storage port.
@@ -20,16 +23,64 @@ import java.io.File
  */
 class SqliteBridge(databaseFile: File) {
 
+    private val checkpointFile = File(databaseFile.parentFile, "${databaseFile.name}.prewrite")
+
     private val connection: SQLiteConnection = BundledSQLiteDriver().open(databaseFile.absolutePath).apply {
         // Write-ahead logging, the same journal mode the app uses. A committed
         // row can still live in the -wal file, so anything that inspects this
         // database must close it first or copy .db, -wal and -shm together.
         prepare("PRAGMA journal_mode = WAL").use { it.step() }
+        prepare("PRAGMA synchronous = FULL").use { it.step() }
         prepare("PRAGMA foreign_keys = ON").use { it.step() }
     }
 
     /** Prepared statements are reused: re-preparing the same SQL is pure waste. */
     private val statements = HashMap<String, SQLiteStatement>()
+
+    /** Run before core schema setup or any task write. Never replace the first snapshot. */
+    fun ensureRecoveryCheckpoint() {
+        checkIntegrity(connection)
+        if (checkpointFile.exists()) {
+            BundledSQLiteDriver().open(checkpointFile.absolutePath).use(::checkIntegrity)
+            syncCheckpoint(checkpointFile)
+            return
+        }
+        val partial = File(checkpointFile.parentFile, "${checkpointFile.name}.building")
+        if (partial.exists()) check(partial.delete()) { "Cannot remove incomplete recovery checkpoint" }
+        try {
+            val path = partial.absolutePath.replace("'", "''")
+            exec("VACUUM INTO '$path'")
+            BundledSQLiteDriver().open(partial.absolutePath).use(::checkIntegrity)
+            syncFile(partial)
+            check(partial.renameTo(checkpointFile)) { "Cannot promote recovery checkpoint" }
+            syncDirectory(checkpointFile.parentFile!!)
+        } catch (error: Throwable) {
+            partial.delete()
+            throw error
+        }
+    }
+
+    private fun syncCheckpoint(file: File) {
+        syncFile(file)
+        syncDirectory(file.parentFile!!)
+    }
+
+    private fun syncFile(file: File) {
+        RandomAccessFile(file, "r").use { it.fd.sync() }
+    }
+
+    private fun syncDirectory(directory: File) {
+        val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
+        try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
+    }
+
+    private fun checkIntegrity(database: SQLiteConnection) {
+        database.prepare("PRAGMA quick_check").use { statement ->
+            check(statement.step() && statement.getText(0) == "ok" && !statement.step()) {
+                "SQLite recovery integrity check failed"
+            }
+        }
+    }
 
     private fun statementFor(sql: String): SQLiteStatement =
         statements.getOrPut(sql) { connection.prepare(sql) }.also {
