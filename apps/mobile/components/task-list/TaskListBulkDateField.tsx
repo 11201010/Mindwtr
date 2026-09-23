@@ -23,6 +23,7 @@ type Props = {
 export function TaskListBulkDateField({
   label, value, onChange, pickerVisible, onOpenPicker, onClosePicker, disabled, t, tc,
 }: Props) {
+  const [editing, setEditing] = React.useState(false);
   const selectedDate = safeParseDate(value);
   const selectDate = (date: Date | null) => {
     if (disabled) return;
@@ -36,8 +37,10 @@ export function TaskListBulkDateField({
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <TextInput
           accessibilityLabel={label}
-          value={value}
+          value={editing ? value : selectedDate ? safeFormatDate(selectedDate, 'P') : value}
           onChangeText={onChange}
+          onFocus={() => setEditing(true)}
+          onBlur={() => setEditing(false)}
           editable={!disabled}
           placeholder="YYYY-MM-DD"
           placeholderTextColor={tc.secondaryText}

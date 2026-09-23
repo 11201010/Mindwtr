@@ -2,7 +2,7 @@ import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Area, Project } from '@mindwtr/core';
+import { configureDateFormatting, type Area, type Project } from '@mindwtr/core';
 import { resetForTests, setStorageAdapter, useTaskStore } from '../../../../packages/core/src/store';
 
 import { TaskListBulkOrganizeModal } from './TaskListBulkOrganizeModal';
@@ -183,6 +183,7 @@ const buttonWithText = (tree: ReturnType<typeof create>, text: string) => tree.r
 ));
 
 beforeEach(() => {
+  configureDateFormatting({ language: 'en', dateFormat: 'mdy', systemLocale: 'en-US' });
   createBulkOrganizeProjectMock.mockReset();
   createBulkOrganizeAreaMock.mockReset();
   ensureDestinationSavedMock.mockReset().mockResolvedValue(undefined);
@@ -221,7 +222,7 @@ describe('TaskListBulkOrganizeModal', () => {
     act(() => { picker.props.onChange({ type: 'set' }, new Date(2026, 9, 5, 23, 30)); });
     expect(onApply).not.toHaveBeenCalled();
     const dueInput = tree.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Due');
-    expect(dueInput?.props.value).toBe('2026-10-05');
+    expect(dueInput?.props.value).toBe('10/05/2026');
     if (os === 'ios') {
       act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Done' }).props.onPress(); });
     }
@@ -229,7 +230,7 @@ describe('TaskListBulkOrganizeModal', () => {
     act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Calendar' }).props.onPress(); });
     picker = tree.root.findByType('DateTimePicker' as any);
     act(() => { picker.props.onChange({ type: 'dismissed' }); });
-    expect(dueInput?.props.value).toBe('2026-10-05');
+    expect(dueInput?.props.value).toBe('10/05/2026');
     act(() => { buttonWithText(tree, 'Apply to selected').props.onPress(); });
     expect(onApply).toHaveBeenCalledWith({ contexts: [], tags: [], dueDate: '2026-10-05' });
   });
@@ -256,8 +257,26 @@ describe('TaskListBulkOrganizeModal', () => {
       .filter((node) => node.props.placeholder === 'YYYY-MM-DD');
 
     expect(dateInputs().map((node) => node.props.accessibilityLabel)).toEqual(['Start', 'Due', 'Review']);
+    act(() => { dateInputs()[0].props.onFocus(); });
     act(() => { dateInputs()[0].props.onChangeText('2026-09-15'); });
     expect(dateInputs()[0].props).toMatchObject({ value: '2026-09-15', accessibilityLabel: 'Start' });
+    act(() => { dateInputs()[0].props.onBlur(); });
+    expect(dateInputs()[0].props.value).toBe('09/15/2026');
+  });
+
+  it('displays the configured day-first format while keeping an ISO date for Apply', () => {
+    configureDateFormatting({ language: 'en', dateFormat: 'dmy', systemLocale: 'en-GB' });
+    const onApply = vi.fn();
+    const tree = renderModal({ onApply });
+    act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Calendar' }).props.onPress(); });
+    act(() => { tree.root.findByType('DateTimePicker' as any).props.onChange({ type: 'set' }, new Date(2026, 9, 5)); });
+    const dueInput = () => tree.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Due');
+    expect(dueInput()?.props.value).toBe('05/10/2026');
+    act(() => { dueInput()?.props.onFocus(); });
+    expect(dueInput()?.props.value).toBe('2026-10-05');
+    act(() => { dueInput()?.props.onBlur(); });
+    act(() => { buttonWithText(tree, 'Apply to selected').props.onPress(); });
+    expect(onApply.mock.lastCall?.[0].dueDate).toBe('2026-10-05');
   });
 
   it('uses localized Follow-up and form captions as input names when Waiting is selected', () => {
