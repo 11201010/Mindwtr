@@ -89,7 +89,7 @@ import {
     resolveDesktopThemeMode,
     resolveNativeTheme,
     resolveSystemThemeCommandPreference,
-    watchSystemThemeCommandPreference,
+    watchSystemThemePortalPreference,
     watchNativeSystemThemePreference,
     watchSystemThemePreference,
 } from './lib/theme';
@@ -668,19 +668,20 @@ function App() {
                 void logError(error, { scope: 'theme', step });
             }
         );
-        const stopWatchingCommandTheme = watchSystemThemeCommandPreference(
+        const stopWatchingPortalTheme = watchSystemThemePortalPreference(
+            () => import('@tauri-apps/api/event'),
             (theme) => {
                 applyThemeMode('system', theme);
             },
             (step, error) => {
-                void logError(error, { scope: 'theme', step: `command:${step}` });
+                void logError(error, { scope: 'theme', step: `portal:${step}` });
             }
         );
 
         return () => {
             stopWatchingSystemTheme();
             stopWatchingNativeTheme();
-            stopWatchingCommandTheme();
+            stopWatchingPortalTheme();
         };
     }, [getActiveThemeMode, hasHydratedSettings]);
 

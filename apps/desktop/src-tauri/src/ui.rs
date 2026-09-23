@@ -302,6 +302,57 @@ pub(crate) fn get_system_theme_preference() -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn start_portal_theme_watcher(app: tauri::AppHandle) {
+    let result = std::thread::Builder::new()
+        .name("portal-theme-watcher".into())
+        .spawn(move || {
+            let portal_result = (|| -> zbus::Result<()> {
+                let connection = zbus::blocking::Connection::session()?;
+                let proxy = zbus::blocking::Proxy::new(
+                    &connection,
+                    "org.freedesktop.portal.Desktop",
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.Settings",
+                )?;
+                let signals = proxy.receive_signal_with_args(
+                    "SettingChanged",
+                    &[(0, "org.freedesktop.appearance"), (1, "color-scheme")],
+                )?;
+                for _ in signals {
+                    if let Some(theme) = get_system_theme_preference() {
+                        log::info!(
+                            "Linux portal theme change resolved extra.releaseCheck=v1.3.3/linux-portal-theme-signal theme={theme}"
+                        );
+                        let _ = app.emit("system-theme-portal-changed", theme);
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(error) = portal_result {
+                log::warn!("Linux portal theme watcher stopped: {error}");
+            }
+            // KDE's kdeglobals fallback still tracks changes when the portal
+            // cannot supply a signal. This polls a local file, not D-Bus.
+            if is_kde_desktop() {
+                let mut last = read_kde_color_scheme_preference();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let next = read_kde_color_scheme_preference();
+                    if next != last {
+                        last = next;
+                        if let Some(theme) = get_system_theme_preference() {
+                            let _ = app.emit("system-theme-portal-changed", theme);
+                        }
+                    }
+                }
+            }
+        });
+    if let Err(error) = result {
+        log::warn!("Linux portal theme watcher could not start: {error}");
+    }
+}
+
 #[tauri::command]
 pub(crate) fn consume_quick_add_pending(
     state: tauri::State<'_, QuickAddPending>,

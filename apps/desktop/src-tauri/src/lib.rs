@@ -1733,6 +1733,8 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            #[cfg(target_os = "linux")]
+            ui::start_portal_theme_watcher(app.handle().clone());
             #[cfg(target_os = "macos")]
             log::info!(
                 "macOS native startup reached after runtime loading extra.releaseCheck=v1.3.0/macos-swift-runtime"

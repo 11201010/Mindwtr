@@ -8,7 +8,7 @@ import {
     resolveNativeTheme,
     resolveSystemThemeCommandPreference,
     resolveSystemThemePreference,
-    watchSystemThemeCommandPreference,
+    watchSystemThemePortalPreference,
     watchNativeSystemThemePreference,
     watchSystemThemePreference,
 } from './theme';
@@ -284,55 +284,45 @@ describe('resolveSystemThemeCommandPreference', () => {
     });
 });
 
-describe('watchSystemThemeCommandPreference', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-    });
-
+describe('watchSystemThemePortalPreference', () => {
     afterEach(() => {
-        disableNativeInvoke();
-        vi.useRealTimers();
         vi.restoreAllMocks();
     });
 
-    it('polls the native command fallback and forwards changed theme values', async () => {
-        const themes = ['dark', 'dark', 'light'];
-        const invoke = vi.fn(async () => themes.shift() ?? 'light');
+    it('forwards portal changes without polling and stops listening on cleanup', async () => {
+        let listener: ((event: { payload: unknown }) => void) | undefined;
+        const unlisten = vi.fn();
+        const listen = vi.fn(async (_event: string, callback: (event: { payload: unknown }) => void) => {
+            listener = callback;
+            return unlisten;
+        });
         const onChange = vi.fn();
-        enableNativeInvoke(invoke);
-
-        const stopWatching = watchSystemThemeCommandPreference(onChange, undefined, 1000);
+        const stopWatching = watchSystemThemePortalPreference(async () => ({ listen }), onChange);
+        await flushMicrotasks();
         await flushMicrotasks();
 
-        expect(invoke).toHaveBeenCalledWith('get_system_theme_preference', undefined);
+        expect(listen).toHaveBeenCalledWith('system-theme-portal-changed', expect.any(Function));
+        listener?.({ payload: 'dark' });
         expect(onChange).toHaveBeenCalledWith('dark');
-
-        await vi.advanceTimersByTimeAsync(1000);
+        listener?.({ payload: 'invalid' });
         expect(onChange).toHaveBeenCalledTimes(1);
-
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(onChange).toHaveBeenNthCalledWith(2, 'light');
-
         stopWatching();
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(invoke).toHaveBeenCalledTimes(3);
+        expect(unlisten).toHaveBeenCalledOnce();
+        listener?.({ payload: 'light' });
+        expect(onChange).toHaveBeenCalledTimes(1);
     });
 
-    it('reports poll failures without tearing the poll down', async () => {
-        const error = new Error('command failed');
+    it('reports subscription failures', async () => {
+        const error = new Error('subscription failed');
         const onError = vi.fn();
-        const invoke = vi.fn(async () => {
-            throw error;
-        });
-        enableNativeInvoke(invoke);
-
-        const stopWatching = watchSystemThemeCommandPreference(vi.fn(), onError, 1000);
+        const stopWatching = watchSystemThemePortalPreference(
+            async () => ({ listen: async () => { throw error; } }),
+            vi.fn(),
+            onError,
+        );
         await flushMicrotasks();
-
-        expect(onError).toHaveBeenCalledWith('resolveSystem', error);
-
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(invoke).toHaveBeenCalledTimes(2);
+        await flushMicrotasks();
+        expect(onError).toHaveBeenCalledWith('watch', error);
         stopWatching();
     });
 });

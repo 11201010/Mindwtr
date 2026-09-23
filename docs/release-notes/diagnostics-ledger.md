@@ -19,6 +19,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 - `Linux desktop notification submitted` / `Linux desktop notification delivery failed` (`notification-service.tsx`), with backend, bounded outcome, and a safe error category on failure.
 - `Android widget list rendered within parcel budget` (`widget-service.ts`), with aggregate collection, item, eligible-item, and parcel-byte counts.
 
+## v1.3.3 (add before tagging, trim in the release after)
+
+- **`v1.3.3/linux-portal-theme-signal`** — desktop `apps/desktop/src-tauri/src/ui.rs`, after a Linux portal color-scheme change is received and resolved. Message: `Linux portal theme change resolved`; fields: `releaseCheck`, `theme` (`light` or `dark`). Change the system appearance while Mindwtr uses System theme: the log must show the new theme and the app must follow it. This marker proves the signal path ran, not that the webview repainted. No task content or identifiers are logged. (#1270)
+
 ## v1.3.2 (add before tagging, trim in the release after)
 
 - **`v1.3.2/macos-microphone-capture`** — desktop `apps/desktop/src-tauri/src/audio.rs`, after a captured WAV is finalized. Message: `Audio capture WAV saved with sampled signal`; fields: `releaseCheck`, `total` (captured sample count), `count` (nonzero sample count). A positive `total` with zero `count` distinguishes a silence-only capture from an empty buffer; it does not prove microphone permission, audible input, or successful transcription. No audio content, paths, identifiers, device details, or raw errors are logged.

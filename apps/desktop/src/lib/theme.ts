@@ -28,7 +28,7 @@ type NativeThemeWindowModule = {
 
 export const THEME_STORAGE_KEY = 'mindwtr-theme';
 const SYSTEM_THEME_MEDIA_QUERY = '(prefers-color-scheme: dark)';
-const COMMAND_THEME_POLL_INTERVAL_MS = 2000;
+const SYSTEM_THEME_PORTAL_CHANGED_EVENT = 'system-theme-portal-changed';
 let cachedSystemThemePreference: SystemThemePreference = null;
 
 const isDesktopThemeMode = (value: string | null | undefined): value is DesktopThemeMode => (
@@ -164,50 +164,31 @@ export const watchNativeSystemThemePreference = (
     };
 };
 
-export const watchSystemThemeCommandPreference = (
+export const watchSystemThemePortalPreference = (
+    loadEventModule: () => Promise<{
+        listen: (event: string, listener: (event: { payload: unknown }) => void) => Promise<() => void>;
+    }>,
     onChange: (theme: NativeThemePreference) => void,
-    onError?: (step: 'resolveSystem', error: unknown) => void,
-    pollIntervalMs = COMMAND_THEME_POLL_INTERVAL_MS,
+    onError?: (step: 'watch', error: unknown) => void,
 ): (() => void) => {
-    if (typeof window === 'undefined') return () => { };
-
     let cancelled = false;
-    let lastTheme: SystemThemePreference = null;
-    let pollInFlight = false;
-
-    const emitIfChanged = (theme: SystemThemePreference) => {
-        if (!theme || theme === lastTheme) return;
-        lastTheme = theme;
-        onChange(theme);
-    };
-
-    const poll = async () => {
-        if (cancelled || pollInFlight) return;
-        pollInFlight = true;
-        try {
-            const theme = coerceSystemThemePreference(
-                await invokeNative('get_system_theme_preference')
-            );
-            if (!cancelled) {
-                emitIfChanged(theme);
-            }
-        } catch (error) {
-            if (!cancelled) {
-                onError?.('resolveSystem', error);
-            }
-        } finally {
-            pollInFlight = false;
-        }
-    };
-
-    void poll();
-    const pollTimer = window.setInterval(() => {
-        void poll();
-    }, pollIntervalMs);
+    let unlisten = () => { };
+    void loadEventModule()
+        .then(({ listen }) => listen(SYSTEM_THEME_PORTAL_CHANGED_EVENT, ({ payload }) => {
+            const theme = coerceSystemThemePreference(payload);
+            if (!cancelled && theme) onChange(theme);
+        }))
+        .then((stop) => {
+            if (cancelled) stop();
+            else unlisten = stop;
+        })
+        .catch((error) => {
+            if (!cancelled) onError?.('watch', error);
+        });
 
     return () => {
         cancelled = true;
-        window.clearInterval(pollTimer);
+        unlisten();
     };
 };
 
