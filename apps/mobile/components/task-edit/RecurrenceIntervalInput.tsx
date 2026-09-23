@@ -1,21 +1,9 @@
 import React from 'react';
 import { TextInput } from 'react-native';
-import { RECURRENCE_INTERVAL_MAX } from '@mindwtr/core';
-
-const normalizeRecurrenceInterval = (value: number): number => (
-    Number.isFinite(value) && value > 0
-        ? Math.min(Math.round(value), RECURRENCE_INTERVAL_MAX)
-        : 1
-);
-
-const parseRecurrenceIntervalDraft = (value: string): number | null => {
-    const trimmed = value.trim();
-    if (!/^\d+$/.test(trimmed)) return null;
-    const parsed = Number(trimmed);
-    return Number.isSafeInteger(parsed) && parsed > 0
-        ? normalizeRecurrenceInterval(parsed)
-        : null;
-};
+import {
+    getRecurrenceIntervalDisplay as normalizeRecurrenceInterval,
+    parseRecurrenceIntervalInput as parseRecurrenceIntervalDraft,
+} from '@mindwtr/core';
 
 type RecurrenceIntervalInputProps = Pick<
     React.ComponentProps<typeof TextInput>,

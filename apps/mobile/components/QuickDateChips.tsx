@@ -2,24 +2,14 @@ import React from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import {
   getQuickDate,
+  getQuickDateLabel,
   isQuickDatePresetSelected,
   QUICK_DATE_PRESETS,
-  tFallback,
   type QuickDatePreset,
 } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { CompactText } from '@/components/compact-text';
-
-const QUICK_DATE_LABELS: Record<QuickDatePreset, { key: string; fallback: string }> = {
-  today: { key: 'quickDate.today', fallback: 'Today' },
-  tomorrow: { key: 'quickDate.tomorrow', fallback: 'Tomorrow' },
-  in_2_days: { key: 'quickDate.in2Days', fallback: '+2 days' },
-  in_3_days: { key: 'quickDate.in3Days', fallback: '+3 days' },
-  next_week: { key: 'quickDate.nextWeek', fallback: 'Next week' },
-  next_month: { key: 'quickDate.nextMonth', fallback: 'Next month' },
-  no_date: { key: 'quickDate.noDate', fallback: 'No date' },
-};
 
 type QuickDateChipsProps = {
   t: (key: string) => string;
@@ -60,8 +50,7 @@ export function QuickDateChips({
       style={[styles.content, style, contentContainerStyle]}
     >
       {presets.map((preset) => {
-        const labelConfig = QUICK_DATE_LABELS[preset];
-        const label = tFallback(t, labelConfig.key, labelConfig.fallback);
+        const label = getQuickDateLabel(preset, t);
         const active = selectedPreset === preset || isQuickDatePresetSelected(preset, selectedDate, now);
 
         return (

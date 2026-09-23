@@ -33,7 +33,23 @@ import { computeGlobalSearchResults, type DuePreset, type GlobalSearchScope } fr
 import { fetchGlobalSearchAdapterResults, getGlobalSearchActiveChips, getGlobalSearchFilterOptions, getGlobalSearchResultDate, getGlobalSearchTaskListTarget, resolveSavedSearch, GLOBAL_SEARCH_DUE_OPTIONS, GLOBAL_SEARCH_SCOPE_OPTIONS, GLOBAL_SEARCH_STATUS_OPTIONS, type GlobalSearchFilterState } from './global-search-model';
 import type { SearchProjectResult } from './storage';
 import { createSearchHighlighter } from './search-highlight';
-import { createDateFormatter, hasTimeComponent, safeParseDate, type DateFormattingConfig } from './date';
+import { createDateFormatter, hasTimeComponent, normalizeClockTimeInput, safeParseDate, type DateFormatter, type DateFormattingConfig } from './date';
+import { WEEKDAY_ORDER } from './recurrence-constants';
+import {
+    editTaskDraftRecurrence,
+    getTaskDraftDateEdit,
+    getTaskDraftRecurrenceWeekdays,
+    getTaskDraftRelativeStartEdit,
+    getTaskEditorRecurrenceDefaultUntil,
+    parseRecurrenceIntervalInput,
+    parseTaskEditorTimeEstimate,
+    parseTaskEditorTimeSpent,
+    setTaskDraftDate,
+    setTaskDraftTime,
+    type TaskDraftRecurrenceEdit,
+    type TaskEditorDateField,
+    type TaskEditorMonthlyCustom,
+} from './task-editor-schedule';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
 import { getProjectRowStatus } from './project-row-meta';
 import { getFocusStarBlockedText } from './focus-star';
@@ -57,7 +73,7 @@ import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
-import type { Area, Project, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
+import type { Area, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
 import { generateUUID } from './uuid';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
@@ -357,6 +373,157 @@ const isSameDraftValue = (left: unknown, right: unknown): boolean => (
     left === right || JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
 );
 
+// ---------------------------------------------------------------------------
+// Editor draft edits: the React Native editor's date, recurrence and estimate
+// controls, applied to a host's unsaved draft (editTaskDraft).
+
+/**
+ * One editor control's edit. Values are draft strings. The model supplies the value
+ * each date control writes (quick chips, Date only, clear as ''): send it as `date`.
+ */
+export type NativeTaskDraftEdit =
+    /** Plain field values, through the draft's cascades (status, star, due date moving a relative start). */
+    | { type: 'fields'; patch: Partial<TaskDraft> }
+    | { type: 'date'; field: TaskEditorDateField; value: string }
+    /** A day from the date picker, yyyy-MM-dd: an existing time is kept, else the default schedule time is added. */
+    | { type: 'pickDate'; field: TaskEditorDateField; date: string }
+    /** A time from the time picker, HH:mm, on the field's day (today when unset). */
+    | { type: 'pickTime'; field: 'startTime' | 'dueDate'; time: string }
+    /** "Start N units before due"; `amount` as typed. */
+    | { type: 'relativeStart'; amount: number | string; unit: RelativeStartOffsetUnit }
+    | { type: 'recurrence'; edit: NativeTaskDraftRecurrenceEdit }
+    /** The Custom… estimate input as typed; text that does not parse leaves the estimate. */
+    | { type: 'timeEstimate'; text: string }
+    /** The Time Spent input as typed. */
+    | { type: 'timeSpent'; text: string };
+
+export type NativeTaskDraftRecurrenceEdit =
+    | Exclude<TaskDraftRecurrenceEdit, { kind: 'interval' } | { kind: 'weekdays' }>
+    /** "Repeat every" as typed. */
+    | { kind: 'interval'; text: string }
+    /** A weekly day button: turns that day on or off. */
+    | { kind: 'weekday'; day: RecurrenceWeekday };
+
+const EDITOR_DATE_FIELDS: readonly string[] = ['startTime', 'dueDate', 'reviewAt'];
+const RELATIVE_START_UNITS: readonly string[] = ['minute', 'hour', 'day', 'week'];
+const CLOCK_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const isEditorDay = (value: unknown): value is string => (
+    typeof value === 'string' && DATE_ONLY_PATTERN.test(value) && safeParseDate(value) !== null
+);
+const isInputText = (value: unknown): value is string => typeof value === 'string' && value.length <= 200;
+const isMonthlyCustom = (value: unknown): value is TaskEditorMonthlyCustom => (
+    isObjectRecord(value)
+    && Number.isSafeInteger(value.interval) && (value.interval as number) >= 1 && (value.interval as number) <= 999
+    && isOneOf(['date', 'nth', 'lastDay'])(value.mode)
+    && isOneOf(['1', '2', '3', '4', '-1'])(value.ordinal)
+    && isOneOf(WEEKDAY_ORDER)(value.weekday)
+    && Array.isArray(value.monthDays) && value.monthDays.length <= 32
+    && value.monthDays.every((day) => Number.isSafeInteger(day) && (day === -1 || (day >= 1 && day <= 31)))
+);
+
+/** A whole draft from a host: every field present and valid (JSON drops unset fields, or sends null). */
+const readTaskDraft = (value: unknown): TaskDraft | null => {
+    if (!isObjectRecord(value) || Object.keys(value).some((field) => !DRAFT_FIELD_SET.has(field))) return null;
+    const draft = toDraftValues(value) as TaskDraft;
+    return TASK_DRAFT_FIELD_KEYS.every((field) => (
+        (Object.prototype.hasOwnProperty.call(value, field) || UNSET_DRAFT_FIELDS.has(field))
+        && DRAFT_VALUE_CHECKS[field](draft[field])
+    )) ? draft : null;
+};
+
+const readRecurrenceEdit = (value: unknown, draft: TaskDraft): TaskDraftRecurrenceEdit | null => {
+    if (!isObjectRecord(value)) return null;
+    switch (value.kind) {
+        case 'rule':
+            return value.rule === '' || (isString(value.rule) && isRecurrenceRule(value.rule))
+                ? { kind: 'rule', rule: value.rule as TaskDraft['recurrence'] }
+                : null;
+        case 'interval':
+            return isInputText(value.text) ? { kind: 'interval', interval: parseRecurrenceIntervalInput(value.text) ?? 1 } : null;
+        case 'weekday': {
+            if (!isOneOf(WEEKDAY_ORDER)(value.day)) return null;
+            const day = value.day as RecurrenceWeekday;
+            const weekdays = getTaskDraftRecurrenceWeekdays(draft.recurrence, draft.recurrenceRRule);
+            return {
+                kind: 'weekdays',
+                weekdays: weekdays.includes(day) ? weekdays.filter((entry) => entry !== day) : [...weekdays, day],
+            };
+        }
+        case 'monthlyOnDay':
+        case 'strategy':
+            return { kind: value.kind };
+        case 'ends':
+            return isOneOf(['never', 'until', 'count'])(value.ends) ? { kind: 'ends', ends: value.ends as 'never' | 'until' | 'count' } : null;
+        case 'count':
+            return isInputText(value.text) ? { kind: 'count', text: value.text } : null;
+        case 'until':
+            return isEditorDay(value.date) ? { kind: 'until', date: value.date } : null;
+        case 'monthlyCustom':
+            return isMonthlyCustom(value.custom) ? { kind: 'monthlyCustom', custom: value.custom } : null;
+        default:
+            return null;
+    }
+};
+
+/** The draft after one control's edit, as the React Native editor applies it; null for an invalid edit. */
+const applyNativeTaskDraftEdit = (
+    draft: TaskDraft,
+    edit: unknown,
+    context: { task: Task; now: Date; formatDate: DateFormatter; defaultScheduleTime: string },
+): TaskDraft | null => {
+    if (!isObjectRecord(edit)) return null;
+    const withPatch = (patch: Partial<TaskDraft> | null) => (patch ? applyTaskDraftPatch(draft, patch) : draft);
+    const field = edit.field as TaskEditorDateField;
+    switch (edit.type) {
+        case 'fields': {
+            if (!isObjectRecord(edit.patch)) return null;
+            const fields = Object.keys(edit.patch) as TaskDraftField[];
+            if (fields.some((key) => !DRAFT_FIELD_SET.has(key))) return null;
+            const patch = toDraftValues(edit.patch);
+            return fields.every((key) => DRAFT_VALUE_CHECKS[key](patch[key])) ? applyTaskDraftPatch(draft, patch) : null;
+        }
+        case 'date':
+            if (!EDITOR_DATE_FIELDS.includes(field) || !isDraftDate(edit.value)) return null;
+            return withPatch(getTaskDraftDateEdit(field, edit.value as string));
+        case 'pickDate': {
+            if (!EDITOR_DATE_FIELDS.includes(field) || !isEditorDay(edit.date)) return null;
+            const value = setTaskDraftDate(field, draft[field], safeParseDate(edit.date) as Date, context);
+            return withPatch(getTaskDraftDateEdit(field, value));
+        }
+        case 'pickTime': {
+            // The React Native editor has no review time: its review field offers a date only.
+            if ((field !== 'startTime' && field !== 'dueDate') || typeof edit.time !== 'string' || !CLOCK_TIME_PATTERN.test(edit.time)) return null;
+            const [hours, minutes] = edit.time.split(':').map(Number);
+            return withPatch(getTaskDraftDateEdit(field, setTaskDraftTime(draft[field], { hours, minutes }, null, context.now)));
+        }
+        case 'relativeStart': {
+            if (!RELATIVE_START_UNITS.includes(edit.unit as string)
+                || !(typeof edit.amount === 'number' || isInputText(edit.amount))) return null;
+            const patch = getTaskDraftRelativeStartEdit(draft.dueDate, Number(edit.amount), edit.unit as RelativeStartOffsetUnit);
+            // An offset the store would not accept (more than 10,000 units) is refused, not written.
+            if (patch?.relativeStartOffset && !normalizeRelativeStartOffset(patch.relativeStartOffset)) return null;
+            return withPatch(patch);
+        }
+        case 'recurrence': {
+            const recurrenceEdit = readRecurrenceEdit(edit.edit, draft);
+            if (!recurrenceEdit) return null;
+            return withPatch(editTaskDraftRecurrence(draft, recurrenceEdit, {
+                weekdays: getTaskDraftRecurrenceWeekdays(draft.recurrence, draft.recurrenceRRule),
+                defaultUntil: getTaskEditorRecurrenceDefaultUntil(draft, context.task, context.formatDate, context.now),
+            }));
+        }
+        case 'timeEstimate': {
+            if (!isInputText(edit.text)) return null;
+            const timeEstimate = parseTaskEditorTimeEstimate(edit.text);
+            return withPatch(timeEstimate === null ? null : { timeEstimate });
+        }
+        case 'timeSpent':
+            return isInputText(edit.text) ? withPatch({ timeSpentMinutes: parseTaskEditorTimeSpent(edit.text) }) : null;
+        default:
+            return null;
+    }
+};
+
 /** One instance per serial native JS host. All reads and commands use the shared store. */
 export function createNativeHostContract() {
     const processId = generateUUID();
@@ -595,6 +762,36 @@ export function createNativeHostContract() {
     // Mobile opens a task in an archived project read-only.
     const isInArchivedProject = (task: Task): boolean => Boolean(task.projectId)
         && useTaskStore.getState()._allProjects.find((project) => project.id === task.projectId)?.status === 'archived';
+
+    // The editor model reads the task, its containers, people, settings and language; the
+    // day and minute ride along in the revision as in the other views.
+    const taskEditorModel = (task: Task, draft: TaskDraft, now: Date): NativeTaskEditorModel => {
+        const state = useTaskStore.getState();
+        const { allContexts, allTags } = state.getDerivedState();
+        return {
+            version: NATIVE_HOST_CONTRACT_VERSION,
+            revision: `${revision()}:${displayRevision(now)}`,
+            id: task.id,
+            readOnly: isInArchivedProject(task),
+            draft,
+            ...buildTaskEditorModel({
+                task,
+                draft,
+                settings: state.settings,
+                projects: state.projects,
+                sections: state.sections,
+                areas: state.areas,
+                tasks: state.tasks,
+                people: state.people,
+                contexts: allContexts,
+                tags: allTags,
+                t: translate,
+                now,
+                formatDate: createDateFormatter(dateFormatting()),
+                language,
+            }),
+        };
+    };
 
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
@@ -1218,35 +1415,7 @@ export function createNativeHostContract() {
             const state = useTaskStore.getState();
             const task = state._tasksById.get(input.id);
             if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
-            // The model reads the task, its containers, people, settings and language; the day
-            // and minute ride along as in the other views.
-            const now = new Date();
-            const draft = createTaskDraft(task);
-            const { allContexts, allTags } = state.getDerivedState();
-            return {
-                ok: true,
-                value: {
-                    version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision: `${revision()}:${displayRevision(now)}`,
-                    id: task.id,
-                    readOnly: isInArchivedProject(task),
-                    draft,
-                    ...buildTaskEditorModel({
-                        task,
-                        draft,
-                        settings: state.settings,
-                        projects: state.projects,
-                        sections: state.sections,
-                        areas: state.areas,
-                        tasks: state.tasks,
-                        people: state.people,
-                        contexts: allContexts,
-                        tags: allTags,
-                        t: translate,
-                        now,
-                    }),
-                },
-            };
+            return { ok: true, value: taskEditorModel(task, createTaskDraft(task), new Date()) };
         },
 
         /**
@@ -1381,6 +1550,39 @@ export function createNativeHostContract() {
                 const failure = useTaskStore.getState().persistenceFailure;
                 return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
             }
+        },
+
+        // -------------------------------------------------------------------
+        // Editor draft edits (task editor-dates-contract).
+
+        /**
+         * The editor for an unsaved draft, after one control's edit: the edited draft and its
+         * layout, options and field states, exactly as the React Native editor shows them while
+         * the user edits. Without `edit`, the model for `draft` as it is. Nothing is written;
+         * save the result with saveTaskDraft. An edit that changes nothing returns the draft as is.
+         */
+        editTaskDraft(input: {
+            id: string;
+            draft: TaskDraft;
+            edit?: NativeTaskDraftEdit;
+        }): NativeHostResult<NativeTaskEditorModel> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
+            const draft = readTaskDraft(input.draft);
+            if (!draft) return fail('INVALID_INPUT', 'draft must hold every task draft field with a valid value');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const now = new Date();
+            const edited = input.edit === undefined ? draft : applyNativeTaskDraftEdit(draft, input.edit, {
+                task,
+                now,
+                formatDate: createDateFormatter(dateFormatting()),
+                defaultScheduleTime: normalizeClockTimeInput(state.settings.gtd?.defaultScheduleTime) || '',
+            });
+            if (!edited) return fail('INVALID_INPUT', 'edit is not a valid editor edit');
+            return { ok: true, value: taskEditorModel(task, edited, now) };
         },
 
         /** Reuse captureId for retries so a failed save cannot create a duplicate. */

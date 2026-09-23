@@ -10,6 +10,7 @@ import {
     parseRRuleString,
 } from './recurrence';
 import { canonicalizeStringMapForComparison } from './sync-signatures';
+import { computeRelativeStartTime } from './task-relative-start';
 import type {
     Attachment,
     Recurrence,
@@ -105,8 +106,28 @@ export const getTaskDraftRecurrenceRRuleValue = getRecurrenceRRuleValue;
 
 const TASK_DRAFT_FIELDS: { [K in TaskDraftField]: FieldSpec<K> } = {
     title: { fromTask: (task) => task.title },
-    dueDate: { fromTask: (task) => toTaskDraftDateTimeLocalValue(task.dueDate) },
-    startTime: { fromTask: (task) => toTaskDraftDateTimeLocalValue(task.startTime) },
+    dueDate: {
+        fromTask: (task) => toTaskDraftDateTimeLocalValue(task.dueDate),
+        // A relative start follows its due date; with no due, or a start the new due
+        // cannot compute (minutes or hours before a date-only due), the link ends.
+        onSet: (draft) => {
+            if (!draft.relativeStartOffset) return draft;
+            const startTime = draft.dueDate ? computeRelativeStartTime(draft.dueDate, draft.relativeStartOffset) : undefined;
+            return startTime
+                ? { ...draft, startTime }
+                : { ...draft, relativeStartOffset: undefined };
+        },
+    },
+    startTime: {
+        fromTask: (task) => toTaskDraftDateTimeLocalValue(task.startTime),
+        // A start other than the one the relative link computes ends the link.
+        onSet: (draft) => (
+            draft.relativeStartOffset
+            && draft.startTime !== computeRelativeStartTime(draft.dueDate, draft.relativeStartOffset)
+                ? { ...draft, relativeStartOffset: undefined }
+                : draft
+        ),
+    },
     relativeStartOffset: {
         fromTask: (task) => task.relativeStartOffset,
         isDirty: (value, task) =>
@@ -380,6 +401,11 @@ export function taskDraftToChangedUpdatePatch(
         if (areSerializedTaskFieldValuesEqual(narrowed[key], baselineValue)) {
             delete narrowed[key];
         }
+    }
+    // The store reads a start or due change that comes without the offset as a
+    // hand-set start and ends the relative link. A draft that keeps the link sends it.
+    if (patch.relativeStartOffset && ('startTime' in narrowed || 'dueDate' in narrowed)) {
+        narrowed.relativeStartOffset = patch.relativeStartOffset;
     }
     return narrowed;
 }

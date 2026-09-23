@@ -1,12 +1,12 @@
 import React from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 import {
-    createCustomTimeEstimate,
     formatTimeEstimateLabel,
-    isCustomTimeEstimate,
-    parseTimeEstimateInput,
-    timeEstimateToMinutes,
+    getTaskEditorTimeEstimate,
+    parseTaskEditorTimeEstimate,
+    parseTaskEditorTimeSpent,
     translateWithFallback,
+    type TimeEstimate,
 } from '@mindwtr/core';
 import {
     BatteryCharging,
@@ -92,7 +92,8 @@ export function TaskEditOrganizationField({
     const customTimeEstimateDraftSourceRef = React.useRef<string | undefined>(undefined);
     const [customTimeEstimateDraft, setCustomTimeEstimateDraft] = React.useState('');
     const currentTimeEstimate = draft?.timeEstimate;
-    const isCustomTimeEstimateSelected = isCustomTimeEstimate(currentTimeEstimate || undefined);
+    const timeEstimateModel = getTaskEditorTimeEstimate(currentTimeEstimate ?? '', t);
+    const isCustomTimeEstimateSelected = timeEstimateModel.customSelected;
 
     React.useEffect(() => {
         if (!isCustomTimeEstimateSelected) {
@@ -111,22 +112,21 @@ export function TaskEditOrganizationField({
     if (!draft) return null;
     const inputStyle = { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text };
 
-    const setCustomTimeEstimate = (minutes: number) => {
-        const next = createCustomTimeEstimate(minutes);
+    const setCustomTimeEstimate = (next: TimeEstimate) => {
         customTimeEstimateDraftSourceRef.current = next;
         setDraftField('timeEstimate', next);
         return next;
     };
 
     const beginCustomTimeEstimate = () => {
-        const next = setCustomTimeEstimate(timeEstimateToMinutes(currentTimeEstimate || undefined));
+        const next = setCustomTimeEstimate(timeEstimateModel.customValue);
         setCustomTimeEstimateDraft(formatTimeEstimateLabel(next));
     };
 
     const applyCustomTimeEstimateDraft = (draft: string): boolean => {
-        const minutes = parseTimeEstimateInput(draft);
-        if (minutes === null) return false;
-        setCustomTimeEstimate(minutes);
+        const next = parseTaskEditorTimeEstimate(draft);
+        if (next === null) return false;
+        setCustomTimeEstimate(next);
         return true;
     };
     const getStatusChipStyle = (active: boolean) => ([
@@ -454,7 +454,7 @@ export function TaskEditOrganizationField({
             );
         case 'timeEstimate': {
             if (!timeEstimatesEnabled) return null;
-            const customTimeEstimateLabel = translateWithFallback(t, 'recurrence.custom', 'Custom…');
+            const customTimeEstimateLabel = timeEstimateModel.customLabel;
             return (
                 <View style={styles.formGroup}>
                     <FieldHeading
@@ -508,9 +508,9 @@ export function TaskEditOrganizationField({
                             value={customTimeEstimateDraft}
                             onChangeText={(draft) => {
                                 setCustomTimeEstimateDraft(draft);
-                                const minutes = parseTimeEstimateInput(draft);
-                                if (minutes === null) return;
-                                setCustomTimeEstimate(minutes);
+                                const next = parseTaskEditorTimeEstimate(draft);
+                                if (next === null) return;
+                                setCustomTimeEstimate(next);
                             }}
                             onBlur={() => {
                                 if (!applyCustomTimeEstimateDraft(customTimeEstimateDraft) && currentTimeEstimate) {
@@ -540,10 +540,7 @@ export function TaskEditOrganizationField({
                             <TextInput
                                 style={[styles.input, inputStyle]}
                                 value={typeof draft.timeSpentMinutes === 'number' ? String(draft.timeSpentMinutes) : ''}
-                                onChangeText={(text) => {
-                                    const digits = text.replace(/[^0-9]/g, '');
-                                    setDraftField('timeSpentMinutes', digits ? Number(digits) : undefined);
-                                }}
+                                onChangeText={(text) => setDraftField('timeSpentMinutes', parseTaskEditorTimeSpent(text))}
                                 keyboardType="number-pad"
                                 onFocus={(event) => handleInputFocus(event.nativeEvent.target)}
                                 placeholder={translateWithFallback(t, 'taskEdit.timeSpentPlaceholder', 'minutes')}

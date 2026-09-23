@@ -2,20 +2,26 @@ import React from 'react';
 import { Keyboard, Platform, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
-    computeRelativeStartTime,
     editRRuleString,
+    editTaskDraftRecurrence,
+    formatTaskEditorDate,
     getProjectedRecurringTaskCalendarDate,
-    getTaskDateCoherenceIssues,
+    getTaskDraftDateOnly,
+    getTaskDraftRelativeStartEdit,
+    getTaskEditorDateIssueLabel,
+    getTaskEditorRecurrenceDefaultUntil,
+    getTaskEditorRecurrenceDetails,
+    getTaskEditorRelativeStart,
+    getTaskEditorReminders,
     hasTimeComponent,
     parseRRuleString,
-    REPEAT_REMINDER_INTERVAL_OPTIONS,
     safeFormatDate,
     safeParseDate,
     tFallback,
-    type RecurrenceByDay,
     type RecurrenceRule,
-    type RecurrenceStrategy,
+    type RelativeStartOffsetUnit,
     type Task,
+    type TaskDraftRecurrenceEdit,
 } from '@mindwtr/core';
 import {
     Calendar,
@@ -41,17 +47,6 @@ type ScheduleFieldId = 'recurrence' | 'startTime' | 'dueDate' | 'reviewAt';
 type TaskEditScheduleFieldProps = TaskEditFieldRendererProps & {
     fieldId: ScheduleFieldId;
 };
-
-const isSubDayRelativeStartUnit = (unit: NonNullable<Task['relativeStartOffset']>['unit']): boolean => (
-    unit === 'minute' || unit === 'hour'
-);
-
-const normalizeRelativeStartUnitForDueDate = (
-    dueDate: string | undefined,
-    unit: NonNullable<Task['relativeStartOffset']>['unit'],
-): NonNullable<Task['relativeStartOffset']>['unit'] => (
-    dueDate && !hasTimeComponent(dueDate) && isSubDayRelativeStartUnit(unit) ? 'day' : unit
-);
 
 export function TaskEditScheduleField({
     applyQuickDate,
@@ -92,76 +87,43 @@ export function TaskEditScheduleField({
         { color: active ? tc.onTint : tc.secondaryText },
     ]);
     const parsedRecurrenceRRule = parseRRuleString(recurrenceRRuleValue);
-    const monthlyInterval = recurrenceRuleValue === 'monthly' && parsedRecurrenceRRule.interval && parsedRecurrenceRRule.interval > 0
-        ? parsedRecurrenceRRule.interval
-        : 1;
-    const recurrenceEndMode: 'never' | 'until' | 'count' = parsedRecurrenceRRule.count
-        ? 'count'
-        : parsedRecurrenceRRule.until
-            ? 'until'
-            : 'never';
-    const recurrenceDefaultEndDate = parsedRecurrenceRRule.until
-        || safeFormatDate(
-            safeParseDate(draft.dueDate || draft.startTime || task?.dueDate || task?.startTime) ?? new Date(),
-            'yyyy-MM-dd'
-        );
-    const buildEditedRecurrence = (
-        rule: RecurrenceRule,
-        overrides: {
-            strategy?: RecurrenceStrategy;
-            byDay?: RecurrenceByDay[];
-            interval?: number;
-            byMonthDay?: number[];
-            count?: number;
-            until?: string;
-            rrule?: string;
-        } = {}
-    ) => {
-        const hasOverride = <TKey extends keyof typeof overrides>(key: TKey) =>
-            Object.prototype.hasOwnProperty.call(overrides, key);
+    const recurrenceDraft = {
+        ...draft,
+        recurrence: recurrenceRuleValue,
+        recurrenceStrategy: recurrenceStrategyValue,
+        recurrenceRRule: recurrenceRRuleValue,
+    };
+    const recurrenceDetails = getTaskEditorRecurrenceDetails({
+        draft: recurrenceDraft,
+        task,
+        dailyInterval,
+        t,
+        formatDate: safeFormatDate,
+        now: new Date(),
+    });
+    const recurrenceEndMode = recurrenceDetails.ends;
+    const applyRecurrenceEdit = (edit: TaskDraftRecurrenceEdit) => {
+        const next = editTaskDraftRecurrence(recurrenceDraft, edit, {
+            weekdays: customWeekdays,
+            defaultUntil: getTaskEditorRecurrenceDefaultUntil(recurrenceDraft, task, safeFormatDate),
+        });
+        setDraftField('recurrence', next.recurrence);
+        setDraftField('recurrenceStrategy', next.recurrenceStrategy);
+        setDraftField('recurrenceRRule', next.recurrenceRRule);
+    };
+    // The next-occurrence preview reads the draft's rule as a stored recurrence.
+    const buildPreviewRecurrence = (rule: RecurrenceRule) => {
         const completedOccurrences = task?.recurrence && typeof task.recurrence === 'object'
             ? task.recurrence.completedOccurrences
             : undefined;
-        const byDay = hasOverride('byDay')
-            ? overrides.byDay
-            : parsedRecurrenceRRule.byDay;
-        const byMonthDay = hasOverride('byMonthDay') ? overrides.byMonthDay : parsedRecurrenceRRule.byMonthDay;
-        const count = hasOverride('count') ? overrides.count : parsedRecurrenceRRule.count;
-        const until = hasOverride('until') ? overrides.until : parsedRecurrenceRRule.until;
-        const rrule = hasOverride('rrule')
-            ? overrides.rrule
-            : editRRuleString(recurrenceRRuleValue, rule, {
-                ...(hasOverride('byDay') ? { byDay: overrides.byDay } : {}),
-                ...(hasOverride('interval') ? { interval: overrides.interval } : {}),
-                ...(hasOverride('byMonthDay') ? { byMonthDay: overrides.byMonthDay } : {}),
-                ...(hasOverride('count') ? { count: overrides.count } : {}),
-                ...(hasOverride('until') ? { until: overrides.until } : {}),
-            });
-        return buildRecurrenceValue(rule, hasOverride('strategy') ? overrides.strategy ?? recurrenceStrategyValue : recurrenceStrategyValue, {
-            byDay,
-            byMonthDay,
-            count,
-            until,
+        return buildRecurrenceValue(rule, recurrenceStrategyValue, {
+            byDay: parsedRecurrenceRRule.byDay,
+            byMonthDay: parsedRecurrenceRRule.byMonthDay,
+            count: parsedRecurrenceRRule.count,
+            until: parsedRecurrenceRRule.until,
             completedOccurrences,
-            rrule,
+            rrule: editRRuleString(recurrenceRRuleValue, rule, {}),
         });
-    };
-    const applyRecurrence = (recurrence: Task['recurrence']) => {
-        if (!recurrence) {
-            setDraftField('recurrence', '');
-            setDraftField('recurrenceStrategy', 'strict');
-            setDraftField('recurrenceRRule', '');
-            return;
-        }
-        if (typeof recurrence === 'string') {
-            setDraftField('recurrence', recurrence);
-            setDraftField('recurrenceStrategy', 'strict');
-            setDraftField('recurrenceRRule', '');
-            return;
-        }
-        setDraftField('recurrence', recurrence.rule);
-        setDraftField('recurrenceStrategy', recurrence.strategy === 'fluid' ? 'fluid' : 'strict');
-        setDraftField('recurrenceRRule', recurrence.rrule ?? '');
     };
     const openDatePicker = (mode: NonNullable<ShowDatePickerMode>) => {
         Keyboard.dismiss();
@@ -172,7 +134,7 @@ export function TaskEditScheduleField({
         if (mode === 'start-time') return pendingStartDate ?? getSafePickerDateValue(draft.startTime);
         if (mode === 'review') return getSafePickerDateValue(draft.reviewAt);
         if (mode === 'recurrence-end') {
-            return getSafePickerDateValue(parsedRecurrenceRRule.until || recurrenceDefaultEndDate);
+            return getSafePickerDateValue(recurrenceDetails.until);
         }
         if (mode === 'due-time') return pendingDueDate ?? getSafePickerDateValue(draft.dueDate);
         return getSafePickerDateValue(draft.dueDate);
@@ -218,23 +180,9 @@ export function TaskEditScheduleField({
             />
         );
     };
-    const formatStartDateTime = (dateStr?: string) => {
-        if (!dateStr) return t('common.notSet');
-        const parsed = safeParseDate(dateStr);
-        if (!parsed) return t('common.notSet');
-        return safeFormatDate(
-            parsed,
-            hasTimeComponent(dateStr) ? 'P p' : 'P',
-            t('common.notSet')
-        ) || t('common.notSet');
-    };
+    const formatStartDateTime = (dateStr?: string) => formatTaskEditorDate(dateStr, safeFormatDate, t('common.notSet'));
     const dateOnlyLabel = t('taskEdit.dateOnly');
-    const dateIssueLabel = getTaskDateCoherenceIssues({
-        startTime: draft.startTime,
-        dueDate: draft.dueDate,
-    }).some((issue) => issue.code === 'start_after_due')
-        ? tFallback(t, 'task.dateIssue.startAfterDue', 'Starts after due date')
-        : '';
+    const dateIssueLabel = getTaskEditorDateIssueLabel(draft, t);
     const renderDateIssue = () => (
         dateIssueLabel ? (
             <Text style={[styles.dateIssueText, { color: tc.warning }]}>
@@ -242,12 +190,9 @@ export function TaskEditScheduleField({
             </Text>
         ) : null
     );
-    const clearTimePart = (value?: string): string => {
-        const parsed = safeParseDate(value);
-        return parsed ? safeFormatDate(parsed, 'yyyy-MM-dd') : '';
-    };
+    const clearTimePart = (value?: string): string => getTaskDraftDateOnly(value, safeFormatDate);
     const projectedRecurrenceDateLabel = (() => {
-        const recurrence = draft.recurrence ? buildEditedRecurrence(draft.recurrence) : undefined;
+        const recurrence = draft.recurrence ? buildPreviewRecurrence(draft.recurrence) : undefined;
         if (!recurrenceRuleValue || !recurrence) return '';
         const nowIso = new Date().toISOString();
         const splitTokens = (value: string) => value.split(',').map((token) => token.trim()).filter(Boolean);
@@ -271,9 +216,9 @@ export function TaskEditScheduleField({
     const projectedRecurrenceDateHint = projectedRecurrenceDateLabel
         ? `${tFallback(t, 'recurrence.nextCalendarPreview', 'Next calendar preview')}: ${projectedRecurrenceDateLabel}.`
         : '';
-    const hasReminderHandoffSchedule = hasTimeComponent(draft.startTime) || hasTimeComponent(draft.dueDate);
+    const reminders = getTaskEditorReminders(draft, t);
     const renderReminderHandoffControl = () => {
-        if (fieldId !== 'dueDate' || !hasReminderHandoffSchedule) return null;
+        if (fieldId !== 'dueDate' || !reminders.showSkip) return null;
         const enabled = draft.suppressMindwtrReminders === true;
         return (
             <TouchableOpacity
@@ -299,26 +244,14 @@ export function TaskEditScheduleField({
         );
     };
     const renderRepeatReminderControl = () => {
-        if (fieldId !== 'dueDate' || !hasTimeComponent(draft.dueDate)) return null;
-        if (draft.suppressMindwtrReminders === true) return null;
-        const label = tFallback(t, 'taskEdit.repeatReminderLabel', 'Repeat reminder');
+        if (fieldId !== 'dueDate' || !reminders.showRepeat) return null;
+        const label = reminders.repeatLabel;
         const current = draft.repeatReminderMinutes ?? 0;
-        const options = [0, ...REPEAT_REMINDER_INTERVAL_OPTIONS];
-        const formatValue = (minutes: number) => (
-            minutes === 0
-                ? tFallback(t, 'taskEdit.repeatReminderOff', 'Off')
-                : tFallback(t, 'taskEdit.repeatReminderEveryMinutes', 'Every {count} min').replace('{count}', String(minutes))
-        );
-        const formatOption = (minutes: number) => (
-            minutes === 0
-                ? tFallback(t, 'taskEdit.repeatReminderOff', 'Off')
-                : tFallback(t, 'taskEdit.repeatReminderMinutesShort', '{count} min').replace('{count}', String(minutes))
-        );
         return (
             <View style={{ marginTop: 8 }}>
                 <TouchableOpacity
                     accessibilityRole="button"
-                    accessibilityLabel={`${label}: ${formatValue(current)}`}
+                    accessibilityLabel={`${label}: ${reminders.repeatValueLabel}`}
                     style={[
                         styles.dateBtn,
                         {
@@ -331,25 +264,25 @@ export function TaskEditScheduleField({
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <Text style={[styles.modalLabel, { color: tc.text, flexShrink: 1 }]} numberOfLines={1}>{label}</Text>
                         <Text style={{ color: current > 0 ? tc.tint : tc.secondaryText, fontSize: 13, flexShrink: 0 }} numberOfLines={1}>
-                            {formatValue(current)}
+                            {reminders.repeatValueLabel}
                         </Text>
                     </View>
                 </TouchableOpacity>
                 {repeatReminderOptionsExpanded && (
                     <View style={[styles.statusContainer, { marginTop: 8 }]}>
-                        {options.map((minutes) => (
+                        {reminders.repeatOptions.map((option) => (
                             <TouchableOpacity
-                                key={minutes}
+                                key={option.value ?? 0}
                                 accessibilityRole="button"
-                                accessibilityLabel={formatOption(minutes)}
-                                style={getStatusChipStyle(current === minutes)}
+                                accessibilityLabel={option.label}
+                                style={getStatusChipStyle(option.selected)}
                                 onPress={() => {
-                                    setDraftField('repeatReminderMinutes', minutes > 0 ? minutes : undefined);
+                                    setDraftField('repeatReminderMinutes', option.value ?? undefined);
                                     setRepeatReminderOptionsExpanded(false);
                                 }}
                             >
-                                <Text style={getStatusTextStyle(current === minutes)}>
-                                    {formatOption(minutes)}
+                                <Text style={getStatusTextStyle(option.selected)}>
+                                    {option.label}
                                 </Text>
                             </TouchableOpacity>
                         ))}
@@ -359,30 +292,18 @@ export function TaskEditScheduleField({
         );
     };
 
-    const applyRelativeStartOffset = (amountValue: number, unitValue: NonNullable<Task['relativeStartOffset']>['unit']) => {
-        if (!draft.dueDate || !Number.isFinite(amountValue)) return;
-        const unit = normalizeRelativeStartUnitForDueDate(draft.dueDate, unitValue);
-        // 0 is valid: start on the due date itself.
-        const magnitude = Math.max(0, Math.floor(amountValue));
-        const offset = { amount: magnitude === 0 ? 0 : -magnitude, unit };
-        const computedStart = computeRelativeStartTime(draft.dueDate, offset);
-        if (!computedStart) {
-            setDraftField('relativeStartOffset', undefined);
-            return;
+    const relativeStart = getTaskEditorRelativeStart(draft, t);
+    const applyRelativeStartOffset = (amountValue: number, unitValue: RelativeStartOffsetUnit) => {
+        const edit = getTaskDraftRelativeStartEdit(draft.dueDate, amountValue, unitValue);
+        if (!edit) return;
+        for (const [field, value] of Object.entries(edit)) {
+            setDraftField(field as 'relativeStartOffset' | 'startTime', value as never);
         }
-        setDraftField('relativeStartOffset', offset);
-        setDraftField('startTime', computedStart);
     };
 
+    // A new due date moves a relative start, or ends the link, through the draft's cascade.
     const updateDueDate = (dueDate: string | undefined) => {
         setDraftField('dueDate', dueDate ?? '');
-        if (!dueDate) {
-            setDraftField('relativeStartOffset', undefined);
-            return;
-        }
-        const computedStart = computeRelativeStartTime(dueDate, draft.relativeStartOffset);
-        if (computedStart) setDraftField('startTime', computedStart);
-        if (draft.relativeStartOffset && !computedStart) setDraftField('relativeStartOffset', undefined);
     };
 
     switch (fieldId) {
@@ -406,48 +327,7 @@ export function TaskEditScheduleField({
                                     if (option.value !== 'weekly') {
                                         setCustomWeekdays([]);
                                     }
-                                    if (!option.value) {
-                                        applyRecurrence(undefined);
-                                        return;
-                                    }
-                                    if (option.value === 'daily') {
-                                        applyRecurrence(buildEditedRecurrence('daily', {
-                                            byDay: undefined,
-                                            byMonthDay: undefined,
-                                            interval: parsedRecurrenceRRule.rule === 'daily' && parsedRecurrenceRRule.interval && parsedRecurrenceRRule.interval > 0
-                                                ? parsedRecurrenceRRule.interval
-                                                : 1,
-                                        }));
-                                        return;
-                                    }
-                                    if (option.value === 'monthly') {
-                                        applyRecurrence(buildEditedRecurrence('monthly', {
-                                            byDay: undefined,
-                                            byMonthDay: undefined,
-                                            interval: parsedRecurrenceRRule.rule === 'monthly' && parsedRecurrenceRRule.interval && parsedRecurrenceRRule.interval > 0
-                                                ? parsedRecurrenceRRule.interval
-                                                : 1,
-                                        }));
-                                        return;
-                                    }
-                                    if (option.value === 'weekly') {
-                                        applyRecurrence(buildEditedRecurrence('weekly', {
-                                            byDay: undefined,
-                                            byMonthDay: undefined,
-                                            interval: undefined,
-                                        }));
-                                        return;
-                                    }
-                                    if (option.value === 'yearly') {
-                                        applyRecurrence(buildEditedRecurrence('yearly', {
-                                            byDay: undefined,
-                                            byMonthDay: undefined,
-                                            interval: parsedRecurrenceRRule.rule === 'yearly' && parsedRecurrenceRRule.interval && parsedRecurrenceRRule.interval > 0
-                                                ? parsedRecurrenceRRule.interval
-                                                : 1,
-                                        }));
-                                        return;
-                                    }
+                                    applyRecurrenceEdit({ kind: 'rule', rule: option.value });
                                 }}
                             >
                                 <Text style={getStatusTextStyle(
@@ -463,14 +343,8 @@ export function TaskEditScheduleField({
                             <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                                 <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
                                 <RecurrenceIntervalInput
-                                    interval={parsedRecurrenceRRule.interval ?? 1}
-                                    onIntervalChange={(interval) => {
-                                        applyRecurrence(buildEditedRecurrence('weekly', {
-                                            ...(customWeekdays.length > 0 ? { byDay: customWeekdays } : {}),
-                                            byMonthDay: undefined,
-                                            interval,
-                                        }));
-                                    }}
+                                    interval={recurrenceDetails.interval}
+                                    onIntervalChange={(interval) => applyRecurrenceEdit({ kind: 'interval', interval })}
                                     style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                     accessibilityLabel={t('recurrence.repeatEvery')}
                                     accessibilityHint={t('recurrence.weekUnit')}
@@ -495,10 +369,7 @@ export function TaskEditScheduleField({
                                                     ? customWeekdays.filter((value) => value !== day.key)
                                                     : [...customWeekdays, day.key];
                                                 setCustomWeekdays(next);
-                                                applyRecurrence(buildEditedRecurrence('weekly', {
-                                                    byDay: next,
-                                                    byMonthDay: undefined,
-                                                }));
+                                                applyRecurrenceEdit({ kind: 'weekdays', weekdays: next });
                                             }}
                                         >
                                             <Text style={[styles.weekdayButtonText, { color: active ? tc.onTint : tc.text }]}>{day.label}</Text>
@@ -512,14 +383,8 @@ export function TaskEditScheduleField({
                         <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                             <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
                             <RecurrenceIntervalInput
-                                interval={dailyInterval}
-                                onIntervalChange={(interval) => {
-                                    applyRecurrence(buildEditedRecurrence('daily', {
-                                        byDay: undefined,
-                                        byMonthDay: undefined,
-                                        interval,
-                                    }));
-                                }}
+                                interval={recurrenceDetails.interval}
+                                onIntervalChange={(interval) => applyRecurrenceEdit({ kind: 'interval', interval })}
                                 style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                 accessibilityLabel={t('recurrence.repeatEvery')}
                                 accessibilityHint={t('recurrence.dayUnit')}
@@ -532,10 +397,8 @@ export function TaskEditScheduleField({
                             <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                                 <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
                                 <RecurrenceIntervalInput
-                                    interval={monthlyInterval}
-                                    onIntervalChange={(interval) => {
-                                        applyRecurrence(buildEditedRecurrence('monthly', { interval }));
-                                    }}
+                                    interval={recurrenceDetails.interval}
+                                    onIntervalChange={(interval) => applyRecurrenceEdit({ kind: 'interval', interval })}
                                     style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                     accessibilityLabel={t('recurrence.repeatEvery')}
                                     accessibilityHint={t('recurrence.monthUnit')}
@@ -545,12 +408,7 @@ export function TaskEditScheduleField({
                             <View style={[styles.statusContainer, { marginTop: 8 }]}>
                                 <TouchableOpacity
                                     style={getStatusChipStyle(monthlyPattern === 'date')}
-                                    onPress={() => {
-                                        applyRecurrence(buildEditedRecurrence('monthly', {
-                                            byDay: undefined,
-                                            byMonthDay: undefined,
-                                        }));
-                                    }}
+                                    onPress={() => applyRecurrenceEdit({ kind: 'monthlyOnDay' })}
                                 >
                                     <Text style={getStatusTextStyle(monthlyPattern === 'date')}>
                                         {t('recurrence.monthlyOnDay')}
@@ -571,14 +429,8 @@ export function TaskEditScheduleField({
                         <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                             <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
                             <RecurrenceIntervalInput
-                                interval={parsedRecurrenceRRule.interval ?? 1}
-                                onIntervalChange={(interval) => {
-                                    applyRecurrence(buildEditedRecurrence('yearly', {
-                                        byDay: undefined,
-                                        byMonthDay: undefined,
-                                        interval,
-                                    }));
-                                }}
+                                interval={recurrenceDetails.interval}
+                                onIntervalChange={(interval) => applyRecurrenceEdit({ kind: 'interval', interval })}
                                 style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                 accessibilityLabel={t('recurrence.repeatEvery')}
                                 accessibilityHint={t('recurrence.yearUnit')}
@@ -594,10 +446,7 @@ export function TaskEditScheduleField({
                                     style={getStatusChipStyle(recurrenceEndMode === 'never')}
                                     onPress={() => {
                                         setShowDatePicker(null);
-                                        applyRecurrence(buildEditedRecurrence(recurrenceRuleValue, {
-                                            count: undefined,
-                                            until: undefined,
-                                        }));
+                                        applyRecurrenceEdit({ kind: 'ends', ends: 'never' });
                                     }}
                                 >
                                     <Text style={getStatusTextStyle(recurrenceEndMode === 'never')}>
@@ -607,10 +456,7 @@ export function TaskEditScheduleField({
                                 <TouchableOpacity
                                     style={getStatusChipStyle(recurrenceEndMode === 'until')}
                                     onPress={() => {
-                                        applyRecurrence(buildEditedRecurrence(recurrenceRuleValue, {
-                                            count: undefined,
-                                            until: parsedRecurrenceRRule.until || recurrenceDefaultEndDate,
-                                        }));
+                                        applyRecurrenceEdit({ kind: 'ends', ends: 'until' });
                                         openDatePicker('recurrence-end');
                                     }}
                                 >
@@ -622,10 +468,7 @@ export function TaskEditScheduleField({
                                     style={getStatusChipStyle(recurrenceEndMode === 'count')}
                                     onPress={() => {
                                         setShowDatePicker(null);
-                                        applyRecurrence(buildEditedRecurrence(recurrenceRuleValue, {
-                                            count: parsedRecurrenceRRule.count ?? 1,
-                                            until: undefined,
-                                        }));
+                                        applyRecurrenceEdit({ kind: 'ends', ends: 'count' });
                                     }}
                                 >
                                     <Text style={getStatusTextStyle(recurrenceEndMode === 'count')}>
@@ -640,7 +483,7 @@ export function TaskEditScheduleField({
                                         onPress={() => openDatePicker('recurrence-end')}
                                     >
                                         <Text style={{ color: tc.text }}>
-                                            {formatDate(parsedRecurrenceRRule.until || recurrenceDefaultEndDate)}
+                                            {recurrenceDetails.untilLabel}
                                         </Text>
                                     </TouchableOpacity>
                                     {renderInlineIOSDatePicker(['recurrence-end'])}
@@ -649,15 +492,8 @@ export function TaskEditScheduleField({
                             {recurrenceEndMode === 'count' && (
                                 <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                                     <TextInput
-                                        value={String(Math.max(parsedRecurrenceRRule.count ?? 1, 1))}
-                                        onChangeText={(value) => {
-                                            const parsed = Number.parseInt(value, 10);
-                                            const count = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 999) : 1;
-                                            applyRecurrence(buildEditedRecurrence(recurrenceRuleValue, {
-                                                count,
-                                                until: undefined,
-                                            }));
-                                        }}
+                                        value={String(recurrenceDetails.count)}
+                                        onChangeText={(value) => applyRecurrenceEdit({ kind: 'count', text: value })}
                                         keyboardType="number-pad"
                                         style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                         accessibilityLabel={t('recurrence.endsAfterCount')}
@@ -672,15 +508,7 @@ export function TaskEditScheduleField({
                         <View style={[styles.statusContainer, { marginTop: 8 }]}>
                             <TouchableOpacity
                                 style={getStatusChipStyle(recurrenceStrategyValue === 'fluid')}
-                                onPress={() => {
-                                    const nextStrategy = recurrenceStrategyValue === 'fluid' ? 'strict' : 'fluid';
-                                    applyRecurrence(buildEditedRecurrence(recurrenceRuleValue, {
-                                        strategy: nextStrategy,
-                                        byDay: recurrenceRuleValue === 'weekly' && customWeekdays.length > 0
-                                            ? customWeekdays
-                                            : undefined,
-                                    }));
-                                }}
+                                onPress={() => applyRecurrenceEdit({ kind: 'strategy' })}
                             >
                                 <Text style={getStatusTextStyle(recurrenceStrategyValue === 'fluid')}>
                                     {t('recurrence.afterCompletion')}
@@ -772,28 +600,14 @@ export function TaskEditScheduleField({
                         </View>
                         {renderQuickDateChips('start', parsed)}
                         {renderDateIssue()}
-                        {!!draft.dueDate && (() => {
-                            const dueDateHasTime = hasTimeComponent(draft.dueDate);
-                            const relativeUnit = normalizeRelativeStartUnitForDueDate(
-                                draft.dueDate,
-                                draft.relativeStartOffset?.unit ?? 'day'
-                            );
-                            const relativeAmount = draft.relativeStartOffset ? Math.abs(draft.relativeStartOffset.amount) : 3;
+                        {relativeStart && (() => {
+                            const relativeUnit = relativeStart.unit;
+                            const relativeAmount = relativeStart.amount;
                             const modeOptions = [
-                                { label: t('taskEdit.startModeAbsolute'), active: !draft.relativeStartOffset, onPress: () => setDraftField('relativeStartOffset', undefined) },
-                                { label: t('taskEdit.startModeRelative'), active: Boolean(draft.relativeStartOffset), onPress: () => applyRelativeStartOffset(relativeAmount, relativeUnit) },
+                                { label: t('taskEdit.startModeAbsolute'), active: !relativeStart.active, onPress: () => setDraftField('relativeStartOffset', undefined) },
+                                { label: t('taskEdit.startModeRelative'), active: relativeStart.active, onPress: () => applyRelativeStartOffset(relativeAmount, relativeUnit) },
                             ];
-                            const unitOptions: { value: NonNullable<Task['relativeStartOffset']>['unit']; label: string }[] = dueDateHasTime
-                                ? [
-                                    { value: 'minute', label: t('taskEdit.relativeStartMinutesShort') },
-                                    { value: 'hour', label: t('taskEdit.relativeStartHoursShort') },
-                                    { value: 'day', label: t('taskEdit.relativeStartDaysShort') },
-                                    { value: 'week', label: t('taskEdit.relativeStartWeeksShort') },
-                                ]
-                                : [
-                                    { value: 'day', label: t('taskEdit.relativeStartDaysShort') },
-                                    { value: 'week', label: t('taskEdit.relativeStartWeeksShort') },
-                                ];
+                            const unitOptions = relativeStart.units.map(({ unit, label }) => ({ value: unit, label }));
                             return (
                                 <View style={{ marginTop: 10, gap: 8 }}>
                                     <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -812,7 +626,7 @@ export function TaskEditScheduleField({
                                             </TouchableOpacity>
                                         ))}
                                     </View>
-                                    {!!draft.relativeStartOffset && (
+                                    {relativeStart.active && (
                                         <View style={{ gap: 8 }}>
                                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                                 <TextInput

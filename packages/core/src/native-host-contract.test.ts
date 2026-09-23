@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createNativeHostContract, NATIVE_HOST_EDITOR_FIELDS, NATIVE_HOST_MAX_WINDOW, type NativeEditableFields } from './native-host-contract';
+import {
+    createNativeHostContract,
+    NATIVE_HOST_EDITOR_FIELDS,
+    NATIVE_HOST_MAX_WINDOW,
+    type NativeEditableFields,
+    type NativeTaskDraftEdit,
+    type NativeTaskDraftRecurrenceEdit,
+    type NativeTaskEditorModel,
+} from './native-host-contract';
 import { computeGlobalSearchResults } from './global-search-filter';
 import { DEFAULT_GLOBAL_SEARCH_FILTERS, getGlobalSearchFilterOptions } from './global-search-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -12,13 +20,13 @@ import * as focusDerivation from './focus-sections';
 import * as projectTaskListModel from './project-task-list-model';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
-import { configureDateFormatting, getDateFormattingConfig, safeFormatDate } from './date';
+import { configureDateFormatting, getDateFormattingConfig, safeFormatDate, safeParseDate } from './date';
 import { getFocusStarBlockedText } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
 import { isTaskActionable } from './task-status';
 import { splitTodayTasksByStartTime } from './task-utils';
-import { createTaskDraft, setTaskDraftField } from './task-draft';
+import { createTaskDraft, setTaskDraftField, type TaskDraft } from './task-draft';
 import { DEFAULT_TASK_EDITOR_HIDDEN } from './task-editor-layout';
 import { buildTaskEditorModel, buildTaskEditUpdatePatch, createTaskEditDraft, getTaskEditorSuggestions } from './task-editor-model';
 import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
@@ -1504,6 +1512,250 @@ describe('native host contract', () => {
             }
             expect(saveData).not.toHaveBeenCalled();
             expect({ edit: storedTask(), archived: storedTask('archived-project') }).toEqual(before);
+        });
+        describe('draft edits (editTaskDraft)', () => {
+            type Host = ReturnType<typeof createNativeHostContract>;
+            // A host keeps the draft as JSON: unset fields drop out.
+            const json = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+            const openDraft = (host: Host, id = 'edit') => {
+                const result = host.getTaskEditorModel({ id });
+                if (!result.ok) throw new Error(result.error.message);
+                return json(result.value.draft);
+            };
+            const edited = (host: Host, draft: TaskDraft, edit?: NativeTaskDraftEdit, id = 'edit') => {
+                const result = host.editTaskDraft({ id, draft, edit });
+                if (!result.ok) throw new Error(result.error.message);
+                return result.value;
+            };
+            // saveTaskDraft's base and patch: the fields the edit changed.
+            const changes = (before: TaskDraft, after: TaskDraft) => {
+                const fields = (Object.keys({ ...before, ...after }) as Array<keyof TaskDraft>)
+                    .filter((field) => JSON.stringify(before[field] ?? null) !== JSON.stringify(after[field] ?? null));
+                return {
+                    base: Object.fromEntries(fields.map((field) => [field, before[field] ?? null])),
+                    patch: Object.fromEntries(fields.map((field) => [field, after[field] ?? null])),
+                } as { base: Partial<TaskDraft>; patch: Partial<TaskDraft> };
+            };
+
+            it('serves the model for an unsaved draft, as the editor shows it while editing', async () => {
+                freezeClock();
+                const host = await activateEditor([editTask({ projectId: 'p-work', dueDate: '2026-09-25' })], {
+                    gtd: { viewSections: { someday: [{ id: 'vs-books', title: 'Books', order: 0 }] } },
+                });
+                const draft = openDraft(host);
+                const same = edited(host, draft);
+                const model = host.getTaskEditorModel({ id: 'edit' });
+                expect(model.ok && json(same)).toEqual(model.ok && json(model.value));
+
+                const all = (value: NativeTaskEditorModel) => value.layout.sections.flatMap(({ fields }) => fields);
+                const reference = edited(host, draft, { type: 'fields', patch: { status: 'reference' } });
+                expect(all(reference)).not.toContain('dueDate');
+                expect(reference.layout.showStatusField).toBe(false);
+                const described = edited(host, draft, { type: 'fields', patch: { location: 'Desk' } });
+                expect(all(described)).toContain('location');
+                const someday = edited(host, draft, { type: 'fields', patch: { status: 'someday' } });
+                expect(someday.layout.showSomedaySection).toBe(true);
+                expect(someday.options.somedaySections.map(({ id }) => id)).toEqual(['', 'vs-books']);
+                const moved = edited(host, draft, { type: 'fields', patch: { projectId: 'p-home', sectionId: '' } });
+                expect(moved.options.sections).toEqual([]);
+                expect(edited(host, draft).options.sections.map(({ id }) => id)).toEqual(['s-ship', 's-plan']);
+                // Nothing is written.
+                expect(storedTask()?.status).toBe('next');
+            });
+
+            it('moves a relative start with its due date and keeps the link through the save', async () => {
+                freezeClock();
+                const host = await activateEditor([editTask({
+                    dueDate: '2026-09-28', startTime: '2026-09-26', relativeStartOffset: { amount: -2, unit: 'day' },
+                })]);
+                const draft = openDraft(host);
+                const moved = edited(host, draft, { type: 'pickDate', field: 'dueDate', date: '2026-10-05' });
+                expect(moved.draft).toMatchObject({ dueDate: '2026-10-05', startTime: '2026-10-03', relativeStartOffset: { amount: -2, unit: 'day' } });
+                expect(moved.fields.relativeStart).toMatchObject({ active: true, amount: 2, unit: 'day' });
+
+                const { base, patch } = changes(draft, json(moved.draft));
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toMatchObject({ ok: true });
+                expect(storedTask()).toMatchObject({
+                    dueDate: '2026-10-05', startTime: '2026-10-03', relativeStartOffset: { amount: -2, unit: 'day' },
+                });
+
+                // A hand-set start ends the link; clearing the due ends it too.
+                const next = openDraft(host);
+                expect(edited(host, next, { type: 'pickDate', field: 'startTime', date: '2026-10-01' }).draft.relativeStartOffset).toBeUndefined();
+                expect(edited(host, next, { type: 'date', field: 'dueDate', value: '' }).draft).toMatchObject({
+                    dueDate: '', startTime: '2026-10-03',
+                });
+                expect(edited(host, next, { type: 'date', field: 'dueDate', value: '' }).draft.relativeStartOffset).toBeUndefined();
+                const weekly = edited(host, next, { type: 'relativeStart', amount: '1', unit: 'week' });
+                expect(weekly.draft).toMatchObject({ startTime: '2026-09-28', relativeStartOffset: { amount: -1, unit: 'week' } });
+                expect(edited(host, next, { type: 'relativeStart', amount: 'x', unit: 'week' }).draft).toEqual(next);
+            });
+
+            it('keeps an existing time on a new day, keeps date-only values date-only, and sets a time', async () => {
+                freezeClock();
+                const host = await activateEditor([
+                    editTask({ dueDate: '2026-09-25T17:00', reviewAt: '2026-09-27T09:15' }),
+                    task('plain', '2026-09-01T00:00:00.000Z', { status: 'next', dueDate: '2026-09-25' }),
+                ], { gtd: { defaultScheduleTime: '9:05' }, dateFormat: 'ymd', timeFormat: '24h' });
+                const draft = openDraft(host);
+                const due = edited(host, draft, { type: 'pickDate', field: 'dueDate', date: '2026-10-01' });
+                expect(due.draft.dueDate).toBe(new Date(2026, 9, 1, 17, 0).toISOString());
+                expect(due.fields.dueDate).toMatchObject({ label: '2026-10-01 17:00', hasTime: true, time: '17:00', dateOnly: '2026-10-01' });
+                expect(edited(host, draft, { type: 'pickDate', field: 'reviewAt', date: '2026-10-02' }).draft.reviewAt).toBe('2026-10-02T09:15');
+                // No time yet: the default schedule time is added.
+                expect(edited(host, draft, { type: 'pickDate', field: 'startTime', date: '2026-10-01' }).draft.startTime).toBe('2026-10-01T09:05');
+                const timed = edited(host, draft, { type: 'pickTime', field: 'dueDate', time: '08:30' });
+                expect(timed.draft.dueDate).toBe(new Date(2026, 8, 25, 8, 30).toISOString());
+                expect(timed.fields.dueDate.picker).toEqual({ date: '2026-09-25', time: '08:30' });
+
+                const plain = openDraft(host, 'plain');
+                const moved = edited(host, plain, { type: 'pickDate', field: 'dueDate', date: '2026-10-01' }, 'plain');
+                expect(moved.draft.dueDate).toBe('2026-10-01T09:05');
+                const chip = edited(host, plain, undefined, 'plain').fields.dueDate.quickDates.find(({ preset }) => preset === 'tomorrow')!;
+                expect(chip).toMatchObject({ label: 'Tomorrow', selected: false, value: '2026-09-24T09:05' });
+                // Labels follow the user's date settings through the host's formatter, not the global one.
+                expect(edited(host, plain, undefined, 'plain').fields.dueDate.label).toBe('2026-09-25');
+                expect(getDateFormattingConfig().dateFormat).not.toBe('ymd');
+            });
+
+            it('sets a picked time on the field\'s own day, across DST changes and late in the evening', async () => {
+                const originalTz = process.env.TZ;
+                process.env.TZ = 'America/New_York';
+                try {
+                    vi.useFakeTimers({ toFake: ['Date'] });
+                    // Today is the spring DST change: 02:00-03:00 does not exist today.
+                    vi.setSystemTime(new Date('2027-03-14T10:00:00'));
+                    const host = await activateEditor([
+                        editTask({ dueDate: '2027-03-20', startTime: '2027-03-14', reviewAt: '2027-03-20' }),
+                        task('fall', '2026-09-01T00:00:00.000Z', { status: 'next', dueDate: '2027-11-07' }),
+                    ]);
+                    const draft = openDraft(host);
+                    const local = (value: string | undefined) => {
+                        const parsed = safeParseDate(value);
+                        return parsed && [parsed.getMonth() + 1, parsed.getDate(), parsed.getHours(), parsed.getMinutes()];
+                    };
+                    const pickTime = (field: 'startTime' | 'dueDate', time: string, from = draft, id = 'edit') => (
+                        edited(host, from, { type: 'pickTime', field, time }, id).draft[field]
+                    );
+                    expect(local(pickTime('dueDate', '02:30'))).toEqual([3, 20, 2, 30]);
+                    // On the change day itself the skipped 02:30 moves forward, as the mobile editor stores it.
+                    expect(local(pickTime('startTime', '02:30'))).toEqual([3, 14, 3, 30]);
+                    expect(local(pickTime('dueDate', '23:30'))).toEqual([3, 20, 23, 30]);
+                    const moved = edited(host, draft, { type: 'pickDate', field: 'dueDate', date: '2027-03-14' });
+                    expect(local(pickTime('dueDate', '23:30', moved.draft))).toEqual([3, 14, 23, 30]);
+                    // The repeated 01:30 on the autumn change takes its first occurrence (EDT).
+                    vi.setSystemTime(new Date('2027-11-07T10:00:00'));
+                    expect(pickTime('dueDate', '01:30', openDraft(host, 'fall'), 'fall')).toBe('2027-11-07T05:30:00.000Z');
+                    // Review has no time in the mobile editor.
+                    expect(host.editTaskDraft({ id: 'edit', draft, edit: { type: 'pickTime', field: 'reviewAt' as never, time: '14:30' } }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                } finally {
+                    if (originalTz === undefined) delete process.env.TZ;
+                    else process.env.TZ = originalTz;
+                }
+            });
+
+            it('refuses a relative start the store would not keep', async () => {
+                freezeClock();
+                const host = await activateEditor([editTask({ dueDate: '2026-09-28' })]);
+                const draft = openDraft(host);
+                expect(edited(host, draft, { type: 'relativeStart', amount: '10000', unit: 'day' }).draft.relativeStartOffset)
+                    .toEqual({ amount: -10000, unit: 'day' });
+                for (const amount of ['10001', 99999, '1e9']) {
+                    expect(host.editTaskDraft({ id: 'edit', draft, edit: { type: 'relativeStart', amount, unit: 'day' } }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                }
+                // Negative input starts on the due date, as the mobile input does.
+                expect(edited(host, draft, { type: 'relativeStart', amount: '-4', unit: 'day' }).draft)
+                    .toMatchObject({ startTime: '2026-09-28', relativeStartOffset: { amount: 0, unit: 'day' } });
+            });
+
+            it('edits recurrence details through the rule, keeping its end', async () => {
+                freezeClock();
+                const host = await activateEditor([editTask({
+                    dueDate: '2026-09-28', recurrence: { rule: 'weekly', strategy: 'strict', rrule: 'FREQ=WEEKLY;BYDAY=MO;COUNT=5' },
+                })]);
+                const draft = openDraft(host);
+                const recurrence = (value: NativeTaskDraftRecurrenceEdit, from = draft) => (
+                    edited(host, from, { type: 'recurrence', edit: value })
+                );
+                const model = edited(host, draft);
+                expect(model.fields.recurrence).toMatchObject({ interval: 1, ends: 'count', count: 5 });
+                expect(model.fields.recurrence.weekdays.filter(({ selected }) => selected).map(({ day }) => day)).toEqual(['MO']);
+                expect(recurrence({ kind: 'rule', rule: 'daily' }).draft.recurrenceRRule).toBe('FREQ=DAILY;COUNT=5');
+                expect(recurrence({ kind: 'weekday', day: 'WE' }).draft.recurrenceRRule).toBe('FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5');
+                expect(recurrence({ kind: 'weekday', day: 'MO' }).draft.recurrenceRRule).toBe('FREQ=WEEKLY;COUNT=5');
+                expect(recurrence({ kind: 'interval', text: '3' }).draft.recurrenceRRule).toBe('FREQ=WEEKLY;INTERVAL=3;BYDAY=MO;COUNT=5');
+                expect(recurrence({ kind: 'count', text: '8' }).draft.recurrenceRRule).toBe('FREQ=WEEKLY;BYDAY=MO;COUNT=8');
+                const until = recurrence({ kind: 'ends', ends: 'until' });
+                expect(until.fields.recurrence).toMatchObject({ ends: 'until', until: '2026-09-28' });
+                expect(recurrence({ kind: 'until', date: '2026-12-31' }, until.draft).draft.recurrenceRRule).toContain('UNTIL=20261231');
+                expect(recurrence({ kind: 'strategy' }).draft.recurrenceStrategy).toBe('fluid');
+                expect(recurrence({ kind: 'rule', rule: '' }).draft).toMatchObject({ recurrence: '', recurrenceRRule: '' });
+                const monthly = recurrence({ kind: 'monthlyCustom', custom: { interval: 2, mode: 'nth', ordinal: '-1', weekday: 'FR', monthDays: [28] } });
+                expect(monthly.draft).toMatchObject({ recurrence: 'monthly', recurrenceRRule: 'FREQ=MONTHLY;INTERVAL=2;BYDAY=-1FR;COUNT=5' });
+                expect(monthly.layout.recurrence.monthlyPattern).toBe('custom');
+                expect(monthly.fields.recurrence.monthlyCustom).toMatchObject({ mode: 'nth', ordinal: '-1', weekday: 'FR', interval: 2 });
+            });
+
+            it('offers quick dates, the date issue, reminder intervals, and parses estimates and time spent', async () => {
+                freezeClock();
+                const host = await activateEditor([editTask({
+                    startTime: '2026-09-30', dueDate: '2026-09-26T21:00:00.000Z', timeEstimate: '2hr',
+                })], { features: { pomodoro: true }, gtd: { pomodoro: { linkTask: true } } });
+                const draft = openDraft(host);
+                const model = edited(host, draft);
+                expect(model.fields.dateIssue).toBe('Starts after due date');
+                expect(model.fields.startTime.quickDates.map(({ label }) => label))
+                    .toEqual(['Today', 'Tomorrow', '+3 days', 'Next week', 'Next month', 'No date']);
+                const today = model.fields.startTime.quickDates[0];
+                expect(edited(host, draft, { type: 'date', field: 'startTime', value: today.value }).draft.startTime).toBe('2026-09-23');
+                expect(edited(host, draft, { type: 'date', field: 'startTime', value: model.fields.startTime.quickDates[5].value }).draft.startTime).toBe('');
+                expect(model.fields.reminders).toMatchObject({ showSkip: true, showRepeat: true, repeatValueLabel: 'Off' });
+                expect(model.fields.reminders.repeatOptions.map(({ value }) => value)).toEqual([null, 5, 10, 15, 30, 60]);
+                const every15 = edited(host, draft, { type: 'fields', patch: { repeatReminderMinutes: 15 } });
+                expect(every15.fields.reminders.repeatValueLabel).toBe('Every 15 min');
+                expect(edited(host, draft, { type: 'fields', patch: { suppressMindwtrReminders: true } }).fields.reminders.showRepeat).toBe(false);
+
+                expect(model.fields.timeEstimate).toMatchObject({ customSelected: false, customValue: 'custom:120', customText: '' });
+                const custom = edited(host, draft, { type: 'timeEstimate', text: '2h30' });
+                expect(custom.draft.timeEstimate).toBe('custom:150');
+                expect(custom.fields.timeEstimate).toMatchObject({ customSelected: true, customText: '2h 30m' });
+                expect(edited(host, custom.draft, { type: 'timeEstimate', text: 'abc' }).draft.timeEstimate).toBe('custom:150');
+                expect(model.fields.timeSpent).toEqual({ enabled: true });
+                expect(edited(host, draft, { type: 'timeSpent', text: '1a2' }).draft.timeSpentMinutes).toBe(12);
+                expect(edited(host, draft, { type: 'timeSpent', text: '' }).draft.timeSpentMinutes).toBeUndefined();
+                expect(JSON.parse(JSON.stringify(model.fields))).toEqual(model.fields);
+            });
+
+            it('refuses an invalid draft or edit, and waits for storage', async () => {
+                const host = createNativeHostContract();
+                expect(host.editTaskDraft({ id: 'edit', draft: {} as TaskDraft })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+                getData.mockResolvedValue(editorData([editTask()]));
+                expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+                const draft = openDraft(host);
+                const { title: _title, ...untitled } = draft;
+                const invalid: Array<[unknown, unknown]> = [
+                    [untitled, undefined],
+                    [{ ...draft, secret: 'x' }, undefined],
+                    [{ ...draft, dueDate: 'tomorrow' }, undefined],
+                    [draft, { type: 'unknown' }],
+                    [draft, { type: 'fields', patch: { status: 'archived' } }],
+                    [draft, { type: 'date', field: 'completedAt', value: '' }],
+                    [draft, { type: 'pickDate', field: 'dueDate', date: '2026-02-30' }],
+                    [draft, { type: 'pickTime', field: 'reviewAt', time: '10:00' }],
+                    [draft, { type: 'pickTime', field: 'dueDate', time: '24:00' }],
+                    [draft, { type: 'relativeStart', amount: 1, unit: 'month' }],
+                    [draft, { type: 'recurrence', edit: { kind: 'rule', rule: 'hourly' } }],
+                    [draft, { type: 'recurrence', edit: { kind: 'monthlyCustom', custom: { interval: 0, mode: 'date', ordinal: '1', weekday: 'MO', monthDays: [1] } } }],
+                    [draft, { type: 'timeEstimate', text: 5 }],
+                ];
+                for (const [value, edit] of invalid) {
+                    expect(host.editTaskDraft({ id: 'edit', draft: value as TaskDraft, edit: edit as NativeTaskDraftEdit }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                }
+                expect(host.editTaskDraft({ id: 'missing', draft })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            });
         });
     });
 

@@ -545,7 +545,9 @@ export function useTaskEditState({
         };
         const applyReference = (saved: boolean) => {
             if (!saved) return false;
-            const nextBaseTask = { ...currentTask, ...referenceUpdate };
+            // The store also ends a relative start for Reference, and so does the draft
+            // below: clearing the dates clears the offset.
+            const nextBaseTask = { ...currentTask, ...referenceUpdate, relativeStartOffset: undefined };
             baseTaskRef.current = nextBaseTask;
             setTaskEditDraftState((current) => {
                 if (!current) return current;

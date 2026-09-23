@@ -3,13 +3,14 @@ import {
     isCustomTimeEstimate,
     resolveTimeEstimateOptions,
 } from './calendar-scheduling';
-import { safeParseDate } from './date';
+import { normalizeClockTimeInput, safeFormatDate, safeParseDate, type DateFormatter } from './date';
 import { tFallback } from './i18n';
 import { getPersonOptionNames, getPersonSuggestionNames } from './people';
 import { filterProjectsBySelectedArea } from './project-utils';
 import { parseRRuleString } from './recurrence';
 import { REFERENCE_HIDDEN_TASK_FIELDS } from './reference';
 import { resolveFeatureFlags } from './resolve-feature-flags';
+import { getTaskEditorDateIssueLabel } from './task-date-coherence';
 import {
     areDraftAttachmentsDirty,
     createTaskDraft,
@@ -30,6 +31,23 @@ import {
     TASK_EDITOR_FIXED_FIELDS,
     TASK_EDITOR_SECTION_ORDER,
 } from './task-editor-layout';
+import {
+    getTaskDraftRecurrenceWeekdays,
+    getTaskEditorDatePart,
+    getTaskEditorMonthlyCustom,
+    getTaskEditorRecurrenceDetails,
+    getTaskEditorRelativeStart,
+    getTaskEditorReminders,
+    getTaskEditorTimeEstimate,
+    getTaskEditorWeekdayButtons,
+    isTaskEditorTimeSpentEnabled,
+    type TaskEditorDatePart,
+    type TaskEditorMonthlyCustom,
+    type TaskEditorRecurrenceDetails,
+    type TaskEditorRelativeStart,
+    type TaskEditorReminders,
+    type TaskEditorTimeEstimate,
+} from './task-editor-schedule';
 import { getFrequentTaskTokensFromUsage, type TaskTokenUsage } from './task-token-usage';
 import { compareAreasByOrder } from './task-utils';
 import { resolveTaskViewSection, setTaskViewSectionId, sortViewSectionDefinitions } from './view-sections';
@@ -537,6 +555,27 @@ export type TaskEditorModel = {
         /** Someday section choices; `viewSectionIds` is the draft value after choosing one. */
         somedaySections: Array<{ id: string; title: string; selected: boolean; viewSectionIds: ViewSectionIds }>;
     };
+    /**
+     * Each schedule and estimate control's state, labels, and the draft values its
+     * taps write. Labels are formatted in the user's language and date settings.
+     */
+    fields: {
+        startTime: TaskEditorDatePart;
+        dueDate: TaskEditorDatePart;
+        reviewAt: TaskEditorDatePart;
+        /** "Starts after due date" under the start and due fields, or ''. */
+        dateIssue: string;
+        /** The start field's absolute/relative control; null without a due date. */
+        relativeStart: TaskEditorRelativeStart | null;
+        /** `weekdays` are the weekly day buttons; `monthlyCustom` is the custom monthly dialog's starting state. */
+        recurrence: TaskEditorRecurrenceDetails & {
+            weekdays: ReturnType<typeof getTaskEditorWeekdayButtons>;
+            monthlyCustom: TaskEditorMonthlyCustom;
+        };
+        reminders: TaskEditorReminders;
+        timeEstimate: TaskEditorTimeEstimate;
+        timeSpent: { enabled: boolean };
+    };
 };
 
 export type TaskEditorModelInput = {
@@ -554,6 +593,10 @@ export type TaskEditorModelInput = {
     tags: readonly string[];
     t: (key: string) => string;
     now?: Date;
+    /** Formats labels; hosts pass createDateFormatter with the user's settings. */
+    formatDate?: DateFormatter;
+    /** The app language, for weekday names. */
+    language?: string;
 };
 
 /** The editor for one draft, as the React Native editor shows it. */
@@ -577,7 +620,16 @@ export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorMod
     });
     const openDefaults = getTaskEditorSectionOpenDefaults(taskEditor);
     const somedayDefinitions = sortViewSectionDefinitions(input.settings.gtd?.viewSections?.someday ?? []);
-    const anchorDate = resolveTaskEditorMonthlyAnchorDate(getTaskEditorMonthlyAnchorSource(task, draft), input.now);
+    const now = input.now ?? new Date();
+    const anchorDate = resolveTaskEditorMonthlyAnchorDate(getTaskEditorMonthlyAnchorSource(task, draft), now);
+    const formatDate = input.formatDate ?? safeFormatDate;
+    const dailyInterval = getTaskEditorDailyInterval(draft.recurrence, draft.recurrenceRRule);
+    const dateOptions = {
+        t,
+        now,
+        formatDate,
+        defaultScheduleTime: normalizeClockTimeInput(input.settings.gtd?.defaultScheduleTime) || '',
+    };
     return {
         layout: {
             sections: TASK_EDITOR_SECTION_ORDER.filter((id) => sections[id].length > 0).map((id) => {
@@ -597,7 +649,7 @@ export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorMod
             showStatusField,
             showSomedaySection: draft.status === 'someday',
             recurrence: {
-                dailyInterval: getTaskEditorDailyInterval(draft.recurrence, draft.recurrenceRRule),
+                dailyInterval,
                 monthlyPattern: getTaskEditorMonthlyPattern(draft.recurrence, draft.recurrenceRRule, anchorDate),
             },
         },
@@ -626,6 +678,24 @@ export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorMod
                 ...choice,
                 viewSectionIds: setTaskViewSectionId(draft.viewSectionIds, 'someday', choice.id || undefined),
             })),
+        },
+        fields: {
+            startTime: getTaskEditorDatePart('startTime', draft.startTime, dateOptions),
+            dueDate: getTaskEditorDatePart('dueDate', draft.dueDate, dateOptions),
+            reviewAt: getTaskEditorDatePart('reviewAt', draft.reviewAt, dateOptions),
+            dateIssue: getTaskEditorDateIssueLabel(draft, t),
+            relativeStart: getTaskEditorRelativeStart(draft, t),
+            recurrence: {
+                ...getTaskEditorRecurrenceDetails({ draft, task, dailyInterval, t, formatDate, now }),
+                weekdays: getTaskEditorWeekdayButtons(
+                    input.language,
+                    getTaskDraftRecurrenceWeekdays(draft.recurrence, draft.recurrenceRRule),
+                ),
+                monthlyCustom: getTaskEditorMonthlyCustom(draft.recurrenceRRule, anchorDate),
+            },
+            reminders: getTaskEditorReminders(draft, t),
+            timeEstimate: getTaskEditorTimeEstimate(draft.timeEstimate, t),
+            timeSpent: { enabled: isTaskEditorTimeSpentEnabled(input.settings) },
         },
     };
 }

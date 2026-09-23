@@ -1,4 +1,5 @@
 import { hasTimeComponent, safeParseDate, safeParseDueDate } from './date';
+import { tFallback } from './i18n';
 import type { Task } from './types';
 
 export type TaskDateCoherenceIssueCode = 'start_after_due';
@@ -54,4 +55,14 @@ export const getTaskDateCoherence = (
 
 export const isTaskDateCoherent = (task: TaskDateCoherenceInput): boolean => (
     getTaskDateCoherenceIssues(task).length === 0
+);
+
+/** The editor's warning under the start and due fields, or '' when the dates are coherent. */
+export const getTaskEditorDateIssueLabel = (
+    task: TaskDateCoherenceInput,
+    t: (key: string) => string,
+): string => (
+    getTaskDateCoherenceIssues(task).some((issue) => issue.code === 'start_after_due')
+        ? tFallback(t, 'task.dateIssue.startAfterDue', 'Starts after due date')
+        : ''
 );
