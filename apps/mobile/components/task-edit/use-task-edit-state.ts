@@ -1,6 +1,7 @@
 import React from 'react';
 import {
     areDraftAttachmentsDirty,
+    clearInvalidTaskDraftSection,
     flushPendingSave,
     generateUUID,
     type Attachment,
@@ -396,18 +397,9 @@ export function useTaskEditState({
         clearPendingTextChanges();
 
         let saveDraftState = taskEditDraft;
-        const nextProjectId = saveDraftState.draft.projectId;
-        const nextSectionId = saveDraftState.draft.sectionId;
-        if (nextProjectId && nextSectionId) {
-            const isValid = sections.some((section) =>
-                section.id === nextSectionId && section.projectId === nextProjectId && !section.deletedAt
-            );
-            if (!isValid) {
-                saveDraftState = {
-                    ...saveDraftState,
-                    draft: setTaskDraftField(saveDraftState.draft, 'sectionId', ''),
-                };
-            }
+        const validSectionDraft = clearInvalidTaskDraftSection(saveDraftState.draft, sections);
+        if (validSectionDraft !== saveDraftState.draft) {
+            saveDraftState = { ...saveDraftState, draft: validSectionDraft };
         }
 
         const pendingChecklistTitle = checklistDraftRef.current.trim();

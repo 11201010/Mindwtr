@@ -10,7 +10,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
-import { sortViewSectionDefinitions, tFallback, type ViewSectionDefinition } from '@mindwtr/core';
+import { getSomedaySectionChoices, tFallback, type ViewSectionDefinition } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { logError } from '@/lib/app-log';
@@ -46,8 +46,6 @@ export function SomedaySectionPicker({
   createOnly = false,
   onCancelCreate,
 }: SomedaySectionPickerProps) {
-  const sortedSections = sortViewSectionDefinitions(sections);
-  const resolvedSelectedId = sortedSections.some((section) => section.id === selectedId) ? selectedId : undefined;
   const [createOpen, setCreateOpen] = useState(createOnly);
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
@@ -86,16 +84,18 @@ export function SomedaySectionPicker({
     }
   };
 
-  const options = [
-    { id: '', title: tFallback(t, 'viewSections.noSection', 'No section') },
-    ...sortedSections,
-  ];
+  const options = getSomedaySectionChoices(
+    sections,
+    selectedId,
+    tFallback(t, 'viewSections.noSection', 'No section'),
+    selectionMixed,
+  );
 
   return (
     <>
       {!createOnly ? <View style={optionsStyle}>
         {options.map((section) => {
-          const selected = !selectionMixed && (resolvedSelectedId ?? '') === section.id;
+          const { selected } = section;
           return (
             <TouchableOpacity
               key={section.id || 'no-section'}

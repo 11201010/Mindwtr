@@ -13,6 +13,22 @@ import {
 } from './project-task-list-model';
 import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
 import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
+import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
+import { isRecurrenceRule, parseRRuleString } from './recurrence';
+import { createTaskDraft, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
+import {
+    applyTaskDraftPatch,
+    buildTaskEditorModel,
+    buildTaskEditUpdatePatch,
+    clearInvalidTaskDraftSection,
+    getTaskEditorSuggestions,
+    TASK_EDITOR_ENERGY_LEVEL_OPTIONS,
+    TASK_EDITOR_PRIORITY_OPTIONS,
+    TASK_EDITOR_STATUS_OPTIONS,
+    type TaskEditorModel,
+    type TaskEditorSuggestions,
+} from './task-editor-model';
+import { normalizeRelativeStartOffset } from './task-relative-start';
 import { createDateFormatter, hasTimeComponent, safeParseDate, type DateFormattingConfig } from './date';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
 import { getFocusStarBlockedText } from './focus-star';
@@ -36,7 +52,7 @@ import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
-import type { Area, Project, Task, TaskPriority, TaskStatus } from './types';
+import type { Area, Project, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
 import { generateUUID } from './uuid';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
@@ -59,6 +75,20 @@ export type NativeTaskEditor = {
     readOnly: boolean;
     statuses: TaskStatus[];
     priorities: TaskPriority[];
+};
+
+/**
+ * The React Native task editor for one task: its draft, the fields to show by
+ * section, and the lists each field picks from. Labels are string keys, except
+ * time estimates, which are formatted in the host language.
+ */
+export type NativeTaskEditorModel = TaskEditorModel & {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    id: string;
+    readOnly: boolean;
+    /** createTaskDraft(task). Fields whose value is undefined are absent over JSON. */
+    draft: TaskDraft;
 };
 
 const CAPTURE_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
@@ -228,6 +258,53 @@ const normalizeEditorValue = (field: keyof NativeEditableFields, value: unknown)
     value == null || (field === 'description' && value === '') ? null : value
 );
 
+const DRAFT_FIELD_SET = new Set<string>(TASK_DRAFT_FIELD_KEYS);
+// JSON has no undefined: these draft fields accept null for "not set".
+const UNSET_DRAFT_FIELDS = new Set<string>(['relativeStartOffset', 'viewSectionIds', 'timeSpentMinutes', 'repeatReminderMinutes']);
+const isString = (value: unknown): value is string => typeof value === 'string';
+const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
+const isDraftDate = (value: unknown) => value === '' || isValidEditorDate(value);
+const isUnsetOrMinutes = (value: unknown) => value === undefined
+    || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+const isOneOf = (values: readonly unknown[]) => (value: unknown) => values.includes(value);
+// The value shapes TaskDraft holds; ids are checked against the store at save.
+const DRAFT_VALUE_CHECKS: Record<TaskDraftField, (value: unknown) => boolean> = {
+    title: isString,
+    dueDate: isDraftDate,
+    startTime: isDraftDate,
+    relativeStartOffset: (value) => value === undefined || normalizeRelativeStartOffset(value) !== undefined,
+    projectId: isString,
+    sectionId: isString,
+    viewSectionIds: (value) => value === undefined || (isObjectRecord(value) && Object.values(value).every(isString)),
+    areaId: isString,
+    completedAt: isDraftDate,
+    status: isOneOf(TASK_EDITOR_STATUS_OPTIONS),
+    focusedToday: isBoolean,
+    contexts: isString,
+    tags: isString,
+    description: isString,
+    location: isString,
+    recurrence: (value) => value === '' || (isString(value) && isRecurrenceRule(value)),
+    recurrenceStrategy: isOneOf(['strict', 'fluid']),
+    recurrenceRRule: (value) => value === '' || (isString(value) && parseRRuleString(value).rule !== undefined),
+    showFutureRecurrence: isBoolean,
+    timeEstimate: (value) => value === '' || TIME_ESTIMATE_OPTIONS.includes(value as TimeEstimate)
+        || (isString(value) && isCustomTimeEstimate(value as TimeEstimate)),
+    timeSpentMinutes: isUnsetOrMinutes,
+    priority: isOneOf(['', ...TASK_EDITOR_PRIORITY_OPTIONS]),
+    energyLevel: isOneOf(['', ...TASK_EDITOR_ENERGY_LEVEL_OPTIONS]),
+    assignedTo: isString,
+    reviewAt: isDraftDate,
+    repeatReminderMinutes: isUnsetOrMinutes,
+    suppressMindwtrReminders: isBoolean,
+};
+const toDraftValues = (input: Record<string, unknown>): Partial<TaskDraft> => Object.fromEntries(
+    Object.entries(input).map(([field, value]) => [field, value === null && UNSET_DRAFT_FIELDS.has(field) ? undefined : value]),
+) as Partial<TaskDraft>;
+const isSameDraftValue = (left: unknown, right: unknown): boolean => (
+    left === right || JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+);
+
 /** One instance per serial native JS host. All reads and commands use the shared store. */
 export function createNativeHostContract() {
     const processId = generateUUID();
@@ -240,6 +317,7 @@ export function createNativeHostContract() {
     let lastProjects = useTaskStore.getState()._allProjects;
     let lastSections = useTaskStore.getState()._allSections;
     let lastAreas = useTaskStore.getState()._allAreas;
+    let lastPeople = useTaskStore.getState()._allPeople;
     let lastSortBy = resolveNonDoneTaskSortBy(useTaskStore.getState().settings.taskSortBy, useTaskStore.getState().settings);
     let lastSettings = useTaskStore.getState().settings;
     let settingsGeneration = 0;
@@ -259,6 +337,13 @@ export function createNativeHostContract() {
     let cachedProjectDetail: ProjectDetailCache | null = null;
     // ponytail: title/area dedupe survives process death, but a renamed, moved, archived, or deleted project can be recreated; persist a capture ID if those retries become required.
     const createdProjects = new Map<string, string>();
+    // Per task, the last draft save the store accepted and the task it produced. The
+    // same request against that same task is a retry: the store may have rewritten
+    // fields it saved (a recurrence's series stamp, a deferred star), so the field
+    // comparison alone cannot recognise it. Any other write to the task replaces its
+    // object, which ends the entry.
+    // ponytail: keeps the 50 most recently saved tasks; an older task's retry falls back to the field comparison.
+    const draftSaves = new Map<string, { key: string; task: Task | undefined }>();
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -276,12 +361,14 @@ export function createNativeHostContract() {
         const state = useTaskStore.getState();
         const sortBy = resolveNonDoneTaskSortBy(state.settings.taskSortBy, state.settings);
         if (state._allTasks !== lastTasks || state._allProjects !== lastProjects
-            || state._allSections !== lastSections || state._allAreas !== lastAreas || sortBy !== lastSortBy) {
+            || state._allSections !== lastSections || state._allAreas !== lastAreas
+            || state._allPeople !== lastPeople || sortBy !== lastSortBy) {
             generation += 1;
             lastTasks = state._allTasks;
             lastProjects = state._allProjects;
             lastSections = state._allSections;
             lastAreas = state._allAreas;
+            lastPeople = state._allPeople;
             lastSortBy = sortBy;
         }
         return `${processId}:${generation}`;
@@ -445,6 +532,10 @@ export function createNativeHostContract() {
             return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
         }
     };
+
+    // Mobile opens a task in an archived project read-only.
+    const isInArchivedProject = (task: Task): boolean => Boolean(task.projectId)
+        && useTaskStore.getState()._allProjects.find((project) => project.id === task.projectId)?.status === 'archived';
 
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
@@ -945,6 +1036,178 @@ export function createNativeHostContract() {
                 const saved = await save();
                 if (!saved.ok) return saved;
                 return { ok: true, value: { id: input.id, changed } };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
+            }
+        },
+
+        getTaskEditorModel(input: { id: string }): NativeHostResult<NativeTaskEditorModel> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            // The model reads the task, its containers, people, settings and language; the day
+            // and minute ride along as in the other views.
+            const now = new Date();
+            const draft = createTaskDraft(task);
+            const { allContexts, allTags } = state.getDerivedState();
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: `${revision()}:${displayRevision(now)}`,
+                    id: task.id,
+                    readOnly: isInArchivedProject(task),
+                    draft,
+                    ...buildTaskEditorModel({
+                        task,
+                        draft,
+                        settings: state.settings,
+                        projects: state.projects,
+                        sections: state.sections,
+                        areas: state.areas,
+                        tasks: state.tasks,
+                        people: state.people,
+                        contexts: allContexts,
+                        tags: allTags,
+                        t: translate,
+                        now,
+                    }),
+                },
+            };
+        },
+
+        /**
+         * Suggestions for a context, tag or person input, from its whole text as typed.
+         * The React Native editor shows 4 matches (`limit`). Store `draftValue` in the draft.
+         */
+        getTaskEditorSuggestions(input: {
+            id: string;
+            field: 'contexts' | 'tags' | 'assignedTo';
+            query: string;
+            limit: number;
+        }): NativeHostResult<TaskEditorSuggestions> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim()
+                || (input.field !== 'contexts' && input.field !== 'tags' && input.field !== 'assignedTo')
+                || typeof input.query !== 'string' || input.query.length > 2000
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW) {
+                return fail('INVALID_INPUT', 'A task ID, a contexts, tags or assignedTo field, a query and a bounded limit are required');
+            }
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const derived = state.getDerivedState();
+            return {
+                ok: true,
+                value: getTaskEditorSuggestions({
+                    field: input.field,
+                    text: input.query,
+                    limit: input.limit,
+                    knownTokens: input.field === 'tags' ? derived.allTags : derived.allContexts,
+                    usage: input.field === 'tags' ? derived.tagTokenUsage : derived.contextTokenUsage,
+                    people: state.people,
+                    tasks: state.tasks,
+                }),
+            };
+        },
+
+        /**
+         * Save draft fields. `base` holds each field's value when editing began; a field
+         * changed since by another writer is a conflict, unless it already holds the new
+         * value. A repeat of the same request after a failed save writes nothing new.
+         */
+        async saveTaskDraft(input: {
+            id: string;
+            base: Partial<TaskDraft>;
+            patch: Partial<TaskDraft>;
+        }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
+            if (!isObjectRecord(input.base) || !isObjectRecord(input.patch)) {
+                return fail('INVALID_INPUT', 'base and patch must be objects');
+            }
+            const fields = Object.keys(input.patch) as TaskDraftField[];
+            if (fields.length === 0) return fail('INVALID_INPUT', 'patch must include a draft field');
+            if (fields.some((field) => !DRAFT_FIELD_SET.has(field))) {
+                return fail('INVALID_INPUT', 'patch fields must be task draft fields');
+            }
+            const mismatchedFields = TASK_DRAFT_FIELD_KEYS.filter((field) =>
+                Object.prototype.hasOwnProperty.call(input.base, field)
+                !== Object.prototype.hasOwnProperty.call(input.patch, field));
+            if (Object.keys(input.base).length !== fields.length || mismatchedFields.length > 0) {
+                const named = mismatchedFields.length > 0 ? `: ${mismatchedFields.join(', ')}` : '';
+                return fail('INVALID_INPUT', `base and patch fields must match${named}`);
+            }
+
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            if (isInArchivedProject(task)) return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
+
+            const base = toDraftValues(input.base);
+            const patch = toDraftValues(input.patch);
+            for (const field of fields) {
+                const value = patch[field];
+                let valid = DRAFT_VALUE_CHECKS[field](value);
+                if (valid && field === 'projectId' && value && value !== task.projectId) {
+                    const project = state._projectsById.get(value as string);
+                    valid = Boolean(project && isSelectableProjectForTaskAssignment(project));
+                }
+                if (valid && field === 'areaId' && value && value !== task.areaId) {
+                    valid = state.areas.some((area) => area.id === value && !area.deletedAt);
+                }
+                if (valid && field === 'sectionId' && value) {
+                    // A named section must be live in the project the draft ends up in.
+                    const projectId = Object.prototype.hasOwnProperty.call(patch, 'projectId') ? patch.projectId : task.projectId;
+                    valid = state.sections.some((section) => section.id === value && section.projectId === projectId && !section.deletedAt);
+                }
+                if (!valid) return fail('INVALID_INPUT', `${field} is not a valid value`);
+            }
+
+            const key = JSON.stringify([input.base, input.patch]);
+            const lastSave = draftSaves.get(input.id);
+            if (lastSave && lastSave.task !== task) draftSaves.delete(input.id);
+            const isRetry = lastSave?.key === key && lastSave.task === task;
+            let updates: Partial<Task> | null = {};
+            if (!isRetry) {
+                const current = createTaskDraft(task);
+                const conflicts = fields.filter((field) => !isSameDraftValue(current[field], base[field])
+                    && !isSameDraftValue(current[field], patch[field]));
+                if (conflicts.length > 0) {
+                    return fail('STALE_REVISION', `Task changed while editing: ${conflicts.join(', ')}`);
+                }
+                // A field that already holds its new value is left alone.
+                const pending = Object.fromEntries(fields
+                    .filter((field) => isSameDraftValue(current[field], base[field]))
+                    .map((field) => [field, patch[field]]));
+                const draft = clearInvalidTaskDraftSection(applyTaskDraftPatch(current, pending), state.sections);
+                updates = buildTaskEditUpdatePatch({ draft, checklist: task.checklist, attachments: task.attachments }, task);
+                if (!updates) return fail('INVALID_INPUT', 'title must not be blank');
+            }
+
+            try {
+                if (Object.keys(updates).length > 0) {
+                    const result = await useTaskStore.getState().updateTask(input.id, updates);
+                    if (!result.success) {
+                        const failure = useTaskStore.getState().persistenceFailure;
+                        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? result.error ?? 'Task update failed');
+                    }
+                    draftSaves.delete(input.id);
+                    draftSaves.set(input.id, { key, task: useTaskStore.getState()._tasksById.get(input.id) });
+                    if (draftSaves.size > 50) draftSaves.delete(draftSaves.keys().next().value as string);
+                } else if (useTaskStore.getState().persistenceFailure) {
+                    await useTaskStore.getState().retryPersistence();
+                }
+                const saved = await save();
+                if (!saved.ok) return saved;
+                const savedTask = useTaskStore.getState()._tasksById.get(input.id) ?? task;
+                return { ok: true, value: { id: input.id, draft: createTaskDraft(savedTask) } };
             } catch (error) {
                 const failure = useTaskStore.getState().persistenceFailure;
                 return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));

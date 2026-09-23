@@ -25,7 +25,8 @@ import { Task,
     setTaskViewSectionId,
     shallow,
     sortViewSectionDefinitions,
-    tFallback, } from '@mindwtr/core';
+    tFallback,
+    toggleTaskEditorToken, } from '@mindwtr/core';
 import { taskDraftToUpdatePatch } from '@mindwtr/core/task-draft';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -803,22 +804,10 @@ function TaskEditModalInner({
         }
     }, [setDraftField, timeSpentEnabled]);
     const toggleQuickContextToken = useCallback((token: string) => {
-        const next = new Set(parseTokenList(contextInputDraft, '@'));
-        if (next.has(token)) {
-            next.delete(token);
-        } else {
-            next.add(token);
-        }
-        updateContextInput(Array.from(next).join(', '));
+        updateContextInput(toggleTaskEditorToken(contextInputDraft, token, '@'));
     }, [contextInputDraft, updateContextInput]);
     const toggleQuickTagToken = useCallback((token: string) => {
-        const next = new Set(parseTokenList(tagInputDraft, '#'));
-        if (next.has(token)) {
-            next.delete(token);
-        } else {
-            next.add(token);
-        }
-        updateTagInput(Array.from(next).join(', '));
+        updateTagInput(toggleTaskEditorToken(tagInputDraft, token, '#'));
     }, [tagInputDraft, updateTagInput]);
     const commitContextDraft = useCallback(() => {
         setIsContextInputFocused(false);

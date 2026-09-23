@@ -16,6 +16,9 @@ import { normalizeFocusTaskLimit } from './focus-utils';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
 import { isTaskActionable } from './task-status';
 import { splitTodayTasksByStartTime } from './task-utils';
+import { createTaskDraft, setTaskDraftField } from './task-draft';
+import { DEFAULT_TASK_EDITOR_HIDDEN } from './task-editor-layout';
+import { buildTaskEditorModel, buildTaskEditUpdatePatch, createTaskEditDraft, getTaskEditorSuggestions } from './task-editor-model';
 import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
 import { getTranslationsSync } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
@@ -940,6 +943,406 @@ describe('native host contract', () => {
             .toHaveLength(1);
         expect(useTaskStore.getState()._allTasks).toHaveLength(2);
         expect(useTaskStore.getState()._tasksById.get('recurring')?.rev).toBe(revAfterFailure);
+    });
+
+    describe('task editor model', () => {
+        const section = (id: string, projectId: string, title: string, order: number, extra: Partial<Section> = {}): Section => ({
+            id, projectId, title, order, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...extra,
+        });
+        const editorData = (tasks: Task[], settings: AppSettings = {}) => ({
+            tasks,
+            projects: [
+                project('p-work', 'active', 0, { areaId: 'a-work' }),
+                project('p-home', 'active', 1, { areaId: 'a-home' }),
+                project('p-old', 'archived', 2),
+            ],
+            sections: [
+                section('s-plan', 'p-work', 'Plan', 1),
+                section('s-ship', 'p-work', 'Ship', 0),
+                section('s-gone', 'p-work', 'Gone', 2, { deletedAt: '2026-09-02T00:00:00.000Z' }),
+            ],
+            areas: [area('a-work', 'Work', 0), area('a-home', 'Home', 1)],
+            people: [{ id: 'person-1', name: 'Alex', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }],
+            settings,
+        });
+        const activateEditor = async (tasks: Task[], settings: AppSettings = {}) => {
+            getData.mockResolvedValue(editorData(tasks, settings));
+            const host = createNativeHostContract();
+            expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+            return host;
+        };
+        const editTask = (extra: Partial<Task> = {}) => task('edit', '2026-09-01T00:00:00.000Z', {
+            title: 'Original', status: 'next', ...extra,
+        });
+        const storedTask = (id = 'edit') => useTaskStore.getState()._tasksById.get(id);
+
+        it('serves the core model for the stored task, draft and settings', async () => {
+            freezeClock();
+            const host = createNativeHostContract();
+            expect(host.getTaskEditorModel({ id: 'edit' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+            getData.mockResolvedValue(editorData([
+                editTask({
+                    projectId: 'p-work', sectionId: 's-plan', dueDate: '2026-09-25', contexts: ['@office'], tags: ['#launch'],
+                    recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY;INTERVAL=2' },
+                }),
+                task('waiting', '2026-09-01T00:00:00.000Z', { status: 'waiting', assignedTo: 'Sam', areaId: 'a-home' }),
+                task('archived-project', '2026-09-01T00:00:00.000Z', { projectId: 'p-old' }),
+                task('deleted', '2026-09-01T00:00:00.000Z', { deletedAt: '2026-09-02T00:00:00.000Z' }),
+                task('someday', '2026-09-01T00:00:00.000Z', { status: 'someday', viewSectionIds: { someday: 'vs-books' } }),
+            ], {
+                gtd: {
+                    taskEditor: { hidden: [...DEFAULT_TASK_EDITOR_HIDDEN, 'tags'], sectionOpen: { organization: true } },
+                    viewSections: { someday: [{ id: 'vs-later', title: 'Later', order: 1 }, { id: 'vs-books', title: 'Books', order: 0 }] },
+                },
+            }));
+            expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+
+            const result = host.getTaskEditorModel({ id: 'edit' });
+            if (!result.ok) throw new Error('Task editor model did not load');
+            const state = useTaskStore.getState();
+            const stored = state._tasksById.get('edit')!;
+            const draft = createTaskDraft(stored);
+            const { allContexts, allTags } = state.getDerivedState();
+            expect(result.value).toEqual({
+                version: 1,
+                revision: expect.any(String),
+                id: 'edit',
+                readOnly: false,
+                draft,
+                ...buildTaskEditorModel({
+                    task: stored, draft, settings: state.settings, projects: state.projects, sections: state.sections,
+                    areas: state.areas, tasks: state.tasks, people: state.people, contexts: allContexts, tags: allTags,
+                    t: getTranslator('en'), now: new Date(),
+                }),
+            });
+            // Concrete values, so the test does not only compare core with itself.
+            const { layout, options } = result.value;
+            expect(layout.sections.map(({ id, fields }) => [id, fields])).toEqual([
+                ['basic', ['status', 'project', 'area', 'contexts', 'dueDate', 'section']],
+                ['scheduling', ['startTime', 'reviewAt', 'recurrence']],
+                ['organization', ['tags']],
+                ['details', ['description', 'attachments', 'checklist']],
+            ]);
+            expect(layout.sections.map(({ titleKey, open, filledCount }) => [titleKey, open, filledCount])).toEqual([
+                [null, true, 1], ['taskEdit.scheduling', true, 1], ['taskEdit.organization', true, 1], ['taskEdit.details', false, 0],
+            ]);
+            expect(layout.recurrence).toEqual({ dailyInterval: 2, monthlyPattern: 'date' });
+            expect(options.projects).toEqual([
+                { id: 'p-work', title: 'p-work', areaId: 'a-work' },
+                { id: 'p-home', title: 'p-home', areaId: 'a-home' },
+            ]);
+            expect(options.sections).toEqual([{ id: 's-ship', title: 'Ship' }, { id: 's-plan', title: 'Plan' }]);
+            expect(options.areas.map(({ id }) => id)).toEqual(['a-work', 'a-home']);
+            expect(options.people).toEqual(['Alex', 'Sam']);
+            expect(options.contexts).toContain('@office');
+            expect(options.statuses).toEqual(['inbox', 'next', 'waiting', 'someday', 'done', 'reference']);
+            expect(options.timeEstimates[0]).toEqual({ value: '', label: 'None' });
+            expect(layout.showSomedaySection).toBe(false);
+            const someday = host.getTaskEditorModel({ id: 'someday' });
+            expect(someday.ok && someday.value.layout.showSomedaySection).toBe(true);
+            expect(someday.ok && someday.value.options.somedaySections).toEqual([
+                { id: '', title: 'No section', selected: false, viewSectionIds: {} },
+                { id: 'vs-books', title: 'Books', selected: true, viewSectionIds: { someday: 'vs-books' } },
+                { id: 'vs-later', title: 'Later', selected: false, viewSectionIds: { someday: 'vs-later' } },
+            ]);
+            // Plain JSON for the native client.
+            expect(JSON.parse(JSON.stringify({ layout, options }))).toEqual({ layout, options });
+
+            // The area filters the project list, as in the mobile picker.
+            const waiting = host.getTaskEditorModel({ id: 'waiting' });
+            expect(waiting.ok && waiting.value.options.projects.map(({ id }) => id)).toEqual(['p-home']);
+            expect(waiting.ok && waiting.value.layout.sections[2].fields).toContain('assignedTo');
+            expect(host.getTaskEditorModel({ id: 'archived-project' })).toMatchObject({ ok: true, value: { readOnly: true } });
+            expect(host.getTaskEditorModel({ id: 'deleted' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            expect(host.getTaskEditorModel({ id: '' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        });
+
+        it('changes the revision on a task edit, a people change, a layout change and a language change', async () => {
+            freezeClock();
+            const host = await activateEditor([editTask()]);
+            const model = () => {
+                const result = host.getTaskEditorModel({ id: 'edit' });
+                if (!result.ok) throw new Error('Task editor model did not load');
+                return result.value;
+            };
+            const first = model();
+            expect(model().revision).toBe(first.revision);
+
+            expect((await useTaskStore.getState().updateTask('edit', { title: 'Changed' })).success).toBe(true);
+            const edited = model();
+            expect(edited.revision).not.toBe(first.revision);
+            expect(edited.draft.title).toBe('Changed');
+
+            await useTaskStore.getState().addPerson('Robin');
+            const withPerson = model();
+            expect(withPerson.revision).not.toBe(edited.revision);
+            expect(withPerson.options.people).toContain('Robin');
+
+            useTaskStore.setState({ settings: { gtd: { taskEditor: { hidden: ['contexts'] } } } });
+            const relaid = model();
+            expect(relaid.revision).not.toBe(withPerson.revision);
+            expect(relaid.layout.sections[0].fields).not.toContain('contexts');
+
+            expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: null })).toMatchObject({ ok: true });
+            const chinese = model();
+            expect(chinese.revision).not.toBe(relaid.revision);
+            expect(chinese.options.timeEstimates[0].label).toBe(getTranslator('zh')('common.none'));
+            expect(chinese.options.timeEstimates[0].label).not.toBe('None');
+        });
+
+        it('saves draft fields over an unrelated change and returns the saved draft', async () => {
+            const host = await activateEditor([editTask({ description: 'Old notes', projectId: 'p-work', sectionId: 's-plan' })]);
+            expect((await useTaskStore.getState().updateTask('edit', { description: 'Other notes' })).success).toBe(true);
+            await flushPendingSave();
+            saveData.mockClear();
+
+            const result = await host.saveTaskDraft({
+                id: 'edit',
+                base: { title: 'Original', dueDate: '', projectId: 'p-work', relativeStartOffset: null as never },
+                patch: { title: '  Mine  ', dueDate: '2026-10-01', projectId: 'p-home', relativeStartOffset: null as never },
+            });
+            const saved = storedTask()!;
+            expect(result).toEqual({ ok: true, value: { id: 'edit', draft: createTaskDraft(saved) } });
+            // Date-only stays date-only; moving projects drops the old project's section.
+            expect(saved).toMatchObject({ title: 'Mine', dueDate: '2026-10-01', projectId: 'p-home', description: 'Other notes' });
+            expect(saved.sectionId).toBeUndefined();
+            expect(saveData).toHaveBeenCalledTimes(1);
+            expect((saveData.mock.lastCall?.[0] as { tasks: Task[] }).tasks.find(({ id }) => id === 'edit')?.title).toBe('Mine');
+        });
+
+        it('refuses a field another writer changed, naming only the field', async () => {
+            const host = await activateEditor([editTask({ description: 'Old notes' })]);
+            expect((await useTaskStore.getState().updateTask('edit', { title: 'Other writer' })).success).toBe(true);
+            await flushPendingSave();
+            const revBefore = storedTask()?.rev;
+            saveData.mockClear();
+
+            expect(await host.saveTaskDraft({
+                id: 'edit', base: { title: 'Original', description: 'Old notes' }, patch: { title: 'Mine', description: 'New notes' },
+            })).toEqual({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } });
+            expect(storedTask()).toMatchObject({ title: 'Other writer', description: 'Old notes', rev: revBefore });
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it('runs core cascades, status first', async () => {
+            const host = await activateEditor([
+                editTask({ isFocusedToday: true }),
+                task('complete', '2026-09-01T00:00:00.000Z', { status: 'next' }),
+            ]);
+            expect(await host.saveTaskDraft({ id: 'edit', base: { status: 'next' }, patch: { status: 'inbox' } }))
+                .toMatchObject({ ok: true, value: { draft: { status: 'inbox', focusedToday: false } } });
+            expect(storedTask()).toMatchObject({ status: 'inbox', isFocusedToday: false });
+
+            // Status goes first, so the chosen completion time survives its cascade.
+            const completedAt = '2026-09-20T10:00:00.000Z';
+            expect(await host.saveTaskDraft({
+                id: 'complete', base: { completedAt: '', status: 'next' }, patch: { completedAt, status: 'done' },
+            })).toMatchObject({ ok: true, value: { draft: { status: 'done', completedAt } } });
+            expect(storedTask('complete')).toMatchObject({ status: 'done', completedAt });
+        });
+
+        it('retries a failed save exactly, without a second write', async () => {
+            const host = await activateEditor([editTask()]);
+            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
+            saveData.mockClear();
+            saveData.mockRejectedValue(new Error('disk unavailable'));
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
+            const revAfterFailure = storedTask()?.rev;
+            expect(storedTask()?.title).toBe('Mine');
+
+            saveData.mockResolvedValue(undefined);
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true, value: { draft: { title: 'Mine' } } });
+            expect(storedTask()?.rev).toBe(revAfterFailure);
+            expect((saveData.mock.lastCall?.[0] as { tasks: Task[] }).tasks.find(({ id }) => id === 'edit')?.title).toBe('Mine');
+            // A lost reply repeats the request once more: still no write.
+            const saves = saveData.mock.calls.length;
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true });
+            expect(storedTask()?.rev).toBe(revAfterFailure);
+            expect(saveData).toHaveBeenCalledTimes(saves);
+        });
+
+        // The store stamps a recurrence rule with its series and drops a star that a
+        // future start defers, so the saved draft differs from the request.
+        it.each([
+            {
+                name: 'a recurrence series stamp',
+                input: { id: 'edit', base: { recurrence: '', recurrenceRRule: '' }, patch: { recurrence: 'weekly', recurrenceRRule: 'FREQ=WEEKLY;BYDAY=MO' } },
+                saved: { recurrence: { rule: 'weekly', byDay: ['MO'] } },
+            },
+            {
+                name: 'a star dropped by a future start',
+                input: { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } },
+                saved: { startTime: '2027-01-04', isFocusedToday: false },
+            },
+        ] as const)('retries exactly after $name', async ({ input, saved }) => {
+            const host = await activateEditor([editTask()]);
+            saveData.mockRejectedValue(new Error('disk unavailable'));
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            const afterFailure = storedTask();
+            expect(afterFailure).toMatchObject(saved);
+
+            saveData.mockResolvedValue(undefined);
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true });
+            expect(storedTask()).toBe(afterFailure);
+            expect((saveData.mock.lastCall?.[0] as { tasks: Task[] }).tasks.find(({ id }) => id === 'edit')).toMatchObject(saved);
+        });
+
+        it('keeps retry state per task: A, then B, then the exact retry of A', async () => {
+            const host = await activateEditor([editTask(), task('b', '2026-09-01T00:00:00.000Z'), task('other', '2026-09-01T00:00:00.000Z')]);
+            // The store drops the star that a future start defers.
+            const inputA = { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } };
+            saveData.mockRejectedValue(new Error('disk unavailable'));
+            expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            const savedA = storedTask();
+            expect(savedA).toMatchObject({ startTime: '2027-01-04', isFocusedToday: false });
+
+            saveData.mockResolvedValue(undefined);
+            expect(await host.saveTaskDraft({ id: 'b', base: { title: 'b' }, patch: { title: 'B' } })).toMatchObject({ ok: true });
+            // An unrelated write, through another path, between the failure and the retry.
+            expect((await useTaskStore.getState().updateTask('other', { title: 'Other' })).success).toBe(true);
+            expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: true, value: { draft: { focusedToday: false } } });
+            expect(storedTask()).toBe(savedA);
+        }, 15_000);
+
+        it('drops a task\'s retry state when another path writes that task', async () => {
+            const host = await activateEditor([editTask({ description: 'Old notes' })]);
+            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
+            saveData.mockRejectedValue(new Error('disk unavailable'));
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+            saveData.mockResolvedValue(undefined);
+            expect((await useTaskStore.getState().updateTask('edit', { description: 'Other notes' })).success).toBe(true);
+            const afterOtherWrite = storedTask();
+            // The field comparison takes over: the title already holds its new value, so nothing is written.
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true, value: { draft: { title: 'Mine', description: 'Other notes' } } });
+            expect(storedTask()).toBe(afterOtherWrite);
+        }, 15_000);
+
+        it('refuses a named section outside the resulting project, and keeps the cleanup for other edits', async () => {
+            const host = await activateEditor([editTask({ projectId: 'p-work', sectionId: 's-plan' })]);
+            const before = storedTask();
+            saveData.mockClear();
+            for (const patch of [
+                { sectionId: 'missing' },
+                { sectionId: 's-gone' },
+                { projectId: 'p-home', sectionId: 's-plan' },
+            ]) {
+                const base = Object.fromEntries(Object.keys(patch).map((field) => [field, field === 'projectId' ? 'p-work' : 's-plan']));
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toEqual({
+                    ok: false, error: { code: 'INVALID_INPUT', message: 'sectionId is not a valid value' },
+                });
+            }
+            expect(saveData).not.toHaveBeenCalled();
+            expect(storedTask()).toBe(before);
+
+            expect(await host.saveTaskDraft({ id: 'edit', base: { sectionId: 's-plan' }, patch: { sectionId: 's-ship' } }))
+                .toMatchObject({ ok: true, value: { draft: { sectionId: 's-ship' } } });
+            // Moving projects without naming a section still drops the old one, as in the mobile editor.
+            expect(await host.saveTaskDraft({ id: 'edit', base: { projectId: 'p-work' }, patch: { projectId: 'p-home' } }))
+                .toMatchObject({ ok: true, value: { draft: { projectId: 'p-home', sectionId: '' } } });
+        });
+
+        it('saves an Inbox start date with the same store patch and result as the mobile editor', async () => {
+            const host = await activateEditor([
+                task('via-host', '2026-09-01T00:00:00.000Z', { status: 'inbox' }),
+                task('via-adapter', '2026-09-01T00:00:00.000Z', { status: 'inbox' }),
+            ]);
+            const updateTask = vi.spyOn(useTaskStore.getState(), 'updateTask');
+            expect(await host.saveTaskDraft({
+                id: 'via-host', base: { status: 'inbox', startTime: '' }, patch: { status: 'inbox', startTime: '2026-10-01' },
+            })).toMatchObject({ ok: true });
+            // The mobile editor: the same draft edit through its save composition, then the store.
+            const adapterTask = storedTask('via-adapter')!;
+            const state = createTaskEditDraft(adapterTask);
+            const adapterPatch = buildTaskEditUpdatePatch({ ...state, draft: setTaskDraftField(state.draft, 'startTime', '2026-10-01') }, adapterTask);
+            expect((await useTaskStore.getState().updateTask('via-adapter', adapterPatch!)).success).toBe(true);
+
+            expect(updateTask.mock.calls.map(([, patch]) => patch)).toEqual([adapterPatch, adapterPatch]);
+            const outcome = (id: string) => {
+                const saved = storedTask(id)!;
+                return { status: saved.status, startTime: saved.startTime, isFocusedToday: saved.isFocusedToday };
+            };
+            // Both promote the task to Next: a start date is a clarify decision in the store.
+            expect(outcome('via-host')).toEqual(outcome('via-adapter'));
+            expect(outcome('via-host')).toEqual({ status: 'next', startTime: '2026-10-01', isFocusedToday: false });
+        });
+
+        it('suggests tokens and people like the mobile fields', async () => {
+            const host = createNativeHostContract();
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: '@o', limit: 4 }))
+                .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+            getData.mockResolvedValue(editorData([
+                editTask({ contexts: ['@office'] }),
+                task('home', '2026-09-01T00:00:00.000Z', { contexts: ['@home'], tags: ['#launch'], assignedTo: 'Sam' }),
+            ]));
+            expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+
+            const state = useTaskStore.getState();
+            const derived = state.getDerivedState();
+            const contexts = host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: '@o', limit: 4 });
+            expect(contexts).toEqual({ ok: true, value: getTaskEditorSuggestions({
+                field: 'contexts', text: '@o', limit: 4, knownTokens: derived.allContexts, usage: derived.contextTokenUsage,
+                people: state.people, tasks: state.tasks,
+            }) });
+            // Known contexts come from the store in its order.
+            expect(contexts.ok && contexts.value.matches).toEqual([
+                { value: '@home', text: '@home, ' },
+                { value: '@office', text: '@office, ' },
+            ]);
+            expect(contexts.ok && contexts.value.draftValue).toBe('@o');
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'tags', query: '', limit: 4 }))
+                .toMatchObject({ ok: true, value: { matches: [], quick: [{ value: '#launch', selected: false, text: '#launch' }] } });
+            // Loading made Sam a person just now, so the more recent Sam comes first.
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'assignedTo', query: 'a', limit: 4 }))
+                .toMatchObject({ ok: true, value: { draftValue: 'a', matches: [{ value: 'Sam', text: 'Sam' }, { value: 'Alex', text: 'Alex' }], quick: [] } });
+            expect(host.getTaskEditorSuggestions({ id: 'missing', field: 'tags', query: '', limit: 4 }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            for (const input of [
+                { id: 'edit', field: 'title', query: '', limit: 4 },
+                { id: 'edit', field: 'tags', query: '', limit: 0 },
+                { id: 'edit', field: 'tags', query: 'x'.repeat(2001), limit: 4 },
+            ]) {
+                expect(host.getTaskEditorSuggestions(input as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            }
+        });
+
+        it('rejects read-only tasks and invalid drafts without writing', async () => {
+            const host = createNativeHostContract();
+            expect(await host.saveTaskDraft({ id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } }))
+                .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+            getData.mockResolvedValue(editorData([
+                editTask(),
+                task('archived-project', '2026-09-01T00:00:00.000Z', { projectId: 'p-old' }),
+            ]));
+            expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+            const before = { edit: storedTask(), archived: storedTask('archived-project') };
+            saveData.mockClear();
+
+            expect(await host.saveTaskDraft({ id: 'archived-project', base: { title: 'archived-project' }, patch: { title: 'Mine' } }))
+                .toEqual({ ok: false, error: { code: 'INVALID_INPUT', message: 'Task is read-only while its project is archived' } });
+            expect(await host.saveTaskDraft({ id: 'missing', base: { title: 'x' }, patch: { title: 'y' } }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            const invalid: Array<[Record<string, unknown>, Record<string, unknown>, string]> = [
+                [{}, {}, 'patch must include a draft field'],
+                [{ secret: 'a' }, { secret: 'b' }, 'patch fields must be task draft fields'],
+                [{ title: 'Original' }, { description: 'Private words' }, 'base and patch fields must match: title, description'],
+                [{ status: 'next' }, { status: 'archived' }, 'status is not a valid value'],
+                [{ dueDate: '' }, { dueDate: '2026-02-30' }, 'dueDate is not a valid value'],
+                [{ dueDate: '' }, { dueDate: 'tomorrow' }, 'dueDate is not a valid value'],
+                [{ projectId: '' }, { projectId: 'p-old' }, 'projectId is not a valid value'],
+                [{ areaId: '' }, { areaId: 'a-missing' }, 'areaId is not a valid value'],
+                [{ title: 'Original' }, { title: null }, 'title is not a valid value'],
+                [{ recurrenceRRule: '' }, { recurrenceRRule: 'Private words' }, 'recurrenceRRule is not a valid value'],
+                [{ timeEstimate: '' }, { timeEstimate: '90min' }, 'timeEstimate is not a valid value'],
+                [{ relativeStartOffset: null }, { relativeStartOffset: { amount: 1.5, unit: 'day' } }, 'relativeStartOffset is not a valid value'],
+            ];
+            for (const [base, patch, message] of invalid) {
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch } as never)).toEqual({
+                    ok: false, error: { code: 'INVALID_INPUT', message },
+                });
+            }
+            expect(saveData).not.toHaveBeenCalled();
+            expect({ edit: storedTask(), archived: storedTask('archived-project') }).toEqual(before);
+        });
     });
 
     it('matches the mobile Focus core pipeline and carries Upcoming reveal dates', async () => {

@@ -18,7 +18,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Type } from 'lucide-react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { parseRRuleString, tFallback, type Attachment, type Task, type TaskEditorFieldId, type TaskEditorSectionId, type TimeEstimate, type ViewSectionDefinition } from '@mindwtr/core';
+import { countTaskEditorFilledFields, parseRRuleString, tFallback, type Attachment, type Task, type TaskEditorFieldId, type TaskEditorSectionId, type TimeEstimate, type ViewSectionDefinition } from '@mindwtr/core';
 import type { TaskDraft } from '@mindwtr/core/task-draft';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { CollapsibleSection } from './CollapsibleSection';
@@ -311,40 +311,9 @@ function TaskEditFormTabComponent({
         });
         return () => registerScrollToEnd(null);
     }, [ensureInputVisible, registerScrollToEnd, suspendKeyboardHandling]);
-    const countFilledFields = (fieldIds: TaskEditorFieldId[]): number => {
-        return fieldIds.filter((fieldId) => {
-            switch (fieldId) {
-                case 'startTime':
-                    return Boolean(draft?.startTime);
-                case 'recurrence':
-                    return Boolean(draft?.recurrence);
-                case 'reviewAt':
-                    return Boolean(draft?.reviewAt);
-                case 'contexts':
-                    return Boolean(draft?.contexts.trim());
-                case 'tags':
-                    return Boolean(draft?.tags.trim());
-                case 'priority':
-                    return Boolean(draft?.priority);
-                case 'energyLevel':
-                    return Boolean(draft?.energyLevel);
-                case 'assignedTo':
-                    return Boolean(draft?.assignedTo.trim());
-                case 'timeEstimate':
-                    return Boolean(draft?.timeEstimate);
-                case 'description':
-                    return Boolean(draft?.description.trim());
-                case 'location':
-                    return Boolean(draft?.location.trim());
-                case 'checklist':
-                    return (checklist?.length ?? 0) > 0;
-                case 'attachments':
-                    return (attachments || []).some((attachment) => !attachment.deletedAt);
-                default:
-                    return false;
-            }
-        }).length;
-    };
+    const countFilledFields = (fieldIds: TaskEditorFieldId[]): number => (
+        countTaskEditorFilledFields(fieldIds, { draft, checklist, attachments })
+    );
     const schedulingFilledCount = countFilledFields(schedulingFields);
     const organizationFilledCount = countFilledFields(organizationFields);
     const detailsFilledCount = countFilledFields(detailsFields);

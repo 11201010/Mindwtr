@@ -203,6 +203,7 @@ export * from './import-source-reader';
 export * from './settings-search-keys';
 export * from './task-recurrence-fields';
 export * from './task-editor-layout';
+export * from './task-editor-model';
 export * from './shared-api-write-limits';
 export * from './task-query';
 export * from './onboarding-guidance';

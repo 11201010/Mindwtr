@@ -1,7 +1,11 @@
 import { useMemo } from 'react';
-import type { TaskTokenUsage } from '@mindwtr/core';
-import { getFrequentTaskTokensFromUsage } from '@mindwtr/core';
-import { QUICK_TOKEN_LIMIT } from './task-edit-modal.utils';
+import {
+    getFrequentTaskTokensFromUsage,
+    getTaskEditorTokenMatches,
+    getTaskEditorTokenPool,
+    TASK_EDITOR_QUICK_TOKEN_LIMIT,
+    type TaskTokenUsage,
+} from '@mindwtr/core';
 import { MAX_VISIBLE_SUGGESTIONS } from './recurrence-utils';
 import { getActiveTokenQuery, parseTokenList } from './task-edit-token-utils';
 
@@ -26,15 +30,15 @@ export const useTaskTokenSuggestions = ({
     contextTokenUsage,
     tagTokenUsage,
 }: UseTaskTokenSuggestionsParams) => {
-    const contextSuggestionPool = useMemo(() => {
-        return Array.from(new Set([...(editedContexts ?? []), ...allContexts]))
-            .filter((item): item is string => Boolean(item?.startsWith('@')));
-    }, [allContexts, editedContexts]);
+    const contextSuggestionPool = useMemo(
+        () => getTaskEditorTokenPool(editedContexts, allContexts, '@'),
+        [allContexts, editedContexts]
+    );
 
-    const tagSuggestionPool = useMemo(() => {
-        return Array.from(new Set([...(editedTags ?? []), ...allTags]))
-            .filter((item): item is string => Boolean(item?.startsWith('#')));
-    }, [allTags, editedTags]);
+    const tagSuggestionPool = useMemo(
+        () => getTaskEditorTokenPool(editedTags, allTags, '#'),
+        [allTags, editedTags]
+    );
 
     const contextTokenQuery = useMemo(
         () => getActiveTokenQuery(contextInputDraft, '@'),
@@ -45,32 +49,25 @@ export const useTaskTokenSuggestions = ({
         [tagInputDraft]
     );
 
-    const contextTokenSuggestions = useMemo(() => {
-        if (!contextTokenQuery) return [];
-        const selected = new Set(parseTokenList(contextInputDraft, '@'));
-        return contextSuggestionPool
-            .filter((token) => token.slice(1).toLowerCase().includes(contextTokenQuery))
-            .filter((token) => !selected.has(token))
-            .slice(0, MAX_VISIBLE_SUGGESTIONS);
-    }, [contextInputDraft, contextSuggestionPool, contextTokenQuery]);
+    const contextTokenSuggestions = useMemo(
+        () => getTaskEditorTokenMatches(contextSuggestionPool, contextInputDraft, '@', MAX_VISIBLE_SUGGESTIONS),
+        [contextInputDraft, contextSuggestionPool]
+    );
 
-    const tagTokenSuggestions = useMemo(() => {
-        if (!tagTokenQuery) return [];
-        const selected = new Set(parseTokenList(tagInputDraft, '#'));
-        return tagSuggestionPool
-            .filter((token) => token.slice(1).toLowerCase().includes(tagTokenQuery))
-            .filter((token) => !selected.has(token))
-            .slice(0, MAX_VISIBLE_SUGGESTIONS);
-    }, [tagInputDraft, tagSuggestionPool, tagTokenQuery]);
+    const tagTokenSuggestions = useMemo(
+        () => getTaskEditorTokenMatches(tagSuggestionPool, tagInputDraft, '#', MAX_VISIBLE_SUGGESTIONS),
+        [tagInputDraft, tagSuggestionPool]
+    );
 
     const frequentContextSuggestions = useMemo(
-        () => getFrequentTaskTokensFromUsage(contextTokenUsage, QUICK_TOKEN_LIMIT),
+        () => getFrequentTaskTokensFromUsage(contextTokenUsage, TASK_EDITOR_QUICK_TOKEN_LIMIT),
         [contextTokenUsage]
     );
 
-    const frequentTagSuggestions = useMemo(() => {
-        return getFrequentTaskTokensFromUsage(tagTokenUsage, QUICK_TOKEN_LIMIT);
-    }, [tagTokenUsage]);
+    const frequentTagSuggestions = useMemo(
+        () => getFrequentTaskTokensFromUsage(tagTokenUsage, TASK_EDITOR_QUICK_TOKEN_LIMIT),
+        [tagTokenUsage]
+    );
 
     const selectedContextTokens = useMemo(
         () => new Set(parseTokenList(contextInputDraft, '@')),
