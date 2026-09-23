@@ -29,6 +29,7 @@ export * from './share-card';
 export * from './process-inbox-workflow';
 export * from './process-inbox-session';
 export * from './process-inbox-plan';
+export * from './process-inbox-model';
 export * from './speech-to-task';
 export * from './data-transfer-transaction';
 export * from './feedback';

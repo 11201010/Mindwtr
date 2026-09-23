@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Folder, X } from 'lucide-react-native';
+import { getProcessInboxConversionRows, replaceProcessInboxExtraAction } from '@mindwtr/core';
 
 import { styles } from '../inbox-processing-modal.styles';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -224,80 +225,79 @@ export function InboxProjectSection({
     );
   };
 
-  const renderProjectConversion = () => (
-    <>
-      {renderAreaPicker()}
-      <View style={styles.projectConversionCard}>
-        <View style={styles.projectFieldGroup}>
-          <Text style={[styles.projectFieldLabel, { color: tc.secondaryText }]}>
-            {t('process.nextAction')}
-          </Text>
-          {/* Enter chains into a fresh action row (desktop parity) and keeps
-              the keyboard up — blurring here collapses the Android keyboard
-              inset and makes the sheet visibly jump (#827 rc.3 feedback).
-              The Create project button is the only way to finish the step. */}
-          <TextInput
-            value={nextActionDraft}
-            onChangeText={setNextActionDraft}
-            placeholder={t('taskEdit.titleLabel')}
-            placeholderTextColor={tc.secondaryText}
-            accessibilityLabel={t('process.nextAction')}
-            style={[styles.projectSearchInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-            onSubmitEditing={() => {
-              if (!nextActionDraft.trim()) return;
-              setExtraActionDrafts([...extraActionDrafts, '']);
-            }}
-            blurOnSubmit={false}
-            returnKeyType="next"
-          />
-          {extraActionDrafts.map((draft, index) => (
-            <View key={index} style={styles.extraActionRow}>
-              <TextInput
-                autoFocus
-                value={draft}
-                onChangeText={(value) => setExtraActionDrafts(
-                  extraActionDrafts.map((current, i) => (i === index ? value : current)),
-                )}
-                placeholder={t('taskEdit.titleLabel')}
-                placeholderTextColor={tc.secondaryText}
-                accessibilityLabel={t('process.nextAction')}
-                style={[styles.projectSearchInput, styles.extraActionInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-                onSubmitEditing={() => {
-                  if (index !== extraActionDrafts.length - 1 || !draft.trim()) return;
-                  setExtraActionDrafts([...extraActionDrafts, '']);
-                }}
-                blurOnSubmit={false}
-                returnKeyType="next"
-              />
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel={t('process.removeAction')}
-                onPress={() => setExtraActionDrafts(extraActionDrafts.filter((_, i) => i !== index))}
-                style={styles.extraActionRemove}
-              >
-                <X size={16} color={tc.secondaryText} />
-              </TouchableOpacity>
-            </View>
-          ))}
+  const renderProjectConversion = () => {
+    const actionRows = getProcessInboxConversionRows(nextActionDraft, extraActionDrafts);
+    return (
+      <>
+        {renderAreaPicker()}
+        <View style={styles.projectConversionCard}>
+          <View style={styles.projectFieldGroup}>
+            <Text style={[styles.projectFieldLabel, { color: tc.secondaryText }]}>
+              {t('process.nextAction')}
+            </Text>
+            {/* Enter chains into a fresh action row (desktop parity) and keeps
+                the keyboard up — blurring here collapses the Android keyboard
+                inset and makes the sheet visibly jump (#827 rc.3 feedback).
+                The Create project button is the only way to finish the step. */}
+            <TextInput
+              value={nextActionDraft}
+              onChangeText={setNextActionDraft}
+              placeholder={t('taskEdit.titleLabel')}
+              placeholderTextColor={tc.secondaryText}
+              accessibilityLabel={t('process.nextAction')}
+              style={[styles.projectSearchInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+              onSubmitEditing={() => {
+                if (actionRows.submitNextAction) setExtraActionDrafts(actionRows.submitNextAction);
+              }}
+              blurOnSubmit={false}
+              returnKeyType="next"
+            />
+            {actionRows.rows.map((row, index) => (
+              <View key={index} style={styles.extraActionRow}>
+                <TextInput
+                  autoFocus
+                  value={row.value}
+                  onChangeText={(value) => setExtraActionDrafts(replaceProcessInboxExtraAction(extraActionDrafts, index, value))}
+                  placeholder={t('taskEdit.titleLabel')}
+                  placeholderTextColor={tc.secondaryText}
+                  accessibilityLabel={t('process.nextAction')}
+                  style={[styles.projectSearchInput, styles.extraActionInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                  onSubmitEditing={() => {
+                    if (row.submit) setExtraActionDrafts(row.submit);
+                  }}
+                  blurOnSubmit={false}
+                  returnKeyType="next"
+                />
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={t('process.removeAction')}
+                  onPress={() => setExtraActionDrafts(row.remove)}
+                  style={styles.extraActionRemove}
+                >
+                  <X size={16} color={tc.secondaryText} />
+                </TouchableOpacity>
+              </View>
+            ))}
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => setExtraActionDrafts(actionRows.add)}
+              style={styles.addActionButton}
+            >
+              <Text style={[styles.addActionText, { color: tc.tint }]}>+ {t('process.addAnotherAction')}</Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             accessibilityRole="button"
-            onPress={() => setExtraActionDrafts([...extraActionDrafts, ''])}
-            style={styles.addActionButton}
+            accessibilityLabel={t('process.createProject')}
+            style={[styles.createProjectButton, styles.projectConversionSubmit, { backgroundColor: filledButton.backgroundColor }]}
+            onPress={handleConvertToProject}
           >
-            <Text style={[styles.addActionText, { color: tc.tint }]}>+ {t('process.addAnotherAction')}</Text>
+            <Text style={[styles.createProjectButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('process.createProject')}</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel={t('process.createProject')}
-          style={[styles.createProjectButton, styles.projectConversionSubmit, { backgroundColor: filledButton.backgroundColor }]}
-          onPress={handleConvertToProject}
-        >
-          <Text style={[styles.createProjectButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('process.createProject')}</Text>
-        </TouchableOpacity>
-      </View>
-    </>
-  );
+      </>
+    );
+  };
 
   return (
     <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>

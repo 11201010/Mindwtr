@@ -2,6 +2,7 @@ import React from 'react';
 import { Animated, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_PROJECT_COLOR } from '@mindwtr/core';
 
 import { InboxProcessingModal } from './inbox-processing-modal';
 
@@ -160,7 +161,6 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
   return {
     ...actual,
     addBreadcrumb: vi.fn(),
-    DEFAULT_PROJECT_COLOR: '#3b82f6',
     collectTaskTokenUsage: vi.fn((tasks: any[], selector: (task: any) => string[] | undefined, options?: { prefix?: string }) => {
       const usage = new Map<string, { token: string; count: number; lastUsedAt: number }>();
       for (const task of tasks) {
@@ -1249,7 +1249,7 @@ describe('InboxProcessingModal', () => {
 
     expect(addProject).toHaveBeenCalledWith(
       'Created Project',
-      '#3b82f6',
+      DEFAULT_PROJECT_COLOR,
       { areaId: workArea.id },
     );
   });
@@ -1302,7 +1302,7 @@ describe('InboxProcessingModal', () => {
 
     expect(addProject).toHaveBeenCalledWith(
       'Plan Launch',
-      '#3b82f6',
+      DEFAULT_PROJECT_COLOR,
       { areaId: workArea.id },
     );
     expect(updateTask).toHaveBeenCalledWith(

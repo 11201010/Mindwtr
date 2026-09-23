@@ -75,6 +75,39 @@ import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
 import type { Area, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
 import { generateUUID } from './uuid';
+import { isCustomTimeEstimate as isCustomInboxTimeEstimate, TIME_ESTIMATE_OPTIONS as INBOX_TIME_ESTIMATES } from './calendar-scheduling';
+import { resolveProcessInboxPlan } from './process-inbox-plan';
+import {
+    answerProcessInboxStep,
+    applyProcessInboxDraftEdit,
+    buildProcessInboxStepView,
+    commitProcessInboxDecision,
+    createProcessInboxDraft,
+    createProcessInboxTitleParser,
+    formatProcessInboxCommitMessage,
+    formatProcessInboxProgressLabel,
+    getProcessInboxProgress,
+    getProcessInboxProjectChoices,
+    INITIAL_PROCESS_INBOX_ANSWERS,
+    PROCESS_INBOX_ENERGY_LEVEL_OPTIONS,
+    PROCESS_INBOX_PRIORITY_OPTIONS,
+    resolveProcessInboxProjectSearchSubmit,
+    resolveProcessInboxStep,
+    selectProcessInboxQueue,
+    type ProcessInboxAnswers,
+    type ProcessInboxDraft,
+    type ProcessInboxDraftEdit,
+    type ProcessInboxMode,
+    type ProcessInboxNotice,
+    type ProcessInboxStepView,
+} from './process-inbox-model';
+import {
+    getProcessInboxCurrentCandidate,
+    getProcessInboxRemainingCandidates,
+    startProcessInboxSession,
+    type ProcessInboxSession,
+} from './process-inbox-session';
+import { createTaskSimilarityIndex, type TaskSimilarityIndex } from './task-similarity';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -795,6 +828,10 @@ export function createNativeHostContract() {
 
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
+        ...createInboxProcessingMethods({
+            readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+        }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
             const ready = readiness();
@@ -1726,6 +1763,448 @@ export function createNativeHostContract() {
             } catch (error) {
                 return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
             }
+        },
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Process Inbox. Kept in one block: other changes edit this file in parallel.
+
+/** One Process Inbox step for the task on screen, with the draft the user is editing. */
+export type NativeInboxProcessingView = ProcessInboxStepView & {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    /** Changes with any task, project, area, person, setting, language or minute change. */
+    revision: string;
+    sessionId: string;
+    taskId: string;
+    progress: { processed: number; total: number; label: string };
+    draft: ProcessInboxDraft;
+};
+
+/** A step's result. `view` is null once the queue is done; the session has then ended. */
+export type NativeInboxProcessingResult = {
+    view: NativeInboxProcessingView | null;
+    /** A message the step shows instead of moving on, like "Choose a start date". */
+    notice: ProcessInboxNotice | null;
+    /** The confirmation shown after a decision lands, with its Undo label. */
+    toast: { message: string; undoLabel: string } | null;
+};
+
+type InboxProcessingDeps = {
+    readiness: () => NativeHostResult<null>;
+    save: () => Promise<NativeHostResult<null>>;
+    revision: (now: Date) => string;
+    t: () => (key: string) => string;
+    formatDate: () => DateFormatter;
+};
+
+type InboxProcessingEntry = {
+    id: string;
+    mode: ProcessInboxMode;
+    session: ProcessInboxSession;
+    answers: ProcessInboxAnswers;
+    draft: ProcessInboxDraft;
+    /** The task's content when it opened; a change by another writer makes the session stale. */
+    taskRevision: string;
+    latchedTotal: number;
+    /** The queue is done. Kept until evicted or ended, so the last decision can still be retried. */
+    ended: boolean;
+    /** Completed requests: an exact retry returns the same outcome without writing again. */
+    requests: Map<string, { key: string; notice: ProcessInboxNotice | null; toast: NativeInboxProcessingResult['toast']; saved: boolean }>;
+};
+
+const INBOX_PROCESSING_MODES = new Set(['guided', 'quick']);
+const INBOX_TEXT_FIELDS = new Set(['title', 'description', 'tokenInput', 'projectSearch', 'assignedTo', 'delegateWho', 'nextAction']);
+const INBOX_DATE_FIELDS = new Set(['startTime', 'dueDate', 'reviewAt', 'followUp']);
+const INBOX_TEXT_LIMIT = 10_000;
+const isInboxText = (value: unknown): value is string => typeof value === 'string' && value.length <= INBOX_TEXT_LIMIT;
+const inboxTaskRevision = (task: Task) => `${task.rev ?? ''}:${task.revBy ?? ''}:${task.updatedAt}`;
+
+function isValidInboxEdit(edit: unknown): edit is ProcessInboxDraftEdit {
+    if (!isObjectRecord(edit)) return false;
+    const state = useTaskStore.getState();
+    const { value } = edit;
+    switch (edit.type) {
+        case 'set':
+            return typeof edit.field === 'string' && INBOX_TEXT_FIELDS.has(edit.field) && isInboxText(value);
+        case 'setExtraActions':
+            return Array.isArray(value) && value.length <= NATIVE_HOST_MAX_WINDOW && value.every(isInboxText);
+        case 'setExtraAction':
+            return Number.isSafeInteger(edit.index) && (edit.index as number) >= 0
+                && (edit.index as number) < NATIVE_HOST_MAX_WINDOW && isInboxText(value);
+        case 'setPriority':
+            return value === null || PROCESS_INBOX_PRIORITY_OPTIONS.includes(value as TaskPriority);
+        case 'setEnergyLevel':
+            return value === null || PROCESS_INBOX_ENERGY_LEVEL_OPTIONS.includes(value as never);
+        case 'setTimeEstimate':
+            return value === null || INBOX_TIME_ESTIMATES.includes(value as TimeEstimate) || isCustomInboxTimeEstimate(value as TimeEstimate);
+        case 'setSomedaySection':
+            return value === null || (typeof value === 'string'
+                && (state.settings.gtd?.viewSections?.someday ?? []).some((section) => section.id === value));
+        case 'setArea':
+            return value === null || state.areas.some((area) => area.id === value && !area.deletedAt);
+        case 'selectProject': {
+            if (value === null) return true;
+            const project = typeof value === 'string' ? state._projectsById.get(value) : undefined;
+            return Boolean(project && isSelectableProjectForTaskAssignment(project));
+        }
+        case 'toggleContext':
+        case 'toggleTag':
+        case 'applyTokenSuggestion':
+            return typeof value === 'string' && value.trim().length > 0 && value.length <= 500;
+        case 'addToken':
+            return edit.kind === undefined || edit.kind === 'context' || edit.kind === 'tag';
+        case 'setDate':
+            return typeof edit.field === 'string' && INBOX_DATE_FIELDS.has(edit.field)
+                && (value === null || (typeof value === 'string' && DATE_ONLY_PATTERN.test(value) && safeParseDate(value) !== null));
+        case 'setDateOnly':
+            return typeof edit.field === 'string' && INBOX_DATE_FIELDS.has(edit.field) && typeof value === 'boolean';
+        case 'toggleAdvancedOptions':
+            return true;
+        default:
+            return false;
+    }
+}
+
+function createInboxProcessingMethods(deps: InboxProcessingDeps) {
+    // ponytail: keeps 4 sessions and 20 requests per session. The oldest one whose
+    // writes are all saved makes room; a write still waiting for a save is never
+    // dropped, so while only such work remains, new sessions and requests are refused.
+    // Add an idle expiry if hosts leave sessions open.
+    const sessions = new Map<string, InboxProcessingEntry>();
+    const busy = () => fail('ACTION_FAILED', 'Earlier Process Inbox changes are not saved yet. Retry them first.');
+    const owesSave = (entry: InboxProcessingEntry) => Array.from(entry.requests.values()).some((done) => !done.saved);
+    /** A successful save stores every earlier write too. */
+    const markAllSaved = () => {
+        for (const entry of sessions.values()) {
+            for (const done of entry.requests.values()) done.saved = true;
+        }
+    };
+    let similarity: { tasks: Task[]; index: TaskSimilarityIndex } | null = null;
+
+    const context = () => {
+        const state = useTaskStore.getState();
+        return {
+            state,
+            plan: resolveProcessInboxPlan(state.settings),
+            queue: selectProcessInboxQueue(state.tasks, state.projects),
+            parseTitle: createProcessInboxTitleParser({
+                settings: state.settings, tasks: state.tasks, people: state.people, projects: state.projects, areas: state.areas,
+            }),
+        };
+    };
+
+    /** Put the session's current task on screen with fresh answers and draft. False when the queue is done. */
+    const openCurrent = (entry: InboxProcessingEntry, queue: Task[]): boolean => {
+        const task = getProcessInboxCurrentCandidate(entry.session, queue);
+        if (!task) return false;
+        entry.answers = { ...INITIAL_PROCESS_INBOX_ANSWERS };
+        entry.draft = createProcessInboxDraft(task);
+        entry.taskRevision = inboxTaskRevision(task);
+        return true;
+    };
+
+    const buildView = (entry: InboxProcessingEntry): NativeInboxProcessingView | null => {
+        const { state, plan, queue } = context();
+        const task = entry.ended ? null : getProcessInboxCurrentCandidate(entry.session, queue);
+        if (!task) return null;
+        const now = new Date();
+        const t = deps.t();
+        if (similarity?.tasks !== state._allTasks) {
+            similarity = { tasks: state._allTasks, index: createTaskSimilarityIndex(state._allTasks) };
+        }
+        const progress = getProcessInboxProgress(entry.latchedTotal, getProcessInboxRemainingCandidates(entry.session, queue).length);
+        entry.latchedTotal = progress.total;
+        return {
+            version: NATIVE_HOST_CONTRACT_VERSION,
+            revision: deps.revision(now),
+            sessionId: entry.id,
+            taskId: task.id,
+            progress: { ...progress, label: formatProcessInboxProgressLabel(t, progress.processed, progress.total) },
+            draft: entry.draft,
+            ...buildProcessInboxStepView({
+                task,
+                draft: entry.draft,
+                answers: entry.answers,
+                mode: entry.mode,
+                plan,
+                settings: state.settings,
+                tasks: state.tasks,
+                projects: state.projects,
+                areas: state.areas,
+                people: state.people,
+                similarityIndex: similarity.index,
+                t,
+                formatDate: deps.formatDate(),
+                now,
+            }),
+        };
+    };
+
+    /** The session, checked against its current task and step. */
+    const current = (input: { sessionId: unknown; taskId: unknown; step: unknown }): NativeHostResult<{ entry: InboxProcessingEntry; task: Task }> => {
+        const entry = typeof input.sessionId === 'string' ? sessions.get(input.sessionId) : undefined;
+        if (!entry || entry.ended) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
+        const { plan, queue } = context();
+        const task = getProcessInboxCurrentCandidate(entry.session, queue);
+        if (!task || task.id !== input.taskId || inboxTaskRevision(task) !== entry.taskRevision) {
+            return fail('STALE_REVISION', 'The Inbox item changed; start again');
+        }
+        if (input.step !== resolveProcessInboxStep(entry.answers, entry.mode, plan)) {
+            return fail('STALE_REVISION', 'The step changed; show the current step');
+        }
+        return { ok: true, value: { entry, task } };
+    };
+
+    const result = (entry: InboxProcessingEntry, notice: ProcessInboxNotice | null, toast: NativeInboxProcessingResult['toast']): NativeInboxProcessingResult => (
+        { view: buildView(entry), notice, toast }
+    );
+
+    const writeFailure = (message: string | undefined): NativeHostResult<never> => {
+        const failure = useTaskStore.getState().persistenceFailure;
+        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? message ?? 'Process Inbox write failed');
+    };
+
+    /** Run one request once. A retry of a completed request only finishes its save. */
+    const once = async (
+        entry: InboxProcessingEntry,
+        requestId: string,
+        key: string,
+        run: () => Promise<NativeHostResult<{ notice: ProcessInboxNotice | null; toast: NativeInboxProcessingResult['toast']; wrote: boolean }>>,
+    ): Promise<NativeHostResult<NativeInboxProcessingResult>> => {
+        let done = entry.requests.get(requestId);
+        if (done && done.key !== key) return fail('INVALID_INPUT', 'Request ID already belongs to another step');
+        if (!done) {
+            if (entry.requests.size >= 20) {
+                const oldestSaved = Array.from(entry.requests.entries()).find(([, receipt]) => receipt.saved)?.[0];
+                if (oldestSaved === undefined) return busy();
+                entry.requests.delete(oldestSaved);
+            }
+            const outcome = await run();
+            if (!outcome.ok) return outcome;
+            done = { key, notice: outcome.value.notice, toast: outcome.value.toast, saved: !outcome.value.wrote };
+            entry.requests.set(requestId, done);
+        } else if (!done.saved && useTaskStore.getState().persistenceFailure) {
+            try {
+                await useTaskStore.getState().retryPersistence();
+            } catch (error) {
+                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        }
+        if (!done.saved) {
+            const saved = await deps.save();
+            if (!saved.ok) return saved;
+            markAllSaved();
+        }
+        return { ok: true, value: result(entry, done.notice, done.toast) };
+    };
+
+    const isRequest = (input: unknown): input is { sessionId: string; taskId: string; requestId: string } => (
+        isObjectRecord(input) && typeof input.sessionId === 'string' && typeof input.taskId === 'string'
+        && typeof input.requestId === 'string' && CAPTURE_ID_PATTERN.test(input.requestId)
+    );
+
+    /** Commit a destination, then open the next task or end the session. */
+    const commitKind = async (
+        entry: InboxProcessingEntry,
+        task: Task,
+        kind: Parameters<typeof commitProcessInboxDecision>[0],
+        committed: Parameters<typeof formatProcessInboxCommitMessage>[1] | null,
+    ) => {
+        const { state, plan, queue, parseTitle } = context();
+        const t = deps.t();
+        const title = entry.draft.title.trim() || task.title;
+        const outcome = await commitProcessInboxDecision(kind, {
+            task,
+            draft: entry.draft,
+            plan,
+            settings: state.settings,
+            projects: state.projects,
+            parseTitle,
+            session: entry.session,
+            candidates: queue,
+            // Read at call time, like every other contract write.
+            actions: {
+                updateTask: (id, updates) => useTaskStore.getState().updateTask(id, updates),
+                deleteTask: (id) => useTaskStore.getState().deleteTask(id),
+                addTask: (taskTitle, props) => useTaskStore.getState().addTask(taskTitle, props),
+                addProject: (projectTitle, color, props) => useTaskStore.getState().addProject(projectTitle, color, props),
+            },
+            t,
+        });
+        entry.draft = outcome.draft;
+        if (!outcome.ok) {
+            if (outcome.reason === 'write-failed' || outcome.reason === 'project-create-failed' || outcome.reason === null) {
+                return writeFailure(outcome.notice?.message);
+            }
+            return { ok: true as const, value: { notice: outcome.notice, toast: null, wrote: false } };
+        }
+        entry.session = outcome.session;
+        if (!openCurrent(entry, context().queue)) entry.ended = true;
+        return {
+            ok: true as const,
+            value: {
+                notice: null,
+                toast: committed
+                    ? { message: formatProcessInboxCommitMessage(t, committed, title), undoLabel: tFallback(t, 'common.undo', 'Undo') }
+                    : null,
+                wrote: true,
+            },
+        };
+    };
+
+    return {
+        /** Open the queue: Inbox items and returning Someday items, in store order. */
+        startInboxProcessing(input: { mode?: ProcessInboxMode } = {}): NativeHostResult<{
+            sessionId: string | null;
+            queue: { total: number; taskIds: string[] };
+            view: NativeInboxProcessingView | null;
+        }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || (input.mode !== undefined && !INBOX_PROCESSING_MODES.has(input.mode as string))) {
+                return fail('INVALID_INPUT', 'mode must be guided or quick');
+            }
+            const { queue } = context();
+            const taskIds = queue.slice(0, NATIVE_HOST_MAX_WINDOW).map((task) => task.id);
+            if (queue.length === 0) return { ok: true, value: { sessionId: null, queue: { total: 0, taskIds }, view: null } };
+            if (sessions.size >= 4) {
+                const oldestSaved = Array.from(sessions.values()).find((session) => !owesSave(session));
+                if (!oldestSaved) return busy();
+                sessions.delete(oldestSaved.id);
+            }
+            const entry: InboxProcessingEntry = {
+                id: generateUUID(),
+                mode: input.mode ?? 'guided',
+                session: startProcessInboxSession(queue),
+                answers: { ...INITIAL_PROCESS_INBOX_ANSWERS },
+                draft: createProcessInboxDraft(queue[0]),
+                taskRevision: inboxTaskRevision(queue[0]),
+                latchedTotal: 0,
+                ended: false,
+                requests: new Map(),
+            };
+            sessions.set(entry.id, entry);
+            return { ok: true, value: { sessionId: entry.id, queue: { total: queue.length, taskIds }, view: buildView(entry)! } };
+        },
+
+        /**
+         * The current step. `edit` changes the draft first, as the step's controls do;
+         * `mode` switches guided and quick for the same task.
+         */
+        getInboxProcessingStep(input: {
+            sessionId: string;
+            taskId: string;
+            step: string;
+            edit?: ProcessInboxDraftEdit;
+            mode?: ProcessInboxMode;
+        }): NativeHostResult<NativeInboxProcessingView> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || typeof input.sessionId !== 'string' || typeof input.taskId !== 'string'
+                || typeof input.step !== 'string'
+                || (input.edit !== undefined && !isValidInboxEdit(input.edit))
+                || (input.mode !== undefined && !INBOX_PROCESSING_MODES.has(input.mode))) {
+                return fail('INVALID_INPUT', 'A session, task, step, and a valid edit or mode are required');
+            }
+            const checked = current(input);
+            if (!checked.ok) return checked;
+            const { entry } = checked.value;
+            if (input.edit) entry.draft = applyProcessInboxDraftEdit(entry.draft, input.edit, context().plan);
+            if (input.mode) entry.mode = input.mode;
+            return { ok: true, value: buildView(entry)! };
+        },
+
+        /**
+         * Answer the step: a choice from `view.choices`, `fileIt`, `createProject`, `back`, or
+         * `submitProjectSearch`. Reuse `requestId` to retry: a completed request writes nothing again.
+         */
+        async commitInboxProcessingStep(input: {
+            sessionId: string;
+            taskId: string;
+            step: string;
+            decision: { choice: string };
+            requestId: string;
+        }): Promise<NativeHostResult<NativeInboxProcessingResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isRequest(input) || typeof input.step !== 'string'
+                || !isObjectRecord(input.decision) || typeof input.decision.choice !== 'string') {
+                return fail('INVALID_INPUT', 'A session, task, step, decision choice, and request UUID are required');
+            }
+            const entry = sessions.get(input.sessionId);
+            if (!entry) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
+            const key = JSON.stringify([input.taskId, input.step, input.decision.choice]);
+            return once(entry, input.requestId, key, async () => {
+                const checked = current(input);
+                if (!checked.ok) return checked;
+                const { task } = checked.value;
+                const { state, plan, parseTitle } = context();
+                if (input.decision.choice === 'submitProjectSearch') {
+                    if (!buildView(entry)?.project?.search) return fail('INVALID_INPUT', 'This step has no project search');
+                    const { exactMatch } = getProcessInboxProjectChoices(state.projects, entry.draft.areaId, entry.draft.projectSearch);
+                    const submit = resolveProcessInboxProjectSearchSubmit(entry.draft.projectSearch, exactMatch, entry.draft.areaId);
+                    if (submit.type === 'none') return { ok: true, value: { notice: null, toast: null, wrote: false } };
+                    let projectId = submit.type === 'select' ? submit.projectId : null;
+                    if (submit.type === 'create') {
+                        try {
+                            projectId = (await useTaskStore.getState().addProject(submit.title, submit.color, submit.props))?.id ?? null;
+                        } catch (error) {
+                            return writeFailure(error instanceof Error ? error.message : String(error));
+                        }
+                        if (!projectId) return writeFailure(useTaskStore.getState().error ?? undefined);
+                    }
+                    entry.draft = applyProcessInboxDraftEdit(entry.draft, { type: 'selectProject', value: projectId }, plan);
+                    return { ok: true, value: { notice: null, toast: null, wrote: submit.type === 'create' } };
+                }
+                const outcome = answerProcessInboxStep({
+                    choice: input.decision.choice,
+                    answers: entry.answers,
+                    draft: entry.draft,
+                    mode: entry.mode,
+                    plan,
+                    task,
+                    parseTitle,
+                });
+                if (outcome.type === 'invalid') return fail('INVALID_INPUT', 'This step does not offer that choice');
+                if (outcome.type === 'flow') {
+                    entry.answers = outcome.answers;
+                    entry.draft = outcome.draft;
+                    return { ok: true, value: { notice: null, toast: null, wrote: false } };
+                }
+                return commitKind(entry, task, outcome.kind, outcome.committed);
+            });
+        },
+
+        /** Skip: keep the edits made so far and move to the next item, as mobile does. */
+        async skipInboxProcessingTask(input: {
+            sessionId: string;
+            taskId: string;
+            requestId: string;
+        }): Promise<NativeHostResult<NativeInboxProcessingResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isRequest(input)) return fail('INVALID_INPUT', 'A session, task, and request UUID are required');
+            const entry = sessions.get(input.sessionId);
+            if (!entry) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
+            return once(entry, input.requestId, JSON.stringify([input.taskId, 'skip']), async () => {
+                // Skip sits in the header, so every step offers it.
+                const step = resolveProcessInboxStep(entry.answers, entry.mode, context().plan);
+                const checked = current({ ...input, step });
+                if (!checked.ok) return checked;
+                return commitKind(entry, checked.value.task, 'skip', null);
+            });
+        },
+
+        /** Close the session. Nothing is written; a write still waiting for its save stays retryable. */
+        endInboxProcessing(input: { sessionId: string }): NativeHostResult<null> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || typeof input.sessionId !== 'string') return fail('INVALID_INPUT', 'A session ID is required');
+            const entry = sessions.get(input.sessionId);
+            if (entry && owesSave(entry)) entry.ended = true;
+            else sessions.delete(input.sessionId);
+            return { ok: true, value: null };
         },
     };
 }

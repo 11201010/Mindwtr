@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text, View } from 'react-native';
-import { tFallback, type Task } from '@mindwtr/core';
+import { formatProcessInboxSimilarTaskMeta, type Task } from '@mindwtr/core';
 
 import { styles } from '../inbox-processing-modal.styles';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -24,8 +24,7 @@ export function SimilarTasksHint({ t, tc, tasks, projectTitles }: Props) {
         {heading}
       </Text>
       {tasks.map((task) => {
-        const status = tFallback(t, `status.${task.status}`, task.status);
-        const projectTitle = task.projectId ? projectTitles.get(task.projectId) : undefined;
+        const meta = formatProcessInboxSimilarTaskMeta(t, task, task.projectId ? projectTitles.get(task.projectId) : undefined);
 
         return (
           <View key={task.id} style={styles.similarTaskRow}>
@@ -33,7 +32,7 @@ export function SimilarTasksHint({ t, tc, tasks, projectTitles }: Props) {
               {task.title}
             </Text>
             <Text style={[styles.similarTaskMeta, { color: tc.secondaryText }]}>
-              {projectTitle ? `${status} • ${projectTitle}` : status}
+              {meta}
             </Text>
           </View>
         );

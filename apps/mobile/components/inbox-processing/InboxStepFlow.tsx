@@ -12,11 +12,15 @@ import {
 } from 'lucide-react-native';
 import { INCUBATE_ICON, START_LATER_ICON, TASK_STATUS_ICONS } from '@/lib/task-status-icons';
 import {
-  formatTaskMarkedDoneMessage,
-  formatTaskMovedMessage,
+  formatProcessInboxCommitMessage,
+  getProcessInboxEntryStep,
+  getProcessInboxStepPrompt,
+  isProcessInboxTerminalStep,
   QUICK_DATE_PRESETS,
+  resolveProcessInboxStep,
   tFallback,
-  type TaskStatus,
+  type ProcessInboxCommitted,
+  type ProcessInboxStepChoice,
 } from '@mindwtr/core';
 
 import { styles } from '../inbox-processing-modal.styles';
@@ -38,10 +42,15 @@ import type { useInboxProcessingController } from './useInboxProcessingControlle
 
 type Controller = ReturnType<typeof useInboxProcessingController>;
 
-/** Which decision landed — picks the Undo toast wording. */
-type Committed = 'trash' | Extract<TaskStatus, 'next' | 'waiting' | 'someday' | 'reference' | 'done'>;
-
-type Step = 'actionable' | 'decisions' | 'someday' | 'later' | 'incubate' | 'twoMinute' | 'execution' | 'oneAction' | 'waiting' | 'file';
+const CHOICE_ICONS: Record<string, LucideIcon> = {
+  done: CheckCircle2,
+  project: Folder,
+  later: START_LATER_ICON,
+  delegate: UserRound,
+  someday: TASK_STATUS_ICONS.someday,
+  incubate: INCUBATE_ICON,
+  reference: TASK_STATUS_ICONS.reference,
+};
 
 const STEP_TRANSITION_MS = 200;
 const STEP_TRANSITION_OFFSET = 24;
@@ -89,42 +98,30 @@ function ChoiceButton({
  */
 export function InboxStepFlow({ controller, mode }: { controller: Controller; mode: InboxProcessingMode }) {
   const {
-    actionabilityChoice,
-    clearDecision,
+    answers,
+    answerStep,
     convertToProject,
     createDecisionUndoReceipt,
     currentTask,
-    executionChoice,
-    handleNextTask,
-    handleNotActionable,
-    handleProjectConversionCancel,
-    handleProjectConversionStart,
-    handleTwoMinYes,
-    finalizeNextAction,
     pendingStartDate,
     pendingStartDateOnly,
+    processInboxPlan,
     projectFirst,
-    setActionabilityChoice,
-    setExecutionChoice,
+    runCommit,
     setPendingStartDate,
     setPendingStartDateOnly,
     setShowStartDatePicker,
-    setTwoMinuteChoice,
     showAdvancedOptions,
     showProjectField,
     showStartDatePicker,
     t,
     tc,
     toggleAdvancedOptions,
-    twoMinuteChoice,
-    twoMinuteEnabled,
-    twoMinuteFirst,
     undoDecision,
   } = controller;
   const { showToast } = useToast();
   const filledButton = useFilledButtonColors();
   const reducedMotion = useReducedMotion();
-  const [oneActionAnswered, setOneActionAnswered] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const submittingRef = useRef(false);
   const fade = useRef(new Animated.Value(1)).current;
@@ -138,32 +135,12 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
 
   // Quick mode answers the whole tree in one tap, so it shares every terminal
   // step and only replaces the entry screen with a flat row of decisions.
-  const quick = mode === 'quick';
-  const entryStep: Step = quick
-    ? 'decisions'
-    : twoMinuteEnabled && twoMinuteFirst ? 'twoMinute' : 'actionable';
-  const step: Step = (() => {
-    if (actionabilityChoice === 'someday') return 'someday';
-    if (actionabilityChoice === 'later') return 'later';
-    if (actionabilityChoice === 'incubate') return 'incubate';
-    if (quick) {
-      if (actionabilityChoice !== 'actionable') return 'decisions';
-      if (twoMinuteEnabled && twoMinuteChoice === null) return 'decisions';
-      if (executionChoice === null) return 'decisions';
-    } else {
-      if (twoMinuteEnabled && twoMinuteFirst && twoMinuteChoice === null) return 'twoMinute';
-      if (actionabilityChoice !== 'actionable') return 'actionable';
-      if (twoMinuteEnabled && !twoMinuteFirst && twoMinuteChoice === null) return 'twoMinute';
-      if (executionChoice === null) return 'execution';
-    }
-    if (executionChoice === 'delegate') return 'waiting';
-    if (showProjectField && !oneActionAnswered) return 'oneAction';
-    return 'file';
-  })();
-  const isTerminal = step === 'someday' || step === 'later' || step === 'incubate' || step === 'waiting' || step === 'file';
+  const entryStep = getProcessInboxEntryStep(mode, processInboxPlan);
+  const step = resolveProcessInboxStep(answers, mode, processInboxPlan);
+  const isTerminal = isProcessInboxTerminalStep(step);
+  const prompt = getProcessInboxStepPrompt(step, processInboxPlan, t);
 
   useEffect(() => {
-    setOneActionAnswered(false);
     setNotesOpen(false);
   }, [taskId]);
 
@@ -181,14 +158,14 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
     Animated.timing(slide, { toValue: 0, duration: STEP_TRANSITION_MS, useNativeDriver: true }).start();
   }, [fade, reducedMotion, slide, step, taskId]);
 
-  const commit = useCallback(async (committed: Committed, run: () => Promise<boolean>) => {
+  const commit = useCallback(async (committed: ProcessInboxCommitted, run: () => Promise<boolean>) => {
     if (submittingRef.current) return;
     const undoReceipt = createDecisionUndoReceipt(
       committed === 'trash' ? 'discarded' : committed === 'done' ? 'completed' : 'filed',
     );
     if (!undoReceipt) return;
-    // Same title the write commits (prepareProcessingEdits), not the raw
-    // capture — refining the title mid-step must show up in the Undo toast.
+    // Same title the write commits, not the raw capture — refining the title
+    // mid-step must show up in the Undo toast.
     const title = controller.processingTitle.trim() || currentTask?.title || '';
     submittingRef.current = true;
     try {
@@ -198,16 +175,8 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
     }
     // Same completion feedback a task row's own done button gives.
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    let message: string;
-    if (committed === 'trash') {
-      message = tFallback(t, 'inbox.movedToTrash', '{{title}} moved to Trash').replace('{{title}}', title);
-    } else if (committed === 'done') {
-      message = formatTaskMarkedDoneMessage(t, title);
-    } else {
-      message = formatTaskMovedMessage(t, title, committed);
-    }
     showToast({
-      message,
+      message: formatProcessInboxCommitMessage(t, committed, title),
       tone: 'info',
       actionLabel: tFallback(t, 'common.undo', 'Undo'),
       onAction: () => { void undoDecision(undoReceipt); },
@@ -215,51 +184,16 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
     });
   }, [controller.processingTitle, createDecisionUndoReceipt, currentTask?.title, showToast, t, undoDecision]);
 
-  const goBack = useCallback(() => {
-    if (quick) {
-      clearDecision('actionability');
-      setOneActionAnswered(false);
-      return;
-    }
-    if (step === 'file' && oneActionAnswered) {
-      handleProjectConversionCancel();
-      setOneActionAnswered(false);
-      return;
-    }
-    if (step === 'file' || step === 'waiting' || step === 'oneAction') {
-      clearDecision('execution');
-      return;
-    }
-    if (step === 'execution' && twoMinuteEnabled && !twoMinuteFirst) {
-      clearDecision('twoMinute');
-      return;
-    }
-    if (step === 'actionable' && twoMinuteEnabled && twoMinuteFirst) {
-      clearDecision('twoMinute');
-      return;
-    }
-    clearDecision('actionability');
-  }, [clearDecision, handleProjectConversionCancel, oneActionAnswered, quick, step, twoMinuteEnabled, twoMinuteFirst]);
-
-  /** Quick mode: answer the whole tree at once and land on the follow-up (if any). */
-  const chooseQuick = useCallback((destination: 'next' | 'project' | 'later' | 'delegate') => {
-    if (destination === 'later') {
-      setActionabilityChoice('later');
-      return;
-    }
-    setActionabilityChoice('actionable');
-    setTwoMinuteChoice('no');
-    setExecutionChoice(destination === 'delegate' ? 'delegate' : 'defer');
-    // 'project' falls through to the one-action question so quick mode can
-    // still split a capture into a project; the rest skip straight past it.
-    setOneActionAnswered(destination !== 'project');
-  }, [setActionabilityChoice, setExecutionChoice, setTwoMinuteChoice]);
+  /** A step button: move to the next question, or commit the destination. */
+  const choose = useCallback((choice: string) => {
+    const outcome = answerStep(choice, mode);
+    if (outcome.type !== 'commit') return;
+    const { kind, committed } = outcome;
+    if (committed) void commit(committed, () => runCommit(kind));
+    else void runCommit(kind);
+  }, [answerStep, commit, mode, runCommit]);
 
   if (!currentTask) return null;
-
-  const terminalOutcome: Committed = step === 'waiting'
-    ? 'waiting'
-    : (step === 'incubate' || step === 'someday' ? 'someday' : 'next');
 
   const moreOptionsDisclosure = (
     <>
@@ -397,186 +331,52 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
     </View>
   );
 
+  /** A question step: its prompt, its choices, and Trash set apart. */
+  const renderPrompt = () => {
+    const grid = step === 'decisions' || step === 'actionable';
+    const renderChoice = (choice: ProcessInboxStepChoice) => (
+      <ChoiceButton
+        key={choice.id}
+        compact={grid}
+        icon={choice.icon ? CHOICE_ICONS[choice.icon] : undefined}
+        tc={tc}
+        label={choice.label}
+        onPress={() => choose(choice.id)}
+      />
+    );
+    return (
+      <View>
+        {prompt.question ? <Text style={[styles.stepQuestion, { color: tc.text }]}>{prompt.question}</Text> : null}
+        {prompt.hint ? <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{prompt.hint}</Text> : null}
+        <View style={grid ? styles.stepChoiceGrid : styles.stepChoiceColumn}>
+          {prompt.choices.filter((choice) => !choice.danger).map(renderChoice)}
+        </View>
+        {prompt.choices.filter((choice) => choice.danger).map((choice) => (
+          <TouchableOpacity
+            key={choice.id}
+            accessibilityRole="button"
+            accessibilityLabel={choice.label}
+            style={styles.stepTertiaryButton}
+            onPress={() => choose(choice.id)}
+          >
+            <Trash2 size={16} color={tc.danger} strokeWidth={2} />
+            <Text style={[styles.stepTertiaryText, { color: tc.danger }]}>{choice.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  };
+
   const renderStep = () => {
     switch (step) {
-      // Quick mode: every destination on one screen. Terminal ones commit on
-      // the tap; the rest drop straight into that decision's follow-up step.
+      // Quick mode puts every destination on one screen. Terminal ones commit
+      // on the tap; the rest drop straight into that decision's follow-up step.
       case 'decisions':
-        return (
-          <View>
-            <View style={styles.stepChoiceGrid}>
-              <ChoiceButton
-                compact
-                tc={tc}
-                label={t('inbox.illDoIt')}
-                onPress={() => { void commit('next', () => finalizeNextAction(controller.selectedProjectId)); }}
-              />
-              {twoMinuteEnabled && (
-                <ChoiceButton
-                  compact
-                  icon={CheckCircle2}
-                  tc={tc}
-                  label={t('inbox.doneIt')}
-                  onPress={() => { void commit('done', handleTwoMinYes); }}
-                />
-              )}
-              {showProjectField && (
-                <ChoiceButton
-                  compact
-                  icon={Folder}
-                  tc={tc}
-                  label={t('taskEdit.projectLabel')}
-                  onPress={() => chooseQuick('project')}
-                />
-              )}
-              <ChoiceButton
-                compact
-                icon={START_LATER_ICON}
-                tc={tc}
-                label={tFallback(t, 'process.later', 'Start later')}
-                onPress={() => chooseQuick('later')}
-              />
-              <ChoiceButton
-                compact
-                icon={UserRound}
-                tc={tc}
-                label={t('inbox.delegate')}
-                onPress={() => chooseQuick('delegate')}
-              />
-              <ChoiceButton
-                compact
-                icon={TASK_STATUS_ICONS.someday}
-                tc={tc}
-                label={t('inbox.someday')}
-                onPress={() => setActionabilityChoice('someday')}
-              />
-              <ChoiceButton
-                compact
-                icon={INCUBATE_ICON}
-                tc={tc}
-                label={tFallback(t, 'process.incubate', 'Incubate')}
-                onPress={() => setActionabilityChoice('incubate')}
-              />
-              <ChoiceButton
-                compact
-                icon={TASK_STATUS_ICONS.reference}
-                tc={tc}
-                label={t('nav.reference')}
-                onPress={() => { void commit('reference', () => handleNotActionable('reference')); }}
-              />
-            </View>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel={t('inbox.trash')}
-              style={styles.stepTertiaryButton}
-              onPress={() => { void commit('trash', () => handleNotActionable('trash')); }}
-            >
-              <Trash2 size={16} color={tc.danger} strokeWidth={2} />
-              <Text style={[styles.stepTertiaryText, { color: tc.danger }]}>{t('inbox.trash')}</Text>
-            </TouchableOpacity>
-          </View>
-        );
-
       case 'actionable':
-        return (
-          <View>
-            <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('inbox.isActionable')}</Text>
-            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{t('inbox.actionableHint')}</Text>
-            <View style={styles.stepChoiceGrid}>
-              <ChoiceButton
-                compact
-                tc={tc}
-                label={t('inbox.yes')}
-                onPress={() => setActionabilityChoice('actionable')}
-              />
-              <ChoiceButton
-                compact
-                icon={START_LATER_ICON}
-                tc={tc}
-                label={tFallback(t, 'process.later', 'Start later')}
-                onPress={() => setActionabilityChoice('later')}
-              />
-              <ChoiceButton
-                compact
-                icon={TASK_STATUS_ICONS.someday}
-                tc={tc}
-                label={t('inbox.someday')}
-                onPress={() => setActionabilityChoice('someday')}
-              />
-              <ChoiceButton
-                compact
-                icon={INCUBATE_ICON}
-                tc={tc}
-                label={tFallback(t, 'process.incubate', 'Incubate')}
-                onPress={() => setActionabilityChoice('incubate')}
-              />
-              <ChoiceButton
-                compact
-                icon={TASK_STATUS_ICONS.reference}
-                tc={tc}
-                label={t('nav.reference')}
-                onPress={() => { void commit('reference', () => handleNotActionable('reference')); }}
-              />
-            </View>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel={t('inbox.trash')}
-              style={styles.stepTertiaryButton}
-              onPress={() => { void commit('trash', () => handleNotActionable('trash')); }}
-            >
-              <Trash2 size={16} color={tc.danger} strokeWidth={2} />
-              <Text style={[styles.stepTertiaryText, { color: tc.danger }]}>{t('inbox.trash')}</Text>
-            </TouchableOpacity>
-          </View>
-        );
-
       case 'twoMinute':
-        return (
-          <View>
-            <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('inbox.twoMinRule')}</Text>
-            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{t('inbox.twoMinHint')}</Text>
-            <View style={styles.stepChoiceColumn}>
-              <ChoiceButton tc={tc} label={t('inbox.doneIt')} onPress={() => { void commit('done', handleTwoMinYes); }} />
-              <ChoiceButton tc={tc} label={t('inbox.takesLonger')} onPress={() => setTwoMinuteChoice('no')} />
-            </View>
-          </View>
-        );
-
       case 'execution':
-        return (
-          <View>
-            <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('inbox.whoShouldDoIt')}</Text>
-            <View style={styles.stepChoiceColumn}>
-              <ChoiceButton tc={tc} label={t('inbox.illDoIt')} onPress={() => setExecutionChoice('defer')} />
-              <ChoiceButton
-                icon={UserRound}
-                tc={tc}
-                label={t('inbox.delegate')}
-                onPress={() => setExecutionChoice('delegate')}
-              />
-            </View>
-          </View>
-        );
-
       case 'oneAction':
-        return (
-          <View>
-            <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('process.moreThanOneStep')}</Text>
-            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{t('process.moreThanOneStepDesc')}</Text>
-            <View style={styles.stepChoiceColumn}>
-              <ChoiceButton
-                tc={tc}
-                label={t('process.moreThanOneStepNo')}
-                onPress={() => { handleProjectConversionCancel(); setOneActionAnswered(true); }}
-              />
-              <ChoiceButton
-                tc={tc}
-                label={t('process.moreThanOneStepYes')}
-                onPress={() => { handleProjectConversionStart(); setOneActionAnswered(true); }}
-              />
-            </View>
-          </View>
-        );
+        return renderPrompt();
 
       case 'someday':
         return (
@@ -589,12 +389,8 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
       case 'later':
         return (
           <View>
-            <Text style={[styles.stepQuestion, { color: tc.text }]}>
-              {tFallback(t, 'inbox.deferWhen', 'When should it start?')}
-            </Text>
-            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
-              {tFallback(t, 'process.laterHint', 'Set a start date and move this to Next Actions.')}
-            </Text>
+            <Text style={[styles.stepQuestion, { color: tc.text }]}>{prompt.question}</Text>
+            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{prompt.hint}</Text>
             <InboxDateSelectorRow
               t={t}
               label={t('taskEdit.startDateLabel')}
@@ -625,12 +421,8 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
       case 'incubate':
         return (
           <View>
-            <Text style={[styles.stepQuestion, { color: tc.text }]}>
-              {tFallback(t, 'inbox.deferWhen', 'When should it come back?')}
-            </Text>
-            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
-              {tFallback(t, 'process.incubateHint', 'Park this without deciding. It comes back to clarify on the date you choose.')}
-            </Text>
+            <Text style={[styles.stepQuestion, { color: tc.text }]}>{prompt.question}</Text>
+            <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{prompt.hint}</Text>
             <InboxDateSelectorRow
               t={t}
               label={t('taskEdit.reviewDateLabel')}
@@ -765,7 +557,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
         </Animated.View>
 
         {step !== entryStep && (
-          <TouchableOpacity accessibilityRole="button" style={styles.stepBackButton} onPress={goBack}>
+          <TouchableOpacity accessibilityRole="button" style={styles.stepBackButton} onPress={() => choose('back')}>
             <Text style={[styles.stepBackText, { color: tc.secondaryText }]}>
               {`‹ ${tFallback(t, 'common.back', 'Back')}`}
             </Text>
@@ -821,7 +613,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
           <TouchableOpacity
             style={[styles.bottomNextButton, { backgroundColor: filledButton.backgroundColor }]}
             accessibilityRole="button"
-            onPress={() => { void commit(terminalOutcome, handleNextTask); }}
+            onPress={() => choose('fileIt')}
           >
             <Text style={[styles.bottomNextButtonText, { color: primaryForeground }]}>
               {tFallback(t, 'inbox.fileIt', 'File it')}

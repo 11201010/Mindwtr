@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { LayoutList, Layers, X } from 'lucide-react-native';
-import { tFallback } from '@mindwtr/core';
+import { getProcessInboxProgress, tFallback } from '@mindwtr/core';
 
 import { AIResponseModal } from './ai-response-modal';
 import { ThemedAlertHost } from '@/components/themed-alert';
@@ -44,11 +44,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   // pair reads "0/3" then "0/2". Latch the session's starting size and count up
   // against it instead: filed and skipped items are both progress.
   const sessionTotalRef = useRef(0);
-  const remaining = totalCount - processedCount;
-  if (!visible) sessionTotalRef.current = 0;
-  else if (remaining > sessionTotalRef.current) sessionTotalRef.current = remaining;
-  const sessionTotal = sessionTotalRef.current;
-  const sessionProcessed = Math.max(0, sessionTotal - remaining);
+  const progress = getProcessInboxProgress(visible ? sessionTotalRef.current : 0, totalCount - processedCount);
+  sessionTotalRef.current = visible ? progress.total : 0;
+  const { total: sessionTotal, processed: sessionProcessed } = progress;
 
   const quick = processingMode === 'quick';
   // Presentation only — switching mid-queue keeps the same item on screen.

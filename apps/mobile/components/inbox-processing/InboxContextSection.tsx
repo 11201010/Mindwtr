@@ -1,6 +1,8 @@
 import React from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { getProcessInboxTokenSection } from '@mindwtr/core';
+
 import { styles } from '../inbox-processing-modal.styles';
 import { InboxSuggestionList } from './InboxSuggestionList';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -44,24 +46,23 @@ export function InboxContextSection({
 }: Props) {
   if (!show) return null;
 
-  const visibleTokenSuggestions = tokenSuggestions.filter((token) => (
-    token.startsWith('#') ? showTagsField : showContextsField
-  ));
-  const visibleTokenSuggestionSet = new Set(visibleTokenSuggestions);
-  const visibleContextCopilotSuggestions = contextCopilotSuggestions.filter((token) => !visibleTokenSuggestionSet.has(token));
-  const visibleTagCopilotSuggestions = tagCopilotSuggestions.filter((token) => !visibleTokenSuggestionSet.has(token));
-  const tokenPlaceholder = showContextsField && !showTagsField
-    ? '@home'
-    : showTagsField && !showContextsField
-      ? '#deep-work'
-      : t('inbox.addContextPlaceholder');
+  const {
+    suggestions: visibleTokenSuggestions,
+    contextSuggestions: visibleContextCopilotSuggestions,
+    tagSuggestions: visibleTagCopilotSuggestions,
+    placeholder,
+    addKind,
+  } = getProcessInboxTokenSection({
+    showContexts: showContextsField,
+    showTags: showTagsField,
+    tokenSuggestions,
+    contextSuggestions: contextCopilotSuggestions,
+    tagSuggestions: tagCopilotSuggestions,
+  });
+  const tokenPlaceholder = placeholder ?? t('inbox.addContextPlaceholder');
   // When only one of the two is on screen, an unprefixed entry belongs to that
   // one — otherwise the shared prefix rule would file a bare tag as a context.
-  const addToken = () => addCustomContextMobile(
-    showContextsField === showTagsField
-      ? undefined
-      : showTagsField ? 'tag' : 'context',
-  );
+  const addToken = () => addCustomContextMobile(addKind);
   const suggestedContextsLabel = `${t('copilot.suggested')} ${t('nav.contexts').toLowerCase()}`;
   const suggestedTagsLabel = `${t('copilot.suggested')} ${t('taskEdit.tagsLabel').toLowerCase()}`;
 
