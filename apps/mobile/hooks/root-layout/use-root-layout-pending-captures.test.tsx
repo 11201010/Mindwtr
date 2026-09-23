@@ -63,10 +63,12 @@ vi.mock('@/lib/pomodoro-controller', () => ({
 vi.mock('@/lib/app-log', () => ({ logError: vi.fn(async () => undefined), logInfo: vi.fn(async () => undefined) }));
 
 // eslint-disable-next-line import/first
+import { logInfo } from '@/lib/app-log';
+// eslint-disable-next-line import/first
 import { useRootLayoutPendingCaptures } from './use-root-layout-pending-captures';
 
-function Harness({ dataReady = true, disabled = false }: { dataReady?: boolean; disabled?: boolean }) {
-  useRootLayoutPendingCaptures({ dataReady, disabled });
+function Harness({ canonicalDataReady = true, disabled = false }: { canonicalDataReady?: boolean; disabled?: boolean }) {
+  useRootLayoutPendingCaptures({ canonicalDataReady, disabled });
   return null;
 }
 
@@ -100,14 +102,39 @@ describe('useRootLayoutPendingCaptures', () => {
     act(() => tree.unmount());
   });
 
-  it('does not drain before store data is ready', () => {
+  // Before canonical data only the startup snapshot is in the store. A write
+  // there makes core discard the SQLite load, so the queue waits on disk.
+  it('holds the queue until canonical data is ready, then drains it once', async () => {
+    let drain!: () => Promise<void>;
+    function Probe({ canonicalDataReady }: { canonicalDataReady: boolean }) {
+      drain = useRootLayoutPendingCaptures({ canonicalDataReady });
+      return null;
+    }
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<Harness dataReady={false} />);
-    });
-
+    await act(async () => { tree = renderer.create(<Probe canonicalDataReady={false} />); });
+    // A Watch wake-up before the load is a no-op, not a lost capture.
+    await act(async () => { await drain(); });
     expect(mocks.ingestPendingCaptures).not.toHaveBeenCalled();
     expect(mocks.ingestIosWidgetCompletions).not.toHaveBeenCalled();
+
+    await act(async () => { tree.update(<Probe canonicalDataReady />); });
+    expect(mocks.ingestPendingCaptures).toHaveBeenCalledOnce();
+    expect(mocks.ingestIosWidgetCompletions).toHaveBeenCalledOnce();
+    expect(logInfo).toHaveBeenCalledWith('Startup capture drain ran after canonical data load', {
+      scope: 'capture',
+      extra: {
+        releaseCheck: 'v1.3.3/mobile-startup-writes-after-canonical-load',
+        elapsedMs: expect.any(Number),
+        count: 0,
+      },
+    });
+
+    // Later foregrounds drain again; the startup line stays one per launch.
+    await act(async () => { mocks.listeners.forEach((listener) => listener('active')); });
+    expect(mocks.ingestPendingCaptures).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(logInfo).mock.calls.filter(
+      ([message]) => message === 'Startup capture drain ran after canonical data load',
+    )).toHaveLength(1);
     act(() => tree.unmount());
   });
 

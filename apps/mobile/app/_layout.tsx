@@ -547,7 +547,9 @@ function RootLayoutContentInner() {
   ]);
 
   useRootLayoutNotificationOpenHandler({
-    appReady: isFirstPaintReady,
+    // A cold-start notification Complete action writes the store, so it waits
+    // for canonical data like the startup writers below.
+    appReady: isFirstPaintReady && canonicalDataReady,
     disabled: sandboxMode,
     pathname,
     router,
@@ -563,8 +565,12 @@ function RootLayoutContentInner() {
       channelName: resolveText('captureNotification.channelName', 'Quick capture'),
     }));
   }, [languageReady, resolveText, sandboxMode]);
+  // Startup writers wait for canonical (SQLite) data, not the backup snapshot
+  // that paints first. A store write on top of the snapshot makes core discard
+  // the canonical load, and the session then runs on stale data. Their inputs
+  // (queue files, share intents, URLs) stay held until then.
   useRootLayoutContextAutomation({
-    dataReady,
+    canonicalDataReady,
     disabled: sandboxMode,
     incomingUrl,
     incomingUrlKey,
@@ -572,7 +578,7 @@ function RootLayoutContentInner() {
     resolveText,
   });
   useRootLayoutExternalCapture({
-    dataReady,
+    canonicalDataReady,
     disabled: sandboxMode,
     hasShareIntent,
     incomingUrl,
@@ -588,10 +594,10 @@ function RootLayoutContentInner() {
     shareWebUrl: shareIntent?.webUrl,
     showToast,
   });
-  useRootLayoutPomodoro({ dataReady, disabled: sandboxMode, resolveText });
-  const drainPendingCaptures = useRootLayoutPendingCaptures({ dataReady, disabled: sandboxMode });
-  useRootLayoutAppleRemindersAutoImport({ dataReady, disabled: sandboxMode, showToast, t });
-  useRootLayoutWatch({ dataReady, disabled: sandboxMode, language, onPendingCapture: drainPendingCaptures });
+  useRootLayoutPomodoro({ canonicalDataReady, disabled: sandboxMode, resolveText });
+  const drainPendingCaptures = useRootLayoutPendingCaptures({ canonicalDataReady, disabled: sandboxMode });
+  useRootLayoutAppleRemindersAutoImport({ canonicalDataReady, disabled: sandboxMode, showToast, t });
+  useRootLayoutWatch({ canonicalDataReady, disabled: sandboxMode, language, onPendingCapture: drainPendingCaptures });
 
   if (!firstRenderLogged.current) {
     firstRenderLogged.current = true;

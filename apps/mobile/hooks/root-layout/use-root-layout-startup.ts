@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
     type AppData,
+    flushPendingSave,
     hasActiveMobileNotificationFeature,
     SQLITE_SCHEMA_VERSION,
     useTaskStore,
@@ -14,7 +15,7 @@ import { getMobileStartupSnapshotFromBackup } from '@/lib/storage-adapter';
 import { updateMobileWidgetFromStore } from '@/lib/widget-service';
 import { markStartupPhase, measureStartupPhase } from '@/lib/startup-profiler';
 import { verifyPolyfills } from '@/utils/verify-polyfills';
-import { logError, logInfo } from '@/lib/app-log';
+import { logError, logInfo, logWarn } from '@/lib/app-log';
 import { coerceSupportedBackend, resolveBackend } from '@/lib/sync-service-utils';
 import { SYNC_BACKEND_KEY } from '@/lib/sync-constants';
 import { isCloudKitAvailable } from '@/lib/cloudkit-sync';
@@ -67,6 +68,33 @@ const applyStartupSnapshotToStore = (data: AppData): void => {
     });
 };
 
+// The first canonical load plus up to two re-fetches.
+const CANONICAL_LOAD_ATTEMPTS = 3;
+const CANONICAL_LOAD_RELEASE_CHECK = 'v1.3.3/mobile-startup-writes-after-canonical-load';
+
+// Runs the canonical storage load and reports whether core applied it to the
+// store. A store write during the load (a tap on a snapshot row, the Focus
+// Pomodoro panel crediting a session) makes core skip the result. The check
+// mirrors the native host contract's activate(): the result counts as applied
+// only if every relevance check saw the same lastDataChangeAt, including the
+// third one, which core runs inside its state producer just before applying.
+// Comparing lastDataChangeAt before and after is not enough: a load migration
+// bumps it on an applied load, and an edit-lock exit leaves it unchanged.
+const loadCanonicalData = async (): Promise<boolean> => {
+    const loadStartedAt = useTaskStore.getState().lastDataChangeAt;
+    let invalidated = false;
+    let relevanceChecks = 0;
+    await useTaskStore.getState().fetchData({
+        silent: true,
+        isResultStillRelevant: () => {
+            relevanceChecks += 1;
+            if (useTaskStore.getState().lastDataChangeAt !== loadStartedAt) invalidated = true;
+            return !invalidated;
+        },
+    });
+    return !invalidated && relevanceChecks >= 3 && !useTaskStore.getState().error;
+};
+
 export function useRootLayoutStartup({
     analyticsHeartbeatUrl,
     analyticsHeartbeatChannel,
@@ -111,11 +139,23 @@ export function useRootLayoutStartup({
                     verifyPolyfills();
                 }
 
-                const store = useTaskStore.getState();
                 let canonicalFetchCompleted = false;
+                let canonicalApplied = false;
+                let canonicalAttempts = 0;
                 const fetchPromise = measureStartupPhase('js.store.fetch_data', async () => {
-                    await store.fetchData({ silent: true });
-                    canonicalFetchCompleted = true;
+                    do {
+                        // A skipped load means a local write landed on the snapshot.
+                        // Save it to SQLite first, so the re-read includes it.
+                        if (canonicalAttempts > 0) await flushPendingSave();
+                        canonicalAttempts += 1;
+                        canonicalApplied = await loadCanonicalData();
+                        canonicalFetchCompleted = true;
+                    } while (
+                        !canonicalApplied
+                        && !cancelled
+                        && !useTaskStore.getState().error
+                        && canonicalAttempts < CANONICAL_LOAD_ATTEMPTS
+                    );
                 });
                 if (!sandboxMode) {
                     void measureStartupPhase('js.store.backup_snapshot.read', async () =>
@@ -134,6 +174,18 @@ export function useRootLayoutStartup({
                 await fetchPromise;
                 if (cancelled) return;
                 const loadedStore = useTaskStore.getState();
+                if (canonicalAttempts > 1) {
+                    // After the last attempt a skipped load still marks data ready
+                    // below (no error), as before; the warning makes that visible.
+                    void (canonicalApplied ? logInfo : logWarn)('Canonical data re-fetched after a local change', {
+                        scope: 'startup',
+                        extra: {
+                            releaseCheck: CANONICAL_LOAD_RELEASE_CHECK,
+                            retryCount: canonicalAttempts - 1,
+                            outcome: canonicalApplied ? 'applied' : (loadedStore.error ? 'failed' : 'skipped'),
+                        },
+                    });
+                }
                 setDataReady(true);
                 // A backup snapshot/error screen is not successful canonical hydration.
                 setCanonicalDataReady(!loadedStore.error);

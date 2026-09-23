@@ -42,7 +42,7 @@ type SharedIntentFile = {
 };
 
 type UseRootLayoutExternalCaptureParams = {
-    dataReady: boolean;
+    canonicalDataReady: boolean;
     disabled?: boolean;
     hasShareIntent: boolean;
     incomingUrl: string | null;
@@ -261,7 +261,7 @@ function resolveEntityOpenPath(kind: EntityOpenKind, id: string): { pathname: st
 }
 
 export function useRootLayoutExternalCapture({
-    dataReady,
+    canonicalDataReady,
     disabled = false,
     hasShareIntent,
     incomingUrl,
@@ -295,10 +295,10 @@ export function useRootLayoutExternalCapture({
         logIosShareDiagnostic({
             stage: 'provider-status',
             providerReady,
-            dataReady,
+            dataReady: canonicalDataReady,
             disabled,
         });
-    }, [dataReady, disabled, providerReady]);
+    }, [canonicalDataReady, disabled, providerReady]);
 
     useEffect(() => {
         if (Platform.OS !== 'ios') return;
@@ -309,10 +309,10 @@ export function useRootLayoutExternalCapture({
             stage: 'host-url-received',
             type,
             providerReady,
-            dataReady,
+            dataReady: canonicalDataReady,
             disabled,
         });
-    }, [dataReady, disabled, incomingUrl, incomingUrlKey, providerReady]);
+    }, [canonicalDataReady, disabled, incomingUrl, incomingUrlKey, providerReady]);
 
     useEffect(() => {
         if (Platform.OS !== 'ios') return;
@@ -336,12 +336,12 @@ export function useRootLayoutExternalCapture({
                 stage: 'payload-seen',
                 type,
                 providerReady,
-                dataReady,
+                dataReady: canonicalDataReady,
                 disabled,
                 fileCount: shareFiles?.length ?? 0,
             });
         }
-        const waitingOutcome = disabled ? 'disabled' : (!dataReady ? 'data-not-ready' : null);
+        const waitingOutcome = disabled ? 'disabled' : (!canonicalDataReady ? 'data-not-ready' : null);
         if (waitingOutcome && !stages.has(`waiting:${waitingOutcome}`)) {
             stages.add(`waiting:${waitingOutcome}`);
             logIosShareDiagnostic({
@@ -350,7 +350,7 @@ export function useRootLayoutExternalCapture({
                 providerReady,
             });
         }
-    }, [dataReady, disabled, hasShareIntent, providerReady, shareFiles, shareText, shareWebUrl]);
+    }, [canonicalDataReady, disabled, hasShareIntent, providerReady, shareFiles, shareText, shareWebUrl]);
 
     // Arms the AppSearch index (#1017) once per app start if the device-local
     // preference is on. This hook already owns every other OS-level entry
@@ -413,7 +413,7 @@ export function useRootLayoutExternalCapture({
                     stage: 'native-error',
                     outcome: 'present',
                     providerReady,
-                    dataReady,
+                    dataReady: canonicalDataReady,
                     disabled,
                 });
             }
@@ -428,16 +428,17 @@ export function useRootLayoutExternalCapture({
             message: resolveText('share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.'),
             tone: 'warning',
         });
-    }, [dataReady, disabled, incomingUrl, incomingUrlKey, providerReady, resolveText, shareError, showToast]);
+    }, [canonicalDataReady, disabled, incomingUrl, incomingUrlKey, providerReady, resolveText, shareError, showToast]);
 
     useEffect(() => {
         if (disabled) return;
         if (!hasShareIntent) return;
         // Cold start: navigating before the root navigator and store are up
         // swallows the replace and the share dies silently (#1117). The provider
-        // holds the intent, so waiting for dataReady just re-runs this effect —
-        // the same gate the deep-link effect below has always used.
-        if (!dataReady) return;
+        // holds the intent, so waiting for canonical data just re-runs this effect —
+        // the same gate the deep-link effect below uses. The startup snapshot is
+        // not enough: the capture sheet and entity links read its tasks and projects.
+        if (!canonicalDataReady) return;
         if (shareHandlingRef.current) return;
         shareHandlingRef.current = true;
         const payloadType = inferSharePayloadType({ shareFiles, shareText, shareWebUrl });
@@ -519,10 +520,10 @@ export function useRootLayoutExternalCapture({
                 logIosShareDiagnostic({ stage: 'reset-returned' });
                 shareHandlingRef.current = false;
             });
-    }, [dataReady, disabled, hasShareIntent, resolveText, resetShareIntent, router, shareFiles, shareSubject, shareText, shareWebUrl, showToast]);
+    }, [canonicalDataReady, disabled, hasShareIntent, resolveText, resetShareIntent, router, shareFiles, shareSubject, shareText, shareWebUrl, showToast]);
 
     useEffect(() => {
-        if (!dataReady || disabled) return;
+        if (!canonicalDataReady || disabled) return;
         if (!incomingUrl) return;
         if (lastHandledKey.current === incomingUrlKey) return;
 
@@ -582,5 +583,5 @@ export function useRootLayoutExternalCapture({
                 extra: { releaseCheck: 'v1.3.1/shortcut-failure-privacy', stage: 'navigation' },
             });
         }
-    }, [dataReady, disabled, incomingUrl, incomingUrlKey, resolveText, openCaptureConfirmation, router, showToast]);
+    }, [canonicalDataReady, disabled, incomingUrl, incomingUrlKey, resolveText, openCaptureConfirmation, router, showToast]);
 }

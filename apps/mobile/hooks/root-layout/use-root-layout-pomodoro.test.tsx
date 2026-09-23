@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DEFAULT_POMODORO_DURATIONS, getPomodoroLocalDayKey } from '@mindwtr/core';
 
 const { storeState } = vi.hoisted(() => ({
   storeState: {
@@ -40,8 +41,8 @@ import { useRootLayoutPomodoro } from './use-root-layout-pomodoro';
 
 const resolveText = (_key: string, fallback: string) => fallback;
 
-function Harness() {
-  useRootLayoutPomodoro({ dataReady: true, resolveText });
+function Harness({ canonicalDataReady = true }: { canonicalDataReady?: boolean }) {
+  useRootLayoutPomodoro({ canonicalDataReady, resolveText });
   return null;
 }
 
@@ -49,6 +50,7 @@ describe('useRootLayoutPomodoro', () => {
   beforeEach(() => {
     mobilePomodoroController.resetForTests();
     storeState.settings = { gtd: { pomodoro: {} } };
+    storeState.tasks = [];
     vi.clearAllMocks();
     vi.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
   });
@@ -87,6 +89,38 @@ describe('useRootLayoutPomodoro', () => {
       new Date(phaseEndsAt),
       { phase: 'focus-complete' },
     );
+    act(() => tree.unmount());
+  });
+
+  // Hydration credits a focus session that finished while the app was closed
+  // to its task (updateTask). On the startup snapshot that write would make
+  // core discard the SQLite load, so hydration waits for canonical data.
+  it('does not hydrate or credit a task before canonical data, then credits it once', async () => {
+    storeState.tasks = [{ id: 'task-1', title: 'Write', timeSpentMinutes: 5 }];
+    vi.mocked(AsyncStorage.getItem).mockResolvedValueOnce(JSON.stringify({
+      durations: DEFAULT_POMODORO_DURATIONS,
+      timerState: { phase: 'focus', remainingSeconds: 1, isRunning: true, completedFocusSessions: 0 },
+      selectedTaskId: 'task-1',
+      phaseEndsAt: new Date(Date.now() - 1_000).toISOString(),
+      sessionHistory: {
+        totalCompletedFocusSessions: 0,
+        completedFocusSessionsByTaskId: {},
+        todayDayKey: getPomodoroLocalDayKey(Date.now()),
+        completedTodayFocusSessions: 0,
+      },
+    }));
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness canonicalDataReady={false} />); });
+
+    expect(AsyncStorage.getItem).not.toHaveBeenCalled();
+    expect(storeState.updateTask).not.toHaveBeenCalled();
+    expect(mobilePomodoroController.getSnapshot().isHydrating).toBe(true);
+
+    await act(async () => { tree.update(<Harness canonicalDataReady />); });
+    await vi.waitFor(() => expect(storeState.updateTask).toHaveBeenCalledOnce());
+    expect(storeState.updateTask).toHaveBeenCalledWith('task-1', {
+      timeSpentMinutes: 5 + DEFAULT_POMODORO_DURATIONS.focusMinutes,
+    });
     act(() => tree.unmount());
   });
 

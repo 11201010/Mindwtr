@@ -59,7 +59,7 @@ type SharedFile = {
 };
 
 function TestHarness({
-  dataReady = true,
+  canonicalDataReady = true,
   disabled = false,
   hasShareIntent = false,
   incomingUrl,
@@ -74,7 +74,7 @@ function TestHarness({
   shareWebUrl = null,
   showToast,
 }: {
-  dataReady?: boolean;
+  canonicalDataReady?: boolean;
   disabled?: boolean;
   hasShareIntent?: boolean;
   incomingUrl: string | null;
@@ -90,7 +90,7 @@ function TestHarness({
   showToast: ShowToast;
 }) {
   useRootLayoutExternalCapture({
-    dataReady,
+    canonicalDataReady,
     disabled,
     hasShareIntent,
     incomingUrl,
@@ -245,9 +245,9 @@ describe('useRootLayoutExternalCapture', () => {
     expect(currentRoute).toBe(initial ? '/inbox' : '/focus');
     router.replace.mockImplementation((route) => { currentRoute = route; });
     let tree!: ReturnType<typeof create>;
-    const render = (hasShareIntent: boolean, dataReady: boolean, delivery = 1) => (
+    const render = (hasShareIntent: boolean, canonicalDataReady: boolean, delivery = 1) => (
       <TestHarness
-        dataReady={dataReady} hasShareIntent={hasShareIntent}
+        canonicalDataReady={canonicalDataReady} hasShareIntent={hasShareIntent}
         incomingUrl={incomingUrl} incomingUrlKey={delivery}
         resetShareIntent={resetShareIntent} router={router}
         shareWebUrl={hasShareIntent ? shareWebUrl : null} showToast={showToast}
@@ -353,7 +353,7 @@ describe('useRootLayoutExternalCapture', () => {
     act(() => {
       tree = create(
         <TestHarness
-          dataReady={false}
+          canonicalDataReady={false}
           hasShareIntent
           incomingUrl={null}
           providerReady={false}
@@ -368,7 +368,7 @@ describe('useRootLayoutExternalCapture', () => {
     act(() => {
       tree.update(
         <TestHarness
-          dataReady
+          canonicalDataReady
           hasShareIntent
           incomingUrl={null}
           providerReady
@@ -843,6 +843,31 @@ describe('useRootLayoutExternalCapture', () => {
     expect(JSON.parse(decodeURIComponent(params.initialProps))).toEqual({
       description: 'Tomorrow',
       tags: ['#phone'],
+    });
+  });
+
+  // The capture sheet and entity links read tasks and projects from the store,
+  // and the startup snapshot can lag SQLite. The link waits for canonical data.
+  it('holds a capture link until canonical data is ready, then opens the sheet once', () => {
+    let tree!: ReturnType<typeof create>;
+    const url = 'mindwtr:///capture?title=Call%20dentist';
+
+    act(() => {
+      tree = create(<TestHarness canonicalDataReady={false} incomingUrl={url} router={router} showToast={showToast} />);
+    });
+    expect(router.replace).not.toHaveBeenCalled();
+
+    act(() => {
+      tree.update(<TestHarness incomingUrl={url} router={router} showToast={showToast} />);
+    });
+    act(() => {
+      tree.update(<TestHarness incomingUrl={url} router={router} showToast={vi.fn()} />);
+    });
+
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith({
+      pathname: '/capture-modal',
+      params: { initialValue: 'Call%20dentist' },
     });
   });
 

@@ -9,10 +9,12 @@ const {
   asyncStorageGetItem,
   asyncStorageSetItem,
   fetchData,
+  flushPendingSave,
   getInstallReferrerAsync,
   getMobileStartupSnapshotFromBackup,
   logError,
   logInfo,
+  logWarn,
   markStartupPhase,
   measureStartupPhase,
   requestSync,
@@ -25,11 +27,13 @@ const {
   alert: vi.fn(),
   asyncStorageGetItem: vi.fn<() => Promise<string | null>>(async () => null),
   asyncStorageSetItem: vi.fn<() => Promise<void>>(async () => undefined),
-  fetchData: vi.fn<() => Promise<void>>(async () => undefined),
+  fetchData: vi.fn<(options?: { isResultStillRelevant?: () => boolean }) => Promise<void>>(async () => undefined),
+  flushPendingSave: vi.fn(async () => undefined),
   getInstallReferrerAsync: vi.fn(async () => ''),
   getMobileStartupSnapshotFromBackup: vi.fn<() => Promise<any>>(async () => null),
   logError: vi.fn(async () => undefined),
   logInfo: vi.fn(async () => undefined),
+  logWarn: vi.fn(async () => undefined),
   markStartupPhase: vi.fn(),
   measureStartupPhase: vi.fn(async (_name: string, fn: () => unknown | Promise<unknown>) => await fn()),
   requestSync: vi.fn(),
@@ -74,6 +78,7 @@ vi.mock('@mindwtr/core', async () => {
   // passthrough the real implementation rather than re-stub it here.
   const { hasActiveMobileNotificationFeature } = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
   return {
+    flushPendingSave,
     generateUUID: () => 'generated-id',
     hasActiveMobileNotificationFeature,
     resetHeartbeatOptOutMarker: vi.fn(async () => undefined),
@@ -136,6 +141,7 @@ vi.mock('@/utils/verify-polyfills', () => ({
 vi.mock('@/lib/app-log', () => ({
   logError,
   logInfo,
+  logWarn,
 }));
 
 vi.mock('@/lib/sync-service-utils', () => ({
@@ -176,6 +182,12 @@ function TestHarness({ onReadyChange, onCanonicalChange, sandboxMode = false }: 
   return null;
 }
 
+// Core runs three relevance checks on a load it applies; the third runs in its
+// state producer, just before the result replaces the store.
+const runAppliedLoadChecks = (options?: { isResultStillRelevant?: () => boolean }) => {
+  for (let check = 0; check < 3; check += 1) options?.isResultStillRelevant?.();
+};
+
 const flushMicrotasks = async () => {
   await Promise.resolve();
   await Promise.resolve();
@@ -198,13 +210,15 @@ describe('useRootLayoutStartup', () => {
     asyncStorageGetItem.mockResolvedValue(null);
     asyncStorageSetItem.mockResolvedValue(undefined);
     fetchData.mockReset();
-    fetchData.mockResolvedValue(undefined);
+    fetchData.mockImplementation(async (options) => runAppliedLoadChecks(options));
+    flushPendingSave.mockClear();
     getInstallReferrerAsync.mockReset();
     getInstallReferrerAsync.mockResolvedValue('');
     getMobileStartupSnapshotFromBackup.mockReset();
     getMobileStartupSnapshotFromBackup.mockResolvedValue(null);
     logError.mockReset();
     logInfo.mockReset();
+    logWarn.mockReset();
     markStartupPhase.mockReset();
     measureStartupPhase.mockClear();
     requestSync.mockReset();
@@ -257,8 +271,9 @@ describe('useRootLayoutStartup', () => {
     const canonicalStates: boolean[] = [];
     let tree!: ReactTestRenderer;
 
-    fetchData.mockImplementation(async () => {
+    fetchData.mockImplementation(async (options) => {
       await fetchDeferred.promise;
+      runAppliedLoadChecks(options);
     });
     getMobileStartupSnapshotFromBackup.mockResolvedValue({
       tasks: [
@@ -281,7 +296,7 @@ describe('useRootLayoutStartup', () => {
       await flushMicrotasks();
     });
 
-    expect(fetchData).toHaveBeenCalledWith({ silent: true });
+    expect(fetchData).toHaveBeenCalledWith(expect.objectContaining({ silent: true }));
     expect(setStateSpy).toHaveBeenCalledTimes(1);
     expect(storeHolder.state.tasks).toHaveLength(1);
     expect(storeHolder.state._allTasks).toHaveLength(1);
@@ -316,7 +331,7 @@ describe('useRootLayoutStartup', () => {
       await flushMicrotasks();
     });
 
-    expect(fetchData).toHaveBeenCalledWith({ silent: true });
+    expect(fetchData).toHaveBeenCalledWith(expect.objectContaining({ silent: true }));
     expect(requestSync).toHaveBeenCalledWith(0);
     expect(setStateSpy).not.toHaveBeenCalled();
     expect(readyStates.at(-1)).toBe(true);
@@ -346,6 +361,35 @@ describe('useRootLayoutStartup', () => {
     act(() => {
       tree.unmount();
     });
+  });
+
+  // A local write during every load (core skips each result) must not loop
+  // forever: three attempts, then the old readiness plus a warning.
+  it('stops after three skipped canonical loads and warns', async () => {
+    storeHolder.state.lastDataChangeAt = 0;
+    fetchData.mockImplementation(async (options) => {
+      storeHolder.state.lastDataChangeAt += 1;
+      runAppliedLoadChecks(options);
+    });
+    const canonicalStates: boolean[] = [];
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<TestHarness onReadyChange={() => undefined} onCanonicalChange={(ready) => canonicalStates.push(ready)} />);
+      await flushMicrotasks();
+    });
+
+    expect(fetchData).toHaveBeenCalledTimes(3);
+    expect(flushPendingSave).toHaveBeenCalledTimes(2);
+    expect(logWarn).toHaveBeenCalledWith('Canonical data re-fetched after a local change', {
+      scope: 'startup',
+      extra: {
+        releaseCheck: 'v1.3.3/mobile-startup-writes-after-canonical-load',
+        retryCount: 2,
+        outcome: 'skipped',
+      },
+    });
+    expect(canonicalStates.at(-1)).toBe(true);
+    act(() => tree.unmount());
   });
 
   it('never marks a terminal storage error as canonical readiness', async () => {

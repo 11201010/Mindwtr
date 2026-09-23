@@ -208,6 +208,7 @@ describe('useRootLayoutNotificationOpenHandler', () => {
       tree = create(<TestHarnessWithState appReady={false} pathname="/" router={router} />);
     });
 
+    expect(consumePendingNotificationOpenPayload).not.toHaveBeenCalled();
     expect(router.push).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -280,6 +281,38 @@ describe('useRootLayoutNotificationOpenHandler', () => {
     });
     expect(setHighlightTask).not.toHaveBeenCalled();
     expect(router.push).not.toHaveBeenCalled();
+  });
+
+  // The root layout passes appReady = first paint AND canonical data. A cold-start
+  // Complete action must not write a snapshot copy of the task. It stays in
+  // native storage until then, so a kill during a slow load does not lose it.
+  it('leaves a cold-start complete action in native storage until the app is ready, then applies it once', async () => {
+    const router = createRouter();
+    storeTasksById.set('task-1', { id: 'task-1', title: 'Pay rent', status: 'next' });
+    consumePendingNotificationOpenPayload.mockResolvedValue({
+      actionIdentifier: 'complete',
+      notificationId: 'notif-1',
+      taskId: 'task-1',
+    });
+
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<TestHarnessWithState appReady={false} pathname="/focus" router={router} />);
+    });
+    expect(consumePendingNotificationOpenPayload).not.toHaveBeenCalled();
+    expect(updateTask).not.toHaveBeenCalled();
+
+    await act(async () => {
+      tree.update(<TestHarnessWithState appReady pathname="/focus" router={router} />);
+    });
+    await act(async () => {
+      tree.update(<TestHarnessWithState appReady pathname="/inbox" router={router} />);
+    });
+
+    expect(consumePendingNotificationOpenPayload).toHaveBeenCalled();
+    expect(updateTask).toHaveBeenCalledTimes(1);
+    expect(updateTask).toHaveBeenCalledWith('task-1', { status: 'done', isFocusedToday: false });
+    act(() => tree.unmount());
   });
 
   it('ignores snooze and dismiss notification actions', () => {

@@ -151,18 +151,22 @@ export function useRootLayoutNotificationOpenHandler({
     useEffect(() => {
         if (disabled) return;
         setNotificationOpenHandler(handleNotificationOpen);
-        void consumePendingNotificationOpenPayload().then((payload) => {
-            if (!payload) return;
-            logNotificationOutcome('Cold-start notification payload consumed', {
-                action: payload.actionIdentifier || 'open',
-                taskId: payload.taskId || '',
+        // Read the cold-start payload only once it can be acted on. Until then
+        // native storage keeps it, so a kill during a slow data load loses nothing.
+        if (canNavigate) {
+            void consumePendingNotificationOpenPayload().then((payload) => {
+                if (!payload) return;
+                logNotificationOutcome('Cold-start notification payload consumed', {
+                    action: payload.actionIdentifier || 'open',
+                    taskId: payload.taskId || '',
+                });
+                handleNotificationOpen(payload);
             });
-            handleNotificationOpen(payload);
-        });
+        }
         return () => {
             setNotificationOpenHandler(null);
         };
-    }, [disabled, handleNotificationOpen]);
+    }, [canNavigate, disabled, handleNotificationOpen]);
 
     useEffect(() => {
         if (disabled || !canNavigate || !pendingPayloadRef.current) return;

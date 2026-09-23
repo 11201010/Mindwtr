@@ -35,18 +35,20 @@ vi.mock('@/lib/notification-service', () => ({
 const defaultResolveText = (_key: string, fallback: string) => fallback;
 
 function TestHarness({
+  canonicalDataReady = true,
   incomingUrl,
   incomingUrlKey = incomingUrl ? 1 : 0,
   returnToBackground,
   resolveText = defaultResolveText,
 }: {
+  canonicalDataReady?: boolean;
   incomingUrl: string | null;
   incomingUrlKey?: number;
   returnToBackground?: () => void;
   resolveText?: (key: string, fallback: string) => string;
 }) {
   useRootLayoutContextAutomation({
-    dataReady: true,
+    canonicalDataReady,
     incomingUrl,
     incomingUrlKey,
     returnToBackground,
@@ -105,6 +107,41 @@ describe('useRootLayoutContextAutomation', () => {
       }
     );
     expect(returnToBackground).toHaveBeenCalledTimes(1);
+  });
+
+  // The notification lists next actions from the store; the startup snapshot
+  // can lag SQLite, so the URL is held until canonical data, then handled once.
+  it('holds a context URL delivered before canonical data and handles it once after', async () => {
+    const returnToBackground = vi.fn();
+    const url = 'mindwtr://contexts?token=%40parents&contextAction=activate';
+    mockStoreState.tasks = [{
+      id: 'task-1',
+      title: 'Call mom',
+      status: 'next',
+      tags: [],
+      contexts: ['@parents'],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<TestHarness canonicalDataReady={false} incomingUrl={url} returnToBackground={returnToBackground} />);
+    });
+    expect(sendMobileImmediateNotification).not.toHaveBeenCalled();
+    expect(returnToBackground).not.toHaveBeenCalled();
+
+    await act(async () => {
+      tree.update(<TestHarness incomingUrl={url} returnToBackground={returnToBackground} />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      tree.update(<TestHarness incomingUrl={url} returnToBackground={returnToBackground} resolveText={(_key, fallback) => fallback} />);
+      await Promise.resolve();
+    });
+
+    expect(sendMobileImmediateNotification).toHaveBeenCalledTimes(1);
+    expect(returnToBackground).toHaveBeenCalledTimes(1);
+    act(() => tree.unmount());
   });
 
   it('handles deactivation URLs silently', async () => {

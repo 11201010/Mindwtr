@@ -69,12 +69,12 @@ const emptyResult = {
 
 const showToast = vi.fn();
 
-function Harness({ dataReady = true, disabled = false }: { dataReady?: boolean; disabled?: boolean }) {
-  useRootLayoutAppleRemindersAutoImport({ dataReady, disabled, showToast, t: (key: string) => key });
+function Harness({ canonicalDataReady = true, disabled = false }: { canonicalDataReady?: boolean; disabled?: boolean }) {
+  useRootLayoutAppleRemindersAutoImport({ canonicalDataReady, disabled, showToast, t: (key: string) => key });
   return null;
 }
 
-const mount = async (props: { dataReady?: boolean; disabled?: boolean } = {}) => {
+const mount = async (props: { canonicalDataReady?: boolean; disabled?: boolean } = {}) => {
   let tree!: renderer.ReactTestRenderer;
   await act(async () => {
     tree = renderer.create(<Harness {...props} />);
@@ -125,12 +125,26 @@ describe('useRootLayoutAppleRemindersAutoImport', () => {
     expect(showToast).toHaveBeenCalledOnce();
     act(() => tree.unmount());
   });
-  it('does not run before the data is ready or while it is disabled', async () => {
-    const notReady = await mount({ dataReady: false });
+  it('does not run before canonical data is ready or while it is disabled', async () => {
+    const notReady = await mount({ canonicalDataReady: false });
     const disabled = await mount({ disabled: true });
+    // A foreground during the startup snapshot must not start an import either.
+    await foreground();
 
     expect(importMocks.runAppleRemindersAutoImport).not.toHaveBeenCalled();
     act(() => { notReady.unmount(); disabled.unmount(); });
+  });
+
+  // Its duplicate check reads the store, so it must see SQLite, not the snapshot.
+  it('runs once canonical data arrives after the startup snapshot', async () => {
+    const tree = await mount({ canonicalDataReady: false });
+    await act(async () => {
+      tree.update(<Harness canonicalDataReady />);
+      await Promise.resolve();
+    });
+
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledOnce();
+    act(() => tree.unmount());
   });
 
   // A foreground burst (unlock, switcher, share sheet) fires several 'active'

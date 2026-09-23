@@ -66,6 +66,8 @@ export function useIncomingUrl(): IncomingUrl {
             lastDelivery = { url: event.url, at: now };
             deliveries += 1;
             logIncomingDelivery(event.url, deliveries, false);
+            // One slot: it keeps only the latest link. A link that arrives while
+            // an earlier one waits for canonical data replaces the earlier one.
             setIncoming((previous) => ({ url: event.url, key: previous.key + 1 }));
         });
         return () => {

@@ -9,11 +9,11 @@ import {
 } from '@/lib/notification-service';
 
 export function useRootLayoutPomodoro({
-  dataReady,
+  canonicalDataReady,
   disabled = false,
   resolveText,
 }: {
-  dataReady: boolean;
+  canonicalDataReady: boolean;
   disabled?: boolean;
   resolveText: (key: string, fallback: string) => string;
 }) {
@@ -23,17 +23,17 @@ export function useRootLayoutPomodoro({
   const autoStartFocus = useTaskStore((state) => state.settings.gtd?.pomodoro?.autoStartFocus === true);
 
   useEffect(() => {
-    if (!dataReady || disabled) return;
+    if (!canonicalDataReady || disabled) return;
     const options: PomodoroAutoStartOptions = { autoStartBreaks, autoStartFocus };
     void mobilePomodoroController.ensureHydrated(options);
     const interval = setInterval(() => {
       mobilePomodoroController.reconcile(options);
     }, 1000);
     return () => clearInterval(interval);
-  }, [autoStartBreaks, autoStartFocus, dataReady, disabled]);
+  }, [autoStartBreaks, autoStartFocus, canonicalDataReady, disabled]);
 
   useEffect(() => {
-    if (!dataReady || disabled || snapshot.isHydrating) return;
+    if (!canonicalDataReady || disabled || snapshot.isHydrating) return;
     if (!completionAlertEnabled || !snapshot.isRunning || !snapshot.phaseEndsAt) {
       void cancelMobilePomodoroCompletionNotification(
         !completionAlertEnabled
@@ -54,7 +54,7 @@ export function useRootLayoutPomodoro({
     });
   }, [
     completionAlertEnabled,
-    dataReady,
+    canonicalDataReady,
     disabled,
     resolveText,
     snapshot.isHydrating,

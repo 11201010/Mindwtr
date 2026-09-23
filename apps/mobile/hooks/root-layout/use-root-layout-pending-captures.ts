@@ -15,13 +15,18 @@ import { transcribePendingAudio } from '@/lib/watch-audio';
 // Drains background captures and iOS widget actions through the normal store
 // on startup and every foreground. Widget actions awaiting the undo grace
 // deadline also get one foreground timer; failed claimed actions do not poll.
-export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { dataReady: boolean; disabled?: boolean }) {
+// Startup waits for the canonical SQLite load, not the backup snapshot: a
+// write on top of the snapshot makes core discard that load, and a check-off
+// would then complete a stale copy of the task. The queue files wait on disk.
+export function useRootLayoutPendingCaptures({ canonicalDataReady, disabled = false }: { canonicalDataReady: boolean; disabled?: boolean }) {
     const runningRef = useRef(false);
     const pendingRef = useRef(false);
     const activeRef = useRef(false);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const enabledRef = useRef(dataReady && !disabled);
-    enabledRef.current = dataReady && !disabled;
+    const mountedAtRef = useRef(Date.now());
+    const firstDrainLoggedRef = useRef(false);
+    const enabledRef = useRef(canonicalDataReady && !disabled);
+    enabledRef.current = canonicalDataReady && !disabled;
 
     const clearTimer = useCallback(() => {
         if (timerRef.current !== null) clearTimeout(timerRef.current);
@@ -49,6 +54,17 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
                         });
                     },
                 });
+                if (!firstDrainLoggedRef.current) {
+                    firstDrainLoggedRef.current = true;
+                    void logInfo('Startup capture drain ran after canonical data load', {
+                        scope: 'capture',
+                        extra: {
+                            releaseCheck: 'v1.3.3/mobile-startup-writes-after-canonical-load',
+                            elapsedMs: Date.now() - mountedAtRef.current,
+                            count: ingested,
+                        },
+                    });
+                }
                 // Startup/foreground refreshes can run before a slow queue
                 // import finishes. Publish again after its durable store writes,
                 // without requiring a manual refresh or another app opening.
@@ -97,7 +113,7 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
     }, [clearTimer]);
 
     useEffect(() => {
-        if (!dataReady || disabled) return;
+        if (!canonicalDataReady || disabled) return;
         activeRef.current = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
         void drainQueue();
         const subscription = AppState.addEventListener('change', (state) => {
@@ -110,7 +126,7 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
             clearTimer();
             subscription.remove();
         };
-    }, [dataReady, disabled, drainQueue, clearTimer]);
+    }, [canonicalDataReady, disabled, drainQueue, clearTimer]);
 
     return drainQueue;
 }

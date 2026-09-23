@@ -23,20 +23,20 @@ const MIN_RUN_GAP_MS = 30_000;
 // (#1238). iOS gives no background access to Reminders, so this is the only
 // moment the app can look. Silent unless something was imported.
 export function useRootLayoutAppleRemindersAutoImport({
-    dataReady,
+    canonicalDataReady,
     disabled = false,
     showToast,
     t,
 }: {
-    dataReady: boolean;
+    canonicalDataReady: boolean;
     disabled?: boolean;
     showToast: (options: ToastOptions) => void;
     t: (key: string) => string;
 }) {
     const runningRef = useRef(false);
     const lastRunAtRef = useRef(0);
-    const enabledRef = useRef(dataReady && !disabled);
-    enabledRef.current = dataReady && !disabled;
+    const enabledRef = useRef(canonicalDataReady && !disabled);
+    enabledRef.current = canonicalDataReady && !disabled;
     const showToastRef = useRef(showToast);
     showToastRef.current = showToast;
     const tRef = useRef(t);
@@ -92,11 +92,11 @@ export function useRootLayoutAppleRemindersAutoImport({
     }, []);
 
     useEffect(() => {
-        if (!dataReady || disabled) return;
+        if (!canonicalDataReady || disabled) return;
         void run();
         const subscription = AppState.addEventListener('change', (state) => {
             if (state === 'active') void run();
         });
         return () => subscription.remove();
-    }, [dataReady, disabled, run]);
+    }, [canonicalDataReady, disabled, run]);
 }
