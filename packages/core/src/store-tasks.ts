@@ -163,6 +163,12 @@ const stampNewRecurringFollowUp = (
     const order = sourceOrder ?? reserveProjectOrder(task.projectId);
     return {
         ...task,
+        // Persist the shape the sync pass writes (sync-canonical-reads contract),
+        // like the addTask creation literal: the rrule carries the series stamp
+        // and the boolean is explicit. createNextRecurringTask keeps its own
+        // shape because the Rust local API parity fixture pins it.
+        recurrence: normalizeRecurrenceForLoad(task.recurrence),
+        suppressMindwtrReminders: task.suppressMindwtrReminders ?? false,
         rev: nextRevision(undefined),
         revBy: deviceId,
         pushCount: 0,
@@ -1152,8 +1158,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     : isTaskFinished(sourceTask)
                         ? 'inbox'
                         : sourceTask.status,
+                // Normalized so the rrule's series stamp names the new series too.
                 recurrence: typeof sourceTask.recurrence === 'object'
-                    ? { ...sourceTask.recurrence, seriesId: newTaskId }
+                    ? normalizeRecurrenceForLoad({ ...sourceTask.recurrence, seriesId: newTaskId })
                     : sourceTask.recurrence,
                 checklist: duplicatedChecklist.length > 0 ? duplicatedChecklist : undefined,
                 attachments: duplicatedAttachments.length > 0 ? duplicatedAttachments : undefined,

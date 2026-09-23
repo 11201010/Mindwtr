@@ -4666,7 +4666,11 @@ describe('TaskStore', () => {
 
         const nextInstance = state._allTasks.find(t => t.id !== original.id)!;
         expect(nextInstance.status).toBe('next');
-        expect(nextInstance.recurrence).toEqual({ rule: 'daily', seriesId: original.id });
+        expect(nextInstance.recurrence).toEqual({
+            rule: 'daily',
+            seriesId: original.id,
+            rrule: `FREQ=DAILY;X-MINDWTR-SERIES-ID=${original.id}`,
+        });
         expect(nextInstance.dueDate).toBe('2023-01-02T09:00');
     });
 
@@ -4856,6 +4860,7 @@ describe('TaskStore', () => {
             rule: 'weekly',
             strategy: 'fluid',
             seriesId: 'weekly-series',
+            rrule: 'FREQ=WEEKLY;X-MINDWTR-SERIES-ID=weekly-series',
         });
     });
 
@@ -4875,6 +4880,7 @@ describe('TaskStore', () => {
             rule: 'weekly',
             strategy: 'strict',
             seriesId: duplicateId,
+            rrule: `FREQ=WEEKLY;X-MINDWTR-SERIES-ID=${duplicateId}`,
         });
 
         await updateTask(originalId, { status: 'done' });

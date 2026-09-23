@@ -29,11 +29,13 @@
  * Timing is printed, never asserted.
  */
 import { performance } from 'node:perf_hooks';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mergeAppData, mergeAppDataWithStats, performSyncCycle } from './sync';
 import { parseSyncDocument, toRemoteSyncDocument } from './sync-document';
 import { purgeExpiredTombstones } from './sync-tombstones';
-import { validateMergedSyncData } from './sync-normalization';
+import { normalizeTaskForSyncMerge, validateMergedSyncData } from './sync-normalization';
+import { getMergeComparableSignature, normalizeTaskForContentComparison } from './sync-signatures';
+import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
@@ -613,7 +615,8 @@ describe('canonical local reads contract', () => {
         expect(changed.map((entry) => entry.label)).toEqual([]);
     }, 120_000);
 
-    const persistTaskPatchAndRead = async (updates: Partial<Task>): Promise<AppData> => {
+    /** Load `stored` into a fresh store, run `mutate`, and return the snapshot the store saved. */
+    const persistAfter = async (stored: AppData, mutate: () => Promise<unknown>): Promise<AppData> => {
         resetForTests();
         useTaskStore.setState({
             tasks: [], projects: [], sections: [], areas: [], people: [], settings: {},
@@ -625,15 +628,22 @@ describe('canonical local reads contract', () => {
         });
         let saved: AppData | undefined;
         setStorageAdapter({
-            getData: async () => throughLocalStorage({ ...emptyData(), tasks: [task('field-task')] }),
+            getData: async () => structuredClone(stored),
             saveData: async (data) => { saved = structuredClone(data); },
         });
         await useTaskStore.getState().fetchData({ silent: true });
-        await useTaskStore.getState().updateTask('field-task', updates);
+        await mutate();
         await flushPendingSave();
-        if (!saved) throw new Error('The field update did not persist a snapshot');
-        return throughLocalStorage(saved);
+        if (!saved) throw new Error('The store never persisted a snapshot');
+        return saved;
     };
+
+    const persistTaskPatchAndRead = async (updates: Partial<Task>): Promise<AppData> => throughLocalStorage(
+        await persistAfter(
+            throughLocalStorage({ ...emptyData(), tasks: [task('field-task')] }),
+            () => useTaskStore.getState().updateTask('field-task', updates),
+        ),
+    );
 
     it('reads showFutureRecurrence canonically after a store write without recurrence', async () => {
         const readBack = await persistTaskPatchAndRead({ showFutureRecurrence: true });
@@ -668,6 +678,87 @@ describe('canonical local reads contract', () => {
                 expect(remoteBytes(readBack), `${field.name}=${JSON.stringify(value)}`)
                     .toBe(remoteBytes(mergeAppData(readBack, emptyData())));
             }
+        }
+    });
+
+    // Every store path that creates a recurring follow-up (single update, batch
+    // update, skip) stamps it in stampNewRecurringFollowUp; duplicateTask is the
+    // other write that mints a series id.
+    it('writes recurring follow-ups the pass keeps, on an unchanged schedule and signature', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(NOW_ISO));
+        const sign = (entry: Task) => getMergeComparableSignature(
+            normalizeTaskForSyncMerge(entry, NOW_ISO),
+            normalizeTaskForContentComparison,
+        );
+        try {
+            for (const action of ['complete', 'batch-complete', 'skip', 'duplicate'] as const) {
+                for (const suppressed of [true, false]) {
+                    for (const seriesId of ['series-x', undefined]) {
+                        for (const rrule of ['FREQ=DAILY', undefined]) {
+                            const label = JSON.stringify({ action, suppressed, seriesId, rrule });
+                            let source: Task | undefined;
+                            const written = await persistAfter(
+                                convergeThroughStorage({ ...emptyData(), tasks: [task('series-task', { dueDate: '2026-09-01' })] }),
+                                async () => {
+                                    const store = useTaskStore.getState();
+                                    // What the task editors send: no series stamp in the rrule.
+                                    await store.updateTask('series-task', {
+                                        recurrence: {
+                                            rule: 'daily',
+                                            strategy: 'strict',
+                                            ...(seriesId ? { seriesId } : {}),
+                                            ...(rrule ? { rrule } : {}),
+                                        },
+                                        ...(suppressed ? { suppressMindwtrReminders: true } : {}),
+                                    });
+                                    source = useTaskStore.getState()._tasksById.get('series-task');
+                                    if (action === 'complete') await store.updateTask('series-task', { status: 'done' });
+                                    if (action === 'batch-complete') await store.batchUpdateTasks([{ id: 'series-task', updates: { status: 'done' } }]);
+                                    if (action === 'skip') await store.skipRecurringTaskOccurrence('series-task');
+                                    if (action === 'duplicate') await store.duplicateTask('series-task');
+                                },
+                            );
+
+                            // Field by field, over the edited source and the new task.
+                            expect(diffDocuments(written, runNormalizePass(written)), label).toEqual([]);
+                            const readBack = throughLocalStorage(written);
+                            expect(diffDocuments(readBack, runNormalizePass(readBack)), label).toEqual([]);
+
+                            expect(written.tasks, label).toHaveLength(2);
+                            const created = written.tasks.find((entry) => entry.id !== 'series-task') as Task;
+                            expect(created.recurrence, label).toMatchObject({
+                                seriesId: action === 'duplicate' ? created.id : (seriesId ?? 'series-task'),
+                            });
+                            expect(created.suppressMindwtrReminders, label).toBe(suppressed);
+                            if (action === 'duplicate') continue;
+
+                            // The schedule is the one next-instance function's, untouched.
+                            const next = createNextRecurringTask(
+                                source as Task,
+                                NOW_ISO,
+                                (source as Task).status,
+                                action === 'skip' ? { advanceOne: true } : undefined,
+                            ) as Task;
+                            expect(created.dueDate, label).toBe('2026-09-02');
+                            expect([created.startTime, created.dueDate, created.reviewAt], label)
+                                .toEqual([next.startTime, next.dueDate, next.reviewAt]);
+
+                            // The shape before this fix differs in bytes but not in signature.
+                            const beforeFix: Task = {
+                                ...created,
+                                recurrence: next.recurrence,
+                                suppressMindwtrReminders: next.suppressMindwtrReminders,
+                            };
+                            expect(remoteBytes({ ...emptyData(), tasks: [beforeFix] }), label)
+                                .not.toBe(remoteBytes({ ...emptyData(), tasks: [created] }));
+                            expect(sign(created), label).toBe(sign(beforeFix));
+                        }
+                    }
+                }
+            }
+        } finally {
+            vi.useRealTimers();
         }
     });
 
@@ -851,6 +942,10 @@ describe('canonical local reads contract', () => {
             restoreTask: () => call('restoreTask', deletedTaskId),
             restoreTasks: () => call('restoreTasks', [deletedTaskId]),
             seedGettingStarted: () => call('seedGettingStarted', { language: 'en' }),
+            skipRecurringTaskOccurrence: async () => {
+                await call('updateTask', taskId, { recurrence: { rule: 'daily', strategy: 'strict', rrule: 'FREQ=DAILY' }, dueDate: '2026-09-01' });
+                expect(await call('skipRecurringTaskOccurrence', taskId)).toMatchObject({ success: true });
+            },
             toggleProjectFocus: () => call('toggleProjectFocus', otherProjectId),
             updateArea: () => call('updateArea', areaId, { name: 'Contract area name' }),
             updatePerson: () => call('updatePerson', personId, { name: 'Contract person name' }),

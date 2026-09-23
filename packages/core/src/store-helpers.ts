@@ -216,12 +216,15 @@ export const normalizeTaskUpdate = (
                 : undefined);
         adjustedUpdates = {
             ...adjustedUpdates,
+            // Normalize again once seriesId is final, so the rrule carries the
+            // series stamp: the shape the sync pass writes (as in sync.ts's
+            // repairTaskRecurrenceSeriesIdentity).
             recurrence: recurrence
-                ? {
+                ? normalizeRecurrenceForLoad({
                     ...recurrence,
                     seriesId,
                     ...(completedOccurrences !== undefined ? { completedOccurrences } : {}),
-                }
+                })
                 : undefined,
         };
     }

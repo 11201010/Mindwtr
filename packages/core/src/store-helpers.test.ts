@@ -92,6 +92,7 @@ describe('recurrence updates', () => {
             seriesId: 'series-1',
             count: 10,
             completedOccurrences: 3,
+            rrule: 'FREQ=WEEKLY;COUNT=10;X-MINDWTR-SERIES-ID=series-1',
         });
         const newSeries = normalizeTaskUpdate(task, {
             recurrence: { rule: 'weekly', seriesId: 'series-2', count: 10 },
