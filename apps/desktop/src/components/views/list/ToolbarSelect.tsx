@@ -11,10 +11,8 @@ import { cn } from '../../../lib/utils';
 import { ModalPortal } from '../../ModalPortal';
 import { useDropdownPosition } from '../../ui/use-dropdown-position';
 
-// One toolbar select for every list view. The trigger reproduces the old
-// ToolbarSelectShell frame (icon, SORT/GROUP/STATUS caption, value, chevron)
-// but follows the APG select-only combobox pattern so the open popup is a
-// themed, portaled listbox instead of the OS-native option list (#861).
+// A themed, portaled listbox shared by list toolbars and task status pills.
+// The toolbar trigger keeps the old icon/caption/value frame (#861).
 const TOOLBAR_SELECT_TRIGGER =
     'relative flex h-9 items-center rounded-lg border pl-2 text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40';
 const TOOLBAR_SELECT_LABEL = 'text-[10px] font-medium uppercase tracking-wide text-muted-foreground';
@@ -34,9 +32,11 @@ type ToolbarSelectProps = {
     options: ToolbarSelectOption[];
     onChange: (value: string) => void;
     className?: string;
+    pill?: boolean;
+    triggerClassName?: string;
 };
 
-export function ToolbarSelect({ active = false, label, icon, value, options, onChange, className }: ToolbarSelectProps) {
+export function ToolbarSelect({ active = false, label, icon, value, options, onChange, className, pill = false, triggerClassName }: ToolbarSelectProps) {
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -84,8 +84,8 @@ export function ToolbarSelect({ active = false, label, icon, value, options, onC
     };
 
     const selectValue = (next: string) => {
-        onChange(next);
         closeDropdown();
+        if (next !== value) onChange(next);
     };
 
     const focusOption = (direction: 1 | -1) => {
@@ -141,7 +141,7 @@ export function ToolbarSelect({ active = false, label, icon, value, options, onC
     };
 
     return (
-        <div ref={containerRef} className={cn('relative', className)}>
+        <div ref={containerRef} className={cn('relative', pill && 'inline-flex shrink-0', className)}>
             <button
                 ref={triggerRef}
                 type="button"
@@ -171,23 +171,27 @@ export function ToolbarSelect({ active = false, label, icon, value, options, onC
                     }
                 }}
                 className={cn(
-                    TOOLBAR_SELECT_TRIGGER,
-                    active
+                    pill
+                        ? 'inline-flex min-h-6 items-center justify-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-center text-[11px] font-medium cursor-pointer hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-primary/40'
+                        : TOOLBAR_SELECT_TRIGGER,
+                    !pill && (active
                         ? 'border-primary bg-primary/10 text-primary hover:bg-primary/15'
-                        : 'border-border bg-card text-foreground hover:bg-muted/70',
-                    className,
+                        : 'border-border bg-card text-foreground hover:bg-muted/70'),
+                    triggerClassName ?? className,
                 )}
             >
-                {icon}
-                <span className={TOOLBAR_SELECT_LABEL}>{label}</span>
-                <span className={TOOLBAR_SELECT_VALUE}>{selected?.label ?? ''}</span>
-                <ChevronDown
-                    className={cn(
-                        'pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-transform',
-                        open && 'rotate-180',
-                    )}
-                    aria-hidden="true"
-                />
+                {pill ? <span className="truncate">{selected?.label ?? ''}</span> : <>
+                    {icon}
+                    <span className={TOOLBAR_SELECT_LABEL}>{label}</span>
+                    <span className={TOOLBAR_SELECT_VALUE}>{selected?.label ?? ''}</span>
+                    <ChevronDown
+                        className={cn(
+                            'pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-transform',
+                            open && 'rotate-180',
+                        )}
+                        aria-hidden="true"
+                    />
+                </>}
             </button>
             {open && (
                 <ModalPortal>
@@ -195,7 +199,7 @@ export function ToolbarSelect({ active = false, label, icon, value, options, onC
                         ref={dropdownRef}
                         data-selector-dropdown="true"
                         style={{ ...fixedDropdownStyle, width: 'max-content', minWidth: fixedDropdownStyle.width }}
-                        className="z-[70] rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1 text-xs"
+                        className={cn('z-[70] rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1', pill ? 'text-sm' : 'text-xs')}
                         onKeyDown={handleDropdownKeyDown}
                     >
                         <div role="listbox" id={listboxId} aria-label={label}>

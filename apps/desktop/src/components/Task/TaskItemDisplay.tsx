@@ -14,6 +14,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { isImageAttachment } from './task-item-attachment-utils';
 import { AttachmentImage } from './AttachmentImage';
 import { FocusStarIcon } from '../FocusStarIcon';
+import { ToolbarSelect } from '../views/list/ToolbarSelect';
 
 interface TaskItemDisplayActions {
     onToggleSelect?: (options?: RangeSelectionOptions) => void;
@@ -1159,31 +1160,15 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                     )) : (
                         <>
                             {!isReference && showStatusSelect && (
-                                <select
+                                <ToolbarSelect
+                                    pill
                                     value={task.status}
-                                    aria-label={t('task.aria.status')}
-                                onChange={(e) => {
-                                    const nextStatus = e.target.value as TaskStatus;
-                                    if (nextStatus === 'waiting' && task.status !== 'waiting') {
-                                        e.currentTarget.blur();
-                                    }
-                                    onStatusChange(nextStatus);
-                                }}
-                                    // Colored per status with the Board's --status-* tints, so a
-                                    // Waiting pill reads amber wherever it appears (Discord ask).
-                                    className={cn(
-                                        'text-[11px] font-medium px-2.5 py-0.5 rounded-full cursor-pointer appearance-none border-none hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-primary/40',
-                                        STATUS_PILL_CLASSES[task.status],
-                                    )}
-                                >
-                                    <option value="inbox">{t('status.inbox')}</option>
-                                    <option value="next">{t('status.next')}</option>
-                                    <option value="waiting">{t('status.waiting')}</option>
-                                    <option value="someday">{t('status.someday')}</option>
-                                    <option value="reference">{t('status.reference')}</option>
-                                    <option value="done">{t('status.done')}</option>
-                                    <option value="archived">{t('status.archived')}</option>
-                                </select>
+                                    label={t('task.aria.status')}
+                                    onChange={(status) => onStatusChange(status as TaskStatus)}
+                                    triggerClassName={STATUS_PILL_CLASSES[task.status]}
+                                    options={(['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'] as TaskStatus[])
+                                        .map((status) => ({ value: status, label: t(`status.${status}`) }))}
+                                />
                             )}
                         </>
                     )}

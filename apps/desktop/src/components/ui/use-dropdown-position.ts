@@ -32,13 +32,15 @@ export function useDropdownPosition({ open, containerRef, dropdownRef }: UseDrop
             if (!trigger || !dropdown) return;
 
             const triggerRect = trigger.getBoundingClientRect();
+            const dropdownWidth = dropdown.getBoundingClientRect().width;
+            const maxLeft = Math.max(VIEWPORT_MARGIN_PX, window.innerWidth - dropdownWidth - VIEWPORT_MARGIN_PX);
             const spaceAbove = triggerRect.top - VIEWPORT_MARGIN_PX;
             const spaceBelow = window.innerHeight - triggerRect.bottom - VIEWPORT_MARGIN_PX;
             const shouldOpenUp = spaceBelow < MIN_DROPDOWN_SPACE && spaceAbove > spaceBelow;
             setOpenUpward(shouldOpenUp);
             setFixedDropdownStyle({
                 position: 'fixed',
-                left: triggerRect.left,
+                left: Math.min(Math.max(VIEWPORT_MARGIN_PX, triggerRect.left), maxLeft),
                 top: shouldOpenUp ? 'auto' : triggerRect.bottom + DROPDOWN_GAP_PX,
                 bottom: shouldOpenUp ? window.innerHeight - triggerRect.top + DROPDOWN_GAP_PX : 'auto',
                 width: triggerRect.width,
