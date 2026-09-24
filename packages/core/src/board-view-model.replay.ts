@@ -114,7 +114,7 @@ const requestId = () => {
 /** The whole Board: the view with every column's cards and the sheet's lists paged in under its revision. */
 function readBoard(contract: Contract, filters: BoardFilterState, filterEdit?: BoardFilterEdit) {
     const view = ok(contract.getBoardView({ filters, filterEdit, limit: 3 }));
-    const page = (list: 'cards' | 'tokens' | 'projects', total: number, first: unknown[], status?: string) => {
+    const page = (list: 'cards' | 'tokens' | 'projects' | 'chips', total: number, first: unknown[], status?: string) => {
         const all = [...first];
         while (all.length < total) {
             all.push(...ok(contract.getBoardList({
@@ -128,6 +128,7 @@ function readBoard(contract: Contract, filters: BoardFilterState, filterEdit?: B
         cards: view.columns.map((column) => page('cards', column.count, column.cards, column.status) as NativeBoardCard[]),
         tokens: page('tokens', view.sheet.tokens.total, view.sheet.tokens.items) as NativeBoardView['sheet']['tokens']['items'],
         projects: page('projects', view.sheet.projects.total, view.sheet.projects.items) as NativeBoardView['sheet']['projects']['items'],
+        chips: page('chips', view.sheet.chips.total, view.sheet.chips.items) as NativeBoardView['sheet']['chips']['items'],
     };
 }
 
@@ -151,7 +152,7 @@ export async function replayBoardScenario(input: {
     const run = (action: NativeBoardAction) => contract.runBoardAction({ requestId: requestId(), action });
 
     const observe = (): Observation => {
-        const { view, cards, tokens, projects } = readBoard(contract, filters);
+        const { view, cards, tokens, projects, chips } = readBoard(contract, filters);
         const texts: string[] = [];
         if (view.bar.active) texts.push(view.bar.clearLabel);
         texts.push(view.bar.filterLabel);
@@ -191,7 +192,7 @@ export async function replayBoardScenario(input: {
                 tokens: tokens.map((token) => token.value),
                 projects: projects.map((project) => ({ id: project.id, title: project.title })),
                 visibility: BOARD_FILTER_VISIBILITY,
-                chips: view.sheet.chips.map((chip) => [chip.id, chip.label, chip.excluded]),
+                chips: chips.map((chip) => [chip.id, chip.label, chip.excluded]),
                 contextMatchMode: view.filters.contextMatchMode,
                 tagMatchMode: view.filters.tagMatchMode,
                 additional: view.sheet.additionalChips.map((chip) => [chip.id, chip.label]),
@@ -227,7 +228,7 @@ export async function replayBoardScenario(input: {
             case 'toggleToken': return edit({ type: 'toggleToken', value: target as string });
             case 'toggleProject': return edit({ type: 'toggleProject', value: target as string });
             case 'matchMode': return edit({ type: 'setMatchMode', kind: target as 'context' | 'tag', value: rest[0] as 'all' | 'any' });
-            case 'chip': return edit(view().sheet.chips.find((chip) => chip.id === target)!.edit);
+            case 'chip': return edit(readBoard(contract, filters).chips.find((chip) => chip.id === target)!.edit);
             case 'additionalChip': {
                 const chip = view().sheet.additionalChips.find((entry) => entry.id === target)!;
                 if (chip.edit.type === 'clearDuePreset') dueExpanded = false;

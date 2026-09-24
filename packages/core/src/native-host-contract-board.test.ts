@@ -115,6 +115,14 @@ describe('native host contract: Board', () => {
         const rest = value(host.getBoardList({ list: 'cards', status: 'someday', offset: 100, limit: 100, revision: view.revision }));
         expect(rest.items.map((card) => (card as { row: { id: string } }).row.id)).toEqual(bulk.slice(100).map((task) => task.id));
         expect(value(host.getBoardList({ list: 'tokens', offset: 100, limit: 100, revision: view.revision })).items).toHaveLength(69);
+        // The sheet's chips page too: 150 selected tokens.
+        const filters = { tokens: bulk.slice(0, 100).map((task) => task.contexts[0]), excludedTokens: bulk.slice(100).map((task) => task.contexts[0]) };
+        const filtered = value(host.getBoardView({ filters, limit: 1 }));
+        expect([filtered.sheet.chips.total, filtered.sheet.chips.items.length]).toEqual([150, 100]);
+        const moreChips = value(host.getBoardList({ filters: filtered.filters, list: 'chips', offset: 100, limit: 100, revision: filtered.revision }));
+        expect(moreChips.items).toEqual(bulk.slice(100).map((task) => ({
+            id: `excluded-token:${task.contexts[0]}`, label: task.contexts[0], excluded: true, edit: { type: 'removeToken', value: task.contexts[0] },
+        })));
         // Filters name their own revision.
         expect(value(host.getBoardView({ filters: { searchQuery: 'bulk 1' }, limit: 1 })).revision).not.toBe(view.revision);
 
@@ -191,6 +199,42 @@ describe('native host contract: Board', () => {
         }
         expect(recorder.log).toHaveLength(writes);
         expect(revisions()).toEqual(before);
+    });
+
+    it('says a reorder changed nothing when the store reads it as the order it has', async () => {
+        freezeClock();
+        // Two cards without a board order: the Board shows them in list order, the store
+        // orders them by creation. Moving B above A asks for the store's own order.
+        const card = (id: string, createdAt: string) => ({ id, title: id, status: 'someday' as const, contexts: [], tags: [], createdAt, updatedAt: createdAt });
+        const { host, recorder } = await openHost(undefined, { ...part, tasks: [...part.tasks, card('A', '2026-09-20T12:00:00.000Z'), card('B', '2026-09-10T12:00:00.000Z')] });
+        const someday = () => value(host.getBoardView({ limit: 10 })).columns.find((column) => column.status === 'someday')!.cards.map((entry) => entry.row.id);
+        expect(someday()).toEqual(['A', 'B']);
+        expect(value(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'moveCard', taskId: 'B', status: 'someday', afterId: null } })))
+            .toEqual({ changed: false, open: null });
+        expect(recorder.log).toEqual([['reorderBoardTasks', 'someday', ['B', 'A']]]);
+        expect(someday()).toEqual(['A', 'B']);
+    });
+
+    it('answers a request with nothing to write without saving or keeping a receipt', async () => {
+        freezeClock();
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(saveData);
+        const move = { type: 'moveCard' as const, taskId: 'n-rent', status: 'waiting' as const };
+        const requestId = generateUUID();
+        value(await host.runBoardAction({ requestId, action: move }));
+        // Saves fail from here on; a finished move replayed after a restart still answers.
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        const saves = saveData.mock.calls.length;
+        const restarted = createNativeHostContract();
+        expect(await restarted.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        expect(await restarted.runBoardAction({ requestId, action: move })).toEqual({ ok: true, value: { changed: false, open: null } });
+        const noOp = generateUUID();
+        expect(await host.runBoardAction({ requestId: noOp, action: { type: 'trashTask', taskId: 't-trashed' } })).toEqual({ ok: true, value: { changed: false, open: null } });
+        expect(saveData).toHaveBeenCalledTimes(saves);
+        // No receipt was kept: the same ID can carry another action.
+        saveData.mockResolvedValue(undefined);
+        expect(value(await host.runBoardAction({ requestId: noOp, action: { type: 'trashTask', taskId: 'n-bulbs' } }))).toEqual({ changed: true, open: null });
+        expect(recorder.log).toEqual([['updateTask', 'n-rent', { status: 'waiting' }], ['deleteTask', 'n-bulbs']]);
     });
 
     it('refuses invalid input', async () => {

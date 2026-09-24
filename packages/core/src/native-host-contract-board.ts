@@ -63,6 +63,7 @@ export type BoardViewDeps = {
     t: () => Translate;
     /** Rows with core meta, as the other contract lists build them. */
     rows: (tasks: readonly Task[], now: Date) => NativeTaskRow[];
+    requestIdPattern: RegExp;
 };
 
 /** The Board's filter state; missing keys are the empty state's. */
@@ -104,8 +105,8 @@ export type NativeBoardView = {
         /** The Any/All control shows once two tokens of a kind are included. */
         showContextMatchMode: boolean;
         showTagMatchMode: boolean;
-        /** The sheet's chips, then the Board's own (search and due date); pressing one sends its edit. */
-        chips: { id: string; label: string; excluded: boolean; edit: BoardFilterEdit }[];
+        /** The sheet's chips (getBoardList pages 'chips'), then the Board's own (search and due date); pressing one sends its edit. */
+        chips: NativeBoardWindow<NativeBoardChip>;
         additionalChips: { id: string; label: string; edit: BoardFilterEdit }[];
         /** The due-date section; a preset sends { type: 'toggleDuePreset', preset } and folds the section. */
         due: { label: string; summary: string; accessibilityLabel: string; presets: { preset: BoardDuePreset; label: string; selected: boolean }[] };
@@ -121,7 +122,8 @@ export type NativeBoardView = {
     };
 };
 
-export type NativeBoardList = 'cards' | 'tokens' | 'projects';
+export type NativeBoardChip = { id: string; label: string; excluded: boolean; edit: BoardFilterEdit };
+export type NativeBoardList = 'cards' | 'tokens' | 'projects' | 'chips';
 
 export type NativeBoardAction =
     /**
@@ -203,7 +205,16 @@ const paramsKey = (params: unknown): string => {
     }
     return hash.toString(36);
 };
-const firstWindow = <T,>(items: readonly T[]): NativeBoardWindow<T> => ({ total: items.length, items: items.slice(0, NATIVE_HOST_MAX_WINDOW) });
+/** A list the view pages: its total, and one window built only for the items it holds. */
+const pagedList = <T, Item>(all: readonly T[], toItem: (entry: T) => Item) => ({
+    total: all.length,
+    page: (offset: number, limit: number): Item[] => all.slice(offset, offset + limit).map(toItem),
+});
+const firstPage = <Item,>(list: { total: number; page: (offset: number, limit: number) => Item[] }): NativeBoardWindow<Item> => (
+    { total: list.total, items: list.page(0, NATIVE_HOST_MAX_WINDOW) }
+);
+// ponytail: the last 200 request IDs that entered the receipts; the receipts keep 50.
+const ENTERED_LIMIT = 200;
 
 export function createBoardViewMethods(deps: BoardViewDeps) {
     // Exact retries through the shared helper: a retry finishes a failed save and never writes twice.
@@ -242,6 +253,13 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         const columns = buildBoardColumns({ tasks, criteria: resolved.criteria, searchQuery: filters.searchQuery, projects: state.projects, now, t });
         const cardText = getBoardCardText(t);
         const timeEstimatesEnabled = resolveFeatureFlags(state.settings).timeEstimates;
+        const lists = {
+            tokens: pagedList(options.tokens, (value) => ({
+                value, state: filters.tokens.includes(value) ? 'included' as const : filters.excludedTokens.includes(value) ? 'excluded' as const : 'none' as const,
+            })),
+            projects: pagedList(options.projects, (project) => ({ ...project, selected: filters.projects.includes(project.id) })),
+            chips: pagedList(resolved.chips, (chip): NativeBoardChip => ({ id: chip.id, label: chip.label, excluded: chip.excluded, edit: chip.edit as BoardFilterEdit })),
+        };
         const view: Omit<NativeBoardView, 'version' | 'revision' | 'columns'> = {
             filters,
             bar: {
@@ -253,13 +271,11 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 filterLabel: summary.filterLabel,
             },
             sheet: {
-                tokens: firstWindow(options.tokens.map((value) => ({
-                    value, state: filters.tokens.includes(value) ? 'included' as const : filters.excludedTokens.includes(value) ? 'excluded' as const : 'none' as const,
-                }))),
-                projects: firstWindow(options.projects.map((project) => ({ ...project, selected: filters.projects.includes(project.id) }))),
+                tokens: firstPage(lists.tokens),
+                projects: firstPage(lists.projects),
                 showContextMatchMode: resolved.showContextMatchMode,
                 showTagMatchMode: resolved.showTagMatchMode,
-                chips: resolved.chips.map((chip) => ({ id: chip.id, label: chip.label, excluded: chip.excluded, edit: chip.edit as BoardFilterEdit })),
+                chips: firstPage(lists.chips),
                 additionalChips: summary.chips.map((chip) => ({
                     ...chip, edit: chip.id === 'board-search' ? { type: 'setSearch', value: '' } : { type: 'clearDuePreset' },
                 })),
@@ -274,7 +290,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 errorTitle: cardText.errorTitle,
             },
         };
-        return { view, columns, options, badges, timeEstimatesEnabled };
+        return { view, columns, lists, badges, timeEstimatesEnabled };
     }
 
     /** The Board for these filters (after an edit), with its revision; null for invalid input. */
@@ -302,69 +318,85 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     // ---- Actions ---------------------------------------------------------------
 
     type Outcome = NativeHostResult<NativeBoardActionResult> | NativeUnsavedWrite<NativeBoardActionResult>;
+    /** An action's checks: a refusal or nothing to write (`result`), or the write to run. */
+    type Prepared = { result: Outcome } | { write: () => Promise<Outcome> };
     /** Nothing to write: the request's target state already holds (a replay after a restart lands here). */
-    const unchanged: Outcome = { ok: true, value: { changed: false, open: null } };
+    const unchanged: Prepared = { result: { ok: true, value: { changed: false, open: null } } };
+    const refuse = (code: NativeHostErrorCode, message: string): Prepared => ({ result: fail(code, message) });
     const liveTask = (id: unknown) => {
         const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
         return task && !task.deletedAt && !task.purgedAt ? task : undefined;
     };
+    /**
+     * Runs a store call. `changed` says whether the tasks changed: a reorder the store
+     * reads as its current order writes nothing, and says so.
+     */
+    const written = async (call: Parameters<typeof runStoreWrite>[0], open: () => NativeBoardActionResult['open'] = () => null): Promise<Outcome> => {
+        const before = useTaskStore.getState()._allTasks;
+        const landed = await runStoreWrite(call);
+        return settleWrite(landed, { changed: useTaskStore.getState()._allTasks !== before, open: open() });
+    };
 
-    const perform = async (action: NativeBoardAction): Promise<Outcome> => {
+    const prepare = (action: NativeBoardAction): Prepared => {
         const store = useTaskStore.getState();
         switch (action.type) {
             case 'moveCard': {
                 const filters = readFilters(action.filters);
                 if (!isBoardStatus(action.status) || !filters
                     || !(action.afterId === undefined || action.afterId === null || isText(action.afterId))) {
-                    return fail('INVALID_INPUT', 'A task, a Board column, an optional card to land after and valid filters are required');
+                    return refuse('INVALID_INPUT', 'A task, a Board column, an optional card to land after and valid filters are required');
                 }
                 const task = liveTask(action.taskId);
-                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
-                if (!isBoardStatus(task.status)) return fail('INVALID_INPUT', 'The card is not on the Board');
+                if (!task) return refuse('TASK_NOT_FOUND', 'Task not found');
+                if (!isBoardStatus(task.status)) return refuse('INVALID_INPUT', 'The card is not on the Board');
                 let columnIds: string[] = [];
                 if (task.status !== action.status) {
-                    if (action.afterId !== undefined) return fail('INVALID_INPUT', 'A drop into another column has no position');
+                    if (action.afterId !== undefined) return refuse('INVALID_INPUT', 'A drop into another column has no position');
                 } else if (action.afterId !== undefined) {
                     const { board } = readBoard({ filters })!;
                     columnIds = board.columns.find((column) => column.status === action.status)!.tasks.map((entry) => entry.id);
                     if (!columnIds.includes(task.id) || (action.afterId !== null && (action.afterId === task.id || !columnIds.includes(action.afterId)))) {
-                        return fail('INVALID_INPUT', 'The card and the card it lands after must be shown in that column');
+                        return refuse('INVALID_INPUT', 'The card and the card it lands after must be shown in that column');
                     }
                 }
                 const plan = planBoardDrop({ task, status: action.status, columnIds, afterId: action.afterId });
                 if (!plan) return unchanged;
-                const value: NativeBoardActionResult = { changed: true, open: null };
-                return settleWrite(await runStoreWrite(() => (plan.kind === 'status'
-                    ? store.updateTask(plan.taskId, { status: plan.status })
-                    : store.reorderBoardTasks(plan.status, plan.orderedIds))), value);
+                return {
+                    write: () => written(() => (plan.kind === 'status'
+                        ? store.updateTask(plan.taskId, { status: plan.status })
+                        : store.reorderBoardTasks(plan.status, plan.orderedIds))),
+                };
             }
             case 'trashTask': {
                 const task = typeof action.taskId === 'string' ? store._tasksById.get(action.taskId) : undefined;
-                if (!task || task.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (!task || task.purgedAt) return refuse('TASK_NOT_FOUND', 'Task not found');
                 if (task.deletedAt) return unchanged;
-                return settleWrite(await runStoreWrite(() => store.deleteTask(task.id)), { changed: true, open: null });
+                return { write: () => written(() => store.deleteTask(task.id)) };
             }
             case 'duplicateTask': {
                 const task = liveTask(action.taskId);
-                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (!task) return refuse('TASK_NOT_FOUND', 'Task not found');
                 const { duplicateFailed } = getBoardCardText(deps.t());
                 let createdId: string | undefined;
                 // Mobile's toast: the store's refusal, else "could not duplicate".
-                const written = await runStoreWrite(async () => {
-                    try {
-                        const result = await store.duplicateTask(task.id, false);
-                        createdId = result.id;
-                        return result.success && result.id ? result : { success: false, error: result.error || duplicateFailed };
-                    } catch {
-                        return { success: false, error: duplicateFailed };
-                    }
-                });
-                return settleWrite(written, { changed: true, open: createdId ? { taskId: createdId, projectId: task.projectId ?? null, tab: 'task' } : null });
+                return {
+                    write: () => written(async () => {
+                        try {
+                            const result = await store.duplicateTask(task.id, false);
+                            createdId = result.id;
+                            return result.success && result.id ? result : { success: false, error: result.error || duplicateFailed };
+                        } catch {
+                            return { success: false, error: duplicateFailed };
+                        }
+                    }, () => (createdId ? { taskId: createdId, projectId: task.projectId ?? null, tab: 'task' } : null)),
+                };
             }
             default:
-                return fail('INVALID_INPUT', 'The Board does not offer that action');
+                return refuse('INVALID_INPUT', 'The Board does not offer that action');
         }
     };
+    // Request IDs that entered the receipts, with their payloads, so a retry reaches its receipt first.
+    const entered = new Map<string, string>();
 
     return {
         /**
@@ -398,7 +430,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
 
         /**
          * A later window of a column's cards ('cards' with its status), or of the filter
-         * sheet's 'tokens' or 'projects'. Send the view's filters and its revision.
+         * sheet's 'tokens', 'projects' or 'chips'. Send the view's filters and its revision.
          */
         getBoardList(input: {
             filters?: NativeBoardFilters;
@@ -411,27 +443,21 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const valid = isObjectRecord(input) && typeof input.revision === 'string' && isWindow(input)
-                && (input.list === 'tokens' || input.list === 'projects' || (input.list === 'cards' && isBoardStatus(input.status)));
+                && (input.list === 'tokens' || input.list === 'projects' || input.list === 'chips' || (input.list === 'cards' && isBoardStatus(input.status)));
             const read = valid ? readBoard({ filters: input.filters }) : null;
             if (!read) return fail('INVALID_INPUT', 'The view\'s filters, a list (a column\'s status for cards), a valid window and its revision are required');
             if (read.revision !== input.revision) return fail('STALE_REVISION', 'The Board changed; read it again');
             const { board, now } = read;
-            const window = <T,>(items: readonly T[]) => items.slice(input.offset, input.offset + input.limit);
             let total: number;
             let items: unknown[];
             if (input.list === 'cards') {
                 const column = board.columns.find((entry) => entry.status === input.status)!;
                 total = column.tasks.length;
-                items = cards(board, window(column.tasks), now);
+                items = cards(board, column.tasks.slice(input.offset, input.offset + input.limit), now);
             } else {
-                const all = input.list === 'tokens' ? board.options.tokens : board.options.projects;
-                total = all.length;
-                items = input.list === 'tokens'
-                    ? window(board.options.tokens).map((value) => ({
-                        value,
-                        state: board.view.filters.tokens.includes(value) ? 'included' : board.view.filters.excludedTokens.includes(value) ? 'excluded' : 'none',
-                    }))
-                    : window(board.options.projects).map((project) => ({ ...project, selected: board.view.filters.projects.includes(project.id) }));
+                const list = board.lists[input.list];
+                total = list.total;
+                items = list.page(input.offset, input.limit);
             }
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: read.revision, list: input.list, total, items } };
         },
@@ -439,7 +465,8 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         /**
          * One Board action. Reuse `requestId` to retry: a completed request writes nothing
          * again. A move and Delete are target-state, so a replay after a restart finds the
-         * card where it asked and writes nothing.
+         * card where it asked and writes nothing. `changed` is false when the store did not
+         * change; a request with nothing to write neither saves nor keeps a receipt.
          *
          * ponytail: Duplicate cannot be recognized after a restart (the store gives the copy
          * a new id and takes none), so a replay after a restart copies again. Needs an id
@@ -448,9 +475,28 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         async runBoardAction(input: { requestId: string; action: NativeBoardAction }): Promise<NativeHostResult<NativeBoardActionResult>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
+            if (!isObjectRecord(input) || !isObjectRecord(input.action) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'A request UUID and an action are required');
+            }
             const action = input.action as NativeBoardAction;
-            return receipts.run(input.requestId, JSON.stringify(['board', action]), () => perform(action));
+            const requestId = input.requestId;
+            const payload = JSON.stringify(['board', action]);
+            // The receipts come first: a request that is running or owes its save only saves.
+            // A new request that is refused or has nothing to write returns at once: no save, no receipt.
+            const known = entered.get(requestId);
+            if (known === undefined) {
+                const prepared = prepare(action);
+                if ('result' in prepared) return prepared.result as NativeHostResult<NativeBoardActionResult>;
+                entered.set(requestId, payload);
+                if (entered.size > ENTERED_LIMIT) entered.delete(entered.keys().next().value!);
+            }
+            const outcome = await receipts.run(requestId, payload, () => {
+                const prepared = prepare(action);
+                return 'result' in prepared ? Promise.resolve(prepared.result) : prepared.write();
+            });
+            // A write that did not land leaves no receipt; another payload under a known ID was refused and changes nothing.
+            if (!outcome.ok && outcome.error.code !== 'SAVE_FAILED' && (known === undefined || known === payload)) entered.delete(requestId);
+            return outcome;
         },
     };
 }

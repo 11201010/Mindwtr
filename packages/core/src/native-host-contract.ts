@@ -977,6 +977,7 @@ export function createNativeHostContract() {
                 const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
                 return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
             },
+            requestIdPattern: CAPTURE_ID_PATTERN,
         }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
