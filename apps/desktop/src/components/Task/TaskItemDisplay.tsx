@@ -160,6 +160,8 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                 : '')
         : '';
     const isReference = task.status === 'reference';
+    const assignedTo = task.assignedTo?.trim();
+    const waitingAssignee = task.status === 'waiting' ? assignedTo : undefined;
     const checklistProgress = isReference ? null : getChecklistProgress(task);
     const recurrenceLabel = formatRecurrenceLabel({ recurrence: task.recurrence, t });
     const projectedRecurrenceDateLabel = recurrenceLabel
@@ -209,7 +211,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
     // give, so it stays out.
     const hasTimedStart = Boolean(task.startTime && hasTimeComponent(task.startTime));
     const hasMetadata = isReference
-        ? Boolean((showProjectBadgeInMetadata && project) || area || task.assignedTo || task.tags.length > 0)
+        ? Boolean((showProjectBadgeInMetadata && project) || area || assignedTo || task.tags.length > 0)
         : Boolean(
             (showProjectBadgeInMetadata && project)
             || area
@@ -223,7 +225,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
             || recurrencePreviewLabel
             || (prioritiesEnabled && task.priority)
             || task.energyLevel
-            || task.assignedTo
+            || assignedTo
             || (task.contexts?.length ?? 0) > 0
             || task.tags.length > 0
             || checklistProgress
@@ -244,6 +246,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
             || (prioritiesEnabled && task.priority)
             || (task.contexts?.length ?? 0) > 0
             || checklistProgress
+            || waitingAssignee
         );
     const resolvedDirection = resolveTaskTextDirection(task);
     const isRtl = resolvedDirection === 'rtl';
@@ -496,6 +499,12 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
         && task.startTime
         && safeFormatDate(task.startTime, 'P') === appearsAtLabel,
     );
+    const renderAssignedToBadge = () => assignedTo && (
+        <MetadataBadge
+            variant="info"
+            label={`${t('taskEdit.assignedTo')}: ${assignedTo}`}
+        />
+    );
     const renderMetadataRow = (className?: string, expanded = false) => (
         <div className={cn("flex flex-wrap items-center text-xs", className)}>
             {showProjectBadgeInMetadata && renderProjectBadge()}
@@ -568,12 +577,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                     label={t(`energyLevel.${task.energyLevel}`)}
                 />
             )}
-            {expanded && task.assignedTo && (
-                <MetadataBadge
-                    variant="info"
-                    label={`${t('taskEdit.assignedTo')}: ${task.assignedTo}`}
-                />
-            )}
+            {(expanded || waitingAssignee) && renderAssignedToBadge()}
             {!isReference && task.contexts?.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
                     {(expanded ? task.contexts : task.contexts.slice(0, 3)).map((ctx) => renderContextBadge(ctx))}
@@ -852,7 +856,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                         dense ? "mt-0.5" : "mt-1",
                         (overlayDragHandle || overlayQuickDone) && "pl-12"
                     ))}
-                    {!isReference && !showCompactMeta && !isViewOpen && (completionLabel || projectDeadlineLabel || appearsAtLabel || hasTimedStart) && (
+                    {!isReference && !showCompactMeta && !isViewOpen && (completionLabel || projectDeadlineLabel || appearsAtLabel || hasTimedStart || waitingAssignee) && (
                         <div className={cn(
                             "flex flex-wrap items-center gap-2 text-xs text-muted-foreground",
                             dense ? "mt-0.5" : "mt-1",
@@ -863,6 +867,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                                 "show list details" off along with the completion timestamp. */}
                             {renderAppearsAtMetadataBadge()}
                             {renderProjectDeadlineMetadataBadge()}
+                            {waitingAssignee && renderAssignedToBadge()}
                             {hasTimedStart && (
                                 <MetadataBadge
                                     variant="info"

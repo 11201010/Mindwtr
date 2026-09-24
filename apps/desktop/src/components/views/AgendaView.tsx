@@ -1266,7 +1266,7 @@ export function AgendaView() {
                         <AgendaCollapsibleSection
                             title={t('agenda.nextActions')}
                             icon={ArrowRight}
-                            color="text-info"
+                            color="text-muted-foreground"
                             count={sections.nextActions.length}
                             expanded={expandedSections.nextActions}
                             onToggle={() => toggleSection('nextActions')}
@@ -1286,7 +1286,7 @@ export function AgendaView() {
                         <AgendaCollapsibleSection
                             title={t('agenda.nextActions')}
                             icon={ArrowRight}
-                            color="text-info"
+                            color="text-muted-foreground"
                             count={sections.nextActions.length}
                             expanded={expandedSections.nextActions}
                             onToggle={() => toggleSection('nextActions')}
