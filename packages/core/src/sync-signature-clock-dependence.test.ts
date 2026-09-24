@@ -12,18 +12,17 @@ import type { Task } from './types';
  * local side of a merge stops recomputing signatures it computed last cycle. That
  * key is only sound if the same raw task always produces the same comparable
  * content. It does not. `normalizeTaskForSyncMerge` takes `nowIso` and passes it to
- * `normalizeTaskForLoad`, which has two clock-reading branches that land on fields
- * the content signature compares:
+ * `normalizeTaskForLoad`, whose completedAt fallback lands on a field the content
+ * signature compares:
  *
- *   1. `focusOrder` (task-status.ts, the `isFutureStart` branch) — a queued
- *      future-start star has no current Focus order until its start day.
- *   2. `completedAt` (task-status.ts, `normalizeTaskLifecycleFields`) — a finished
+ *   `completedAt` (task-status.ts, `normalizeTaskLifecycleFields`) — a finished
  *      task with no `completedAt`, no `updatedAt` and no `createdAt` falls all the
  *      way back to the backfilled `createdAt`, which is `nowIso`.
  *
- * Both are recorded in `docs/performance/merge-signature-reuse-2026-09-21.md`.
+ * `focusOrder` also changes at a future start, but is excluded from the content
+ * signature, so that branch is now clock-independent for comparison.
  *
- * If a later change makes either branch clock-independent, these tests fail. That
+ * If a later change makes the completedAt branch clock-independent, these tests fail. That
  * is the signal to update them AND to re-open the cache-key question — not to
  * loosen the assertion.
  *
@@ -41,7 +40,7 @@ const signAt = (task: Task, nowIso: string): string =>
 const asTask = (raw: Record<string, unknown>): Task => raw as unknown as Task;
 
 describe('merge content signature vs the merge clock', () => {
-    it('a focused task with a future start signs differently before and after that start', () => {
+    it('a focused task with a future start has the same content signature before and after that start', () => {
         const task = asTask({
             id: 'clock-focus',
             title: 'Focused with a future start',
@@ -60,8 +59,8 @@ describe('merge content signature vs the merge clock', () => {
         expect(beforeStart).toContain('"isFocusedToday":true');
         expect(beforeStart).not.toContain('"focusOrder"');
         expect(afterStart).toContain('"isFocusedToday":true');
-        expect(afterStart).toContain('"focusOrder":3');
-        expect(beforeStart).not.toEqual(afterStart);
+        expect(afterStart).not.toContain('"focusOrder"');
+        expect(beforeStart).toEqual(afterStart);
     });
 
     it('a finished task with no timestamps at all takes completedAt from the merge clock', () => {

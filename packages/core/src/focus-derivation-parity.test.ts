@@ -36,6 +36,7 @@ import {
 import { applyFilter, createTaskFilterPredicate } from './saved-filters';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
 import { isTaskActionable } from './task-status';
+import { isTaskFutureStart } from './task-utils';
 import type { Project, Section, SortField, Task, TaskPriority, TaskStatus } from './types';
 
 // --- the generated store ----------------------------------------------------
@@ -418,7 +419,13 @@ describe('applyFilter short cut for empty criteria', () => {
 
 function expectParity(store: Store, nowIso: string, sortBy: SortField, prioritiesEnabled: boolean): void {
     const now = new Date(nowIso);
-    const actionable = store.tasks.filter(isTaskActionable);
+    // The frozen reference predates scheduled Focus. Compare the performance
+    // refactor on shared behavior; dedicated Focus tests cover queued stars.
+    const actionable = store.tasks.filter(isTaskActionable).map((task) => (
+        task.isFocusedToday && isTaskFutureStart(task, now)
+            ? { ...task, isFocusedToday: false }
+            : task
+    ));
     const poolsInput = {
         tasks: actionable,
         visibleTasks: actionable,

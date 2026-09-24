@@ -190,7 +190,7 @@ describe('widget-data', () => {
                     task('focus-hidden', 'Gamma hidden focus', {
                         isFocusedToday: true,
                         areaId: 'home',
-                        startTime: '2026-09-23T09:00:00.000Z',
+                        startTime: '2026-09-22T09:00:00.000Z',
                     }),
                     task('section-a-first', 'Beta today', {
                         projectId: 'sequential', sectionId: 'section-a', order: 0, dueDate: '2026-09-22',
@@ -886,7 +886,7 @@ describe('widget-data', () => {
         expect(payload.items.map((item) => item.id)).toEqual(['section-a-first', 'section-b-first']);
     });
 
-    it('keeps starred tasks visible despite future starts while hiding unstarred future work', () => {
+    it('keeps future-start stars out of the widget until their start day', () => {
         const created = new Date().toISOString();
         const future = '2999-01-01T09:00:00.000Z';
         const data: AppData = {
@@ -917,7 +917,7 @@ describe('widget-data', () => {
             ],
         };
         const payload = buildWidgetPayload(data, 'en');
-        expect(payload.items.map((item) => item.id)).toEqual(['focus-future']);
+        expect(payload.items.map((item) => item.id)).toEqual([]);
     });
 
     it('orders focused tasks using the Focus screen sort before taking top three', () => {

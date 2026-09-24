@@ -3359,7 +3359,8 @@ describe('cloud server api', () => {
     test('counts only active Focus tasks for a configured PATCH cap without adding eligibility rules', async () => {
         const iso = '2026-01-01T00:00:00.000Z';
         const deferredId = crypto.randomUUID();
-        const blockedId = crypto.randomUUID();
+        const thirdId = crypto.randomUUID();
+        const overCapId = crypto.randomUUID();
         expect((await seedFocusData([
             makeTestTask({ id: crypto.randomUUID(), title: 'Active one', status: 'next', isFocusedToday: true }),
             makeTestTask({ id: crypto.randomUUID(), title: 'Active two', status: 'waiting', reviewAt: '2020-01-01', isFocusedToday: true }),
@@ -3368,7 +3369,8 @@ describe('cloud server api', () => {
             makeTestTask({ id: crypto.randomUUID(), title: 'Archived', status: 'archived', isFocusedToday: true }),
             makeTestTask({ id: crypto.randomUUID(), title: 'Deleted', status: 'next', deletedAt: iso, isFocusedToday: true }),
             makeTestTask({ id: deferredId, title: 'Deferred', status: 'next', startTime: '2099-01-01', isFocusedToday: false }),
-            makeTestTask({ id: blockedId, title: 'Fourth active', status: 'next', isFocusedToday: false }),
+            makeTestTask({ id: thirdId, title: 'Third active', status: 'next', isFocusedToday: false }),
+            makeTestTask({ id: overCapId, title: 'Over cap', status: 'next', isFocusedToday: false }),
         ], 3)).status).toBe(200);
 
         const deferredStar = await fetch(`${baseUrl}/v1/tasks/${deferredId}`, {
@@ -3379,7 +3381,14 @@ describe('cloud server api', () => {
         expect(deferredStar.status).toBe(200);
         expect((await deferredStar.json()).task.isFocusedToday).toBe(true);
 
-        const refused = await fetch(`${baseUrl}/v1/tasks/${blockedId}`, {
+        const thirdStar = await fetch(`${baseUrl}/v1/tasks/${thirdId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(thirdStar.status).toBe(200);
+
+        const refused = await fetch(`${baseUrl}/v1/tasks/${overCapId}`, {
             method: 'PATCH',
             headers: { ...authHeaders, 'content-type': 'application/json' },
             body: JSON.stringify({ isFocusedToday: true }),

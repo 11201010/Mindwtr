@@ -457,7 +457,7 @@ describe('FocusScreen', () => {
     expect(openProjectScreenMock).toHaveBeenCalledWith('review-project');
   });
 
-  it('defers a focused task from the row action and offers undo', async () => {
+  it('queues a focused task from the row action and offers undo', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 4, 2, 10, 0, 0, 0));
     const alertSpy = vi.spyOn(Alert, 'alert');
@@ -493,7 +493,6 @@ describe('FocusScreen', () => {
 
     expect(storeState.updateTask).toHaveBeenCalledWith('focused-next', {
       startTime: '2026-05-03',
-      isFocusedToday: false,
     });
     expect(showToastMock).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Focused next',
@@ -508,7 +507,6 @@ describe('FocusScreen', () => {
 
     expect(storeState.updateTask).toHaveBeenLastCalledWith('focused-next', {
       startTime: undefined,
-      isFocusedToday: true,
     });
     vi.useRealTimers();
   });
