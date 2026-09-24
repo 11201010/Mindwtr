@@ -76,6 +76,12 @@
     "weeklyReview": ["weekly: every step, then finish", "weekly: Monday week start", "weekly: tracked time in the look-back", "weekly: estimates off hide the look-back totals", "weekly: an empty system"],
     "dailyReview": ["daily: every step, then finish", "daily: no focus step", "daily: an empty system"]
    }
+  },
+  "ci36049852319ReviewEmpty": {
+   "baseSha": "f28f81afa5222015392dd4b7ede4e623671aa91b",
+   "sourceState": "React Native Review screen after the due and all scope change; parity harness selects All open tasks before legacy interactions and omits new scope and due action controls",
+   "command": "cd apps/mobile && MINDWTR_CAPTURE_REVIEW_VIEWS=1 bunx vitest run 'app/(drawer)/review.parity.test.tsx'",
+   "cases": { "review": ["overview: empty"] }
   }
  },
  "review": {
@@ -3822,7 +3828,7 @@
     {
      "texts": [
       "Start Review",
-      "You're all caught up. Nothing to review right now."
+      "No open tasks to review."
      ],
      "headers": [],
      "expansion": [
@@ -3850,7 +3856,7 @@
     {
      "texts": [
       "Start Review",
-      "You're all caught up. Nothing to review right now."
+      "No open tasks to review."
      ],
      "headers": [],
      "expansion": [

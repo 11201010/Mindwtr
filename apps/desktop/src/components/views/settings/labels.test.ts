@@ -40,7 +40,7 @@ const reportedZhHantLabels = {
     defaultScheduleTime: '默認安排時間',
     defaultScheduleTimeDesc: '可選。選擇日期後自動填入開始、截止和回顧時間。留空則保持僅日期。',
     undoNotifications: '撤銷通知',
-    undoNotificationsDesc: '在將任務標記為已完成或刪除後顯示可撤銷提示。',
+    undoNotificationsDesc: '完成、刪除或取消任務後顯示可復原操作。',
     launchAtStartup: '開機自動啟動',
     launchAtStartupDesc: '登錄這台電腦時自動啟動 Mindwtr。',
     localApiServer: '啟用本機 API 伺服器',

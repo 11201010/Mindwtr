@@ -174,6 +174,7 @@ test('Review toolbar stays compact and its status picker preserves filtering', a
     ] });
     await page.goto('/?view=review');
     await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'All open tasks', exact: true }).click();
     const toolbar = page.locator('.review-toolbar');
     const status = toolbar.getByRole('combobox', { name: 'Status', exact: true });
     await expect(status).toContainText('Open tasks (2)');
