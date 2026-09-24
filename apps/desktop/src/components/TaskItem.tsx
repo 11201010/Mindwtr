@@ -1657,6 +1657,7 @@ export const TaskItem = memo(function TaskItem({
                 } : undefined}
                 onDoubleClick={(event) => {
                     if (!enableDoubleClickEdit || selectionMode || effectiveReadOnly || isEditing) return;
+                    if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, [role="button"], [contenteditable], [data-task-row-ignore-double-click]')) return;
                     event.stopPropagation();
                     startEditing();
                 }}
