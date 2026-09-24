@@ -188,6 +188,7 @@ import { createReviewViewMethods } from './native-host-contract-review-views';
 import { createQuickCaptureMethods } from './native-host-contract-quick-capture';
 import { createCalendarViewMethods } from './native-host-contract-calendar';
 import { createBoardViewMethods } from './native-host-contract-board';
+import { createInboxViewMethods } from './native-host-contract-inbox-view';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -966,6 +967,17 @@ export function createNativeHostContract() {
             formatDate: () => createDateFormatter(dateFormatting()),
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
+        }),
+        // The Inbox tab's list, toolbar and screen parts: native-host-contract-inbox-view.ts.
+        ...createInboxViewMethods({
+            readiness,
+            t: () => translate,
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            // Mobile's Inbox list hides checklist progress.
+            rows: (tasks, now) => {
+                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now, { hideChecklistProgress: true })));
+            },
         }),
         // The Board: native-host-contract-board.ts.
         ...createBoardViewMethods({
