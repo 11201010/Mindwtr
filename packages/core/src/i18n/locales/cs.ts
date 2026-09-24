@@ -1503,7 +1503,7 @@ export const csOverrides: Record<string, string> = {
         'agenda.emptyStart': 'Zatím žádné úkoly. Přidejte vše, co máte v hlavě, do Schránky a roztřiďte to později.',
         'focus.schedule': 'Dnes',
         'focus.nextActions': 'Další kroky',
-        'focus.groupBy': 'Seskupit podle',
+        'focus.groupBy': 'Seskupit další kroky podle',
         'focus.group.context': 'Kontext',
         'focus.group.project': 'Projekt',
         'focus.group.area': 'Oblast',

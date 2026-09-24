@@ -1771,7 +1771,7 @@ export default function FocusScreen() {
               </View>
 
               <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
-                {resolveText('focus.groupBy', 'Group by')}
+                {resolveText('focus.groupBy', 'Group next actions by')}
               </Text>
               <View style={styles.sheetChipRow}>
                 {focusGroupByOptions.map((groupBy) => renderFilterChip(

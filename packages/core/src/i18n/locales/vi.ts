@@ -1711,7 +1711,7 @@ export const viOverrides: Record<string, string> = {
         'agenda.emptyStart': 'Chưa có nhiệm vụ nào. Thêm những gì bạn đang nghĩ vào Hộp thư đến rồi sắp xếp sau.',
         'focus.schedule': 'Hôm nay',
         'focus.nextActions': 'Hành động tiếp theo',
-        'focus.groupBy': 'Nhóm theo',
+        'focus.groupBy': 'Nhóm hành động tiếp theo theo',
         'focus.group.context': 'Ngữ cảnh',
         'focus.group.project': 'Dự án',
         'focus.group.area': 'Khu vực',

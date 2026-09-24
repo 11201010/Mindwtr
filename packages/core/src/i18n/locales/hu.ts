@@ -1661,7 +1661,7 @@ export const huOverrides: Record<string, string> = {
     'agenda.emptyStart': 'Még nincsenek feladatok. Adja hozzá bármi, ami eszébe jut, a Beérkezett elemekhez, és rendszerezze később.',
     'focus.schedule': 'Ma',
     'focus.nextActions': 'Következő teendők',
-    'focus.groupBy': 'Csoportosítás',
+    'focus.groupBy': 'Következő teendők csoportosítása',
     'focus.group.context': 'Kontextus',
     'focus.group.project': 'Projekt',
     'focus.group.area': 'Terület',

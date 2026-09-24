@@ -1249,7 +1249,7 @@ describe('AgendaView', () => {
         expect(getAllByText('Waiting review task')).toHaveLength(1);
     });
 
-    it('renders Review Due between Schedule and Next Actions', () => {
+    it('renders Next Actions between Schedule and Review Due', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(nowIso));
         const tasks = [
@@ -1270,8 +1270,8 @@ describe('AgendaView', () => {
         expect(scheduleSection).not.toBeNull();
         expect(reviewSection).not.toBeNull();
         expect(nextSection).not.toBeNull();
-        expect(scheduleSection!.compareDocumentPosition(reviewSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-        expect(reviewSection!.compareDocumentPosition(nextSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(scheduleSection!.compareDocumentPosition(nextSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(nextSection!.compareDocumentPosition(reviewSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('walks visible Focus tasks in rendered section order', () => {
@@ -1294,9 +1294,9 @@ describe('AgendaView', () => {
             ?.dataset.taskId;
 
         fireEvent.keyDown(window, { key: 'j' });
-        expect(focusedTaskId()).toBe('review-task');
-        fireEvent.keyDown(window, { key: 'j' });
         expect(focusedTaskId()).toBe('next-task');
+        fireEvent.keyDown(window, { key: 'j' });
+        expect(focusedTaskId()).toBe('review-task');
         fireEvent.keyDown(window, { key: 'j' });
         expect(focusedTaskId()).toBe('upcoming-task');
     });

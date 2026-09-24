@@ -1657,7 +1657,7 @@ export const ukOverrides: Record<string, string> = {
     "agenda.emptyStart": "Завдань ще немає. Додайте все, що думаєте, до папки «Вхідні» та сортуйте пізніше.",
     "focus.schedule": "Сьогодні",
     "focus.nextActions": "Наступні дії",
-    "focus.groupBy": "Групувати за",
+    "focus.groupBy": "Групувати наступні дії за",
     "focus.group.context": "Контекст",
     "focus.group.project": "Проект",
     "focus.group.area": "Сфера",
