@@ -298,7 +298,7 @@ describe('AgendaView', () => {
         expect(queryByText('Review project')).not.toBeInTheDocument();
         expect(getByRole('button', { name: 'Expand sections' })).toBeInTheDocument();
         expect(JSON.parse(window.localStorage.getItem(focusViewStateStorageKey) ?? '{}').expandedSections)
-            .toEqual({ schedule: false, reviewDue: false, nextActions: false, upcoming: false, reviewProjects: false });
+            .toEqual({ focus: true, schedule: false, reviewDue: false, nextActions: false, upcoming: false, reviewProjects: false });
 
         fireEvent.click(getByRole('button', { name: /Next Actions\s*\(1\)/ }));
         expect(getByText('Next task')).toBeInTheDocument();
