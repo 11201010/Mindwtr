@@ -141,7 +141,7 @@ import {
     type HistoryTab,
 } from './archive-view-model';
 import type { BulkTaskTokenField, BulkTaskTokenMode } from './bulk-task-tokens';
-import { createNativeRequestReceipts } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import {
     buildContextsTokenIndex,
     buildContextsViewModel,
@@ -159,7 +159,6 @@ import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { countActiveFilterCriteria, criteriaFromSelections } from './filter-criteria';
 import type { ContextOrTagMatchMode } from './hierarchy-utils';
 import { getInlineMarkdownPreview } from './markdown';
-import type { StoreActionResult } from './store-types';
 import { taskMatchesFilterSelections } from './task-filter-selections';
 import type { TaskGroupItem } from './task-group-sections';
 import { DONE_TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
@@ -2484,6 +2483,9 @@ export type NativeTrashAction =
     | { type: 'purgeItems'; taskIds: string[]; projectIds: string[] }
     | { type: 'emptyTrash'; revision: string };
 
+/** A list action's answer; SAVE_FAILED carries it when the write landed and only its save failed. */
+type ListActionOutcome<Action> = NativeHostResult<NativeListActionResult<Action>> | NativeUnsavedWrite<NativeListActionResult<Action>>;
+
 type ListViewDeps = {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
@@ -2592,21 +2594,8 @@ function createListViewMethods(deps: ListViewDeps) {
     };
     const projectTitles = () => new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
 
-    const writeFailure = (message: string | undefined): NativeHostResult<never> => {
-        const failure = useTaskStore.getState().persistenceFailure;
-        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? message ?? 'The list action failed');
-    };
-    /** Run the screen's store write (one call, or several together); any refusal fails the action. */
-    const write = async (run: () => Promise<StoreActionResult | void | (StoreActionResult | void | undefined)[]>): Promise<NativeHostResult<null>> => {
-        try {
-            const outcome = await run();
-            const results = Array.isArray(outcome) ? outcome : [outcome];
-            const refused = results.find((result) => result && result.success === false);
-            return refused ? writeFailure(refused.error) : { ok: true, value: null };
-        } catch (error) {
-            return writeFailure(error instanceof Error ? error.message : String(error));
-        }
-    };
+    /** Run the screen's store write (one call, or several together): SAVE_FAILED only when it landed. */
+    const write = runStoreWrite;
     const liveTask = (id: unknown): Task | undefined => {
         const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
         return task && !task.deletedAt ? task : undefined;
@@ -2634,7 +2623,7 @@ function createListViewMethods(deps: ListViewDeps) {
     const performTaskAction = async (
         screen: 'contexts' | 'archive',
         action: NativeContextsAction | NativeArchiveAction,
-    ): Promise<NativeHostResult<NativeListActionResult<NativeContextsAction | NativeArchiveAction>> | null> => {
+    ): Promise<ListActionOutcome<NativeContextsAction | NativeArchiveAction> | null> => {
         const t = deps.t();
         const store = () => useTaskStore.getState();
         const missing = (ids: string[]) => ids.some((id) => !liveTask(id));
@@ -2642,28 +2631,26 @@ function createListViewMethods(deps: ListViewDeps) {
             case 'trashTask': {
                 if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
                 const written = await write(() => store().deleteTask(action.taskId));
-                if (!written.ok) return written;
                 // Contexts rows offer Undo; Archive asked before deleting and offers none.
-                return { ok: true, value: { changed: true, toast: screen === 'contexts' ? {
-                    tone: 'info', title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
-                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks', taskIds: [action.taskId] } },
-                } : null } };
+                return settleWrite(written, { changed: true, toast: screen === 'contexts' ? {
+                    tone: 'info' as const, title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
+                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks' as const, taskIds: [action.taskId] } },
+                } : null });
             }
             case 'trashTasks': {
                 if (!isIdList(action.taskIds) || missing(action.taskIds)) return fail('INVALID_INPUT', 'Every task must exist and not be in Trash');
                 const written = await write(() => store().batchDeleteTasks(action.taskIds));
-                if (!written.ok) return written;
-                return { ok: true, value: { changed: true, toast: {
+                return settleWrite(written, { changed: true, toast: {
                     ...doneToast(action.taskIds.length, t),
-                    undo: { label: tFallback(t, 'trash.restoreToInbox', 'Restore'), action: { type: 'restoreTasks', taskIds: [...action.taskIds] } },
-                } } };
+                    undo: { label: tFallback(t, 'trash.restoreToInbox', 'Restore'), action: { type: 'restoreTasks' as const, taskIds: [...action.taskIds] } },
+                } });
             }
             case 'restoreTasks': {
                 if (!isIdList(action.taskIds) || action.taskIds.some((id) => !trashedTask(id))) {
                     return fail('INVALID_INPUT', 'Every task must be in Trash');
                 }
                 const written = await write(() => Promise.all(action.taskIds.map((id) => store().restoreTask(id))));
-                return written.ok ? { ok: true, value: { changed: true, toast: null } } : written;
+                return settleWrite(written, { changed: true, toast: null });
             }
             default:
                 return null;
@@ -2760,7 +2747,7 @@ function createListViewMethods(deps: ListViewDeps) {
             const action = input.action as NativeContextsAction;
             return receipts.run(input.requestId, JSON.stringify(['contexts', action]), async () => {
                 const shared = await performTaskAction('contexts', action);
-                if (shared) return shared as NativeHostResult<NativeListActionResult<NativeContextsAction>>;
+                if (shared) return shared as ListActionOutcome<NativeContextsAction>;
                 const t = deps.t();
                 const store = useTaskStore.getState();
                 switch (action.type) {
@@ -2768,7 +2755,7 @@ function createListViewMethods(deps: ListViewDeps) {
                         if (!TASK_STATUSES.includes(action.status)) return fail('INVALID_INPUT', 'A task status is required');
                         if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
                         const written = await write(() => store.updateTask(action.taskId, { status: action.status }));
-                        return written.ok ? { ok: true, value: { changed: true, toast: null } } : written;
+                        return settleWrite(written, { changed: true, toast: null });
                     }
                     case 'moveTasks': {
                         if (!CONTEXTS_BULK_STATUSES.some((status) => status === action.status)
@@ -2776,7 +2763,7 @@ function createListViewMethods(deps: ListViewDeps) {
                             return fail('INVALID_INPUT', 'A bulk status and tasks that exist are required');
                         }
                         const written = await write(() => store.batchMoveTasks(action.taskIds, action.status));
-                        return written.ok ? { ok: true, value: { changed: true, toast: doneToast(action.taskIds.length, t) } } : written;
+                        return settleWrite(written, { changed: true, toast: doneToast(action.taskIds.length, t) });
                     }
                     case 'editTaskTokens': {
                         if (!isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))
@@ -2794,9 +2781,8 @@ function createListViewMethods(deps: ListViewDeps) {
                             changed = outcome.changed;
                             return outcome.changed ? outcome.result : undefined;
                         });
-                        if (!written.ok) return written;
                         // Mobile counts the selection, not the tasks that changed.
-                        return { ok: true, value: { changed, toast: changed ? doneToast(action.taskIds.length, t) : null } };
+                        return settleWrite(written, { changed, toast: changed ? doneToast(action.taskIds.length, t) : null });
                     }
                     default:
                         return fail('INVALID_INPUT', 'Contexts does not offer that action');
@@ -2932,11 +2918,9 @@ function createListViewMethods(deps: ListViewDeps) {
             const action = input.action as NativeArchiveAction;
             return receipts.run(input.requestId, JSON.stringify(['archive', action]), async () => {
                 const shared = await performTaskAction('archive', action);
-                if (shared) return shared as NativeHostResult<NativeListActionResult<NativeArchiveAction>>;
+                if (shared) return shared as ListActionOutcome<NativeArchiveAction>;
                 const store = useTaskStore.getState();
-                const done = (written: NativeHostResult<null>): NativeHostResult<NativeListActionResult<NativeArchiveAction>> => (
-                    written.ok ? { ok: true, value: { changed: true, toast: null } } : written
-                );
+                const done = (written: NativeHostResult<null>): ListActionOutcome<NativeArchiveAction> => settleWrite(written, { changed: true, toast: null });
                 switch (action.type) {
                     case 'moveToInbox':
                         if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
@@ -3059,9 +3043,7 @@ function createListViewMethods(deps: ListViewDeps) {
             const action = input.action as NativeTrashAction;
             return receipts.run(input.requestId, JSON.stringify(['trash', action]), async () => {
                 const store = useTaskStore.getState();
-                const done = (written: NativeHostResult<null>): NativeHostResult<NativeListActionResult<NativeTrashAction>> => (
-                    written.ok ? { ok: true, value: { changed: true, toast: null } } : written
-                );
+                const done = (written: NativeHostResult<null>): ListActionOutcome<NativeTrashAction> => settleWrite(written, { changed: true, toast: null });
                 const itemsInTrash = (taskIds: unknown, projectIds: unknown) => isIdList(taskIds, true) && isIdList(projectIds, true)
                     && taskIds.length + projectIds.length > 0
                     && taskIds.every((id) => trashedTask(id)) && projectIds.every((id) => trashedProject(id));

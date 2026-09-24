@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NativeHostResult } from './native-host-contract';
-import { createNativeRequestReceipts } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import { resetForTests, useTaskStore } from './store';
 import { generateUUID } from './uuid';
 
 const ok = <T,>(value: T): NativeHostResult<T> => ({ ok: true, value });
@@ -100,6 +101,37 @@ describe('native request receipts', () => {
         // The unsaved write kept its receipt: its retry saves and does not write again.
         expect(await receipts.run(unsaved, 'x', write)).toEqual(ok('w'));
         expect(write).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps a write that landed while its save failed: a retry only saves, and answers with its value', async () => {
+        const { save } = createSave();
+        const receipts = createNativeRequestReceipts({ save });
+        // The store applied the change in memory, then could not save it.
+        const write = vi.fn(async () => settleWrite(saveFailed as NativeHostResult<null>, 'moved'));
+        const id = generateUUID();
+        expect(await receipts.run(id, 'a', write)).toEqual(saveFailed);
+        expect(save).not.toHaveBeenCalled();
+        expect(await receipts.run(id, 'a', write)).toEqual(ok('moved'));
+        expect(await receipts.run(id, 'a', write)).toEqual(ok('moved'));
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it('says a store call landed only when it changed the store\'s data', async () => {
+        resetForTests();
+        useTaskStore.setState({ persistenceFailure: { message: 'disk unavailable', failedAt: '2026-09-24T00:00:00.000Z', retrying: false } });
+        // Refused before it changed anything: it did not land, whatever earlier save failed.
+        expect(await runStoreWrite(async () => ({ success: false, error: 'Task not found' })))
+            .toEqual({ ok: false, error: { code: 'ACTION_FAILED', message: 'Task not found' } });
+        expect(await runStoreWrite(async () => { throw new Error('boom'); }))
+            .toEqual({ ok: false, error: { code: 'ACTION_FAILED', message: 'boom' } });
+        // Changed the data, then failed to save it: it landed.
+        expect(await runStoreWrite(async () => {
+            useTaskStore.setState({ _allTasks: [] });
+            return { success: false, error: 'Failed to save' };
+        })).toEqual({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
+        expect(await runStoreWrite(async () => [undefined, { success: true }])).toEqual({ ok: true, value: null });
+        resetForTests();
     });
 
     it('does not count a write that landed during another request\'s save as saved', async () => {

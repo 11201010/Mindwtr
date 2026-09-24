@@ -54,7 +54,7 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
 import {
     buildSomedaySectionManagerRows,
     buildSomedaySectionMoveDialog,
@@ -1024,21 +1024,15 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 // Target state: tasks already in the section are not written.
                 const { updates, previous } = planSomedaySectionMove({ ids, tasks, destination });
                 if (previous.length === 0) return { ok: true, value: { moved: 0, toast: null, undoRequestId: null } };
-                try {
-                    const result = await state.batchUpdateTasks(updates);
-                    if (!result.success) return writeFailure(result.error);
-                } catch (error) {
-                    return caught(error);
-                }
+                const written = await runStoreWrite(() => state.batchUpdateTasks(updates));
+                if (!written.ok && written.error.code !== 'SAVE_FAILED') return written;
+                // Landed: Undo is offered even while the save is owed.
                 rememberUndo(requestId, { previous, sectionId: input.sectionId });
-                return {
-                    ok: true,
-                    value: {
-                        moved: previous.length,
-                        toast: { message: formatSomedaySectionMoved(t, previous.length, section?.title), undoLabel: text.undoLabel },
-                        undoRequestId: requestId,
-                    },
-                };
+                return settleWrite(written, {
+                    moved: previous.length,
+                    toast: { message: formatSomedaySectionMoved(t, previous.length, section?.title), undoLabel: text.undoLabel },
+                    undoRequestId: requestId,
+                });
             });
         },
 
@@ -1064,13 +1058,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     .filter((task): task is Task => task?.status === 'someday');
                 const updates = buildTaskViewSectionUndoUpdates(latest, 'someday', undo.previous, undo.sectionId ?? undefined);
                 if (updates.length === 0) return { ok: true, value: { reverted: 0 } };
-                try {
-                    const result = await state.batchUpdateTasks(updates);
-                    if (!result.success) return writeFailure(result.error);
-                } catch (error) {
-                    return caught(error);
-                }
-                return { ok: true, value: { reverted: updates.length } };
+                return settleWrite(await runStoreWrite(() => state.batchUpdateTasks(updates)), { reverted: updates.length });
             });
         },
 
@@ -1107,13 +1095,13 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     }
                     const plan = planSomedaySectionTaskAdd({ title, sectionId: input.sectionId ?? undefined, stored: somedaySections() });
                     if (plan.kind !== 'add') return { ok: true, value: { refused: { title: null, message: text.failed } } };
-                    try {
+                    let created = id;
+                    const written = await runStoreWrite(async () => {
                         const result = await useTaskStore.getState().addTask(plan.title, plan.props, { captureId: input.captureId });
-                        if (!result.success || !result.id) return writeFailure(result.error ?? 'Task creation failed');
-                        return { ok: true, value: { id: result.id, toast: text.created } };
-                    } catch (error) {
-                        return caught(error);
-                    }
+                        if (result.id) created = result.id;
+                        return result.success && !result.id ? { success: false, error: 'Task creation failed' } : result;
+                    });
+                    return settleWrite(written, { id: created, toast: text.created });
                 },
             );
         },

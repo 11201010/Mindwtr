@@ -21,8 +21,10 @@ import type {
     NativeReviewExpansionEdit,
     NativeReviewOverview,
     NativeReviewOverviewItem,
+    NativeReviewWindow,
     NativeWeeklyReview,
     NativeWeeklyReviewItem,
+    NativeWeeklyReviewList,
 } from './native-host-contract-review-views';
 import { DAILY_REVIEW_SESSION_STORAGE_KEY, WEEKLY_REVIEW_SESSION_STORAGE_KEY, filterReviewSuggestions, getReviewCalendarRange, getReviewDay, isActionableReviewSuggestion } from './review-views-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -422,6 +424,16 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
         (window) => contract.getWeeklyReview({ checkpoint, calendar, expandedProjectId, ...window }),
         (view: NativeWeeklyReview) => view.items,
     );
+    /** A nested list whole: its first window, then the rest under the view's revision. */
+    const whole = <T,>(view: NativeWeeklyReview, window: NativeReviewWindow<T>, list: NativeWeeklyReviewList, key?: string): T[] => {
+        const all = [...window.items];
+        while (all.length < window.total) {
+            all.push(...(ok(contract.getWeeklyReviewList({
+                checkpoint, calendar, expandedProjectId, list, key, offset: all.length, limit: 7, revision: view.revision,
+            })).items as T[]));
+        }
+        return all;
+    };
     /** Every read stores the checkpoint the review now stands on, as mobile saves its session. */
     const settle = () => {
         const result = read();
@@ -471,9 +483,9 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
         } else if (content.step === 'stale') {
             texts.push(labels.stale, labels.staleDesc);
             rows.push(...tasks.map((item) => item.row.id));
-            content.projects.items.forEach((item) => texts.push(item.title, item.daysLabel));
+            whole(view, content.projects, 'staleProjects').forEach((item) => texts.push(item.title, item.daysLabel));
             if (content.ai.enabled) {
-                const titleById = Object.fromEntries(content.ai.items.map((item) => [item.id, item.title]));
+                const titleById = Object.fromEntries(whole(view, content.ai.items, 'aiItems').map((item) => [item.id, item.title]));
                 texts.push(labels.aiDesc, labels.aiRun);
                 if (ai.ran && ai.suggestions.length === 0) texts.push(labels.aiEmpty);
                 ai.suggestions.forEach((suggestion) => {
@@ -492,7 +504,8 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
                 content.days.forEach((day) => {
                     const expanded = expandedDays.has(day.key);
                     texts.push(day.title);
-                    (expanded ? day.events.items : day.events.items.slice(0, day.previewCount)).forEach((event) => texts.push(event.timeLabel, event.title));
+                    const events = whole(view, day.events, 'dayEvents', day.key);
+                    (expanded ? events : events.slice(0, day.previewCount)).forEach((event) => texts.push(event.timeLabel, event.title));
                     if (day.moreLabel) texts.push(expanded ? labels.less : day.moreLabel);
                 });
             }
@@ -513,8 +526,9 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
             items.forEach((item) => {
                 if (item.type !== 'context') return;
                 const expanded = expandedContexts.has(item.context);
-                texts.push(item.context, String(item.taskCount));
-                (expanded ? item.tasks : item.tasks.slice(0, content.previewCount)).forEach((task) => texts.push(task.title));
+                const contextTasks = whole(view, item.tasks, 'contextTasks', item.context);
+                texts.push(item.context, String(item.tasks.total));
+                (expanded ? contextTasks : contextTasks.slice(0, content.previewCount)).forEach((task) => texts.push(task.title));
                 if (item.moreLabel) texts.push(expanded ? labels.less : item.moreLabel);
             });
         } else if (content.step === 'projects') {
@@ -618,12 +632,15 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
                 editor = null;
                 return;
             case 'contextTask': {
-                const task = items.flatMap((item) => (item.type === 'context' ? item.tasks : [])).find((entry) => entry.title === target)!;
+                const task = items.flatMap((item) => (item.type === 'context' ? whole(view, item.tasks, 'contextTasks', item.context) : []))
+                    .find((entry) => entry.title === target)!;
                 editor = [task.id, 'view'];
                 return;
             }
             case 'suggestion': {
-                const titleById = view.content.step === 'stale' ? Object.fromEntries(view.content.ai.items.map((item) => [item.id, item.title])) : {};
+                const titleById = view.content.step === 'stale'
+                    ? Object.fromEntries(whole(view, view.content.ai.items, 'aiItems').map((item) => [item.id, item.title]))
+                    : {};
                 const suggestion = ai.suggestions.find((entry) => (titleById[entry.id] || entry.id) === target)!;
                 if (!isActionableReviewSuggestion(suggestion)) return;
                 if (ai.selected.has(suggestion.id)) ai.selected.delete(suggestion.id);
@@ -658,13 +675,14 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
                     promptTitle = '';
                 } else if (content.step === 'stale' && label === labels.aiRun) {
                     ai.ran = true;
-                    if (content.ai.items.length === 0) {
+                    const aiItems = whole(view, content.ai.items, 'aiItems');
+                    if (aiItems.length === 0) {
                         ai.suggestions = [];
                         ai.selected = new Set();
                         return;
                     }
-                    aiRequests.push({ items: content.ai.items });
-                    ai.suggestions = filterReviewSuggestions(part.aiSuggestions ?? [], content.ai.items);
+                    aiRequests.push({ items: aiItems });
+                    ai.suggestions = filterReviewSuggestions(part.aiSuggestions ?? [], aiItems);
                     ai.selected = new Set(ai.suggestions.filter(isActionableReviewSuggestion).map((suggestion) => suggestion.id));
                 } else if (content.step === 'stale' && label === `${labels.aiApply} (${ai.selected.size})`) {
                     const chosen = ai.suggestions.filter((suggestion) => ai.selected.has(suggestion.id));

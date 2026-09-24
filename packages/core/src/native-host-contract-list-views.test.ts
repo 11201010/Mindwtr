@@ -205,6 +205,37 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(recorder.log).toHaveLength(1);
     });
 
+    it('retries a Contexts status change whose store save failed after it landed: one write', async () => {
+        // Reopening a task of an archived project reactivates the project and saves at once.
+        const archivedAt = '2026-09-08T09:00:00.000Z';
+        const part = {
+            ...fixture.contexts,
+            tasks: [...fixture.contexts.tasks, {
+                id: 'c-reopen', title: 'Reopen me', status: 'done' as const, completedAt: archivedAt, statusBeforeProjectArchive: 'next' as const,
+                projectArchivedAt: archivedAt, projectId: 'p-shelved', contexts: ['@home'], tags: [], createdAt: archivedAt, updatedAt: archivedAt, rev: 2,
+            }],
+            projects: [...fixture.contexts.projects, {
+                id: 'p-shelved', title: 'Shelved', status: 'archived' as const, color: '#94a3b8', order: 9, tagIds: [],
+                createdAt: archivedAt, updatedAt: archivedAt, rev: 2,
+            }],
+        };
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(part, scenario(fixture.contexts, 'chips, counts and chip search'), saveData);
+        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'c-reopen', status: 'next' as const } };
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.runContextsAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        // The store changed the task and its project in memory before its save failed.
+        expect(useTaskStore.getState()._projectsById.get('p-shelved')?.status).toBe('active');
+        const reopened = useTaskStore.getState()._tasksById.get('c-reopen');
+        saveData.mockResolvedValue(undefined);
+        expect(await host.runContextsAction(input)).toEqual({ ok: true, value: { changed: true, toast: null } });
+        expect(recorder.log.filter(([name]) => name === 'updateTask')).toEqual([['updateTask', 'c-reopen', { status: 'next' }]]);
+        expect(useTaskStore.getState()._tasksById.get('c-reopen')).toBe(reopened);
+        const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; status: string }[]; projects: { id: string; status: string }[] };
+        expect(saved.tasks.find(({ id }) => id === 'c-reopen')?.status).toBe('next');
+        expect(saved.projects.find(({ id }) => id === 'p-shelved')?.status).toBe('active');
+    });
+
     it('retries an Archive bulk move to Trash after a failed save, then undoes it', async () => {
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'), saveData);

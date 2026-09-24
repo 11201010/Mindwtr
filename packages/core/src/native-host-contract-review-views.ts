@@ -5,9 +5,11 @@
  * React Native screen's, from the same core models (review-utils.ts,
  * review-views-model.ts).
  *
- * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision. Writes go
- * through runReviewAction with a request UUID: an exact retry never writes twice
- * (native-request-receipts.ts), and success means the change is saved.
+ * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision; nested lists
+ * page through getWeeklyReviewList. Writes go through runReviewAction with a
+ * request UUID: while a save is owed, a retry only saves (native-request-receipts.ts);
+ * every action is target-state, so a replay after a restart writes nothing. Success
+ * means the change is saved.
  *
  * A review wizard's place (pause and resume) is a device-local checkpoint, as
  * on mobile: each view returns the `checkpoint` string to store and the
@@ -32,7 +34,7 @@ import {
     type NativeListToast,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import {
     buildReviewSteps,
@@ -89,7 +91,6 @@ import {
     type WeeklyReviewStepId,
 } from './review-views-model';
 import { useTaskStore } from './store';
-import type { StoreActionResult } from './store-types';
 import { getBulkTrashConfirmation, type ListConfirmation } from './trash-view-model';
 import type { Task, TaskStatus } from './types';
 
@@ -193,10 +194,15 @@ export type NativeReviewOverview = {
     } | null;
 };
 
+/** The first NATIVE_HOST_MAX_WINDOW items of a nested list, of `total`. */
+export type NativeReviewWindow<T> = { total: number; items: T[] };
+export type NativeStaleProject = { id: string; title: string; daysLabel: string };
+export type NativeWeeklyReviewList = 'staleProjects' | 'aiItems' | 'dayEvents' | 'contextTasks';
+
 export type NativeWeeklyReviewItem =
     | { type: 'task'; row: NativeTaskRow; scheduled: boolean; projectId: string | null }
-    /** A context's card: `tasks` holds its first NATIVE_HOST_MAX_WINDOW tasks, of `taskCount`. */
-    | { type: 'context'; context: string; taskCount: number; moreLabel: string | null; tasks: { id: string; title: string }[] }
+    /** A context's card: the first window of its tasks; getWeeklyReviewList pages the rest ('contextTasks', key: context). */
+    | { type: 'context'; context: string; moreLabel: string | null; tasks: NativeReviewWindow<{ id: string; title: string }> }
     | {
         type: 'project';
         id: string;
@@ -226,13 +232,15 @@ export type NativeWeeklyReview = {
     labels: WeeklyReviewLabels & { closeLabel: string; processInbox: string; inboxHint: string; mindSweep: string; mindSweepTitle: string; mindSweepIntro: string };
     content:
         | { step: 'inbox'; countLabel: string | null; empty: string | null }
-        | { step: 'stale'; projects: { total: number; items: { id: string; title: string; daysLabel: string }[] }; ai: { enabled: boolean; items: ReviewSnapshotItem[] } }
+        /** getWeeklyReviewList pages 'staleProjects' and 'aiItems' (the AI analysis input). */
+        | { step: 'stale'; projects: NativeReviewWindow<NativeStaleProject>; ai: { enabled: boolean; items: NativeReviewWindow<ReviewSnapshotItem> } }
         | {
             step: 'calendar';
             /** Loading, the fetch error or "no events" in place of the days. */
             notice: string | null;
             loading: boolean;
-            days: (Omit<WeeklyReviewCalendarDay, 'dayStart' | 'events'> & { previewCount: number; events: { total: number; items: WeeklyReviewCalendarDay['events'] } })[];
+            /** getWeeklyReviewList pages a day's 'dayEvents' (key: the day's key). */
+            days: (Omit<WeeklyReviewCalendarDay, 'dayStart' | 'events'> & { previewCount: number; events: NativeReviewWindow<WeeklyReviewCalendarDay['events'][number]> })[];
             tasks: { key: string; taskId: string; title: string; meta: string }[];
             tasksEmpty: string | null;
         }
@@ -360,21 +368,6 @@ const isSuggestion = (value: unknown): value is ReviewSuggestion => (
 );
 
 export function createReviewViewMethods(deps: ReviewViewDeps) {
-    const writeFailure = (message: string | undefined): NativeHostResult<never> => {
-        const failure = useTaskStore.getState().persistenceFailure;
-        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? message ?? 'The review action failed');
-    };
-    /** Run the screen's store write (one call, or several together); any refusal fails the action. */
-    const write = async (run: () => Promise<StoreActionResult | void | (StoreActionResult | void | undefined)[]>): Promise<NativeHostResult<null>> => {
-        try {
-            const outcome = await run();
-            const results = Array.isArray(outcome) ? outcome : [outcome];
-            const refused = results.find((result) => result && result.success === false);
-            return refused ? writeFailure(refused.error) : { ok: true, value: null };
-        } catch (error) {
-            return writeFailure(error instanceof Error ? error.message : String(error));
-        }
-    };
     // Exact retries through the shared helper: a retry finishes a failed save and never writes twice.
     const receipts = createNativeRequestReceipts({
         save: async () => {
@@ -397,20 +390,34 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         cache.set(screen, { key, value });
         return value;
     };
-    const liveTask = (id: unknown): Task | undefined => {
+    /** A task that is live or in Trash; a purged task is gone. */
+    const knownTask = (id: unknown): Task | undefined => {
         const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
-        return task && !task.deletedAt ? task : undefined;
+        return task && !task.purgedAt ? task : undefined;
     };
-    const trashedTask = (id: unknown) => {
-        const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
-        return task?.deletedAt && !task.purgedAt ? task : undefined;
+    const liveTask = (id: unknown) => {
+        const task = knownTask(id);
+        return task && !task.deletedAt ? task : undefined;
     };
     const doneToast = (count: number, t: Translate): NativeListToast<NativeReviewAction> => (
         { tone: 'success', title: t('common.done'), message: `${count} ${t('common.tasks')}`, undo: null }
     );
-    const done = (changed: boolean, toast: NativeReviewActionResult['toast'] = null, createdId: string | null = null): NativeHostResult<NativeReviewActionResult> => (
-        { ok: true, value: { changed, toast, createdId } }
-    );
+    type Outcome = NativeHostResult<NativeReviewActionResult> | NativeUnsavedWrite<NativeReviewActionResult>;
+    /** Nothing to write: the request's target state already holds (a replay after a restart lands here). */
+    const unchanged = (createdId: string | null = null): Outcome => ({ ok: true, value: { changed: false, toast: null, createdId } });
+    /** Write, then answer: SAVE_FAILED carries the answer when the write landed and only its save failed. */
+    const written = async (
+        call: Parameters<typeof runStoreWrite>[0],
+        toast: NativeReviewActionResult['toast'] = null,
+        createdId: string | null = null,
+    ): Promise<Outcome> => settleWrite(await runStoreWrite(call), { changed: true, toast, createdId });
+    /** Keeps only updates that change their task. */
+    const changing = (updates: { id: string; updates: Partial<Task> }[]) => updates.filter(({ id, updates: patch }) => {
+        const task = knownTask(id);
+        return !task || Object.entries(patch).some(([field, value]) => (
+            JSON.stringify(task[field as keyof Task] ?? null) !== JSON.stringify(value ?? null)
+        ));
+    });
 
     // ---- Review overview -------------------------------------------------------
 
@@ -456,15 +463,47 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         } else if (expansionEdit?.type === 'toggleProject') {
             projectIds = toggleReviewExpandedId(projectIds, expansionEdit.id);
         }
-        const store = useTaskStore.getState();
-        const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
-        const selectedIds = ((input.selectedIds as string[] | undefined) ?? []).filter((id) => tasksById[id]);
-        const selected = new Set(selectedIds);
+        const liveIds = cached('overview-ids', base, () => new Set(useTaskStore.getState().tasks.map((task) => task.id)));
+        const selectedIds = ((input.selectedIds as string[] | undefined) ?? []).filter((id) => liveIds.has(id));
         const expandedAreaIds = Array.from(areaIds);
         const expandedProjectIds = Array.from(projectIds);
         const revision = `${base}:${paramsKey([expandedAreaIds, expandedProjectIds, selectedIds])}`;
         if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Review changed; restart paging from offset zero');
-        type Entry = Exclude<NativeReviewOverviewItem, { type: 'task' }> | { type: 'task'; areaGroupId: string; projectGroupId: string; task: Task };
+        // One flattened page source per revision and expansion; paging slices it.
+        const view = cached('overview-page', revision, () => buildOverviewPage(groups, text, t, areaIds, projectIds, selectedIds));
+        const windowItems = page(view.entries, input as { offset: number; limit: number });
+        const rows = deps.rows(windowItems.flatMap((entry) => (entry.type === 'task' ? [entry.task] : [])), now);
+        const selected = new Set(selectedIds);
+        let rowIndex = 0;
+        return {
+            ok: true,
+            value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision,
+                expandedAreaIds,
+                expandedProjectIds,
+                expansion: view.expansion,
+                total: view.entries.length,
+                items: windowItems.map((entry): NativeReviewOverviewItem => (entry.type === 'task'
+                    ? { type: 'task', areaGroupId: entry.areaGroupId, projectGroupId: entry.projectGroupId, row: rows[rowIndex++], selected: selected.has(entry.task.id) }
+                    : entry)),
+                empty: view.empty,
+                startReview: view.startReview,
+                bulk: view.bulk,
+            },
+        };
+    };
+
+    type OverviewEntry = Exclude<NativeReviewOverviewItem, { type: 'task' }> | { type: 'task'; areaGroupId: string; projectGroupId: string; task: Task };
+    const buildOverviewPage = (
+        groups: ReturnType<typeof buildOverview>['groups'],
+        text: ReturnType<typeof getReviewOverviewText>,
+        t: Translate,
+        areaIds: Set<string>,
+        projectIds: Set<string>,
+        selectedIds: string[],
+    ) => {
+        type Entry = OverviewEntry;
         const entries: Entry[] = groups.flatMap((group): Entry[] => [
             {
                 type: 'area', id: group.id, areaId: group.areaId, isUnassigned: group.isUnassigned, title: group.title,
@@ -482,49 +521,38 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 ))),
             ])),
         ]);
-        const windowItems = page(entries, input as { offset: number; limit: number });
-        const rows = deps.rows(windowItems.flatMap((entry) => (entry.type === 'task' ? [entry.task] : [])), now);
-        let rowIndex = 0;
         const control = getReviewExpansionControl(groups, { areaIds, projectIds }, text);
         const hasSelection = selectedIds.length > 0;
+        const tasksById = hasSelection ? Object.fromEntries(useTaskStore.getState().tasks.map((task) => [task.id, task])) : {};
         const removableTags = collectBulkTaskTokens(selectedIds, tasksById, 'tags');
+        const bulk: NativeReviewOverview['bulk'] = !hasSelection ? null : {
+            selectedIds,
+            countLabel: `${selectedIds.length} ${text.selected}`,
+            cancelLabel: text.cancel,
+            actions: [
+                { id: 'organize', label: text.organize, enabled: true },
+                { id: 'moveTo', label: text.moveTo, enabled: true },
+                { id: 'addTag', label: text.addTag, enabled: true },
+                { id: 'removeTag', label: text.removeTag, enabled: removableTags.length > 0 },
+                { id: 'share', label: text.share, enabled: true },
+                { id: 'delete', label: text.delete, enabled: true },
+            ],
+            statuses: REVIEW_BULK_STATUSES.map((status) => ({ status, label: t(`status.${status}`) })),
+            addTag: { title: text.addTag, placeholder: text.tagsLabel, saveLabel: text.save, cancelLabel: text.cancel },
+            removeTag: { title: text.removeTag, placeholder: text.tagPlaceholder, tags: removableTags },
+            deleteConfirmation: getBulkTrashConfirmation(t),
+            shareText: buildReviewShareText(selectedIds.map((id) => tasksById[id])),
+        };
         return {
-            ok: true,
-            value: {
-                version: NATIVE_HOST_CONTRACT_VERSION,
-                revision,
-                expandedAreaIds,
-                expandedProjectIds,
-                expansion: { label: control.label, disabled: control.disabled, allExpanded: control.allExpanded },
-                total: entries.length,
-                items: windowItems.map((entry): NativeReviewOverviewItem => (entry.type === 'task'
-                    ? { type: 'task', areaGroupId: entry.areaGroupId, projectGroupId: entry.projectGroupId, row: rows[rowIndex++], selected: selected.has(entry.task.id) }
-                    : entry)),
-                empty: groups.length === 0 ? text.empty : null,
-                startReview: {
-                    label: text.startReview,
-                    options: [{ id: 'daily', label: text.dailyReview }, { id: 'weekly', label: text.weeklyReview }],
-                    cancelLabel: text.cancel,
-                },
-                bulk: !hasSelection ? null : {
-                    selectedIds,
-                    countLabel: `${selectedIds.length} ${text.selected}`,
-                    cancelLabel: text.cancel,
-                    actions: [
-                        { id: 'organize', label: text.organize, enabled: true },
-                        { id: 'moveTo', label: text.moveTo, enabled: true },
-                        { id: 'addTag', label: text.addTag, enabled: true },
-                        { id: 'removeTag', label: text.removeTag, enabled: removableTags.length > 0 },
-                        { id: 'share', label: text.share, enabled: true },
-                        { id: 'delete', label: text.delete, enabled: true },
-                    ],
-                    statuses: REVIEW_BULK_STATUSES.map((status) => ({ status, label: t(`status.${status}`) })),
-                    addTag: { title: text.addTag, placeholder: text.tagsLabel, saveLabel: text.save, cancelLabel: text.cancel },
-                    removeTag: { title: text.removeTag, placeholder: text.tagPlaceholder, tags: removableTags },
-                    deleteConfirmation: getBulkTrashConfirmation(t),
-                    shareText: buildReviewShareText(selectedIds.map((id) => tasksById[id])),
-                },
+            entries,
+            expansion: { label: control.label, disabled: control.disabled, allExpanded: control.allExpanded },
+            empty: groups.length === 0 ? text.empty : null,
+            startReview: {
+                label: text.startReview,
+                options: [{ id: 'daily' as const, label: text.dailyReview }, { id: 'weekly' as const, label: text.weeklyReview }],
+                cancelLabel: text.cancel,
             },
+            bulk,
         };
     };
 
@@ -554,6 +582,12 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             const pushTask = (task: Task, scheduled = false, projectId: string | null = null) => {
                 entries.push({ kind: 'task', task, scheduled, projectId });
             };
+            // Nested lists, whole: views carry their first window, getWeeklyReviewList pages them.
+            const lists = new Map<string, readonly unknown[]>();
+            const nested = <T,>(key: string, items: readonly T[]) => {
+                lists.set(key, items);
+                return firstWindow(items);
+            };
             let content: NativeWeeklyReview['content'];
             if (step === 'inbox') {
                 buckets.inbox.forEach((task) => pushTask(task));
@@ -565,7 +599,11 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             } else if (step === 'stale') {
                 const stale = getWeeklyReviewStale(buckets.staleItems, state.tasks, labels);
                 stale.tasks.forEach((task) => pushTask(task));
-                content = { step, projects: firstWindow(stale.projects), ai: { enabled: aiEnabled, items: aiEnabled ? buckets.staleItems : [] } };
+                content = {
+                    step,
+                    projects: nested('staleProjects', stale.projects),
+                    ai: { enabled: aiEnabled, items: nested('aiItems', aiEnabled ? buckets.staleItems : []) },
+                };
             } else if (step === 'calendar') {
                 const view = getWeeklyReviewCalendar(days, buckets.calendarItems, labels, formatDate);
                 content = {
@@ -573,7 +611,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                     notice: getWeeklyReviewCalendarNotice({ loading: calendar.loading, error: calendar.error, dayCount: days.length }, labels),
                     loading: calendar.loading,
                     days: calendar.loading || calendar.error ? [] : view.days.map(({ dayStart: _dayStart, events, ...day }) => ({
-                        ...day, previewCount: WEEKLY_REVIEW_PREVIEW.dayEvents, events: firstWindow(events),
+                        ...day, previewCount: WEEKLY_REVIEW_PREVIEW.dayEvents, events: nested(`dayEvents:${day.key}`, events),
                     })),
                     tasks: view.tasks.map(({ key, task, title: taskTitle, meta }) => ({ key, taskId: task.id, title: taskTitle, meta })),
                     tasksEmpty: view.tasks.length === 0 ? labels.calendarTasksEmpty : null,
@@ -593,9 +631,8 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 buckets.contextGroups.forEach((group) => entries.push({ kind: 'item', item: {
                     type: 'context',
                     context: group.context,
-                    taskCount: group.tasks.length,
                     moreLabel: getWeeklyReviewContextMoreLabel(group.tasks.length, labels),
-                    tasks: group.tasks.slice(0, NATIVE_HOST_MAX_WINDOW).map((task) => ({ id: task.id, title: task.title })),
+                    tasks: nested(`contextTasks:${group.context}`, group.tasks.map((task) => ({ id: task.id, title: task.title }))),
                 } }));
                 content = { step, empty: buckets.contextGroups.length === 0 ? labels.contextsEmpty : null, previewCount: WEEKLY_REVIEW_PREVIEW.contextTasks };
             } else if (step === 'projects') {
@@ -634,26 +671,36 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 },
                 content,
                 entries,
+                lists,
             };
         })
     );
 
-    const weeklyReview = (input: Record<string, unknown>): NativeHostResult<NativeWeeklyReview> => {
+    /** The weekly view for these inputs, with its revision; null for invalid inputs. */
+    const readWeekly = (input: Record<string, unknown>) => {
         const calendar = readCalendar(input.calendar);
-        if (!isPaging(input) || !calendar
+        if (!calendar
             || (input.checkpoint !== undefined && input.checkpoint !== null && !isText(input.checkpoint, 1000))
             || (input.expandedProjectId !== undefined && input.expandedProjectId !== null && !isText(input.expandedProjectId))) {
-            return fail('INVALID_INPUT', 'A checkpoint or null, a calendar, an expanded project, offset, bounded limit and revision for later pages are required');
+            return null;
         }
         const now = new Date();
         const base = deps.revision(now);
         const view = buildWeekly(base, (input.checkpoint as string | null | undefined) ?? null, calendar, (input.expandedProjectId as string | null | undefined) ?? null, now);
-        const revision = `${base}:${paramsKey([view.checkpoint, calendar, input.expandedProjectId ?? null])}`;
+        return { now, view, revision: `${base}:${paramsKey([view.checkpoint, calendar, input.expandedProjectId ?? null])}` };
+    };
+
+    const weeklyReview = (input: Record<string, unknown>): NativeHostResult<NativeWeeklyReview> => {
+        const read = isPaging(input) ? readWeekly(input) : null;
+        if (!read) {
+            return fail('INVALID_INPUT', 'A checkpoint or null, a calendar, an expanded project, offset, bounded limit and revision for later pages are required');
+        }
+        const { now, view, revision } = read;
         if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'The review changed; restart paging from offset zero');
         const windowEntries = page(view.entries, input as { offset: number; limit: number });
         const rows = deps.rows(windowEntries.flatMap((entry) => (entry.kind === 'task' ? [entry.task] : [])), now);
         let rowIndex = 0;
-        const { entries: _entries, ...rest } = view;
+        const { entries: _entries, lists: _lists, ...rest } = view;
         return {
             ok: true,
             value: {
@@ -778,47 +825,56 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
 
     // ---- Actions ---------------------------------------------------------------
 
-    const perform = async (requestId: string, action: NativeReviewAction): Promise<NativeHostResult<NativeReviewActionResult>> => {
+    /**
+     * One action, target-state: the receipts cover a retry while a save is owed; a
+     * replay after that (a restart, an eviction) finds its target state and writes nothing.
+     */
+    const perform = async (requestId: string, action: NativeReviewAction): Promise<Outcome> => {
         const t = deps.t();
         const store = useTaskStore.getState();
         const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
-        const everyLive = (ids: unknown) => isIdList(ids) && ids.every((id) => liveTask(id));
+        const everyLive = (ids: unknown): ids is string[] => isIdList(ids) && ids.every((id) => liveTask(id));
+        const everyKnown = (ids: unknown): ids is string[] => isIdList(ids) && ids.every((id) => knownTask(id));
         switch (action.type) {
             case 'setTaskStatus': {
                 if (!TASK_STATUSES.includes(action.status)) return fail('INVALID_INPUT', 'A task status is required');
-                if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
-                const written = await write(() => store.updateTask(action.taskId, { status: action.status }));
-                return written.ok ? done(true) : written;
+                const task = liveTask(action.taskId);
+                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (task.status === action.status) return unchanged();
+                return written(() => store.updateTask(task.id, { status: action.status }));
             }
             case 'trashTask': {
-                if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
-                const written = await write(() => store.deleteTask(action.taskId));
-                if (!written.ok) return written;
+                const task = knownTask(action.taskId);
+                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (task.deletedAt) return unchanged();
                 // The row's delete: moved to Trash at once, with Undo.
-                return done(true, {
+                return written(() => store.deleteTask(task.id), {
                     tone: 'info', title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
-                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks', taskIds: [action.taskId] } },
+                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks', taskIds: [task.id] } },
                 });
             }
             case 'restoreTasks': {
-                if (!isIdList(action.taskIds) || action.taskIds.some((id) => !trashedTask(id))) return fail('INVALID_INPUT', 'Every task must be in Trash');
-                const written = await write(() => Promise.all(action.taskIds.map((id) => store.restoreTask(id))));
-                return written.ok ? done(true) : written;
+                if (!everyKnown(action.taskIds)) return fail('INVALID_INPUT', 'Every task must be live or in Trash');
+                const trashed = action.taskIds.filter((id) => knownTask(id)?.deletedAt);
+                if (trashed.length === 0) return unchanged();
+                return written(() => Promise.all(trashed.map((id) => store.restoreTask(id))));
             }
             case 'moveTasks': {
                 if (!REVIEW_BULK_STATUSES.includes(action.status) || !everyLive(action.taskIds)) {
                     return fail('INVALID_INPUT', 'A bulk status and tasks that exist are required');
                 }
-                const written = await write(() => store.batchMoveTasks(action.taskIds, action.status));
-                return written.ok ? done(true, doneToast(action.taskIds.length, t)) : written;
+                const moving = action.taskIds.filter((id) => liveTask(id)!.status !== action.status);
+                if (moving.length === 0) return unchanged();
+                // Mobile counts the selection.
+                return written(() => store.batchMoveTasks(moving, action.status), doneToast(action.taskIds.length, t));
             }
             case 'trashTasks': {
-                if (!everyLive(action.taskIds)) return fail('INVALID_INPUT', 'Every task must exist and not be in Trash');
-                const written = await write(() => store.batchDeleteTasks(action.taskIds));
-                if (!written.ok) return written;
-                return done(true, {
-                    ...doneToast(action.taskIds.length, t),
-                    undo: { label: getReviewOverviewText(t).restore, action: { type: 'restoreTasks', taskIds: [...action.taskIds] } },
+                if (!everyKnown(action.taskIds)) return fail('INVALID_INPUT', 'Every task must be live or in Trash');
+                const live = action.taskIds.filter((id) => liveTask(id));
+                if (live.length === 0) return unchanged();
+                return written(() => store.batchDeleteTasks(live), {
+                    ...doneToast(live.length, t),
+                    undo: { label: getReviewOverviewText(t).restore, action: { type: 'restoreTasks', taskIds: live } },
                 });
             }
             case 'addTag':
@@ -830,56 +886,62 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                     || (action.type === 'organizeTasks' && !isOrganizeInput(action.input))) {
                     return fail('INVALID_INPUT', 'Tasks that exist and a valid tag, tags or organize choice are required');
                 }
-                const updates = action.type === 'organizeTasks'
+                const updates = changing(action.type === 'organizeTasks'
                     ? buildBulkOrganizeTaskUpdates(action.taskIds, tasksById, action.input)
                     : action.type === 'addTag'
                         ? buildBulkTaskTokenUpdates(action.taskIds, tasksById, 'tags', action.tag.trim(), 'add')
-                        : buildBulkTaskTokenUpdates(action.taskIds, tasksById, 'tags', action.tags, 'remove');
-                if (updates.length === 0) return done(false);
-                const written = await write(() => store.batchUpdateTasks(updates));
-                return written.ok ? done(true, doneToast(updates.length, t)) : written;
+                        : buildBulkTaskTokenUpdates(action.taskIds, tasksById, 'tags', action.tags, 'remove'));
+                if (updates.length === 0) return unchanged();
+                return written(() => store.batchUpdateTasks(updates), doneToast(updates.length, t));
             }
             case 'addProjectTask': {
                 const project = isText(action.projectId) ? store._projectsById.get(action.projectId) : undefined;
                 if (!project || project.deletedAt || !isText(action.title, 10_000) || !action.title.trim()) {
                     return fail('INVALID_INPUT', 'A project that exists and a task title are required');
                 }
-                // After a restart the receipt is gone: the task this request created still answers it.
-                const id = requestId.toLowerCase();
-                if (store._allTasks.some((task) => task.id === id)) return done(false, null, id);
                 const plan = planReviewProjectTask({
                     title: action.title, projectId: project.id, projects: store.projects, areas: store.areas,
                     settings: store.settings, tasks: store.tasks, people: store.people,
                 });
                 if (!plan) return fail('INVALID_INPUT', 'A task title is required');
-                try {
-                    const result = await store.addTask(plan.title, plan.props, { captureId: requestId });
-                    if (!result.success || !result.id) return writeFailure(result.error ?? 'Task creation failed');
-                    return done(true, null, result.id);
-                } catch (error) {
-                    return writeFailure(error instanceof Error ? error.message : String(error));
+                // The request ID is the task's ID: a replay finds the task this request made,
+                // and anything else under that ID is refused.
+                const id = requestId.toLowerCase();
+                const existing = store._allTasks.find((task) => task.id === id);
+                if (existing) {
+                    const same = !existing.deletedAt && existing.title === plan.title
+                        && (existing.projectId ?? null) === (plan.props.projectId ?? null)
+                        && (existing.sectionId ?? null) === (plan.props.sectionId ?? null)
+                        && existing.status === plan.props.status;
+                    return same ? unchanged(id) : fail('INVALID_INPUT', 'Request ID already belongs to another task');
                 }
+                return written(async () => {
+                    const result = await store.addTask(plan.title, plan.props, { captureId: requestId });
+                    return result.success && result.id !== id ? { success: false, error: 'Task creation failed' } : result;
+                }, null, id);
             }
             case 'applySuggestions': {
                 if (!Array.isArray(action.suggestions) || action.suggestions.length > NATIVE_HOST_MAX_WINDOW || !action.suggestions.every(isSuggestion)) {
                     return fail('INVALID_INPUT', 'Suggestions with an id, action and reason are required');
                 }
-                // Only suggestions for items the review offers, as mobile applies them.
+                // Only suggestions for items the review offers, as mobile applies them; a task
+                // already where the suggestion puts it is not written again.
                 const { weekStart } = getWeeklyReviewSettings(store.settings);
                 const { staleItems } = getWeeklyReviewBuckets(store.tasks, store.projects, { weekStart });
-                const suggestions = filterReviewSuggestions(action.suggestions, staleItems).filter(isActionableReviewSuggestion);
+                const suggestions = filterReviewSuggestions(action.suggestions, staleItems).filter((suggestion) => (
+                    isActionableReviewSuggestion(suggestion)
+                    && liveTask(suggestion.id)?.status !== (suggestion.action === 'someday' ? 'someday' : 'archived')
+                ));
                 const updates = buildReviewSuggestionUpdates(suggestions, new Set(suggestions.map((entry) => entry.id)), new Date());
-                if (updates.length === 0) return done(false);
-                const written = await write(() => store.batchUpdateTasks(updates));
-                return written.ok ? done(true) : written;
+                if (updates.length === 0) return unchanged();
+                return written(() => store.batchUpdateTasks(updates));
             }
             case 'followUpToday': {
                 const task = liveTask(action.taskId);
                 if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                 const plan = planDailyReviewFollowUp(task, getReviewDay(new Date()));
-                if (!plan) return done(false);
-                const written = await write(() => store.updateTask(task.id, plan));
-                return written.ok ? done(true) : written;
+                if (!plan) return unchanged();
+                return written(() => store.updateTask(task.id, plan));
             }
             default:
                 return fail('INVALID_INPUT', 'Review does not offer that action');
@@ -920,6 +982,46 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             if (!ready.ok) return ready;
             if (!isObjectRecord(input)) return fail('INVALID_INPUT', 'An offset and bounded limit are required');
             return weeklyReview(input);
+        },
+
+        /**
+         * A later window of one of the Weekly Review's nested lists: the stale step's
+         * 'staleProjects' and 'aiItems', a calendar day's 'dayEvents' (key: the day's
+         * key) or a context's 'contextTasks' (key: the context). Send the view's own
+         * inputs and its revision.
+         */
+        getWeeklyReviewList(input: {
+            checkpoint?: string | null;
+            calendar?: NativeReviewCalendar;
+            expandedProjectId?: string | null;
+            list: NativeWeeklyReviewList;
+            key?: string;
+            offset: number;
+            limit: number;
+            revision: string;
+        }): NativeHostResult<{ version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string; list: NativeWeeklyReviewList; key: string | null; total: number; items: unknown[] }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const valid = isObjectRecord(input) && typeof input.revision === 'string' && isPaging(input)
+                && ['staleProjects', 'aiItems', 'dayEvents', 'contextTasks'].includes(input.list as string)
+                && (input.key === undefined || isText(input.key));
+            const read = valid ? readWeekly(input) : null;
+            if (!read) return fail('INVALID_INPUT', 'The view\'s inputs, one of its lists, a valid window and its revision are required');
+            if (read.revision !== input.revision) return fail('STALE_REVISION', 'The review changed; read it again');
+            const key = input.list === 'dayEvents' || input.list === 'contextTasks' ? `${input.list}:${input.key ?? ''}` : input.list;
+            const items = read.view.lists.get(key);
+            if (!items) return fail('INVALID_INPUT', 'This step does not show that list');
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: read.revision,
+                    list: input.list,
+                    key: input.key ?? null,
+                    total: items.length,
+                    items: page(items, input),
+                },
+            };
         },
 
         /** The Daily Review at `checkpoint` (null: today's stored one is gone, start over). */

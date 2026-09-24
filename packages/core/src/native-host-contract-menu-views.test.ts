@@ -207,6 +207,35 @@ describe('native host contract: More sheet and list views', () => {
         expect(['s-a', 's-b'].map((id) => useTaskStore.getState()._tasksById.get(id)?.viewSectionIds?.someday)).toEqual(['s-later', 's-ideas']);
     });
 
+    it('retries a section move whose store save failed after it landed: one write', async () => {
+        freezeClock();
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(scenario('someday', 'sections'), saveData);
+        // A store write that saves at once, as the store's reactivation path does: it lands, then reports the failed save.
+        const inner = useTaskStore.getState().batchUpdateTasks;
+        useTaskStore.setState({
+            batchUpdateTasks: async (updates) => {
+                const result = await inner(updates);
+                try {
+                    await flushPendingSave();
+                } catch (error) {
+                    return { success: false, error: error instanceof Error ? error.message : String(error) };
+                }
+                return result;
+            },
+        });
+        const input = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID() };
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.moveSomedayTasksToSection(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(recorder.log).toHaveLength(1);
+        saveData.mockResolvedValue(undefined);
+        expect(value(await host.moveSomedayTasksToSection(input)))
+            .toEqual({ moved: 2, toast: { message: 'Moved to Travel (2)', undoLabel: 'Undo' }, undoRequestId: input.requestId });
+        expect(recorder.log).toHaveLength(1);
+        const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; viewSectionIds?: { someday?: string } }[] };
+        expect(saved.tasks.filter(({ id }) => id === 's-a' || id === 's-b').map((task) => task.viewSectionIds?.someday)).toEqual(['s-empty', 's-empty']);
+    });
+
     it('retries a failed Add task exactly: one task', async () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
