@@ -34,8 +34,9 @@ const REMOVE_CLIPPED_SUBVIEWS_MIN_ITEMS = 15;
  * that no longer exists and aborts the app. A list whose length crosses the
  * threshold (filter a long Done list down to a few rows) flips the prop and
  * hits exactly that: duplicated rows first, then a crash (#949, #969).
- * Android's ReactViewGroup re-attaches clipped children on the way back, so it
- * keeps the #766 scroll win.
+ * Android's ReactViewGroup may leave rows blank after clipping flips off while
+ * filtering. TaskList latches this value once true (#1272), keeping the #766
+ * scroll win without detaching a newly matched row.
  */
 export function shouldRemoveClippedSubviews(itemCount: number): boolean {
   return Platform.OS === 'android' && itemCount >= REMOVE_CLIPPED_SUBVIEWS_MIN_ITEMS;

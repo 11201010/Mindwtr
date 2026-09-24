@@ -774,6 +774,19 @@ function TaskListComponent({
     }
     return orderedTasks.map((task): ListItem => ({ type: 'task', task, reorderSectionId: task.sectionId }));
   }, [activeGroupBy, areas, collapsedGroupIds, localDayKey, orderedTasks, projectById, projectTaskList, statusListModel, t]);
+  // Android can leave filtered rows detached when clipping flips off after a
+  // long list shrinks. Keep clipping on until this list unmounts (#1272).
+  const clipListSubviewsRef = useRef(false);
+  clipListSubviewsRef.current ||= shouldRemoveClippedSubviews(listItems.length);
+  const loggedRetainedClippingRef = useRef(false);
+  useEffect(() => {
+    if (!clipListSubviewsRef.current || shouldRemoveClippedSubviews(listItems.length) || loggedRetainedClippingRef.current) return;
+    loggedRetainedClippingRef.current = true;
+    void logInfo('Android task list clipping retained after filtering', {
+      scope: 'list',
+      extra: { releaseCheck: 'v1.3.3/android-task-list-filter-render', count: String(listItems.length) },
+    });
+  }, [listItems.length]);
   const orderedTaskIds = useMemo(
     () => Array.from(new Set(listItems.flatMap((item) => (item.type === 'task' ? [item.task.id] : [])))),
     [listItems],
@@ -1773,10 +1786,9 @@ function TaskListComponent({
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
           {...TASK_LIST_WINDOWING_PROPS}
-          // Clipping costs more than it saves on a short list, so this list —
-          // unlike the shared default — turns it on only once it is long, and
-          // only where flipping the prop is safe. See shouldRemoveClippedSubviews.
-          removeClippedSubviews={shouldRemoveClippedSubviews(listItems.length)}
+          // Android enables clipping once the list grows large; the ref keeps
+          // it enabled when filtering shrinks the list again.
+          removeClippedSubviews={clipListSubviewsRef.current}
           // iOS only bounces (and thus allows pull-to-refresh) when content
           // exceeds the viewport unless bounce is forced; short lists like a
           // freshly processed Inbox must still be able to pull to sync.

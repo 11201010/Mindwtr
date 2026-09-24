@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/android-task-list-filter-render`** — mobile `apps/mobile/components/task-list.tsx`, once per mounted Android task list when filtering reduces a list that had clipping enabled to fewer than 15 rows. Message: `Android task list clipping retained after filtering`; fields: `releaseCheck`, `count`. The tester searches for a task near the end of a long Reference or other task list; the log must show `count` below 15 and the matching row must be visible without first scrolling the unfiltered list. No task content or identifiers are logged.
+
 - **`v1.3.3/cloudkit-large-library-write`** — desktop and iOS `cloudkit-sync.ts`, after all record types, purged-record deletes, and the change-token step complete without a transport error. Message: `CloudKit write complete`; fields: `releaseCheck`, `conflicts`. A line with zero conflicts proves this build completed the serialized, unchanged-record-filtered write path; confirm the other device receives edits and both devices show a successful sync. A missing line or nonzero conflicts requires another diagnostic log. No task content or identifiers are logged.
 
 - **`v1.3.3/purge-refused-outside-trash`** — core `packages/core/src/store-tasks.ts`, when Delete forever (desktop or mobile Trash) is asked to purge a task that is no longer in Trash, because sync or another device restored it after the confirmation. Message: `Purge refused for a task not in Trash`; fields: `releaseCheck`, `purged` (true if it was already purged). The log proves the live task was kept. No task content or identifiers are logged.
