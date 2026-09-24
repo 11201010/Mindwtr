@@ -2,7 +2,29 @@
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_BOARD_VIEWS=1 bunx vitest run components/views/board-view.parity.test.tsx",
   "capturedAt": "4df813c5354fcf56a92999b2c5db1341f7ffdced",
-  "note": "Captured from the React Native Board screen at capturedAt, before its logic moved into core: the harness file (board-view.parity.test.tsx) was the only change in the checkout; board.tsx, board-view.tsx and board-view.utils.ts were unchanged. Do not regenerate it from core: it is the reference core and the native host contract must match. It freezes three React Native behaviours on purpose (see the task report): a swipe to duplicate also moves the original card to Trash, a custom time estimate shows its raw value (custom:45), and a reorder moves the cards the Board hides (a search, a filter, a parked project) below the ones it shows."
+  "note": "Originally captured from the React Native Board at capturedAt, before extraction to core. The cases listed in recapturedCases were recaptured from React Native after the six Board fixes; all other observations remain from the original capture. The native host contract must match this fixture.",
+  "fixBase": "434f623ed",
+  "fixCommit": "fix commit on branch fix/rn-board-bugs",
+  "fixCommand": "MINDWTR_CAPTURE_BOARD_VIEWS=1 bun run --filter mobile test -- board-view.parity.test.tsx",
+  "recapturedCases": [
+   "columns: every status",
+   "columns: the Home area filter",
+   "filters: title search",
+   "filters: contexts and tags, any then all",
+   "filters: projects and no project",
+   "filters: due presets",
+   "filters: Clear resets search, criteria and due date",
+   "filters: nothing matches",
+   "drag: into another column",
+   "drag: onto an empty column",
+   "drag: reorder within a column",
+   "drag: reorder under a search",
+   "drag: to the end, past a card the Board hides",
+   "cards: tap opens the editor",
+   "cards: swipe to delete",
+   "cards: swipe to duplicate",
+   "cards: a refused duplicate"
+  ]
  },
  "board": {
   "timeZone": "America/New_York",
@@ -740,7 +762,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -931,7 +953,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "0",
@@ -1310,7 +1332,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -1658,7 +1680,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -1870,7 +1892,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -2080,7 +2102,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -3374,7 +3396,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -3584,7 +3606,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -4048,7 +4070,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Locked copy",
@@ -4249,7 +4271,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "0",
@@ -4398,7 +4420,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "0",
@@ -4499,7 +4521,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -4709,7 +4731,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -4987,7 +5009,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -5036,7 +5058,7 @@
       "Delete",
       "Due date",
       "All",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -5271,7 +5293,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "0",
@@ -5429,7 +5451,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "0",
@@ -5442,7 +5464,7 @@
       "No tasks",
       "Due date",
       "Today",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -5770,7 +5792,7 @@
       "No tasks",
       "Due date",
       "Overdue",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -5955,7 +5977,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -6233,7 +6255,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -6282,7 +6304,7 @@
       "Delete",
       "Due date",
       "All",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -6517,7 +6539,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "1",
@@ -6705,7 +6727,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -6983,7 +7005,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -7032,7 +7054,7 @@
       "Delete",
       "Due date",
       "All",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -7273,7 +7295,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "1",
@@ -7453,7 +7475,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Waiting",
       "1",
@@ -7469,7 +7491,7 @@
       "No tasks",
       "Due date",
       "This month",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -7929,7 +7951,7 @@
       "Delete",
       "Due date",
       "No date",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -8548,7 +8570,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -9282,7 +9304,7 @@
       "No tasks",
       "Due date",
       "All",
-      "\u2212",
+      "−",
       "Today",
       "This week",
       "This month",
@@ -9929,7 +9951,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -10141,7 +10163,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -10416,7 +10438,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -10620,7 +10642,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -10835,7 +10857,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -11064,7 +11086,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -11274,7 +11296,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -11488,7 +11510,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -11712,7 +11734,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -11926,7 +11948,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -12018,37 +12040,37 @@
         [
          "i-plumber",
          "next",
-         3072,
+         null,
          null
         ],
         [
          "n-rent",
          "next",
-         4096,
+         null,
          null
         ],
         [
          "n-bulbs",
          "next",
-         5120,
+         null,
          "#16a34a"
         ],
         [
          "n-tags",
          "next",
-         6144,
+         null,
          "#64748b"
         ],
         [
          "n-locked",
          "next",
-         7168,
+         null,
          null
         ],
         [
          "n-gone",
          "next",
-         8192,
+         null,
          null
         ]
        ]
@@ -12105,7 +12127,8 @@
         "n-tags",
         "n-locked",
         "n-gone"
-       ]
+       ],
+       "n-loose"
       ]
      ],
      "toasts": [],
@@ -12152,7 +12175,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -12225,32 +12248,32 @@
        "cards": [
         [
          "n-demo",
+         "next",
+         0,
+         "#2563eb"
+        ],
+        [
+         "n-draft",
          "next",
          1024,
          "#2563eb"
         ],
         [
-         "n-draft",
-         "next",
-         2048,
-         "#2563eb"
-        ],
-        [
          "i-plumber",
          "next",
-         3072,
+         2048,
          null
         ],
         [
          "n-rent",
          "next",
-         4096,
+         3072,
          null
         ],
         [
          "n-loose",
          "next",
-         4608,
+         4096,
          "#64748b"
         ],
         [
@@ -12274,7 +12297,7 @@
         [
          "n-gone",
          "next",
-         8192,
+         9216,
          null
         ]
        ]
@@ -12331,7 +12354,8 @@
         "n-tags",
         "n-locked",
         "n-gone"
-       ]
+       ],
+       "n-loose"
       ]
      ],
      "toasts": [],
@@ -12372,7 +12396,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -12452,25 +12476,25 @@
         [
          "n-draft",
          "next",
-         2048,
+         1024,
          "#2563eb"
         ],
         [
          "i-plumber",
          "next",
-         3072,
+         2048,
          null
         ],
         [
          "n-rent",
          "next",
-         4096,
+         3072,
          null
         ],
         [
          "n-loose",
          "next",
-         4608,
+         4096,
          "#64748b"
         ],
         [
@@ -12494,13 +12518,13 @@
         [
          "n-gone",
          "next",
-         8192,
+         9216,
          null
         ],
         [
          "n-demo",
          "next",
-         8704,
+         10240,
          "#2563eb"
         ]
        ]
@@ -12557,7 +12581,8 @@
         "n-locked",
         "n-gone",
         "n-demo"
-       ]
+       ],
+       "n-demo"
       ]
      ],
      "toasts": [],
@@ -12594,7 +12619,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Loose step",
@@ -12678,31 +12703,31 @@
         [
          "n-draft",
          "next",
-         2048,
+         1024,
          "#2563eb"
         ],
         [
          "i-plumber",
          "next",
-         3072,
+         2048,
          null
         ],
         [
          "n-rent",
          "next",
-         4096,
+         3072,
          null
         ],
         [
          "n-bulbs",
          "next",
-         4352,
+         3584,
          "#16a34a"
         ],
         [
          "n-loose",
          "next",
-         4608,
+         4096,
          "#64748b"
         ],
         [
@@ -12720,13 +12745,13 @@
         [
          "n-gone",
          "next",
-         8192,
+         9216,
          null
         ],
         [
          "n-demo",
          "next",
-         8704,
+         10240,
          "#2563eb"
         ]
        ]
@@ -12783,7 +12808,8 @@
         "n-locked",
         "n-gone",
         "n-demo"
-       ]
+       ],
+       "n-bulbs"
       ]
      ],
      "toasts": [],
@@ -12820,7 +12846,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Loose step",
@@ -12904,31 +12930,31 @@
         [
          "n-draft",
          "next",
-         2048,
+         1024,
          "#2563eb"
         ],
         [
          "i-plumber",
          "next",
-         3072,
+         2048,
          null
         ],
         [
          "n-rent",
          "next",
-         4096,
+         3072,
          null
         ],
         [
          "n-bulbs",
          "next",
-         4352,
+         3584,
          "#16a34a"
         ],
         [
          "n-loose",
          "next",
-         4608,
+         4096,
          "#64748b"
         ],
         [
@@ -12946,13 +12972,13 @@
         [
          "n-gone",
          "next",
-         8192,
+         9216,
          null
         ],
         [
          "n-demo",
          "next",
-         8704,
+         10240,
          "#2563eb"
         ]
        ]
@@ -13038,7 +13064,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -13455,13 +13481,13 @@
         [
          "n-loose",
          "next",
-         3072,
+         null,
          "#64748b"
         ],
         [
          "n-locked",
          "next",
-         4096,
+         null,
          null
         ]
        ]
@@ -13507,7 +13533,8 @@
         "n-draft",
         "n-loose",
         "n-locked"
-       ]
+       ],
+       "n-gone"
       ]
      ],
      "toasts": [],
@@ -13540,11 +13567,8 @@
       "30m",
       "Delete",
       "Duplicate task",
-      "Loose step",
-      "Loose project",
-      "Delete",
-      "Duplicate task",
-      "Locked copy",
+      "Call plumber",
+      "#house",
       "Delete",
       "Duplicate task",
       "Pay rent",
@@ -13556,7 +13580,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -13575,8 +13599,11 @@
       "@c6",
       "Delete",
       "Duplicate task",
-      "Call plumber",
-      "#house",
+      "Loose step",
+      "Loose project",
+      "Delete",
+      "Duplicate task",
+      "Locked copy",
       "Delete",
       "Waiting",
       "2",
@@ -13644,39 +13671,39 @@
          "#2563eb"
         ],
         [
-         "n-loose",
+         "i-plumber",
          "next",
-         3072,
-         "#64748b"
-        ],
-        [
-         "n-locked",
-         "next",
-         4096,
+         null,
          null
         ],
         [
          "n-rent",
          "next",
-         5120,
+         null,
          null
         ],
         [
          "n-bulbs",
          "next",
-         6144,
+         null,
          "#16a34a"
         ],
         [
          "n-tags",
          "next",
-         7168,
+         null,
          "#64748b"
         ],
         [
-         "i-plumber",
+         "n-loose",
          "next",
-         9216,
+         null,
+         "#64748b"
+        ],
+        [
+         "n-locked",
+         "next",
+         null,
          null
         ]
        ]
@@ -13762,7 +13789,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -13968,7 +13995,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -14092,13 +14119,13 @@
         [
          "n-gone",
          "next",
-         7168,
+         8192,
          null
         ],
         [
          "i-plumber",
          "next",
-         8192,
+         9216,
          null
         ]
        ]
@@ -14155,7 +14182,8 @@
         "n-locked",
         "n-gone",
         "i-plumber"
-       ]
+       ],
+       "i-plumber"
       ]
      ],
      "toasts": [],
@@ -14200,7 +14228,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -14410,7 +14438,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -14623,7 +14651,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -14833,7 +14861,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -15048,7 +15076,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -15463,7 +15491,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -15646,7 +15674,13 @@
       "@home",
       "Delete",
       "Next",
-      "9",
+      "10",
+      "Duplicate task",
+      "Record demo",
+      "Launch",
+      "@computer",
+      "1h",
+      "Delete",
       "Duplicate task",
       "Record demo",
       "Launch",
@@ -15673,7 +15707,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -15749,9 +15783,15 @@
        "badge": "#3b82f6",
        "cards": [
         [
-         "<copy:n-demo>",
+         "n-demo",
          "next",
          1024,
+         "#2563eb"
+        ],
+        [
+         "<copy:n-demo>",
+         "next",
+         1536,
          "#2563eb"
         ],
         [
@@ -15847,10 +15887,6 @@
        "duplicateTask",
        "n-demo",
        false
-      ],
-      [
-       "deleteTask",
-       "n-demo"
       ]
      ],
      "toasts": [],
@@ -15901,7 +15937,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -16084,7 +16120,7 @@
       "@home",
       "Delete",
       "Next",
-      "8",
+      "9",
       "Duplicate task",
       "Record demo",
       "Launch",
@@ -16111,7 +16147,7 @@
       "Buy bulbs",
       "Garden",
       "#garden",
-      "custom:45",
+      "45m",
       "Delete",
       "Duplicate task",
       "Many tags",
@@ -16132,6 +16168,9 @@
       "Duplicate task",
       "Loose step",
       "Loose project",
+      "Delete",
+      "Duplicate task",
+      "Locked copy",
       "Delete",
       "Duplicate task",
       "Orphan of gone",
@@ -16226,6 +16265,12 @@
          "#64748b"
         ],
         [
+         "n-locked",
+         "next",
+         null,
+         null
+        ],
+        [
          "n-gone",
          "next",
          null,
@@ -16276,10 +16321,6 @@
        "duplicateTask",
        "n-locked",
        false
-      ],
-      [
-       "deleteTask",
-       "n-locked"
       ]
      ],
      "toasts": [

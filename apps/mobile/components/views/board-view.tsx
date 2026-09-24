@@ -176,7 +176,7 @@ function DraggableTask({
               <Text style={[styles.deleteActionText, { color: tc.text }]}>{deleteLabel}</Text>
             </View>
           )}
-          onSwipeableOpen={(side) => onSwipe(task, side)}
+          onSwipeableOpen={(side, swipeable) => { swipeable.close(); onSwipe(task, side); }}
         >
 	          <View style={[
 	            styles.taskCard,
@@ -252,6 +252,7 @@ interface ColumnProps {
   dragScrollCompensation: SharedValue<number>;
   badges: Map<string, BoardProjectBadge>;
   timeEstimatesEnabled: boolean;
+  t: (key: string) => string;
   onColumnLayout: (columnIndex: number, y: number, height: number) => void;
   onColumnContentLayout: (columnIndex: number, y: number) => void;
   onTaskLayout: (taskId: string, columnIndex: number, y: number, height: number) => void;
@@ -277,6 +278,7 @@ function Column({
   dragScrollCompensation,
   badges,
   timeEstimatesEnabled,
+  t,
   onColumnLayout,
   onColumnContentLayout,
   onTaskLayout,
@@ -319,7 +321,7 @@ function Column({
             duplicateLabel={duplicateLabel}
             isDragActive={draggingTaskId === task.id}
             dragScrollCompensation={dragScrollCompensation}
-            card={getBoardCard(task, { badges, timeEstimatesEnabled })}
+            card={getBoardCard(task, { badges, timeEstimatesEnabled, t })}
             onLayout={onTaskLayout}
           />
         ))}
@@ -561,7 +563,7 @@ export function BoardView() {
     }
 
     const plan = planBoardDrop({ task: currentTask, status: BOARD_COLUMNS[newColumnIndex].status, ...target });
-    if (plan?.kind === 'reorder') void reorderBoardTasks(plan.status, plan.orderedIds);
+    if (plan?.kind === 'reorder') void reorderBoardTasks(plan.status, plan.orderedIds, plan.taskId);
     else if (plan?.kind === 'status') updateTask(plan.taskId, { status: plan.status });
   }, [columns, getColumnBounds, getTaskTopInContent, reorderBoardTasks, tasks, updateTask]);
 
@@ -819,6 +821,7 @@ export function BoardView() {
             dragScrollCompensation={dragScrollCompensationSv}
             badges={badges}
             timeEstimatesEnabled={timeEstimatesEnabled}
+            t={t}
             onColumnLayout={handleColumnLayout}
             onColumnContentLayout={handleColumnContentLayout}
             onTaskLayout={handleTaskLayout}

@@ -8,6 +8,7 @@
  */
 import { projectMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { normalizeBulkTaskTokenInput } from './bulk-task-tokens';
+import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { countActiveFilterCriteria } from './filter-criteria';
 import { tFallback } from './i18n';
 import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState, type ListFilterEdit } from './list-filter-state';
@@ -133,19 +134,12 @@ export type BoardCard = {
     showMetaRow: boolean;
 };
 
-export function getBoardCard(task: Task, options: { badges: Map<string, BoardProjectBadge>; timeEstimatesEnabled: boolean }): BoardCard {
+export function getBoardCard(task: Task, options: { badges: Map<string, BoardProjectBadge>; timeEstimatesEnabled: boolean; t: Translate }): BoardCard {
     const badge = task.projectId ? options.badges.get(task.projectId) : undefined;
     const projectTitle = badge?.title || null;
-    // ponytail: mobile shortens the stored value in English ('30min' → '30m'); a custom
-    // estimate shows raw ('custom:45'). Kept as mobile shows it; see the Board parity fixture.
-    let timeEstimateLabel: string | null = null;
-    if (options.timeEstimatesEnabled && task.timeEstimate) {
-        const estimate = String(task.timeEstimate);
-        if (estimate.endsWith('min')) timeEstimateLabel = estimate.replace('min', 'm');
-        else if (estimate.endsWith('hr+')) timeEstimateLabel = estimate.replace('hr+', 'h+');
-        else if (estimate.endsWith('hr')) timeEstimateLabel = estimate.replace('hr', 'h');
-        else timeEstimateLabel = estimate;
-    }
+    const timeEstimateLabel = options.timeEstimatesEnabled && task.timeEstimate
+        ? formatTimeEstimateLabel(task.timeEstimate, { t: options.t })
+        : null;
     const tags = (task.tags || []).slice(0, 6);
     const contexts = (task.contexts || []).slice(0, 6);
     return {
@@ -164,12 +158,10 @@ export type BoardCardAction = 'duplicate' | 'trash';
  * A card's two swipe panels: the one on its left (a swipe to the right) and the one
  * on its right, with what each runs, in order.
  *
- * ponytail: mobile runs Delete on either panel (its open handler does not check the
- * side), so Duplicate also moves the original card to Trash. Kept byte-identical with
- * the frozen fixture; the fix is `actions: ['duplicate']` here plus a fixture recapture.
+ * Mobile passes the opened side to this mapping, so each panel runs one action.
  */
 export const BOARD_CARD_SWIPES: Record<'left' | 'right', { labelKey: string; actions: readonly BoardCardAction[] }> = {
-    left: { labelKey: 'taskEdit.duplicateTask', actions: ['duplicate', 'trash'] },
+    left: { labelKey: 'taskEdit.duplicateTask', actions: ['duplicate'] },
     right: { labelKey: 'board.delete', actions: ['trash'] },
 };
 
@@ -188,7 +180,7 @@ export type BoardDropPlan =
     /** updateTask(taskId, { status }): the card keeps its board order in the new column. */
     | { kind: 'status'; taskId: string; status: BoardStatus }
     /** reorderBoardTasks(status, orderedIds): the column as shown, top to bottom. */
-    | { kind: 'reorder'; status: BoardStatus; orderedIds: string[] };
+    | { kind: 'reorder'; status: BoardStatus; orderedIds: string[]; taskId: string };
 
 /**
  * The write behind a drop, as mobile makes it. Into another column only the status
@@ -210,7 +202,7 @@ export function planBoardDrop(input: {
     const at = afterId === null ? 0 : orderedIds.indexOf(afterId) + 1;
     if (at === 0 && afterId !== null) return null;
     orderedIds.splice(at, 0, task.id);
-    return orderedIds.every((id, index) => id === columnIds[index]) ? null : { kind: 'reorder', status, orderedIds };
+    return orderedIds.every((id, index) => id === columnIds[index]) ? null : { kind: 'reorder', status, orderedIds, taskId: task.id };
 }
 
 // ---------------------------------------------------------------------------

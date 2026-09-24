@@ -463,7 +463,7 @@ async function perform(renderer: ReactTestRenderer, action: [string, ...unknown[
       return run('swipe', () => {
         if (rest[0] === 'left') swipeable.onSwipeableLeftOpen?.();
         else swipeable.onSwipeableRightOpen?.();
-        swipeable.onSwipeableOpen?.(rest[0], {});
+        swipeable.onSwipeableOpen?.(rest[0], { close: vi.fn() });
       });
     }
     case 'closeEditor':
@@ -516,7 +516,16 @@ describe('React Native Board screen parity fixture', () => {
     if (CAPTURE) {
       let previous: Record<string, unknown> = {};
       try { previous = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')); } catch { previous = {}; }
-      writeFileSync(FIXTURE_PATH, `${JSON.stringify({ ...previous, board: { ...inputs(), observations: captured } }, null, 1)}\n`);
+      const oldBoard = previous.board as { observations: Record<string, unknown> };
+      const recapturedCases = scenarios.map((scenario) => scenario.name)
+        .filter((name) => JSON.stringify(captured[name]) !== JSON.stringify(oldBoard.observations[name]));
+      const observations = { ...oldBoard.observations };
+      for (const name of recapturedCases) observations[name] = captured[name];
+      writeFileSync(FIXTURE_PATH, `${JSON.stringify({
+        ...previous,
+        board: { ...inputs(), observations },
+      }, null, 1)}\n`);
+      expect(JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')).provenance).toEqual(previous.provenance);
     }
     const { observations, ...frozenInputs } = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')).board;
     expect(frozenInputs).toEqual(inputs());

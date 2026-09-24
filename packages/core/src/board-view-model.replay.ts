@@ -89,11 +89,11 @@ export async function seedBoardStore(
     useTaskStore.setState({
         updateTask: async (id, updates) => { record('updateTask', [id, updates]); return real.updateTask(id, updates); },
         deleteTask: async (id) => { record('deleteTask', [id]); return real.deleteTask(id); },
-        reorderBoardTasks: async (status, ids) => { record('reorderBoardTasks', [status, ids]); return real.reorderBoardTasks(status, ids); },
-        duplicateTask: async (id, asNextAction) => {
+        reorderBoardTasks: async (status, ids, movedTaskId) => { record('reorderBoardTasks', [status, ids, movedTaskId]); return real.reorderBoardTasks(status, ids, movedTaskId); },
+        duplicateTask: async (id, asNextAction, copyId) => {
             record('duplicateTask', [id, asNextAction]);
             if (id === REFUSED_COPY) return { success: false, error: 'Copy refused' };
-            const result = await real.duplicateTask(id, asNextAction);
+            const result = await real.duplicateTask(id, asNextAction, copyId);
             if (result.id) recorder.createdIds.set(result.id, `<copy:${id}>`);
             return result;
         },

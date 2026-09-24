@@ -10,8 +10,8 @@
  *
  * runBoardAction writes with a request UUID: while a save is owed, a retry only
  * saves (native-request-receipts.ts). A move and Delete are target-state, so a
- * replay after a restart writes nothing; Duplicate is exact only while this host
- * runs (see runBoardAction). Success means the change is saved.
+ * replay after a restart writes nothing; Duplicate uses its request UUID as the
+ * copy ID and checks unchanged copy fields. Success means the change is saved.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -39,6 +39,7 @@ import {
     type BoardFilterState,
     type BoardStatus,
 } from './board-view-model';
+import { matchesDuplicateSource } from './store-helpers';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import {
     NATIVE_HOST_CONTRACT_VERSION,
@@ -310,7 +311,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         const rows = deps.rows(tasks, now);
         return tasks.map((task, index) => ({
             row: rows[index],
-            card: getBoardCard(task, { badges: board.badges, timeEstimatesEnabled: board.timeEstimatesEnabled }),
+            card: getBoardCard(task, { badges: board.badges, timeEstimatesEnabled: board.timeEstimatesEnabled, t: deps.t() }),
             boardOrder: Number.isFinite(task.boardOrder) ? task.boardOrder as number : null,
         }));
     };
@@ -337,7 +338,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         return settleWrite(landed, { changed: useTaskStore.getState()._allTasks !== before, open: open() });
     };
 
-    const prepare = (action: NativeBoardAction): Prepared => {
+    const prepare = (action: NativeBoardAction, requestId: string): Prepared => {
         const store = useTaskStore.getState();
         switch (action.type) {
             case 'moveCard': {
@@ -364,7 +365,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 return {
                     write: () => written(() => (plan.kind === 'status'
                         ? store.updateTask(plan.taskId, { status: plan.status })
-                        : store.reorderBoardTasks(plan.status, plan.orderedIds))),
+                        : store.reorderBoardTasks(plan.status, plan.orderedIds, plan.taskId))),
                 };
             }
             case 'trashTask': {
@@ -376,13 +377,21 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             case 'duplicateTask': {
                 const task = liveTask(action.taskId);
                 if (!task) return refuse('TASK_NOT_FOUND', 'Task not found');
+                const copy = store._tasksById.get(requestId);
+                if (copy) {
+                    // An edited copy cannot acknowledge a lost reply.
+                    if (!matchesDuplicateSource(task, copy)) {
+                        return refuse('INVALID_INPUT', 'The duplicate request ID does not match this source');
+                    }
+                    return { result: { ok: true, value: { changed: false, open: { taskId: copy.id, projectId: task.projectId ?? null, tab: 'task' } } } };
+                }
                 const { duplicateFailed } = getBoardCardText(deps.t());
                 let createdId: string | undefined;
                 // Mobile's toast: the store's refusal, else "could not duplicate".
                 return {
                     write: () => written(async () => {
                         try {
-                            const result = await store.duplicateTask(task.id, false);
+                            const result = await store.duplicateTask(task.id, false, requestId);
                             createdId = result.id;
                             return result.success && result.id ? result : { success: false, error: result.error || duplicateFailed };
                         } catch {
@@ -468,9 +477,6 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
          * card where it asked and writes nothing. `changed` is false when the store did not
          * change; a request with nothing to write neither saves nor keeps a receipt.
          *
-         * ponytail: Duplicate cannot be recognized after a restart (the store gives the copy
-         * a new id and takes none), so a replay after a restart copies again. Needs an id
-         * option on the store's duplicateTask to become target-state.
          */
         async runBoardAction(input: { requestId: string; action: NativeBoardAction }): Promise<NativeHostResult<NativeBoardActionResult>> {
             const ready = deps.readiness();
@@ -485,13 +491,13 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             // A new request that is refused or has nothing to write returns at once: no save, no receipt.
             const known = entered.get(requestId);
             if (known === undefined) {
-                const prepared = prepare(action);
+                const prepared = prepare(action, requestId);
                 if ('result' in prepared) return prepared.result as NativeHostResult<NativeBoardActionResult>;
                 entered.set(requestId, payload);
                 if (entered.size > ENTERED_LIMIT) entered.delete(entered.keys().next().value!);
             }
             const outcome = await receipts.run(requestId, payload, () => {
-                const prepared = prepare(action);
+                const prepared = prepare(action, requestId);
                 return 'result' in prepared ? Promise.resolve(prepared.result) : prepared.write();
             });
             // A write that did not land leaves no receipt; another payload under a known ID was refused and changes nothing.

@@ -82,7 +82,7 @@ describe('native host contract: Board', () => {
                 .toEqual(expected.columns.map((column) => [column.status, column.label, column.tone, column.tasks.length, column.empty, column.tasks.map((task) => task.id)]));
             for (const [index, column] of expected.columns.entries()) {
                 expect(view.columns[index].cards.map((card) => card.card))
-                    .toEqual(column.tasks.map((task) => getBoardCard(task, { badges: expected.badges, timeEstimatesEnabled: true })));
+                    .toEqual(column.tasks.map((task) => getBoardCard(task, { badges: expected.badges, timeEstimatesEnabled: true, t })));
                 for (const card of view.columns[index].cards) expect(card.row.meta.parts).toBeInstanceOf(Array);
             }
             expect(view.sheet.tokens.items.map((token) => token.value)).toEqual(expected.options.tokens);
@@ -99,6 +99,15 @@ describe('native host contract: Board', () => {
         expect(view.columns.map((column) => column.label)).toEqual(['inbox', 'next', 'waiting', 'someday', 'done'].map((status) => french[`status.${status}`]));
         expect(view.columns[3].empty).toBe(french['board.noTasks']);
         expect(view.cardActions.swipes.right.label).toBe(french['board.delete']);
+    });
+
+    it('formats custom Board estimates in the host language', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        expect(await host.setLanguage({ storedLanguage: 'ko', systemLocale: null })).toMatchObject({ ok: true });
+        const cards = value(host.getBoardView({ limit: 100 })).columns.flatMap((column) => column.cards);
+        expect(cards.find((entry) => entry.row.id === 'n-bulbs')?.card.timeEstimateLabel).toBe('45분');
+        expect(cards.find((entry) => entry.row.id === 'n-demo')?.card.timeEstimateLabel).toBe('1시간');
     });
 
     it('pages a long column and the sheet under one revision, and refuses a stale page after a relevant edit', async () => {
@@ -174,6 +183,43 @@ describe('native host contract: Board', () => {
         expect(retried).toEqual({ changed: true, open: { taskId: copies[0].id, projectId: 'p-launch', tab: 'task' } });
     });
 
+    it('replays a duplicate after restart without a second copy and refuses a different source', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const requestId = generateUUID();
+        const action = { type: 'duplicateTask' as const, taskId: 'n-draft' };
+        const first = value(await host.runBoardAction({ requestId, action }));
+        expect(first).toMatchObject({ changed: true, open: { taskId: requestId } });
+        const before = useTaskStore.getState()._allTasks.map((task) => [task.id, task.rev]);
+        const restarted = createNativeHostContract();
+        expect(await restarted.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        expect(value(await restarted.runBoardAction({ requestId, action }))).toEqual({ changed: false, open: first.open });
+        expect(await restarted.runBoardAction({ requestId, action: { ...action, taskId: 'n-demo' } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(useTaskStore.getState()._allTasks.map((task) => [task.id, task.rev])).toEqual(before);
+        await useTaskStore.getState().updateTask(requestId, { title: 'Edited copy' });
+        await flushPendingSave();
+        const editedRestart = createNativeHostContract();
+        expect(await editedRestart.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        expect(await editedRestart.runBoardAction({ requestId, action }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('replays a requested duplicate after restart with an older identical copy', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        expect((await useTaskStore.getState().duplicateTask('n-draft', false)).success).toBe(true);
+        await flushPendingSave();
+        const requestId = generateUUID();
+        const action = { type: 'duplicateTask' as const, taskId: 'n-draft' };
+        expect(value(await host.runBoardAction({ requestId, action }))).toMatchObject({ changed: true, open: { taskId: requestId } });
+        const before = useTaskStore.getState()._allTasks.map((task) => [task.id, task.rev]);
+        const restarted = createNativeHostContract();
+        expect(await restarted.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
+        expect(value(await restarted.runBoardAction({ requestId, action }))).toMatchObject({ changed: false, open: { taskId: requestId } });
+        expect(useTaskStore.getState()._allTasks.map((task) => [task.id, task.rev])).toEqual(before);
+    });
+
     it('writes nothing when a move or a delete that already landed is replayed after a restart', async () => {
         freezeClock();
         const { host, recorder } = await openHost();
@@ -201,7 +247,7 @@ describe('native host contract: Board', () => {
         expect(revisions()).toEqual(before);
     });
 
-    it('says a reorder changed nothing when the store reads it as the order it has', async () => {
+    it('writes a reorder when unordered cards move in the Board order', async () => {
         freezeClock();
         // Two cards without a board order: the Board shows them in list order, the store
         // orders them by creation. Moving B above A asks for the store's own order.
@@ -210,9 +256,9 @@ describe('native host contract: Board', () => {
         const someday = () => value(host.getBoardView({ limit: 10 })).columns.find((column) => column.status === 'someday')!.cards.map((entry) => entry.row.id);
         expect(someday()).toEqual(['A', 'B']);
         expect(value(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'moveCard', taskId: 'B', status: 'someday', afterId: null } })))
-            .toEqual({ changed: false, open: null });
-        expect(recorder.log).toEqual([['reorderBoardTasks', 'someday', ['B', 'A']]]);
-        expect(someday()).toEqual(['A', 'B']);
+            .toEqual({ changed: true, open: null });
+        expect(recorder.log).toEqual([['reorderBoardTasks', 'someday', ['B', 'A'], 'B']]);
+        expect(someday()).toEqual(['B', 'A']);
     });
 
     it('answers a request with nothing to write without saving or keeping a receipt', async () => {

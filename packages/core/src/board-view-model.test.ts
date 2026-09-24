@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     applyBoardFilterEdit,
+    BOARD_CARD_SWIPES,
     EMPTY_BOARD_FILTER_STATE,
     getBoardCard,
     getBoardFilterSummary,
@@ -52,6 +53,11 @@ describe('Board view model', () => {
         'filters.label': 'Filters', 'common.search': 'Search', 'search.due.label': 'Due date', 'filters.datePreset.overdue': 'Overdue',
     }[key] ?? key);
 
+    it('runs only the action on the opened swipe side', () => {
+        expect(BOARD_CARD_SWIPES.left.actions).toEqual(['duplicate']);
+        expect(BOARD_CARD_SWIPES.right.actions).toEqual(['trash']);
+    });
+
     it('toggles a due-date preset: sets it, replaces another, clears itself', () => {
         expect(toggleBoardDuePreset({}, 'overdue')).toEqual({ dueDateRange: { preset: 'overdue' } });
         expect(toggleBoardDuePreset({ dueDateRange: { preset: 'today' } }, 'overdue')).toEqual({ dueDateRange: { preset: 'overdue' } });
@@ -73,8 +79,8 @@ describe('Board view model', () => {
         const task = { id: 'b', status: 'next' as const };
         const columnIds = ['a', 'b', 'c'];
         expect(planBoardDrop({ task, status: 'waiting', columnIds: [] })).toEqual({ kind: 'status', taskId: 'b', status: 'waiting' });
-        expect(planBoardDrop({ task, status: 'next', columnIds, afterId: null })).toEqual({ kind: 'reorder', status: 'next', orderedIds: ['b', 'a', 'c'] });
-        expect(planBoardDrop({ task, status: 'next', columnIds, afterId: 'c' })).toEqual({ kind: 'reorder', status: 'next', orderedIds: ['a', 'c', 'b'] });
+        expect(planBoardDrop({ task, status: 'next', columnIds, afterId: null })).toEqual({ kind: 'reorder', status: 'next', orderedIds: ['b', 'a', 'c'], taskId: 'b' });
+        expect(planBoardDrop({ task, status: 'next', columnIds, afterId: 'c' })).toEqual({ kind: 'reorder', status: 'next', orderedIds: ['a', 'c', 'b'], taskId: 'b' });
         expect(planBoardDrop({ task, status: 'next', columnIds, afterId: 'a' })).toBeNull();
         expect(planBoardDrop({ task, status: 'next', columnIds })).toBeNull();
         expect(planBoardDrop({ task, status: 'next', columnIds, afterId: 'missing' })).toBeNull();
@@ -84,9 +90,21 @@ describe('Board view model', () => {
     it('shows a project badge in its area color, never the project placeholder', () => {
         const badges = new Map([['p', { title: 'Launch', color: '#2563eb' }], ['q', { title: 'Loose' }]]);
         const task = { id: 't', title: 'T', status: 'next', projectId: 'p', tags: [], contexts: [], createdAt: '', updatedAt: '' } as Task;
-        expect(getBoardCard(task, { badges, timeEstimatesEnabled: true })).toMatchObject({ projectTitle: 'Launch', projectColor: '#2563eb', showMetaRow: true });
-        expect(getBoardCard({ ...task, projectId: 'q' }, { badges, timeEstimatesEnabled: true })).toMatchObject({ projectTitle: 'Loose', projectColor: null });
-        expect(getBoardCard({ ...task, projectId: undefined, timeEstimate: '2hr' }, { badges, timeEstimatesEnabled: false }).showMetaRow).toBe(false);
+        expect(getBoardCard(task, { badges, timeEstimatesEnabled: true, t })).toMatchObject({ projectTitle: 'Launch', projectColor: '#2563eb', showMetaRow: true });
+        expect(getBoardCard({ ...task, projectId: 'q' }, { badges, timeEstimatesEnabled: true, t })).toMatchObject({ projectTitle: 'Loose', projectColor: null });
+        expect(getBoardCard({ ...task, projectId: undefined, timeEstimate: '2hr' }, { badges, timeEstimatesEnabled: false, t }).showMetaRow).toBe(false);
+    });
+
+    it('formats preset and custom time estimates with the Board language', () => {
+        const task = { id: 't', title: 'T', status: 'next', tags: [], contexts: [], createdAt: '', updatedAt: '' } as Task;
+        const units = (key: string) => ({
+            'units.minutesShort': '{minutes} min.',
+            'units.hoursShort': '{hours} h.',
+            'units.hoursMinutesShort': '{hours} h. {minutes} min.',
+        }[key] ?? key);
+        const options = { badges: new Map(), timeEstimatesEnabled: true, t: units };
+        expect(getBoardCard({ ...task, timeEstimate: '30min' }, options).timeEstimateLabel).toBe('30 min.');
+        expect(getBoardCard({ ...task, timeEstimate: 'custom:45' }, options).timeEstimateLabel).toBe('45 min.');
     });
 
     it('keeps match modes on any until a second token of the kind is picked, and Clear empties everything', () => {
