@@ -2,6 +2,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   Alert,
   AppState,
+  Platform,
   type AlertButton,
   type AppStateStatus,
   type LayoutChangeEvent,
@@ -104,7 +105,7 @@ import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { useLanguage } from '../../../contexts/language-context';
 import { canOpenExternalCalendarEvent, fetchExternalCalendarEvents, openExternalCalendarEvent } from '../../../lib/external-calendar';
-import { logError } from '../../../lib/app-log';
+import { logError, logInfo } from '../../../lib/app-log';
 import {
   getCalendarTimelineAnchorMinutes,
   getCalendarTimelineDefaultScrollKey,
@@ -789,7 +790,15 @@ export function useCalendarViewController() {
   const openExternalEventInCalendar = (event: ExternalCalendarEvent) => {
     openExternalCalendarEvent(event)
       .then((opened) => {
-        if (opened) return;
+        if (opened) {
+          if (Platform.OS === 'ios') {
+            void logInfo('Native calendar event dialog completed', {
+              scope: 'calendar',
+              extra: { releaseCheck: 'v1.3.3/ios-external-calendar-open' },
+            });
+          }
+          return;
+        }
         showToast(getCalendarToasts(t).cannotOpenEvent);
       })
       .catch((error) => {
@@ -824,7 +833,11 @@ export function useCalendarViewController() {
       createTask: () => {
         void createTaskFromExternalEvent(event);
       },
-      openInCalendar: () => openExternalEventInCalendar(event),
+      openInCalendar: () => {
+        // The iOS alert callback runs before its native dismissal finishes.
+        if (Platform.OS === 'ios') setTimeout(() => openExternalEventInCalendar(event), 500);
+        else openExternalEventInCalendar(event);
+      },
     };
     const buttons: AlertButton[] = sheet.buttons.map((button) => (
       button.id === 'cancel'
