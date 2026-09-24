@@ -23,7 +23,7 @@ import { buildAdvancedChips, buildSelectionChips, type ActiveFilterChipDeps } fr
 import { useLanguage } from '../../contexts/language-context';
 import { cn } from '../../lib/utils';
 import { useUiStore } from '../../store/ui-store';
-import { AlertCircle, CalendarDays, Clock, ArrowRight, Folder, CheckCircle2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { AlertCircle, CalendarDays, ChevronDown, ChevronRight, Clock, ArrowRight, Folder, CheckCircle2, MoreHorizontal, Trash2 } from 'lucide-react';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
@@ -58,7 +58,7 @@ const AGENDA_VIRTUALIZATION_THRESHOLD = 25;
 const AGENDA_ACTIVE_STATUSES: Task['status'][] = ['inbox', 'next', 'waiting', 'someday'];
 const FOCUS_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:focus:v1';
 
-type FocusSectionKey = 'schedule' | 'nextActions' | 'upcoming' | 'reviewDue' | 'reviewProjects';
+type FocusSectionKey = 'focus' | 'schedule' | 'nextActions' | 'upcoming' | 'reviewDue' | 'reviewProjects';
 type SetFocusCollapsedGroups = (
     updater: (current: CollapsedGroups<NextGroupBy>) => CollapsedGroups<NextGroupBy>,
 ) => void;
@@ -70,6 +70,7 @@ type FocusPersistedViewState = {
 
 const DEFAULT_FOCUS_VIEW_STATE: FocusPersistedViewState = {
     expandedSections: {
+        focus: true,
         schedule: true,
         nextActions: true,
         upcoming: true,
@@ -88,6 +89,7 @@ function sanitizeFocusViewState(value: unknown, fallback: FocusPersistedViewStat
         : {};
     return {
         expandedSections: {
+            focus: typeof expandedSections.focus === 'boolean' ? expandedSections.focus : fallback.expandedSections.focus,
             schedule: typeof expandedSections.schedule === 'boolean' ? expandedSections.schedule : fallback.expandedSections.schedule,
             nextActions: typeof expandedSections.nextActions === 'boolean' ? expandedSections.nextActions : fallback.expandedSections.nextActions,
             upcoming: typeof expandedSections.upcoming === 'boolean' ? expandedSections.upcoming : fallback.expandedSections.upcoming,
@@ -861,7 +863,7 @@ export function AgendaView() {
     // The keyboard scope walks exactly what is on screen, in render order:
     // collapsed sections and collapsed groups contribute no rows.
     const visibleTasks = useMemo(() => {
-        const visible = [...focusedTasks];
+        const visible = expandedSections.focus ? [...focusedTasks] : [];
         if (expandedSections.schedule) visible.push(...orderedTodayTasks);
         if (expandedSections.reviewDue) visible.push(...sections.reviewDue);
         if (expandedSections.nextActions) visible.push(...visibleNextActions);
@@ -941,6 +943,7 @@ export function AgendaView() {
         setPersistedViewState((current) => ({
             ...current,
             expandedSections: {
+                ...current.expandedSections,
                 schedule: expanded,
                 reviewDue: expanded,
                 nextActions: expanded,
@@ -1054,15 +1057,26 @@ export function AgendaView() {
             data-testid="todays-focus-section"
             className="rounded-xl border border-border/70 border-l-4 border-l-amber-400 bg-card/70 p-6 shadow-sm dark:border-border/60 dark:border-l-amber-400/80 dark:bg-card/60"
         >
-            <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-foreground">
-                <FocusStarIcon className="w-5 h-5" filled />
-                {t('agenda.todaysFocus')}
-                <span className="text-sm font-normal text-muted-foreground">
-                    ({focusedCount}/{focusTaskLimit})
-                </span>
+            <h3 className={cn(expandedSections.focus && 'mb-4')}>
+                <button
+                    type="button"
+                    onClick={() => toggleSection('focus')}
+                    aria-expanded={expandedSections.focus}
+                    aria-controls="agenda-section-focus"
+                    className="flex w-full items-center gap-2 rounded-md text-left text-lg font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                    {expandedSections.focus
+                        ? <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                        : <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+                    <FocusStarIcon className="h-5 w-5" filled />
+                    <span>{t('agenda.todaysFocus')}</span>
+                    <span className="text-sm font-normal text-muted-foreground">
+                        ({focusedCount}/{focusTaskLimit})
+                    </span>
+                </button>
             </h3>
 
-            {focusListBody}
+            {expandedSections.focus && <div id="agenda-section-focus">{focusListBody}</div>}
         </div>
     ) : null;
 
