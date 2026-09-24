@@ -205,6 +205,8 @@ export interface QuickAddDateCommandsResult {
     invalidDateCommands?: string[];
 }
 
+// By design (maintainer, 2026-09-24): a blank line anywhere, a trailing one
+// included, joins the lines into one task (a pasted paragraph).
 export function splitQuickAddBulkLines(input: string): string[] {
     const normalized = String(input || '').replace(/\r\n?/g, '\n');
     const lines = normalized

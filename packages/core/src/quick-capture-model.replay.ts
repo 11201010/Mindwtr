@@ -447,8 +447,13 @@ export async function replayQuickCaptureScenario(input: {
         const bulk = current.bulk!;
         current.bulk = null;
         if (contract) {
+            // Mobile saves a recovery snapshot before the batch; the host writes the file.
+            const snapshot = unwrap(await contract.createQuickCaptureSnapshot());
             const result = unwrap(await contract.submitQuickCaptureLines({
-                text: current.text, options: current.options, captureIds: bulk.lines.map(() => generateUUID()),
+                text: current.text,
+                options: current.options,
+                captureIds: bulk.lines.map(() => generateUUID()),
+                snapshotFileName: snapshot?.fileName ?? null,
             }));
             if (result.kind === 'refused') toasts.push(toastOf(result.notice));
             else close();

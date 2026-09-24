@@ -14,7 +14,18 @@
  * never once per open: capture 2 of a burst must know a context capture 1
  * created. A sync that lands mid-draft stays unknown until the next rebuild.
  */
-import { filterCaptureAreas, filterCaptureProjects, hasExactCaptureAreaMatch, hasExactCaptureProjectMatch, prepareCaptureTask, executeCaptureTransaction, type CaptureAssemblyInput, type CaptureTransactionActions, type CaptureTransactionOptions } from './capture';
+import {
+    executeCaptureTransaction,
+    filterCaptureAreas,
+    filterCaptureProjects,
+    hasExactCaptureAreaMatch,
+    hasExactCaptureProjectMatch,
+    planCaptureTask,
+    prepareCaptureTask,
+    type CaptureAssemblyInput,
+    type CaptureTransactionActions,
+    type CaptureTransactionOptions,
+} from './capture';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, resolveAreaFilterSelection } from './area-filter';
 import { getDefaultTaskAreaMode, resolveDefaultNewTaskAreaId } from './area-utils';
 import { getQuickDate, hasTimeComponent, isQuickDatePresetSelected, safeParseDate, type DateFormatter } from './date';
@@ -335,7 +346,11 @@ export function getQuickCapturePickedDueDate(
     return options.dueDateHasTime ? dueDate.toISOString() : dateOnly;
 }
 
-/** The live chips under the title: what saving the text with these options produces. */
+/**
+ * The live chips under the title: what saving the text with these options
+ * produces. By design (maintainer, 2026-09-24), a draft of several lines
+ * previews as one line, while Save asks to create one task per line.
+ */
 export function buildQuickCapturePreview(
     text: string,
     options: Pick<QuickCaptureOptions, 'projectId' | 'dueDate' | 'dueDateHasTime' | 'startTime'>,
@@ -469,6 +484,24 @@ export function planQuickCaptureSave(text: string):
 }
 
 /**
+ * The opener's preset as the save merges it: the popup's options own the
+ * fields they show (project, area, section, priority, note, dates, contexts
+ * and the focus star), so the preset only seeded them. What the popup shows is
+ * what is saved: a preset project the popup dropped (archived, deleted) or one
+ * the user cleared is not saved, and neither is a cleared or hidden priority.
+ */
+const presetUnderOptions = (initialProps: Partial<Task> | undefined, options: QuickCaptureOptions): Partial<Task> | undefined => {
+    if (!initialProps) return initialProps;
+    const {
+        projectId, sectionId, areaId: _areaId, priority: _priority, description: _description,
+        dueDate: _dueDate, startTime: _startTime, contexts: _contexts, isFocusedToday: _isFocusedToday,
+        ...rest
+    } = initialProps;
+    // A preset section belongs to the preset project; it stays only with it.
+    return sectionId && projectId && options.projectId === projectId ? { ...rest, sectionId } : rest;
+};
+
+/**
  * The capture transaction's input for one line: the typed text parsed with the
  * popup's one parse-options bag, with the chosen options applied on top.
  */
@@ -499,7 +532,7 @@ export function buildQuickCaptureRequest(
             rawInput: trimmed,
             fallbackTitle: input.fallbackTitle,
             projects,
-            initialProps: context.initialProps,
+            initialProps: presetUnderOptions(context.initialProps, options),
             extraProps: input.extraProps,
             selectedAreaId: options.areaId,
             starNewTask: options.focus && canFocus(options, context),
@@ -527,6 +560,15 @@ export function buildQuickCaptureRequest(
             },
         },
     };
+}
+
+/** What saving one line would write, without writing (the project it would create included). */
+export function planQuickCaptureTask(
+    input: { text: string; options: QuickCaptureOptions; projects?: readonly Project[] },
+    context: Parameters<typeof buildQuickCaptureRequest>[1],
+): ReturnType<typeof planCaptureTask> {
+    const request = buildQuickCaptureRequest({ text: input.text, fallbackTitle: input.text.trim(), options: input.options, projects: input.projects }, context);
+    return planCaptureTask(request.input, request.options);
 }
 
 /** After a saved capture: open the task (Save and edit), stay for the next one, or close. */
@@ -608,6 +650,13 @@ export async function saveQuickCaptureBulk(input: {
     /** One capture UUID per line, for exact retries. */
     captureIds?: readonly string[];
 }): Promise<QuickCaptureBulkOutcome> {
+    // Every line's date commands are checked before any project or task is written.
+    for (const line of input.lines) {
+        const plan = planQuickCaptureTask({ text: line, options: input.options }, input.context);
+        if (!plan.success && plan.reason === 'invalid-date-command') {
+            return { kind: 'refused', notice: getQuickCaptureInvalidDateNotice(input.context.t, plan.invalidDateCommands) };
+        }
+    }
     const items: { title: string; initialProps: Partial<Task>; captureId?: string }[] = [];
     let projects = input.context.projects;
     for (const line of input.lines) {

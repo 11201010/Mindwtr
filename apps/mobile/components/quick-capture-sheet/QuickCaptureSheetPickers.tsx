@@ -36,7 +36,6 @@ interface QuickCaptureSheetPickersProps {
   onSubmitAreaQuery?: () => void;
   onSubmitContextQuery: () => void;
   onSubmitProjectQuery: () => void;
-  pendingStartDate: Date | null;
   pickerLayer?: 'all' | 'date' | 'overlay';
   overlayKeyboardInset?: number;
   prioritiesEnabled: boolean;
@@ -50,12 +49,9 @@ interface QuickCaptureSheetPickersProps {
   showDueTimePicker: boolean;
   showPriorityPicker: boolean;
   showProjectPicker: boolean;
-  startPickerMode: 'date' | 'time' | null;
-  startTime: Date | null;
   dueDate: Date | null;
   onDueDateChange: (event: { type: string }, selectedDate?: Date) => void;
   onDueTimeChange: (event: { type: string }, selectedDate?: Date) => void;
-  onStartTimeChange: (event: { type: string }, selectedDate?: Date) => void;
   t: (key: string) => string;
   tc: ThemeColors;
 }
@@ -89,11 +85,9 @@ export function QuickCaptureSheetPickers({
   onSelectContext,
   onSelectPriority,
   onSelectProject,
-  onStartTimeChange,
   onSubmitAreaQuery = () => {},
   onSubmitContextQuery,
   onSubmitProjectQuery,
-  pendingStartDate,
   pickerLayer = 'all',
   overlayKeyboardInset = 0,
   prioritiesEnabled,
@@ -107,8 +101,6 @@ export function QuickCaptureSheetPickers({
   showDueTimePicker,
   showPriorityPicker,
   showProjectPicker,
-  startPickerMode,
-  startTime,
   t,
   tc,
 }: QuickCaptureSheetPickersProps) {
@@ -138,19 +130,6 @@ export function QuickCaptureSheetPickers({
           mode="time"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={onDueTimeChange}
-        />
-      )}
-
-      {showDateLayer && startPickerMode && (
-        <DateTimePicker
-          value={(() => {
-            if (Platform.OS === 'ios') return startTime ?? new Date();
-            if (startPickerMode === 'time') return pendingStartDate ?? startTime ?? new Date();
-            return startTime ?? new Date();
-          })()}
-          mode={Platform.OS === 'ios' ? 'datetime' : startPickerMode}
-          display={Platform.OS === 'ios' ? 'inline' : 'default'}
-          onChange={onStartTimeChange}
         />
       )}
 

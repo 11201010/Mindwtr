@@ -7,14 +7,20 @@ import {
     replayQuickCaptureScenario,
     seedQuickCaptureStore,
 } from './quick-capture-model.replay';
+import { safeFormatDate } from './date';
+import { buildQuickAddParseOptions } from './quick-add';
 import {
     applyQuickCaptureEdit,
     createQuickCaptureOptions,
     normalizeQuickCaptureContext,
     parseQuickCaptureContextQuery,
+    saveQuickCapture,
+    saveQuickCaptureBulk,
+    type QuickCaptureContext,
     type QuickCaptureEdit,
     type QuickCaptureOptions,
 } from './quick-capture-model';
+import type { Area, Project, Task } from './types';
 import { resetForTests } from './store';
 
 const fixture = loadQuickCaptureFixture();
@@ -100,5 +106,82 @@ describe('capture popup model', () => {
         expect(edit(inProject, { type: 'resetProject' })).toMatchObject({ projectId: null, areaId: 'a-home' });
         expect(edit(inProject, { type: 'selectArea', areaId: 'a-work' })).toMatchObject({ projectId: null, areaId: 'a-work' });
         expect(edit(inProject, { type: 'selectArea', areaId: null })).toMatchObject({ projectId: 'p-launch', areaId: null });
+    });
+});
+
+describe('capture popup save: what the popup shows is what is saved', () => {
+    const at = '2026-09-01T12:00:00.000Z';
+    const projects: Project[] = [
+        { id: 'p-home', title: 'Home Repairs', status: 'active', color: '#94a3b8', order: 0, tagIds: [], createdAt: at, updatedAt: at, areaId: 'a-home' },
+        { id: 'p-old', title: 'Old stuff', status: 'archived', color: '#94a3b8', order: 1, tagIds: [], createdAt: at, updatedAt: at },
+        { id: 'p-gone', title: 'Removed', status: 'active', color: '#94a3b8', order: 2, tagIds: [], createdAt: at, updatedAt: at, deletedAt: at },
+    ];
+    const areas: Area[] = [{ id: 'a-home', name: 'Home', color: '#16a34a', order: 0, createdAt: at, updatedAt: at }];
+    const contextFor = (initialProps: Partial<Task>, settings: QuickCaptureContext['settings'] = {}): QuickCaptureContext => ({
+        settings,
+        projects: projects.filter((project) => !project.deletedAt),
+        areas,
+        parseOptions: buildQuickAddParseOptions(settings, {}),
+        focusedCount: 0,
+        defaultAreaId: null,
+        initialProps,
+        t: (key) => key,
+        formatDate: safeFormatDate,
+        now: new Date(2026, 8, 23, 10, 0),
+    });
+    const save = async (initialProps: Partial<Task>, settings: QuickCaptureContext['settings'] = {}, change?: (options: QuickCaptureOptions) => QuickCaptureOptions) => {
+        const context = contextFor(initialProps, settings);
+        const shown = createQuickCaptureOptions({ initialProps, projects: context.projects, defaultAreaId: null });
+        const addTask = vi.fn(async () => ({ success: true, id: 'task-1' }));
+        const addProject = vi.fn(async () => null);
+        await saveQuickCapture({ text: 'Fix fence', options: change ? change(shown) : shown, context, actions: { addTask, addProject } });
+        return { shown, props: (addTask.mock.calls[0] as unknown[] | undefined)?.[1] as Partial<Task> };
+    };
+
+    it('does not save a preset project the popup dropped (archived or deleted); it saves the area it shows', async () => {
+        for (const projectId of ['p-old', 'p-gone']) {
+            const { shown, props } = await save({ projectId, areaId: 'a-home', status: 'next' });
+            expect(shown).toMatchObject({ projectId: null, areaId: 'a-home' });
+            expect(props.projectId).toBeUndefined();
+            expect(props).toMatchObject({ areaId: 'a-home', status: 'next' });
+        }
+        // A preset project the popup keeps is saved as before.
+        expect((await save({ projectId: 'p-home', status: 'next' })).props).toMatchObject({ projectId: 'p-home', status: 'next' });
+    });
+
+    it('does not save a preset priority while Priorities are off, nor one the popup cleared', async () => {
+        expect((await save({ priority: 'high' }, { features: { priorities: false } })).props.priority).toBeUndefined();
+        expect((await save({ priority: 'high' })).props.priority).toBe('high');
+        expect((await save({ priority: 'high' }, {}, (options) => ({ ...options, priority: null }))).props.priority).toBeUndefined();
+    });
+
+    it('does not save a preset project, due date, star or context the popup cleared', async () => {
+        const { props } = await save(
+            { projectId: 'p-home', dueDate: '2026-09-30', isFocusedToday: true, contexts: ['@home', 'errands'] },
+            {},
+            (options) => ({ ...options, projectId: null, areaId: null, dueDate: null, focus: false, contexts: ['@home'] }),
+        );
+        expect(props.projectId).toBeUndefined();
+        expect(props.dueDate).toBeUndefined();
+        expect(props.isFocusedToday).toBeUndefined();
+        expect(props.contexts).toEqual(['@home']);
+    });
+
+    it('checks every line of a batch before it writes anything', async () => {
+        const context = contextFor({});
+        const addProject = vi.fn(async (title: string) => ({ ...projects[0], id: 'p-new', title }));
+        const addTasks = vi.fn(async () => ({ success: true, ids: [] }));
+        const outcome = await saveQuickCaptureBulk({
+            lines: ['Plan beds +Garden', 'Pay rent /due:whenever'],
+            options: createQuickCaptureOptions({ projects, defaultAreaId: null }),
+            context,
+            actions: { addProject, addTasks },
+        });
+        expect(outcome).toEqual({
+            kind: 'refused',
+            notice: { tone: 'warning', title: 'common.notice', message: 'quickAdd.invalidDateCommand: /due:whenever', durationMs: 4200 },
+        });
+        expect(addProject).not.toHaveBeenCalled();
+        expect(addTasks).not.toHaveBeenCalled();
     });
 });

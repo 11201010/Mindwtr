@@ -149,10 +149,8 @@ describe('Quick capture modal composition', () => {
           onSelectContext={vi.fn()}
           onSelectPriority={vi.fn()}
           onSelectProject={vi.fn()}
-          onStartTimeChange={vi.fn()}
           onSubmitContextQuery={vi.fn()}
           onSubmitProjectQuery={vi.fn()}
-          pendingStartDate={null}
           prioritiesEnabled
           priorityOptions={['low', 'medium', 'high', 'urgent']}
           projectQuery=""
@@ -164,8 +162,6 @@ describe('Quick capture modal composition', () => {
           showDueTimePicker={false}
           showPriorityPicker={false}
           showProjectPicker={false}
-          startPickerMode={null}
-          startTime={null}
           t={(key) => key}
           tc={tc}
         />
@@ -206,10 +202,8 @@ describe('Quick capture modal composition', () => {
           onSelectContext={vi.fn()}
           onSelectPriority={vi.fn()}
           onSelectProject={vi.fn()}
-          onStartTimeChange={vi.fn()}
           onSubmitContextQuery={vi.fn()}
           onSubmitProjectQuery={vi.fn()}
-          pendingStartDate={null}
           prioritiesEnabled
           priorityOptions={['low', 'medium', 'high', 'urgent']}
           projectQuery=""
@@ -221,8 +215,6 @@ describe('Quick capture modal composition', () => {
           showDueTimePicker={false}
           showPriorityPicker={false}
           showProjectPicker={false}
-          startPickerMode={null}
-          startTime={null}
           t={(key) => key}
           tc={tc}
         />
@@ -423,11 +415,9 @@ describe('Quick capture modal composition', () => {
           onSelectContext={vi.fn()}
           onSelectPriority={vi.fn()}
           onSelectProject={vi.fn()}
-          onStartTimeChange={vi.fn()}
           onSubmitContextQuery={vi.fn()}
           onSubmitProjectQuery={vi.fn()}
           overlayKeyboardInset={280}
-          pendingStartDate={null}
           prioritiesEnabled
           priorityOptions={['low', 'medium', 'high', 'urgent']}
           projectQuery=""
@@ -439,8 +429,6 @@ describe('Quick capture modal composition', () => {
           showDueTimePicker={false}
           showPriorityPicker={false}
           showProjectPicker={false}
-          startPickerMode={null}
-          startTime={null}
           t={(key) => key}
           tc={tc}
         />
@@ -494,11 +482,9 @@ describe('Quick capture modal composition', () => {
           onSelectContext={vi.fn()}
           onSelectPriority={vi.fn()}
           onSelectProject={vi.fn()}
-          onStartTimeChange={vi.fn()}
           onSubmitAreaQuery={onSubmitAreaQuery}
           onSubmitContextQuery={vi.fn()}
           onSubmitProjectQuery={vi.fn()}
-          pendingStartDate={null}
           prioritiesEnabled
           priorityOptions={['low', 'medium', 'high', 'urgent']}
           projectQuery=""
@@ -510,8 +496,6 @@ describe('Quick capture modal composition', () => {
           showDueTimePicker={false}
           showPriorityPicker={false}
           showProjectPicker={false}
-          startPickerMode={null}
-          startTime={null}
           t={t}
           tc={tc}
         />
@@ -1297,10 +1281,8 @@ describe('Quick capture modal composition', () => {
           onSelectContext={vi.fn()}
           onSelectPriority={vi.fn()}
           onSelectProject={vi.fn()}
-          onStartTimeChange={vi.fn()}
           onSubmitContextQuery={vi.fn()}
           onSubmitProjectQuery={vi.fn()}
-          pendingStartDate={null}
           prioritiesEnabled
           priorityOptions={['low', 'medium', 'high', 'urgent']}
           projectQuery=""
@@ -1312,8 +1294,6 @@ describe('Quick capture modal composition', () => {
           showDueTimePicker={false}
           showPriorityPicker
           showProjectPicker={false}
-          startPickerMode={null}
-          startTime={null}
           t={(key) => key}
           tc={tc}
         />

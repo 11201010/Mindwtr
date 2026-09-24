@@ -160,8 +160,53 @@ describe('native host contract: the capture popup', () => {
         expect(await restarted.setLanguage({ storedLanguage: 'en', systemLocale: null })).toMatchObject({ ok: true });
         expect(await restarted.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         recorder.log.length = 0;
+        // The stored task does not match another draft: refused, never acknowledged.
+        expect(await restarted.submitQuickCapture({ ...input, text: 'Call @phone' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await restarted.submitQuickCapture({ ...input, options: { ...options, focus: true } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(value(await restarted.submitQuickCapture(input))).toMatchObject({ kind: 'saved', taskId: input.captureId.toLowerCase() });
         expect(recorder.log).toEqual([]);
+    });
+
+    it('never reports SAVE_FAILED for a result that wrote nothing, and a refused capture ID stays free', async () => {
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host } = await openHost('base', saveData);
+        const options = value(host.openQuickCapture()).options;
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.submitQuickCapture({ text: 'First', options, captureId: generateUUID() }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(useTaskStore.getState().persistenceFailure).toBeTruthy();
+
+        // An earlier save still fails, but these calls write nothing of their own.
+        const captureId = generateUUID();
+        expect(value(await host.submitQuickCapture({ text: 'Pay rent /due:whenever', options, captureId })))
+            .toMatchObject({ kind: 'refused' });
+        expect(value(await host.submitQuickCaptureLines({ text: 'one\ntwo /due:whenever', options, captureIds: [generateUUID(), generateUUID()], snapshotFileName: null })))
+            .toMatchObject({ kind: 'refused' });
+        expect(value(await host.submitQuickCapturePickerQuery({ picker: 'project', query: 'launch', text: 'x', options, requestId: generateUUID() })))
+            .toEqual({ options: { ...options, projectId: 'p-launch', areaId: null }, created: false });
+
+        saveData.mockResolvedValue(undefined);
+        expect(value(await host.submitQuickCapture({ text: 'Pay rent /due:tomorrow', options, captureId })))
+            .toMatchObject({ kind: 'saved', taskId: captureId.toLowerCase() });
+    });
+
+    it('reads a date-only option as a local day and refuses a non-canonical instant', async () => {
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host } = await openHost('base', saveData);
+        const options = value(host.openQuickCapture()).options;
+        const view = value(host.getQuickCaptureView({ text: 'Plan', options: { ...options, dueDate: '2026-09-23' } }));
+        expect(view.options.dueDate).toBe(new Date(2026, 8, 23).toISOString());
+        expect(view.due.label).toBe('09/23/2026');
+        const captureId = generateUUID();
+        expect(value(await host.submitQuickCapture({ text: 'Plan', options: { ...options, dueDate: '2026-09-23' }, captureId })))
+            .toMatchObject({ kind: 'saved' });
+        expect(useTaskStore.getState().tasks.find((task) => task.id === captureId.toLowerCase())?.dueDate).toBe('2026-09-23');
+        for (const dueDate of ['2026-09-23T10:00', '2026-09-23T14:00:00Z', '2026-02-30']) {
+            expect(host.getQuickCaptureView({ text: 'Plan', options: { ...options, dueDate } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(host.getQuickCaptureView({ text: 'Plan', options: { ...options, dueDate: '2026-09-23', dueDateHasTime: true } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 
     it('refuses a date command it cannot read and writes nothing', async () => {
@@ -186,17 +231,75 @@ describe('native host contract: the capture popup', () => {
         });
         expect(recorder.log).toEqual([]);
         const captureIds = [generateUUID(), generateUUID()];
-        expect(await host.submitQuickCaptureLines({ text, options, captureIds: [captureIds[0]] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // Mobile saves a recovery snapshot first; the host writes the file the contract serializes.
+        expect(await host.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName: null }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const snapshot = value(await host.createQuickCaptureSnapshot())!;
+        expect(snapshot.fileName).toMatch(/^data\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}\.snapshot\.json$/u);
+        expect((JSON.parse(snapshot.contents) as { tasks: unknown[] }).tasks.length).toBe(fixture.tasks.length);
+        const snapshotFileName = snapshot.fileName;
+        expect(await host.submitQuickCaptureLines({ text, options, captureIds: [captureIds[0]], snapshotFileName }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
 
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.submitQuickCaptureLines({ text, options, captureIds })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(await host.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         saveData.mockResolvedValue(undefined);
-        expect(value(await host.submitQuickCaptureLines({ text, options, captureIds })))
+        expect(value(await host.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName })))
             .toEqual({ kind: 'saved', taskIds: captureIds.map((id) => id.toLowerCase()) });
         expect(writes(recorder.log)).toEqual(['addTasks']);
         const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; title: string; contexts: string[] }[] };
         expect(saved.tasks.filter((task) => captureIds.map((id) => id.toLowerCase()).includes(task.id)).map((task) => [task.title, task.contexts]))
             .toEqual([['Buy eggs', ['@errands']], ['Call plumber', []]]);
+    });
+
+    it('refuses a batch whose snapshot is older than the data', async () => {
+        const { host } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const snapshot = value(await host.createQuickCaptureSnapshot())!;
+        await useTaskStore.getState().addTask('Synced meanwhile');
+        expect(await host.submitQuickCaptureLines({ text: 'a\nb', options, captureIds: [generateUUID(), generateUUID()], snapshotFileName: snapshot.fileName }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('answers a batch retried after a restart from its tasks, preparing only missing lines', async () => {
+        const { host, recorder } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const text = 'Plan beds +Garden plan\nCall Bob';
+        const captureIds = [generateUUID(), generateUUID()];
+        const snapshotFileName = value(await host.createQuickCaptureSnapshot())!.fileName;
+        const saved = value(await host.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName }));
+        await flushPendingSave();
+
+        const restarted = createNativeHostContract();
+        expect(await restarted.setLanguage({ storedLanguage: 'en', systemLocale: null })).toMatchObject({ ok: true });
+        expect(await restarted.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        recorder.log.length = 0;
+        // A completed batch needs no snapshot and prepares nothing.
+        expect(value(await restarted.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName: null }))).toEqual(saved);
+        expect(await restarted.submitQuickCaptureLines({ text: 'Plan beds\nCall Bob', options, captureIds, snapshotFileName: null }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // Archiving Garden plan completes its task: the stored task no longer proves this draft, so the
+        // retry is refused, and no second Garden plan is created.
+        const garden = useTaskStore.getState().projects.find((project) => project.title === 'Garden plan')!;
+        await useTaskStore.getState().updateProject(garden.id, { status: 'archived' });
+        await flushPendingSave();
+        const again = createNativeHostContract();
+        expect(await again.setLanguage({ storedLanguage: 'en', systemLocale: null })).toMatchObject({ ok: true });
+        expect(await again.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        expect(await again.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName: null }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(recorder.log).toEqual([]);
+        expect(useTaskStore.getState()._allProjects.filter((project) => project.title === 'Garden plan')).toHaveLength(1);
+
+        // One line landed before the restart: only the other is prepared and written.
+        const partial = [generateUUID(), generateUUID()];
+        await useTaskStore.getState().addTask('Water', { status: 'inbox', areaId: undefined }, { captureId: partial[0] });
+        recorder.log.length = 0;
+        const snapshot = value(await restarted.createQuickCaptureSnapshot())!.fileName;
+        expect(value(await restarted.submitQuickCaptureLines({ text: 'Water\nFeed cat', options, captureIds: partial, snapshotFileName: snapshot })))
+            .toEqual({ kind: 'saved', taskIds: partial.map((id) => id.toLowerCase()) });
+        expect(recorder.log.filter((entry) => (entry as unknown[])[0] === 'addTasks').map((entry) => ((entry as unknown[])[1] as { title: string }[]).map((item) => item.title)))
+            .toEqual([['Feed cat']]);
     });
 
     it('creates a project from the picker search once, and chooses an existing one by its exact name', async () => {

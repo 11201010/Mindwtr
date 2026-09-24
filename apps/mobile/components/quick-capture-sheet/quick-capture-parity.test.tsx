@@ -8,6 +8,10 @@
  *   MINDWTR_CAPTURE_QUICK_CAPTURE=1 MINDWTR_CAPTURE_QUICK_CAPTURE_COMMIT=$(git rev-parse HEAD) bunx vitest run components/quick-capture-sheet/quick-capture-parity.test.tsx
  * The capture refuses to run unless that commit is HEAD and the checkout holds
  * nothing but HEAD's code, so the provenance always names the code that ran.
+ * To recapture only the scenarios a deliberate RN change affects, also set
+ *   MINDWTR_CAPTURE_QUICK_CAPTURE_SCENARIOS='<name>|<name>' MINDWTR_CAPTURE_QUICK_CAPTURE_REASON='<why>'
+ * The other scenarios keep their frozen observations, and `provenance.recaptured`
+ * records the commit, the reason and the names.
  * Each scenario renders the real sheet (its real body and pickers) with the real
  * core store, drives it through the props the sheet hands its body and pickers,
  * and records what a user sees and what the store is asked to write.
@@ -38,6 +42,7 @@ import { QuickDateChips } from '../QuickDateChips';
 
 const FIXTURE_PATH = new URL('../../../../packages/core/src/quick-capture-parity.fixtures.json', import.meta.url).pathname;
 const CAPTURE = process.env.MINDWTR_CAPTURE_QUICK_CAPTURE === '1';
+const CAPTURE_ONLY = process.env.MINDWTR_CAPTURE_QUICK_CAPTURE_SCENARIOS?.split('|').filter(Boolean) ?? [];
 
 const english = vi.hoisted(() => ({ strings: {} as Record<string, string> }));
 const toastLog = vi.hoisted(() => ({ entries: [] as unknown[] }));
@@ -263,7 +268,7 @@ export const scenarios: QuickCaptureScenario[] = [
     actions: [['type', 'Fix bug /priority:urgent'], ['more'], ['openPicker', 'priority'], ['save']],
   },
   {
-    name: 'with Priorities off a preset priority leaves the control empty but is still saved',
+    name: 'with Priorities off a preset priority is not saved',
     settings: 'noPriorities',
     initialProps: { priority: 'high' },
     actions: [['type', 'Fix bug'], ['more'], ['save']],
@@ -487,10 +492,10 @@ export const scenarios: QuickCaptureScenario[] = [
     actions: [['type', 'Old thing'], ['save']],
   },
   {
-    name: 'a preset project deleted elsewhere: the store refuses the write and a toast says so',
+    name: 'a preset project deleted elsewhere is not saved; the task goes to the area the popup shows',
     settings: 'base',
     initialProps: { projectId: 'p-gone', areaId: 'a-work' },
-    actions: [['type', 'Orphan'], ['save'], ['close']],
+    actions: [['type', 'Orphan'], ['save']],
   },
   {
     name: 'the fixed default area',
@@ -523,6 +528,11 @@ export const scenarios: QuickCaptureScenario[] = [
       ['type', 'First paragraph\n\nsecond paragraph'],
       ['save'],
     ],
+  },
+  {
+    name: 'a bad line refuses the whole batch before any project is created',
+    settings: 'base',
+    actions: [['type', 'Plan beds +Garden plan\nPay rent /due:whenever'], ['save'], ['confirmBulk']],
   },
   {
     name: 'a trailing blank line also joins the lines into one task',
@@ -866,17 +876,39 @@ describe('React Native capture popup parity fixture', () => {
 
   it('replays every scenario exactly as frozen', async () => {
     const captured: Record<string, unknown> = {};
-    for (const scenario of scenarios) {
+    const selected = CAPTURE && CAPTURE_ONLY.length > 0 ? scenarios.filter(({ name }) => CAPTURE_ONLY.includes(name)) : scenarios;
+    if (selected.length !== (CAPTURE && CAPTURE_ONLY.length > 0 ? CAPTURE_ONLY.length : scenarios.length)) {
+      throw new Error(`Unknown scenario in MINDWTR_CAPTURE_QUICK_CAPTURE_SCENARIOS: ${CAPTURE_ONLY.join(' | ')}`);
+    }
+    for (const scenario of selected) {
       captured[scenario.name] = await runScenario(scenario);
     }
     const inputs = normalize({ timeZone: TIME_ZONE, now: NOW, tasks, projects, areas, settings: settingsVariants, scenarios }) as Record<string, unknown>;
     if (CAPTURE) {
-      writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance: captureProvenance(), ...inputs, observations: captured }, null, 1)}\n`);
+      const provenance = captureProvenance();
+      if (CAPTURE_ONLY.length === 0) {
+        writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance, ...inputs, observations: captured }, null, 1)}\n`);
+      } else {
+        const reason = process.env.MINDWTR_CAPTURE_QUICK_CAPTURE_REASON;
+        if (!reason) throw new Error('A partial recapture needs MINDWTR_CAPTURE_QUICK_CAPTURE_REASON');
+        const previous = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
+        writeFileSync(FIXTURE_PATH, `${JSON.stringify({
+          provenance: {
+            ...previous.provenance,
+            recaptured: [...(previous.provenance.recaptured ?? []), { commit: provenance.capturedAt, reason, scenarios: CAPTURE_ONLY }],
+          },
+          ...inputs,
+          observations: Object.fromEntries(scenarios.map(({ name }) => [
+            name,
+            CAPTURE_ONLY.includes(name) ? captured[name] : previous.observations[name],
+          ])),
+        }, null, 1)}\n`);
+      }
     }
     const fixture = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
     const { observations, provenance: _provenance, ...frozenInputs } = fixture;
     expect(frozenInputs).toEqual(inputs);
-    for (const scenario of scenarios) {
+    for (const scenario of selected) {
       expect({ [scenario.name]: captured[scenario.name] }).toEqual({ [scenario.name]: observations[scenario.name] });
     }
   }, 180_000);

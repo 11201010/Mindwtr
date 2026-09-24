@@ -290,16 +290,25 @@ const captureErrorMessage = (error: unknown, fallback: string): string => {
     return fallback;
 };
 
+/** The write a capture would make, without making it. */
+export type CaptureTaskPlan = {
+    success: true;
+    title: string;
+    props: Partial<Task>;
+    /** When set, the capture creates this project first (the props then take its id). */
+    projectToCreate?: CaptureProjectToCreate;
+    invalidDateCommands?: string[];
+};
+
 /**
- * Prepare the durable task write, including the optional project write.
- * Batch and audio capture adapters may use this phase before their specialized
- * task write; ordinary interactive capture should use executeCaptureTransaction.
+ * Plan the durable task write without writing: parsed input, surface
+ * enrichment, and the project the capture would create. prepareCaptureTask
+ * is this plan plus the project write.
  */
-export async function prepareCaptureTask(
+export function planCaptureTask(
     input: CaptureAssemblyInput,
-    actions: Pick<CaptureTransactionActions, 'addProject'>,
     options: CaptureTransactionOptions = {},
-): Promise<CapturePreparationFailure | PreparedCaptureTask> {
+): Exclude<CapturePreparationFailure, { reason: 'project-create-failed' }> | CaptureTaskPlan {
     const invalidDateCommands = input.parsed.invalidDateCommands;
     if (invalidDateCommands?.length) {
         return {
@@ -322,13 +331,36 @@ export async function prepareCaptureTask(
         props = applyCapturedProject(props, props.projectId);
     }
 
+    return {
+        success: true,
+        title: assembly.title,
+        props,
+        invalidDateCommands: assembly.invalidDateCommands,
+        ...(!props.projectId && assembly.projectToCreate ? { projectToCreate: assembly.projectToCreate } : {}),
+    };
+}
+
+/**
+ * Prepare the durable task write, including the optional project write.
+ * Batch and audio capture adapters may use this phase before their specialized
+ * task write; ordinary interactive capture should use executeCaptureTransaction.
+ */
+export async function prepareCaptureTask(
+    input: CaptureAssemblyInput,
+    actions: Pick<CaptureTransactionActions, 'addProject'>,
+    options: CaptureTransactionOptions = {},
+): Promise<CapturePreparationFailure | PreparedCaptureTask> {
+    const plan = planCaptureTask(input, options);
+    if (!plan.success) return plan;
+
+    let props = plan.props;
     let createdProject: Project | undefined;
-    if (!props.projectId && assembly.projectToCreate) {
+    if (plan.projectToCreate) {
         try {
             const created = await actions.addProject(
-                assembly.projectToCreate.title,
-                assembly.projectToCreate.color,
-                assembly.projectToCreate.initialProps,
+                plan.projectToCreate.title,
+                plan.projectToCreate.color,
+                plan.projectToCreate.initialProps,
             );
             if (!created) {
                 return {
@@ -350,9 +382,9 @@ export async function prepareCaptureTask(
 
     return {
         success: true,
-        title: assembly.title,
+        title: plan.title,
         props,
-        invalidDateCommands: assembly.invalidDateCommands,
+        invalidDateCommands: plan.invalidDateCommands,
         ...(createdProject ? { createdProject } : {}),
     };
 }

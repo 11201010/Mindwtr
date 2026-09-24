@@ -443,14 +443,11 @@ export function QuickCaptureSheet({
     addAnother,
   } = options;
   const dueDate = useMemo(() => (options.dueDate ? new Date(options.dueDate) : null), [options.dueDate]);
-  const startTime = useMemo(() => (options.startTime ? new Date(options.startTime) : null), [options.startTime]);
   const [recoveryAttachments, setRecoveryAttachments] = useState<Attachment[]>([]);
   const [recoveryOwnedAttachmentUris, setRecoveryOwnedAttachmentUris] = useState<string[]>([]);
   const [pendingBulkLines, setPendingBulkLines] = useState<string[] | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showDueTimePicker, setShowDueTimePicker] = useState(false);
-  const [startPickerMode, setStartPickerMode] = useState<'date' | 'time' | null>(null);
-  const [pendingStartDate, setPendingStartDate] = useState<Date | null>(null);
   const [contextOptions, setContextOptions] = useState<string[]>([]);
   const [contextOptionsLoading, setContextOptionsLoading] = useState(false);
   const [showContextPicker, setShowContextPicker] = useState(false);
@@ -506,7 +503,7 @@ export function QuickCaptureSheet({
     noteValue,
     dueDate: dueDate?.toISOString() ?? null,
     dueDateHasTime,
-    startTime: startTime?.toISOString() ?? null,
+    startTime: options.startTime,
     contextTags,
     projectId,
     selectedAreaId,
@@ -528,8 +525,8 @@ export function QuickCaptureSheet({
     projectId,
     recoveryAttachments,
     recoveryOwnedAttachmentUris,
+    options.startTime,
     selectedAreaId,
-    startTime,
     value,
   ]);
   const restoreActivitySession = useCallback((recovered: QuickCaptureActivityState) => {
@@ -811,8 +808,6 @@ export function QuickCaptureSheet({
     setAndroidKeyboardAvoidingEnabled(true);
     setShowDatePicker(false);
     setShowDueTimePicker(false);
-    setStartPickerMode(null);
-    setPendingStartDate(null);
     setRecoveryAttachments([]);
     setRecoveryOwnedAttachmentUris([]);
   }, [clearAndroidOptionsExpand, clearContextOptionsLoad, defaultAreaId, initialProps, initialValue]);
@@ -952,8 +947,6 @@ export function QuickCaptureSheet({
     setAndroidKeyboardAvoidingEnabled(true);
     setShowDatePicker(false);
     setShowDueTimePicker(false);
-    setStartPickerMode(null);
-    setPendingStartDate(null);
     setRecoveryAttachments([]);
     setRecoveryOwnedAttachmentUris([]);
   }, [clearAndroidOptionsExpand, clearContextOptionsLoad, defaultAreaId]);
@@ -1212,35 +1205,6 @@ export function QuickCaptureSheet({
     setShowDueTimePicker(false);
   }, [editOptions, resetDueDate]);
 
-  const handleStartTimeChange = useCallback((event: { type: string }, selectedDate?: Date) => {
-    if (event.type === 'dismissed') {
-      setStartPickerMode(null);
-      setPendingStartDate(null);
-      return;
-    }
-    if (!selectedDate) return;
-    if (Platform.OS === 'ios') {
-      setOptions((current) => ({ ...current, startTime: selectedDate.toISOString() }));
-      return;
-    }
-    if (startPickerMode === 'date') {
-      const base = new Date(selectedDate);
-      const existing = startTime ?? pendingStartDate;
-      if (existing) {
-        base.setHours(existing.getHours(), existing.getMinutes(), 0, 0);
-      }
-      setPendingStartDate(base);
-      setStartPickerMode('time');
-      return;
-    }
-    const base = pendingStartDate ?? startTime ?? new Date();
-    const combined = new Date(base);
-    combined.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
-    setOptions((current) => ({ ...current, startTime: combined.toISOString() }));
-    setPendingStartDate(null);
-    setStartPickerMode(null);
-  }, [pendingStartDate, startPickerMode, startTime]);
-
   const handleToggleContext = useCallback((token: string) => {
     editOptions({ type: 'toggleContext', value: token });
     setContextQuery('');
@@ -1379,7 +1343,6 @@ export function QuickCaptureSheet({
     onSelectContext: handleToggleContext,
     onSelectPriority: handleSelectPriority,
     onSelectProject: handleSelectProject,
-    onStartTimeChange: handleStartTimeChange,
     onSubmitContextQuery: handleContextSubmit,
     onSubmitAreaQuery: () => {
       void submitAreaQuery();
@@ -1387,7 +1350,6 @@ export function QuickCaptureSheet({
     onSubmitProjectQuery: () => {
       void submitProjectQuery();
     },
-    pendingStartDate,
     prioritiesEnabled,
     priorityOptions: QUICK_CAPTURE_PRIORITY_OPTIONS,
     projectQuery,
@@ -1399,8 +1361,6 @@ export function QuickCaptureSheet({
     showDueTimePicker,
     showPriorityPicker,
     showProjectPicker,
-    startPickerMode,
-    startTime,
     t,
     tc,
   };
