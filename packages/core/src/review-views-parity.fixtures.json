@@ -67,6 +67,15 @@
     ],
     "dailyReview": ["daily: rows, the editor and follow-ups"]
    }
+  },
+  "discussion1281ReviewCopy": {
+   "baseSha": "f7a75b4cf6a5039930e5b202032bae6184811042",
+   "sourceState": "uncommitted Review completion copy in the discussion-1281 worktree",
+   "command": "cd apps/mobile && MINDWTR_CAPTURE_REVIEW_VIEWS=1 bunx vitest run components/review-modal.parity.test.tsx components/daily-review-modal.parity.test.tsx",
+   "cases": {
+    "weeklyReview": ["weekly: every step, then finish", "weekly: Monday week start", "weekly: tracked time in the look-back", "weekly: estimates off hide the look-back totals", "weekly: an empty system"],
+    "dailyReview": ["daily: every step, then finish", "daily: no focus step", "daily: an empty system"]
+   }
   }
  },
  "review": {
@@ -18856,7 +18865,7 @@
       "8",
       "All Done!",
       "Review Complete!",
-      "You've clarified your inputs, updated your lists, and you're ready to engage with your work.",
+      "You've clarified your inputs, updated your lists, and you're ready to engage with your work. Finishing the guide does not mark individual reminders reviewed.",
       "This week",
       "2 action(s) completed this week",
       "2 project(s) moved forward",
@@ -25980,7 +25989,7 @@
       "8",
       "All Done!",
       "Review Complete!",
-      "You've clarified your inputs, updated your lists, and you're ready to engage with your work.",
+      "You've clarified your inputs, updated your lists, and you're ready to engage with your work. Finishing the guide does not mark individual reminders reviewed.",
       "This week",
       "2 action(s) completed this week",
       "2 project(s) moved forward",
@@ -26064,7 +26073,7 @@
       "8",
       "All Done!",
       "Review Complete!",
-      "You've clarified your inputs, updated your lists, and you're ready to engage with your work.",
+      "You've clarified your inputs, updated your lists, and you're ready to engage with your work. Finishing the guide does not mark individual reminders reviewed.",
       "This week",
       "2 action(s) completed this week",
       "2 project(s) moved forward",
@@ -26153,7 +26162,7 @@
       "8",
       "All Done!",
       "Review Complete!",
-      "You've clarified your inputs, updated your lists, and you're ready to engage with your work.",
+      "You've clarified your inputs, updated your lists, and you're ready to engage with your work. Finishing the guide does not mark individual reminders reviewed.",
       "This week",
       "2 action(s) completed this week",
       "2 project(s) moved forward",
@@ -26239,7 +26248,7 @@
       "8",
       "All Done!",
       "Review Complete!",
-      "You've clarified your inputs, updated your lists, and you're ready to engage with your work.",
+      "You've clarified your inputs, updated your lists, and you're ready to engage with your work. Finishing the guide does not mark individual reminders reviewed.",
       "Inbox is empty",
       "Mind Sweep",
       "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
@@ -28444,7 +28453,7 @@
       "Daily Review",
       "Ready",
       "Step 5 of 5",
-      "You’re clear and ready to engage.",
+      "You’re clear and ready to engage. Finishing the guide does not mark individual reminders reviewed.",
       "Finish"
      ],
      "rows": [],
@@ -30345,7 +30354,7 @@
       "Daily Review",
       "Ready",
       "Step 4 of 4",
-      "You’re clear and ready to engage.",
+      "You’re clear and ready to engage. Finishing the guide does not mark individual reminders reviewed.",
       "Finish"
      ],
      "rows": [],
@@ -30730,7 +30739,7 @@
       "Daily Review",
       "Ready",
       "Step 1 of 1",
-      "You’re clear and ready to engage.",
+      "You’re clear and ready to engage. Finishing the guide does not mark individual reminders reviewed.",
       "Finish"
      ],
      "rows": [],
