@@ -1,7 +1,20 @@
 {
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_QUICK_CAPTURE=1 MINDWTR_CAPTURE_QUICK_CAPTURE_COMMIT=$(git rev-parse HEAD) bunx vitest run components/quick-capture-sheet/quick-capture-parity.test.tsx",
-  "capturedAt": "5918b6c98f3d5d245c1462ac4117b9c73e4af521"
+  "capturedAt": "5918b6c98f3d5d245c1462ac4117b9c73e4af521",
+  "recaptured": [
+   {
+    "commit": "1243565d0ae9df2c4d8bf0b7d99c50dfd08504b2",
+    "reason": "Correction pass 1 (maintainer 2026-09-24: fix the RN bugs found): the popup saves what it shows, so a preset project it dropped, a hidden preset priority and cleared preset fields are not saved; a batch checks every line before any write. Renamed scenarios describe the fixed behavior.",
+    "scenarios": [
+     "with Priorities off a preset priority is not saved",
+     "a capture preset by the project screen",
+     "an archived preset project is dropped and the area is kept",
+     "a preset project deleted elsewhere is not saved; the task goes to the area the popup shows",
+     "a bad line refuses the whole batch before any project is created"
+    ]
+   }
+  ]
  },
  "timeZone": "America/New_York",
  "now": "2026-09-23T14:00:00.000Z",
@@ -393,7 +406,7 @@
    ]
   },
   {
-   "name": "with Priorities off a preset priority leaves the control empty but is still saved",
+   "name": "with Priorities off a preset priority is not saved",
    "settings": "noPriorities",
    "initialProps": {
     "priority": "high"
@@ -1137,7 +1150,7 @@
    ]
   },
   {
-   "name": "a preset project deleted elsewhere: the store refuses the write and a toast says so",
+   "name": "a preset project deleted elsewhere is not saved; the task goes to the area the popup shows",
    "settings": "base",
    "initialProps": {
     "projectId": "p-gone",
@@ -1150,9 +1163,6 @@
     ],
     [
      "save"
-    ],
-    [
-     "close"
     ]
    ]
   },
@@ -1246,6 +1256,22 @@
     ],
     [
      "save"
+    ]
+   ]
+  },
+  {
+   "name": "a bad line refuses the whole batch before any project is created",
+   "settings": "base",
+   "actions": [
+    [
+     "type",
+     "Plan beds +Garden plan\nPay rent /due:whenever"
+    ],
+    [
+     "save"
+    ],
+    [
+     "confirmBulk"
     ]
    ]
   },
@@ -4072,7 +4098,7 @@
     "sheet": null
    }
   ],
-  "with Priorities off a preset priority leaves the control empty but is still saved": [
+  "with Priorities off a preset priority is not saved": [
    {
     "writes": [],
     "toasts": [],
@@ -4240,7 +4266,6 @@
       "Fix bug",
       {
        "status": "inbox",
-       "priority": "high",
        "areaId": "<undefined>"
       }
      ],
@@ -4251,7 +4276,6 @@
         "title": "Fix bug",
         "initialProps": {
          "status": "inbox",
-         "priority": "high",
          "areaId": "<undefined>"
         }
        }
@@ -14665,19 +14689,17 @@
       "Fix fence",
       {
        "status": "next",
+       "isFocusedToday": true,
+       "areaId": "<undefined>",
+       "description": "From the project",
        "projectId": "p-home",
        "contexts": [
-        "home",
-        "@Home",
-        "  ",
-        "@home"
+        "@home",
+        "@Home"
        ],
-       "description": "From the project",
        "priority": "high",
        "dueDate": "2026-09-30",
-       "startTime": "2026-09-28T13:00:00.000Z",
-       "isFocusedToday": true,
-       "areaId": "<undefined>"
+       "startTime": "2026-09-28T13:00:00.000Z"
       }
      ],
      [
@@ -14687,19 +14709,17 @@
         "title": "Fix fence",
         "initialProps": {
          "status": "next",
+         "isFocusedToday": true,
+         "areaId": "<undefined>",
+         "description": "From the project",
          "projectId": "p-home",
          "contexts": [
-          "home",
-          "@Home",
-          "  ",
-          "@home"
+          "@home",
+          "@Home"
          ],
-         "description": "From the project",
          "priority": "high",
          "dueDate": "2026-09-30",
-         "startTime": "2026-09-28T13:00:00.000Z",
-         "isFocusedToday": true,
-         "areaId": "<undefined>"
+         "startTime": "2026-09-28T13:00:00.000Z"
         }
        }
       ]
@@ -15336,8 +15356,7 @@
       "Old thing",
       {
        "status": "inbox",
-       "projectId": "p-old",
-       "areaId": "<undefined>"
+       "areaId": "a-home"
       }
      ],
      [
@@ -15347,8 +15366,7 @@
         "title": "Old thing",
         "initialProps": {
          "status": "inbox",
-         "projectId": "p-old",
-         "areaId": "<undefined>"
+         "areaId": "a-home"
         }
        }
       ]
@@ -15361,7 +15379,7 @@
     "sheet": null
    }
   ],
-  "a preset project deleted elsewhere: the store refuses the write and a toast says so": [
+  "a preset project deleted elsewhere is not saved; the task goes to the area the popup shows": [
    {
     "writes": [],
     "toasts": [],
@@ -15465,8 +15483,7 @@
       "Orphan",
       {
        "status": "inbox",
-       "projectId": "p-gone",
-       "areaId": "<undefined>"
+       "areaId": "a-work"
       }
      ],
      [
@@ -15476,72 +15493,16 @@
         "title": "Orphan",
         "initialProps": {
          "status": "inbox",
-         "projectId": "p-gone",
-         "areaId": "<undefined>"
+         "areaId": "a-work"
         }
        }
       ]
      ]
     ],
-    "toasts": [
-     [
-      "error",
-      "Notice",
-      "Failed to add task",
-      4200
-     ]
-    ],
-    "navigation": [],
-    "closed": false,
-    "highlight": null,
-    "sheet": {
-     "text": "Orphan",
-     "note": "",
-     "saveEnabled": true,
-     "saveAndEditEnabled": true,
-     "preview": [],
-     "labels": {
-      "due": "Due Date",
-      "dueTime": "Change time",
-      "contexts": "Contexts",
-      "project": "Project",
-      "area": "Work",
-      "priority": "Priority"
-     },
-     "dueDate": null,
-     "showDueTime": false,
-     "projectSelected": false,
-     "prioritiesEnabled": true,
-     "priority": null,
-     "areaId": "a-work",
-     "contexts": [],
-     "focus": {
-      "on": false,
-      "canFocus": true,
-      "disabledReason": "Max 3 focus item(s)",
-      "label": "Add to today's focus"
-     },
-     "addAnother": false,
-     "expanded": false,
-     "moreLabel": "More",
-     "quickDates": null,
-     "customDate": null,
-     "dueTimeChip": null,
-     "pickers": {
-      "project": null,
-      "area": null,
-      "context": null,
-      "priority": null
-     },
-     "bulk": null
-    }
-   },
-   {
-    "writes": [],
     "toasts": [],
     "navigation": [],
     "closed": true,
-    "highlight": null,
+    "highlight": "<created:Orphan>",
     "sheet": null
    }
   ],
@@ -16882,6 +16843,278 @@
     "closed": true,
     "highlight": null,
     "sheet": null
+   }
+  ],
+  "a bad line refuses the whole batch before any project is created": [
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "closed": false,
+    "highlight": null,
+    "sheet": {
+     "text": "",
+     "note": "",
+     "saveEnabled": false,
+     "saveAndEditEnabled": false,
+     "preview": [],
+     "labels": {
+      "due": "Due Date",
+      "dueTime": "Change time",
+      "contexts": "Contexts",
+      "project": "Project",
+      "area": "No Area",
+      "priority": "Priority"
+     },
+     "dueDate": null,
+     "showDueTime": false,
+     "projectSelected": false,
+     "prioritiesEnabled": true,
+     "priority": null,
+     "areaId": null,
+     "contexts": [],
+     "focus": {
+      "on": false,
+      "canFocus": true,
+      "disabledReason": "Max 3 focus item(s)",
+      "label": "Add to today's focus"
+     },
+     "addAnother": false,
+     "expanded": false,
+     "moreLabel": "More",
+     "quickDates": null,
+     "customDate": null,
+     "dueTimeChip": null,
+     "pickers": {
+      "project": null,
+      "area": null,
+      "context": null,
+      "priority": null
+     },
+     "bulk": null
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "closed": false,
+    "highlight": null,
+    "sheet": {
+     "text": "Plan beds +Garden plan\nPay rent /due:whenever",
+     "note": "",
+     "saveEnabled": true,
+     "saveAndEditEnabled": true,
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      },
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan beds /due:whenever",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Garden plan Pay rent",
+       "tone": "default"
+      }
+     ],
+     "labels": {
+      "due": "Due Date",
+      "dueTime": "Change time",
+      "contexts": "Contexts",
+      "project": "Project",
+      "area": "No Area",
+      "priority": "Priority"
+     },
+     "dueDate": null,
+     "showDueTime": false,
+     "projectSelected": false,
+     "prioritiesEnabled": true,
+     "priority": null,
+     "areaId": null,
+     "contexts": [],
+     "focus": {
+      "on": false,
+      "canFocus": true,
+      "disabledReason": "Max 3 focus item(s)",
+      "label": "Add to today's focus"
+     },
+     "addAnother": false,
+     "expanded": false,
+     "moreLabel": "More",
+     "quickDates": null,
+     "customDate": null,
+     "dueTimeChip": null,
+     "pickers": {
+      "project": null,
+      "area": null,
+      "context": null,
+      "priority": null
+     },
+     "bulk": null
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [],
+    "navigation": [],
+    "closed": false,
+    "highlight": null,
+    "sheet": {
+     "text": "Plan beds +Garden plan\nPay rent /due:whenever",
+     "note": "",
+     "saveEnabled": true,
+     "saveAndEditEnabled": true,
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      },
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan beds /due:whenever",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Garden plan Pay rent",
+       "tone": "default"
+      }
+     ],
+     "labels": {
+      "due": "Due Date",
+      "dueTime": "Change time",
+      "contexts": "Contexts",
+      "project": "Project",
+      "area": "No Area",
+      "priority": "Priority"
+     },
+     "dueDate": null,
+     "showDueTime": false,
+     "projectSelected": false,
+     "prioritiesEnabled": true,
+     "priority": null,
+     "areaId": null,
+     "contexts": [],
+     "focus": {
+      "on": false,
+      "canFocus": true,
+      "disabledReason": "Max 3 focus item(s)",
+      "label": "Add to today's focus"
+     },
+     "addAnother": false,
+     "expanded": false,
+     "moreLabel": "More",
+     "quickDates": null,
+     "customDate": null,
+     "dueTimeChip": null,
+     "pickers": {
+      "project": null,
+      "area": null,
+      "context": null,
+      "priority": null
+     },
+     "bulk": {
+      "title": "Create 2 tasks?",
+      "message": "Plan beds +Garden plan\nPay rent /due:whenever",
+      "confirm": "Create tasks",
+      "cancel": "Cancel"
+     }
+    }
+   },
+   {
+    "writes": [],
+    "toasts": [
+     [
+      "warning",
+      "Notice",
+      "Invalid date command: /due:whenever",
+      4200
+     ]
+    ],
+    "navigation": [],
+    "closed": false,
+    "highlight": null,
+    "sheet": {
+     "text": "Plan beds +Garden plan\nPay rent /due:whenever",
+     "note": "",
+     "saveEnabled": true,
+     "saveAndEditEnabled": true,
+     "preview": [
+      {
+       "id": "warning:/due:whenever",
+       "kind": "warning",
+       "label": "Invalid date command",
+       "value": "/due:whenever",
+       "tone": "warning"
+      },
+      {
+       "id": "title",
+       "kind": "title",
+       "label": "Title",
+       "value": "Plan beds /due:whenever",
+       "tone": "default"
+      },
+      {
+       "id": "project",
+       "kind": "project",
+       "label": "Project",
+       "value": "Garden plan Pay rent",
+       "tone": "default"
+      }
+     ],
+     "labels": {
+      "due": "Due Date",
+      "dueTime": "Change time",
+      "contexts": "Contexts",
+      "project": "Project",
+      "area": "No Area",
+      "priority": "Priority"
+     },
+     "dueDate": null,
+     "showDueTime": false,
+     "projectSelected": false,
+     "prioritiesEnabled": true,
+     "priority": null,
+     "areaId": null,
+     "contexts": [],
+     "focus": {
+      "on": false,
+      "canFocus": true,
+      "disabledReason": "Max 3 focus item(s)",
+      "label": "Add to today's focus"
+     },
+     "addAnother": false,
+     "expanded": false,
+     "moreLabel": "More",
+     "quickDates": null,
+     "customDate": null,
+     "dueTimeChip": null,
+     "pickers": {
+      "project": null,
+      "area": null,
+      "context": null,
+      "priority": null
+     },
+     "bulk": null
+    }
    }
   ],
   "a trailing blank line also joins the lines into one task": [
