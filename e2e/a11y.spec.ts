@@ -125,6 +125,9 @@ for (const theme of THEMES) {
         // Three screens and three axe passes in one browser context: past the
         // default per-test budget, well inside the job's.
         test.slow();
+        // This adaptive mode uses the light palette here; OLED is checked separately.
+        if (theme === 'system-oled') await page.emulateMedia({ colorScheme: 'light' });
+        const contrastTheme = theme === 'system-oled' ? 'light' : theme;
         await dismissOnboarding(page);
         await seedTheme(page, theme);
         await seedAppData(page, { ...FIXTURE, settings: { theme } });
@@ -133,15 +136,15 @@ for (const theme of THEMES) {
 
         await page.goto('/');
         await expect(page.locator('[data-sidebar-item][data-view="agenda"]')).toBeVisible();
-        found.push(...await runAxeContrast(page, theme, 'focus'));
+        found.push(...await runAxeContrast(page, contrastTheme, 'focus'));
 
         // Settings is code-split, so wait for its own heading, not the shell.
         await page.goto('/?view=settings');
         await expect(page.getByRole('heading', { name: 'General', level: 2 })).toBeVisible();
-        found.push(...await runAxeContrast(page, theme, 'settings'));
+        found.push(...await runAxeContrast(page, contrastTheme, 'settings'));
 
         await openDailyReview(page);
-        found.push(...await runAxeContrast(page, theme, 'daily-review'));
+        found.push(...await runAxeContrast(page, contrastTheme, 'daily-review'));
 
         const unlisted = [...new Set(
             found
