@@ -36,7 +36,7 @@ describe('AgendaHeader', () => {
     it('shows direct Sort and Group controls and highlights each non-default value independently', () => {
         const view = renderHeader();
         const sort = view.getByRole('combobox', { name: 'Sort' });
-        const group = view.getByRole('combobox', { name: 'Group' });
+        const group = view.getByRole('combobox', { name: 'Group next actions by' });
 
         expect(view.queryByRole('button', { name: 'common.viewOptions' })).not.toBeInTheDocument();
         expect(sort).toHaveClass('bg-card');
@@ -191,7 +191,7 @@ describe('AgendaHeader', () => {
     it('renders its controls in the shared list-toolbar style', () => {
         const { container, getByRole, getByText } = renderHeader();
 
-        const groupTrigger = getByRole('combobox', { name: 'Group' });
+        const groupTrigger = getByRole('combobox', { name: 'Group next actions by' });
         expect(groupTrigger.className).toContain('h-9');
         expect(groupTrigger.className).toContain('rounded-lg');
         expect(getByText('Group')).toBeInTheDocument();
