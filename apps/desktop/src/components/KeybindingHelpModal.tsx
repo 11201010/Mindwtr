@@ -81,6 +81,8 @@ export function KeybindingHelpModal({
         { keys: 'Esc', labelKey: 'keybindings.list.cancelEdit' },
         { keys: 'x', labelKey: 'keybindings.list.toggleDone' },
         { keys: 'dd', labelKey: 'keybindings.list.delete' },
+        { keys: 'yy', labelKey: 'keybindings.list.copyTitle' },
+        { keys: 'yi', labelKey: 'keybindings.list.copyWithDescription' },
         { keys: 'si / sn / sw / ss / sd / sa', labelKey: 'keybindings.list.setStatus', fallbackLabel: 'Set status: Inbox / Next / Waiting / Someday / Done / Archived' },
         { keys: 'Insert', labelKey: 'keybindings.list.newTask', fallbackLabel: 'Focus add-task input' },
     ];
