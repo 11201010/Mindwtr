@@ -1335,6 +1335,9 @@ describe('AgendaView', () => {
 
         fireEvent.keyDown(window, { key: 'j' });
         expect(document.activeElement?.closest<HTMLElement>('[data-task-id]')?.dataset.taskId)
+            .toBe('review-next');
+        fireEvent.keyDown(window, { key: 'k' });
+        expect(document.activeElement?.closest<HTMLElement>('[data-task-id]')?.dataset.taskId)
             .toBe('plain-next');
     });
 
@@ -1457,7 +1460,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group', 'Context');
+        selectToolbarOption('Group next actions by', 'Context');
 
         expect(getByText('@work')).toBeInTheDocument();
         expect(getByText('@home')).toBeInTheDocument();
@@ -1508,7 +1511,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group', 'Project');
+        selectToolbarOption('Group next actions by', 'Project');
 
         expect(getByText('Alpha project')).toBeInTheDocument();
         expect(getByText('No Project')).toBeInTheDocument();
@@ -1559,7 +1562,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group', 'Priority');
+        selectToolbarOption('Group next actions by', 'Priority');
 
         expect(getByText('Urgent')).toBeInTheDocument();
         expect(getByText('Low')).toBeInTheDocument();
@@ -2423,7 +2426,7 @@ describe('AgendaView', () => {
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
         selectToolbarOption('Sort', 'Start date', { getByRole });
-        selectToolbarOption('Group', 'Project', { getByRole });
+        selectToolbarOption('Group next actions by', 'Project', { getByRole });
         fireEvent.click(getByRole('button', { name: /^Save$/i }));
         fireEvent.change(getByDisplayValue('Focus filter'), { target: { value: 'Start by project' } });
         const saveButtons = getAllByRole('button', { name: /^Save$/i });
@@ -2652,7 +2655,7 @@ describe('AgendaView', () => {
         });
 
         const { getByText } = renderAgenda();
-        selectToolbarOption('Group', 'Context');
+        selectToolbarOption('Group next actions by', 'Context');
 
         expect(getByText(/no context/i)).toBeInTheDocument();
         expect(getByText('Next task 30')).toBeInTheDocument();
@@ -2701,7 +2704,7 @@ describe('AgendaView', () => {
         });
 
         const firstRender = renderAgenda();
-        selectToolbarOption('Group', 'Context', firstRender);
+        selectToolbarOption('Group next actions by', 'Context', firstRender);
 
         const workContextGroup = firstRender.getByRole('button', { name: /@work\s*1/i });
         fireEvent.click(workContextGroup);
@@ -2716,12 +2719,12 @@ describe('AgendaView', () => {
         expect(persisted.collapsedGroups?.context).toEqual(['context:@work']);
         expect(persisted.collapsedGroups?.project ?? []).toEqual([]);
 
-        selectToolbarOption('Group', 'Project', firstRender);
+        selectToolbarOption('Group next actions by', 'Project', firstRender);
 
         expect(firstRender.getByRole('button', { name: /@work\s*1/i })).toHaveAttribute('aria-expanded', 'true');
         expect(firstRender.getByText('Work task')).toBeInTheDocument();
 
-        selectToolbarOption('Group', 'Context', firstRender);
+        selectToolbarOption('Group next actions by', 'Context', firstRender);
         firstRender.unmount();
 
         const secondRender = renderAgenda();

@@ -1457,7 +1457,7 @@ describe('FocusScreen', () => {
     ]);
   });
 
-  it('keeps mobile Focus tasks exclusive with Schedule ahead of Review Due ahead of Next Actions', () => {
+  it('keeps mobile Focus tasks exclusive with Schedule ahead of Next Actions ahead of Review Due', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-05T12:00:00.000Z'));
     storeState.tasks = [
@@ -1488,7 +1488,7 @@ describe('FocusScreen', () => {
     expect(idsIn('Today')).toEqual(['scheduled-review-next']);
     expect(idsIn('Review Due')).toEqual(['review-next']);
     expect(idsIn('Next Actions')).toEqual(['plain-next']);
-    expect(allTaskIds).toEqual(['scheduled-review-next', 'review-next', 'plain-next']);
+    expect(allTaskIds).toEqual(['scheduled-review-next', 'plain-next', 'review-next']);
   });
 
   it('shows a next task with a timed start later today in Today, not Next Actions or Upcoming', () => {
