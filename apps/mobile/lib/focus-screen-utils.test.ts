@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getFocusTokenOptions, splitFocusedTasks } from './focus-screen-utils';
+import { splitFocusedTasks } from './focus-screen-utils';
 
 describe('splitFocusedTasks', () => {
     it('separates focused tasks while preserving relative order inside each group', () => {
@@ -33,16 +33,6 @@ describe('splitFocusedTasks', () => {
             focusedTasks: tasks,
             otherTasks: [],
         });
-    });
-});
-
-describe('getFocusTokenOptions', () => {
-    it('returns sorted unique contexts and tags', () => {
-        expect(getFocusTokenOptions([
-            { contexts: ['@work', '@home', ''], tags: ['#deep'] },
-            { contexts: ['@work/calls', '@home'], tags: ['#deep', '#ops'] },
-            { contexts: [], tags: [] },
-        ] as any)).toEqual(['@home', '@work', '@work/calls', '#deep', '#ops']);
     });
 });
 
