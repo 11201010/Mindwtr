@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Redirect, usePathname } from 'expo-router';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { translateWithFallback } from '@mindwtr/core';
+import { getStatusListScreenText } from '@mindwtr/core';
 import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session-storage';
 
 import { TaskList } from '../../components/task-list';
@@ -23,12 +23,8 @@ export default function DoneScreen() {
   const { t } = useLanguage();
   const [viewState, setViewState] = useState<DoneListViewState>(DEFAULT_DONE_LIST_VIEW_STATE);
   const viewStateTouchedRef = useRef(false);
-  const resolveText = (key: string, fallback: string) => {
-    return translateWithFallback(t, key, fallback);
-  };
-  const title = resolveText('nav.done', 'Done');
-  const emptyText = resolveText('list.done', 'Done');
-  const emptyHint = resolveText('done.emptyHint', 'Completed tasks land here — a running log of what you finished.');
+  // The screen's texts come from core, shared with the native host.
+  const { title, emptyText, emptyHint } = getStatusListScreenText('done', t);
   const navBarInset = Platform.OS === 'android' && insets.bottom >= 24 ? insets.bottom : 0;
   useEffect(() => {
     let active = true;

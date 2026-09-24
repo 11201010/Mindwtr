@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { translateWithFallback } from '@mindwtr/core';
+import { getStatusListScreenText, REFERENCE_LIST_DEFAULT_GROUP_BY } from '@mindwtr/core';
 
 import { TaskList, type TaskListGroupBy } from '../../components/task-list';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -11,13 +11,9 @@ export default function ReferenceScreen() {
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
   const { t } = useLanguage();
-  const [groupBy, setGroupBy] = useState<TaskListGroupBy>('area');
-  const resolveText = (key: string, fallback: string) => {
-    return translateWithFallback(t, key, fallback);
-  };
-  const title = resolveText('nav.reference', 'Reference');
-  const emptyText = resolveText('reference.empty', 'Nothing filed yet');
-  const emptyHint = resolveText('reference.emptyHint', 'Reference holds info you might want later — no action required.');
+  const [groupBy, setGroupBy] = useState<TaskListGroupBy>(REFERENCE_LIST_DEFAULT_GROUP_BY);
+  // The screen's texts come from core, shared with the native host.
+  const { title, emptyText, emptyHint } = getStatusListScreenText('reference', t);
   const navBarInset = Platform.OS === 'android' && insets.bottom >= 24 ? insets.bottom : 0;
 
   return (

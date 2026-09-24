@@ -26,12 +26,18 @@ import {
 import { beginCaptureProfile, endCaptureProfile } from '@/lib/capture-profiler';
 import { QuickCaptureProvider, useQuickCapture, type QuickCaptureOptions } from '../../../contexts/quick-capture-context';
 import { useToastBottomOffset } from '../../../contexts/toast-context';
-import { getDefaultTaskAreaMode, isSandboxMode, useTaskStore, type MobileQuickAccessView, type SavedSearch, type Task } from '@mindwtr/core';
 import {
-  coerceMobileQuickAccessView,
-  MOBILE_QUICK_ACCESS_STACK_ROUTE,
-  MOBILE_QUICK_ACCESS_TAB_ROUTE,
-} from '@/lib/mobile-quick-access-view';
+  buildMoreMenuModel,
+  getDefaultTaskAreaMode,
+  isSandboxMode,
+  resolveMobileQuickAccessView,
+  useTaskStore,
+  type MobileQuickAccessView,
+  type MoreMenuItem,
+  type SavedSearch,
+  type Task,
+} from '@mindwtr/core';
+import { MOBILE_QUICK_ACCESS_TAB_ROUTE } from '@/lib/mobile-quick-access-view';
 import { COMPACT_NAV_TEXT_MAX_SCALE } from '@/constants/text-scale';
 
 type IconSymbolName = Parameters<typeof IconSymbol>[0]['name'];
@@ -67,9 +73,7 @@ type MoreDestination = {
   onPress?: () => void;
 };
 
-function compactSlashLabel(label: string) {
-  return label.split('/')[0]?.trim() || label;
-}
+const toMoreDestination = (item: MoreMenuItem): MoreDestination => ({ ...item, icon: item.icon as IconSymbolName });
 
 export const resolveMoreMenuFrameStyle = (
   adaptiveWindow: AdaptiveWindowLayout,
@@ -223,20 +227,6 @@ function MoreNavigationSheet({
   const wasVisibleRef = useRef(false);
   const hiddenTranslateY = adaptiveWindow.height;
   const constrainedSheetStyle = resolveMoreMenuFrameStyle(adaptiveWindow, tabBarHeight);
-  const iconColors = {
-    board: '#4F8CF7',
-    review: '#22C55E',
-    calendar: '#35B8B1',
-    projects: '#10B981',
-    contexts: '#8B5CF6',
-    waiting: '#F2B705',
-    someday: '#6366F1',
-    reference: '#0EA5E9',
-    history: '#22C55E',
-    trash: '#EF4444',
-    settings: '#64748B',
-    saved: '#4F8CF7',
-  };
 
   const animateClosed = useCallback(() => {
     if (reducedMotion) {
@@ -328,36 +318,10 @@ function MoreNavigationSheet({
 
   if (!visible) return null;
 
-  const quickAccessItems: Record<MobileQuickAccessView, MoreDestination> = {
-    review: { id: 'review', label: t('nav.review'), icon: 'clipboard.fill', iconColor: iconColors.review, route: MOBILE_QUICK_ACCESS_STACK_ROUTE.review },
-    projects: { id: 'projects', label: t('nav.projects'), icon: 'folder.fill', iconColor: iconColors.projects, route: MOBILE_QUICK_ACCESS_STACK_ROUTE.projects },
-    calendar: { id: 'calendar', label: t('nav.calendar'), icon: 'calendar', iconColor: iconColors.calendar, route: MOBILE_QUICK_ACCESS_STACK_ROUTE.calendar },
-    contexts: { id: 'contexts', label: t('nav.contexts'), icon: 'circle', iconColor: iconColors.contexts, route: MOBILE_QUICK_ACCESS_STACK_ROUTE.contexts },
-  };
-  const moreQuickAccessItem = (view: Exclude<MobileQuickAccessView, 'projects'>) => (
-    quickAccessView === view ? quickAccessItems.projects : quickAccessItems[view]
-  );
-  const primaryItems: MoreDestination[] = [
-    { id: 'waiting', label: t('nav.waiting'), icon: 'pause.circle.fill', iconColor: iconColors.waiting, route: '/waiting' },
-    {
-      id: 'someday',
-      label: t('nav.someday'),
-      displayLabel: compactSlashLabel(t('nav.someday')),
-      icon: 'arrow.up.circle.fill',
-      iconColor: iconColors.someday,
-      route: '/someday',
-    },
-    moreQuickAccessItem('review'),
-    { id: 'reference', label: t('nav.reference'), icon: 'book.closed.fill', iconColor: iconColors.reference, route: '/reference' },
-    moreQuickAccessItem('contexts'),
-    moreQuickAccessItem('calendar'),
-  ];
-  const secondaryItems: MoreDestination[] = [
-    { id: 'trash', label: t('nav.trash'), icon: 'trash.fill', iconColor: iconColors.trash, route: '/trash' },
-    { id: 'board', label: t('tab.board'), icon: 'square.grid.2x2.fill', iconColor: iconColors.board, route: '/board' },
-    { id: 'history', label: t('nav.history'), icon: 'clock.arrow.circlepath', iconColor: iconColors.history, route: '/history' },
-    { id: 'settings', label: t('nav.settings'), icon: 'gearshape.fill', iconColor: iconColors.settings, route: '/settings' },
-  ];
+  // Destinations, order, labels and icons come from core, shared with the native host.
+  const menu = buildMoreMenuModel({ quickAccessView, savedSearches, t });
+  const primaryItems = menu.primary.map(toMoreDestination);
+  const secondaryItems = menu.utilities.map(toMoreDestination);
 
   return (
     <>
@@ -405,26 +369,20 @@ function MoreNavigationSheet({
               ))}
             </View>
 
-            {savedSearches.length > 0 ? (
+            {menu.savedSearches.length > 0 ? (
               <View style={styles.moreSavedSection}>
                 <Text style={[styles.moreSectionTitle, { color: tc.secondaryText }]}>
-                  {t('search.savedSearches')}
+                  {menu.savedSearchesTitle}
                 </Text>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.moreUtilityStripContent}
                 >
-                  {savedSearches.map((search) => (
+                  {menu.savedSearches.map((search) => (
                     <MoreSheetCompactItem
                       key={search.id}
-                      item={{
-                        id: search.id,
-                        label: search.name,
-                        icon: 'tray.fill',
-                        iconColor: iconColors.saved,
-                        route: `/saved-search/${search.id}`,
-                      }}
+                      item={toMoreDestination(search)}
                       itemStyle={styles.moreUtilityScrollItem}
                       onNavigate={onNavigate}
                       tc={tc}
@@ -854,7 +812,7 @@ export default function TabLayout() {
   const captureRadius = tokens.isMaterial ? tokens.shape.large : 10;
   const defaultCapture = settings.gtd?.defaultCaptureMethod ?? 'text';
   const defaultAutoRecord = defaultCapture === 'audio';
-  const quickAccessView = coerceMobileQuickAccessView(settings.appearance?.mobileQuickAccessView);
+  const quickAccessView = resolveMobileQuickAccessView(settings.appearance?.mobileQuickAccessView);
   const quickAccessTabRoute = MOBILE_QUICK_ACCESS_TAB_ROUTE[quickAccessView];
   const { syncBadgeAccessibilityLabel, syncBadgeColor } = useMobileSyncBadge();
 

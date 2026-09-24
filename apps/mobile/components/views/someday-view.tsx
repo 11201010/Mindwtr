@@ -1,23 +1,19 @@
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import {
-  TASK_LIST_SORT_OPTIONS,
+  buildSomedayFilterOptions,
+  buildSomedayViewModel,
   flushPendingSave,
-  getTaskMetadataFilterVisibility,
-  getUsedTaskTokens,
-  groupTasksByViewSection,
-  normalizeBulkTaskTokenInput,
-  resolveFeatureFlags,
-  resolveNonDoneTaskSortBy,
-  SAVED_FILTER_NO_PROJECT_ID,
+  getSomedayGroupSectionId,
+  getSomedaySectionMoveSelection,
+  getSomedaySectionTaskText,
+  planSomedaySectionTaskAdd,
+  selectSomedayTasks,
   shallow,
-  sortTasksBy,
-  sortViewSectionDefinitions,
   tFallback,
-  TIME_ESTIMATE_OPTIONS,
   useTaskStore,
 } from '@mindwtr/core';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Task, TaskSortBy, TaskStatus, ViewSectionTaskGroup } from '@mindwtr/core';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SomedayGroupBy, Task, TaskSortBy, TaskStatus } from '@mindwtr/core';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 import { ArrowUpDown, Eye, Folder, Lightbulb, Plus, SlidersHorizontal } from 'lucide-react-native';
@@ -25,7 +21,6 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
-import { compareSomedayTasks } from '@/lib/list-order';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import { TaskEditModal } from '../task-edit-modal';
@@ -33,45 +28,14 @@ import { getBulkMoveStatusOptions } from '../task-list/TaskListBulkBar';
 import { assertBulkActionSucceeded, usePruneSelectionToVisible, useTaskListSelection } from '../use-task-list-selection';
 import { TaskListView } from '../task-list-view';
 import { FilterChip, TaskFilterSheet } from '../task-filter-sheet';
-import { DeferredProjectsSection, selectDeferredProjects } from './deferred-projects-section';
+import { DeferredProjectsSection } from './deferred-projects-section';
 import { SomedaySectionPicker } from '../someday-section-picker';
 import { createSomedaySection } from '@/lib/someday-section-actions';
 import { useToast } from '@/contexts/toast-context';
 import { logError } from '@/lib/app-log';
 import { useSomedaySectionMove } from './use-someday-section-move';
 import { ListOverflowMenu } from '../list-overflow-menu';
-import { taskMatchesFilterSelections, useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
-import { buildTaskGroupSections, type TaskGroupItem } from '@/lib/task-group-sections';
-
-const SOMEDAY_GROUP_OPTIONS = ['viewSection', 'none', 'project', 'area'] as const;
-type SomedayGroupBy = typeof SOMEDAY_GROUP_OPTIONS[number];
-
-const getSomedayGroupByLabel = (groupBy: SomedayGroupBy, t: (key: string) => string): string => {
-  switch (groupBy) {
-    case 'viewSection':
-      return tFallback(t, 'viewSections.somedaySection', 'Someday section');
-    case 'none':
-      return tFallback(t, 'list.groupByNone', 'No grouping');
-    case 'project':
-      return tFallback(t, 'list.groupByProject', 'Project');
-    case 'area':
-      return tFallback(t, 'list.groupByArea', 'Area');
-  }
-};
-
-const toTaskListViewGroups = (items: readonly TaskGroupItem[]): ViewSectionTaskGroup[] => {
-  const groups: ViewSectionTaskGroup[] = [];
-  let current: ViewSectionTaskGroup | null = null;
-  items.forEach((item) => {
-    if (item.type === 'section') {
-      current = { id: `attribute-group:${item.id}`, title: item.title, muted: item.muted, tasks: [] };
-      groups.push(current);
-      return;
-    }
-    current?.tasks.push(item.task);
-  });
-  return groups;
-};
+import { useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
 
 export function SomedayView() {
   const { tasks, projects, settings, updateTask, updateProject, deleteTask, restoreTask, batchMoveTasks, batchDeleteTasks, batchUpdateTasks, highlightTaskId, setHighlightTask } = useTaskStore((state) => ({
@@ -120,117 +84,40 @@ export function SomedayView() {
     [navBarInset],
   );
 
-  const baseSomedayTasks = useMemo(
-    () => visibleTasks.filter((task) => task.status === 'someday'),
-    [visibleTasks],
-  );
-  const projectById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project])),
-    [projects],
-  );
-  const areas = useMemo(() => Array.from(areaById.values()), [areaById]);
-  const resolvedFeatureFlags = resolveFeatureFlags(settings);
-  const metadataFilterVisibility = useMemo(
-    () => getTaskMetadataFilterVisibility(baseSomedayTasks, {
-      prioritiesEnabled: resolvedFeatureFlags.priorities,
-      timeEstimatesEnabled: resolvedFeatureFlags.timeEstimates,
-    }),
-    [baseSomedayTasks, resolvedFeatureFlags.priorities, resolvedFeatureFlags.timeEstimates],
-  );
-  const tokenFilterOptions = useMemo(
-    () => getUsedTaskTokens(baseSomedayTasks, (task) => [
-      ...(task.contexts ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'contexts')),
-      ...(task.tags ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'tags')),
-    ]),
-    [baseSomedayTasks],
-  );
-  const usedProjectIds = useMemo(
-    () => new Set(baseSomedayTasks.map((task) => task.projectId).filter((id): id is string => Boolean(id))),
-    [baseSomedayTasks],
-  );
-  const projectFilterOptions = useMemo(() => {
-    const noProjectOption = baseSomedayTasks.some((task) => !task.projectId)
-      ? [{ id: SAVED_FILTER_NO_PROJECT_ID, title: tFallback(t, 'taskEdit.noProjectOption', 'No project') }]
-      : [];
-    const projectOptions = projects
-      .filter((project) => usedProjectIds.has(project.id) && !project.deletedAt && !project.purgedAt)
-      .sort((left, right) => {
-        const leftOrder = Number.isFinite(left.order) ? left.order : Number.POSITIVE_INFINITY;
-        const rightOrder = Number.isFinite(right.order) ? right.order : Number.POSITIVE_INFINITY;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-        return left.title.localeCompare(right.title);
-      })
-      .map((project) => ({ id: project.id, title: project.title }));
-    return [...noProjectOption, ...projectOptions];
-  }, [baseSomedayTasks, projects, t, usedProjectIds]);
-  const projectFilterOptionIds = useMemo(
-    () => projectFilterOptions.map((project) => project.id),
-    [projectFilterOptions],
-  );
-  const getProjectFilterLabel = useCallback(
-    (projectId: string) => projectId === SAVED_FILTER_NO_PROJECT_ID
-      ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
-      : projectById.get(projectId)?.title,
-    [projectById, t],
+  // What the screen lists, groups, counts and offers comes from core, shared with the native host.
+  const baseSomedayTasks = useMemo(() => selectSomedayTasks(visibleTasks), [visibleTasks]);
+  const filterOptions = useMemo(
+    () => buildSomedayFilterOptions({ tasks: baseSomedayTasks, projects, settings, t }),
+    [baseSomedayTasks, projects, settings, t],
   );
   const selections = useTaskFilterSelections({
     view: 'list',
     t,
-    visibility: metadataFilterVisibility,
-    retainTokens: tokenFilterOptions,
-    retainProjects: projectFilterOptionIds,
-    getProjectLabel: getProjectFilterLabel,
+    visibility: filterOptions.visibility,
+    retainTokens: filterOptions.retainTokens,
+    retainProjects: filterOptions.retainProjects,
+    getProjectLabel: filterOptions.getProjectLabel,
   });
-  const effectiveSortBy = resolveNonDoneTaskSortBy(sortBy, settings);
-  const somedaySortOptions = useMemo(
-    () => TASK_LIST_SORT_OPTIONS.filter((option) => (
-      option !== 'timeEstimate' || resolvedFeatureFlags.timeEstimates
-    )),
-    [resolvedFeatureFlags.timeEstimates],
-  );
-  const somedayTasks = useMemo(() => {
-    const filtered = baseSomedayTasks.filter((task) => taskMatchesFilterSelections(task, {
-      criteria: selections.criteria,
-      searchQuery: selections.searchQuery,
-    }));
-    return effectiveSortBy === 'default'
-      ? [...filtered].sort(compareSomedayTasks)
-      : sortTasksBy([...filtered], effectiveSortBy);
-  }, [baseSomedayTasks, effectiveSortBy, selections.criteria, selections.searchQuery]);
-  const deferredProjects = useMemo(
-    () => selectDeferredProjects(projects, 'someday', resolvedAreaFilter, areaById),
-    [projects, resolvedAreaFilter, areaById],
-  );
-  const somedaySections = useMemo(
-    () => sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday ?? []),
-    [settings?.gtd?.viewSections?.someday],
-  );
-  const somedayTaskGroups = useMemo(() => {
-    if (groupBy === 'none') return undefined;
-    if (groupBy !== 'viewSection') {
-      return toTaskListViewGroups(buildTaskGroupSections({
-        groupBy,
-        tasks: somedayTasks,
-        areas,
-        projectById,
-        t,
-      }));
-    }
-    if (somedaySections.length === 0) return undefined;
-    const grouped = groupTasksByViewSection(
-        somedayTasks,
-        'someday',
-        somedaySections,
-        tFallback(t, 'viewSections.noSection', 'No section'),
-      );
-    const byId = new Map(grouped.map((group) => [group.id, group]));
-    // This Someday grouping is actionable: empty definitions still offer Add task.
-    return [
-      ...somedaySections.map((section) => byId.get(`view-section:someday:${section.id}`)
-        ?? { id: `view-section:someday:${section.id}`, title: section.title, tasks: [] }),
-      ...(byId.get('view-section:someday:none') ? [byId.get('view-section:someday:none')!] : []),
-    ];
-  }, [areas, groupBy, projectById, somedaySections, somedayTasks, t]);
+  const model = useMemo(() => buildSomedayViewModel({
+    tasks: baseSomedayTasks,
+    projects,
+    areaById,
+    resolvedAreaFilter,
+    settings,
+    sortBy,
+    groupBy,
+    showDetails,
+    criteria: selections.criteria,
+    searchQuery: selections.searchQuery,
+    t,
+  }), [areaById, baseSomedayTasks, groupBy, projects, resolvedAreaFilter, selections.criteria, selections.searchQuery, settings, showDetails, sortBy, t]);
+  const {
+    deferredProjects,
+    groups: somedayTaskGroups,
+    labels,
+    sections: somedaySections,
+    tasks: somedayTasks,
+  } = model;
   const selection = useTaskListSelection({
     batchDeleteTasks,
     batchMoveTasks,
@@ -244,16 +131,15 @@ export function SomedayView() {
   usePruneSelectionToVisible(selection.setMultiSelectedIds, visibleTaskIds);
   const bulkMoveStatusOptions = useMemo(() => getBulkMoveStatusOptions('someday'), []);
   const sectionMove = useSomedaySectionMove(t, resolvedAreaFilter, selection.exitSelectionMode);
-  const moveAssignments = sectionMove.moveTargetIds?.map((id) => tasksById[id]?.viewSectionIds?.someday);
-  const moveAssignmentMixed = moveAssignments?.some((assignment) => assignment !== moveAssignments[0]) ?? false;
-  const moveSelectedId = moveAssignmentMixed ? undefined : moveAssignments?.[0];
+  const moveSelection = sectionMove.moveTargetIds
+    ? getSomedaySectionMoveSelection(sectionMove.moveTargetIds.map((id) => tasksById[id]), somedaySections)
+    : { selectedId: undefined, selectionMixed: false };
+  const addTaskText = getSomedaySectionTaskText(t, addingGroup?.title ?? '');
 
   const openAddTaskForGroup = (groupId: string) => {
     const group = somedayTaskGroups?.find((candidate) => candidate.id === groupId);
     if (!group) return;
-    const sectionId = groupId === 'view-section:someday:none'
-      ? undefined : groupId.replace('view-section:someday:', '');
-    setAddingGroup({ sectionId, title: group.title });
+    setAddingGroup({ sectionId: getSomedayGroupSectionId(groupId) ?? undefined, title: group.title });
     setNewTaskTitle('');
     setAddTaskError(false);
     pendingAddedTaskRef.current = null;
@@ -273,8 +159,12 @@ export function SomedayView() {
     setAddTaskError(false);
     try {
       const latest = useTaskStore.getState();
-      if (addingGroup.sectionId && !sortViewSectionDefinitions(latest.settings?.gtd?.viewSections?.someday)
-        .some((section) => section.id === addingGroup.sectionId)) {
+      const plan = planSomedaySectionTaskAdd({
+        title,
+        sectionId: addingGroup.sectionId,
+        stored: latest.settings?.gtd?.viewSections?.someday,
+      });
+      if (plan.kind !== 'add') {
         setAddTaskError(true);
         return;
       }
@@ -283,10 +173,7 @@ export function SomedayView() {
         await latest.retryPersistence();
       }
       if (!pending || pending.title !== title || !latest.tasks.some((task) => task.id === pending.id)) {
-        const result = await latest.addTask(title, {
-          status: 'someday',
-          ...(addingGroup.sectionId ? { viewSectionIds: { someday: addingGroup.sectionId } } : {}),
-        });
+        const result = await latest.addTask(plan.title, plan.props);
         assertBulkActionSucceeded(result);
         if (result.id) pendingAddedTaskRef.current = { id: result.id, title };
       }
@@ -296,7 +183,7 @@ export function SomedayView() {
       setAddingGroup(null);
       setNewTaskTitle('');
       setAddTaskError(false);
-      showToast({ message: tFallback(t, 'calendar.eventTaskCreatedTitle', 'Task created'), tone: 'success' });
+      showToast({ message: addTaskText.created, tone: 'success' });
     } catch (error) {
       setAddTaskError(true);
       void logError(error, { scope: 'task', extra: { message: 'Failed to add Someday section task' } });
@@ -339,23 +226,21 @@ export function SomedayView() {
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <View style={[styles.stats, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{baseSomedayTasks.length}</Text>
-          <Text style={styles.statLabel}>{t('someday.ideas')}</Text>
+          <Text style={styles.statValue}>{model.ideasCount}</Text>
+          <Text style={styles.statLabel}>{labels.ideas}</Text>
         </View>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
-            {baseSomedayTasks.filter((task) => task.projectId).length}
-          </Text>
-          <Text style={styles.statLabel}>{t('someday.inProjects')}</Text>
+          <Text style={styles.statValue}>{model.inProjectsCount}</Text>
+          <Text style={styles.statLabel}>{labels.inProjects}</Text>
         </View>
         {selections.hasActive ? (
           <FilterChip
-            label={`${tFallback(t, 'filters.title', 'Filters')} · ${selections.activeCount}`}
+            label={`${labels.filters} · ${selections.activeCount}`}
             selected
             themeColors={tc}
             onPress={selections.clear}
             removable
-            removeLabel={`${tFallback(t, 'filters.clear', 'Clear')}: ${tFallback(t, 'filters.title', 'Filters')}`}
+            removeLabel={`${labels.filtersClear}: ${labels.filters}`}
           />
         ) : null}
         <View style={styles.summaryOverflow}>
@@ -363,7 +248,7 @@ export function SomedayView() {
             actions={[
               {
                 id: 'filters',
-                label: tFallback(t, 'filters.title', 'Filters'),
+                label: labels.filters,
                 icon: (color) => <SlidersHorizontal size={19} color={color} strokeWidth={2} />,
                 onPress: () => setFiltersVisible(true),
                 selected: selections.hasActive,
@@ -371,52 +256,47 @@ export function SomedayView() {
               },
               {
                 id: 'sort',
-                label: tFallback(t, 'sort.label', 'Sort'),
-                accessibilityLabel: `${tFallback(t, 'sort.label', 'Sort')}: ${t(`sort.${effectiveSortBy}`)}`,
+                label: labels.sort,
+                accessibilityLabel: `${labels.sort}: ${model.menu.sortValue}`,
                 icon: (color) => <ArrowUpDown size={19} color={color} strokeWidth={2} />,
-                value: t(`sort.${effectiveSortBy}`),
+                value: model.menu.sortValue,
                 testID: 'someday-sort-action',
                 submenu: {
-                  title: tFallback(t, 'sort.label', 'Sort'),
-                  actions: somedaySortOptions.map((option) => ({
-                    id: `sort:${option}`,
-                    label: t(`sort.${option}`),
-                    accessibilityLabel: `${tFallback(t, 'sort.label', 'Sort')}: ${t(`sort.${option}`)}`,
+                  title: labels.sort,
+                  actions: model.menu.sortOptions.map((option) => ({
+                    id: `sort:${option.value}`,
+                    label: option.label,
+                    accessibilityLabel: `${labels.sort}: ${option.label}`,
                     icon: (color) => <ArrowUpDown size={18} color={color} strokeWidth={2} />,
-                    onPress: () => setSortBy(option),
-                    selected: effectiveSortBy === option,
-                    testID: `someday-sort-${option}`,
+                    onPress: () => setSortBy(option.value),
+                    selected: option.selected,
+                    testID: `someday-sort-${option.value}`,
                   })),
                 },
               },
               {
                 id: 'group',
-                label: tFallback(t, 'list.groupBy', 'Group'),
-                accessibilityLabel: `${tFallback(t, 'list.groupBy', 'Group')}: ${getSomedayGroupByLabel(groupBy, t)}`,
+                label: labels.group,
+                accessibilityLabel: `${labels.group}: ${model.menu.groupValue}`,
                 icon: (color) => <Folder size={19} color={color} strokeWidth={2} />,
-                value: getSomedayGroupByLabel(groupBy, t),
+                value: model.menu.groupValue,
                 testID: 'someday-group-action',
                 submenu: {
-                  title: tFallback(t, 'list.groupBy', 'Group'),
-                  actions: SOMEDAY_GROUP_OPTIONS.map((option) => {
-                    const label = getSomedayGroupByLabel(option, t);
-                    return {
-                      id: `group:${option}`,
-                      label,
-                      accessibilityLabel: `${tFallback(t, 'list.groupBy', 'Group')}: ${label}`,
-                      icon: (color: string) => <Folder size={18} color={color} strokeWidth={2} />,
-                      onPress: () => setGroupBy(option),
-                      selected: groupBy === option,
-                      testID: `someday-group-${option}`,
-                    };
-                  }),
+                  title: labels.group,
+                  actions: model.menu.groupOptions.map((option) => ({
+                    id: `group:${option.value}`,
+                    label: option.label,
+                    accessibilityLabel: `${labels.group}: ${option.label}`,
+                    icon: (color: string) => <Folder size={18} color={color} strokeWidth={2} />,
+                    onPress: () => setGroupBy(option.value),
+                    selected: option.selected,
+                    testID: `someday-group-${option.value}`,
+                  })),
                 },
               },
               {
                 id: 'details',
-                label: showDetails
-                  ? tFallback(t, 'list.hideDetails', 'Hide details')
-                  : tFallback(t, 'list.showDetails', 'Show details'),
+                label: labels.details,
                 icon: (color) => <Eye size={19} color={color} strokeWidth={2} />,
                 onPress: () => setShowDetails((current) => !current),
                 selected: showDetails,
@@ -424,15 +304,15 @@ export function SomedayView() {
               },
               {
                 id: 'new-section',
-                label: tFallback(t, 'viewSections.new', 'New section'),
+                label: labels.newSection,
                 icon: (color) => <Plus size={19} color={color} strokeWidth={2} />,
                 onPress: () => setNewSectionOpen(true),
                 testID: 'someday-new-section-action',
               },
             ]}
-            backLabel={tFallback(t, 'common.back', 'Back')}
-            closeLabel={tFallback(t, 'common.close', 'Close')}
-            moreLabel={tFallback(t, 'taskEdit.moreOptions', 'More options')}
+            backLabel={labels.back}
+            closeLabel={labels.close}
+            moreLabel={labels.more}
             themeColors={tc}
             triggerTestID="someday-overflow-button"
           />
@@ -469,9 +349,9 @@ export function SomedayView() {
         ListEmptyComponent={deferredProjects.length === 0 ? (
           <View style={styles.emptyState}>
             <Lightbulb size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
-            <Text style={[styles.emptyTitle, { color: tc.text }]}>{t('someday.empty')}</Text>
+            <Text style={[styles.emptyTitle, { color: tc.text }]}>{labels.emptyTitle}</Text>
             <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-              {t('someday.emptyHint')}
+              {labels.emptyHint}
             </Text>
           </View>
         ) : null}
@@ -482,10 +362,10 @@ export function SomedayView() {
         onClose={() => setFiltersVisible(false)}
         selections={selections}
         options={{
-          tokens: tokenFilterOptions,
-          projects: projectFilterOptions,
-          timeEstimates: TIME_ESTIMATE_OPTIONS,
-          visibility: metadataFilterVisibility,
+          tokens: filterOptions.tokens,
+          projects: filterOptions.projects ?? undefined,
+          timeEstimates: filterOptions.timeEstimates,
+          visibility: filterOptions.visibility,
         }}
         themeColors={tc}
         t={t}
@@ -514,13 +394,13 @@ export function SomedayView() {
           <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
             onStartShouldSetResponder={() => true}>
             <Text accessibilityRole="header" style={[styles.pickerTitle, { color: tc.text }]}>
-              {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+              {labels.moveToSection}
             </Text>
             <ScrollView keyboardShouldPersistTaps="handled">
               <SomedaySectionPicker
                 sections={somedaySections}
-                selectedId={moveSelectedId}
-                selectionMixed={moveAssignmentMixed || Boolean(moveSelectedId && !somedaySections.some((section) => section.id === moveSelectedId))}
+                selectedId={moveSelection.selectedId}
+                selectionMixed={moveSelection.selectionMixed}
                 onCreate={createSomedaySection}
                 onSelect={(sectionId) => { void sectionMove.move(sectionId); }}
                 t={t}
@@ -543,23 +423,22 @@ export function SomedayView() {
         <View style={styles.pickerOverlay}>
           <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
             <Text accessibilityRole="header" style={[styles.pickerTitle, { color: tc.text }]}>
-              {tFallback(t, 'viewSections.addTask', 'Add task to {section}')
-                .replace('{section}', addingGroup?.title ?? '')}
+              {addTaskText.title}
             </Text>
             <TextInput
-              accessibilityLabel={tFallback(t, 'taskEdit.titleLabel', 'Task title')}
+              accessibilityLabel={addTaskText.inputLabel}
               autoFocus
               value={newTaskTitle}
               editable={!addingTask && !pendingAddedTaskRef.current}
               onChangeText={setNewTaskTitle}
               onSubmitEditing={() => { void saveSectionTask(); }}
-              placeholder={tFallback(t, 'quickAdd.inputLabel', 'Task title')}
+              placeholder={addTaskText.placeholder}
               placeholderTextColor={tc.secondaryText}
               style={[styles.taskTitleInput, { color: tc.text, borderColor: tc.border, backgroundColor: tc.bg }]}
             />
             {addTaskError ? (
               <Text accessibilityRole="alert" style={{ color: tc.danger }}>
-                {tFallback(t, 'task.addFailed', 'Failed to add task')}
+                {addTaskText.failed}
               </Text>
             ) : null}
             <View style={styles.pickerActions}>
@@ -568,11 +447,11 @@ export function SomedayView() {
                 <Text style={{ color: tc.secondaryText }}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity accessibilityRole="button"
-                accessibilityLabel={pendingAddedTaskRef.current ? tFallback(t, 'common.retry', 'Retry') : t('common.save')}
+                accessibilityLabel={pendingAddedTaskRef.current ? addTaskText.retryLabel : addTaskText.saveLabel}
                 disabled={addingTask || !newTaskTitle.trim()} onPress={() => { void saveSectionTask(); }}
                 style={[styles.pickerSave, { backgroundColor: tc.tint, opacity: addingTask || !newTaskTitle.trim() ? 0.5 : 1 }]}>
                 <Text style={{ color: tc.onTint }}>
-                  {pendingAddedTaskRef.current ? tFallback(t, 'common.retry', 'Retry') : t('common.save')}
+                  {pendingAddedTaskRef.current ? addTaskText.retryLabel : addTaskText.saveLabel}
                 </Text>
               </TouchableOpacity>
             </View>

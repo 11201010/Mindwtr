@@ -1,13 +1,15 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   buildTaskViewSectionUndoUpdates,
-  buildTaskViewSectionUpdates,
   flushPendingSave,
-  isTaskVisibleInArea,
+  formatSomedaySectionMoved,
+  getSomedaySectionMoveTasks,
+  getSomedaySectionMoveText,
+  planSomedaySectionMove,
   sortViewSectionDefinitions,
-  tFallback,
   useTaskStore,
   type AreaFilterSelection,
+  type SomedaySectionAssignment,
   type Task,
 } from '@mindwtr/core';
 
@@ -15,7 +17,7 @@ import { useToast } from '@/contexts/toast-context';
 import { logInfo } from '@/lib/app-log';
 import { assertBulkActionSucceeded } from '../use-task-list-selection';
 
-type PreviousAssignment = { id: string; sectionId?: string };
+type PreviousAssignment = SomedaySectionAssignment;
 type PendingMove = {
   ids: string[];
   destination?: string;
@@ -27,23 +29,16 @@ type PendingUndo = {
   count: number;
 };
 
-const sameIds = (left: readonly string[], right: readonly string[]) =>
-  left.length === right.length && left.every((id, index) => id === right[index]);
-
 /** Someday's list scope, recomputed from the store at the moment of a write. */
 function getLatestEligibleTasks(ids: readonly string[], filter: AreaFilterSelection): Task[] | null {
   const state = useTaskStore.getState();
-  const taskById = new Map(state.tasks.map((task) => [task.id, task]));
-  const visibility = {
-    areaById: new Map((state.areas ?? []).filter((area) => !area.deletedAt).map((area) => [area.id, area])),
-    projectById: new Map(state.projects.map((project) => [project.id, project])),
+  return getSomedaySectionMoveTasks({
+    tasks: state.tasks,
+    projects: state.projects,
+    areas: state.areas ?? [],
+    ids,
     resolvedAreaFilter: filter,
-  };
-  const tasks = ids.map((id) => taskById.get(id));
-  if (tasks.some((task) => !task || task.status !== 'someday' || !isTaskVisibleInArea(task, visibility))) {
-    return null;
-  }
-  return tasks as Task[];
+  });
 }
 
 export function useSomedaySectionMove(
@@ -58,12 +53,10 @@ export function useSomedaySectionMove(
   const pendingUndoRef = useRef<PendingUndo | null>(null);
   const undoBusyRef = useRef(false);
 
-  const showMoveFailure = useCallback(() => showToast({
-    title: tFallback(t, 'common.error', 'Error'),
-    message: tFallback(t, 'viewSections.moveFailed', 'Could not move tasks to the section.'),
-    tone: 'error',
-    durationMs: 5200,
-  }), [showToast, t]);
+  const showMoveFailure = useCallback(() => {
+    const text = getSomedaySectionMoveText(t);
+    showToast({ title: text.errorTitle, message: text.moveFailed, tone: 'error', durationMs: 5200 });
+  }, [showToast, t]);
 
   const undo = useCallback(async (previous: readonly PreviousAssignment[], destination?: string) => {
     if (undoBusyRef.current) return;
@@ -91,12 +84,13 @@ export function useSomedaySectionMove(
         extra: { releaseCheck: 'v1.3.1/someday-section-move', count, operation: 'undo' },
       });
     } catch {
+      const text = getSomedaySectionMoveText(t);
       showToast({
-        title: tFallback(t, 'common.error', 'Error'),
-        message: tFallback(t, 'viewSections.undoFailed', 'Could not undo the section move.'),
+        title: text.errorTitle,
+        message: text.undoFailed,
         tone: 'error',
         durationMs: 5200,
-        actionLabel: tFallback(t, 'common.undo', 'Undo'),
+        actionLabel: text.undoLabel,
         onAction: () => { void undo(previous, destination); },
       });
     } finally {
@@ -128,18 +122,12 @@ export function useSomedaySectionMove(
         showMoveFailure();
         return;
       }
-      const updates = buildTaskViewSectionUpdates(eligibleTasks, 'someday', destination);
-      const pending = pendingMoveRef.current;
-      const resume = pending && sameIds(pending.ids, moveTargetIds)
-        && eligibleTasks.every((task) => (task.viewSectionIds?.someday || undefined) === pending.destination)
-        ? pending : null;
-      const previousById = new Map((resume?.previous ?? []).map((entry) => [entry.id, entry]));
-      for (const update of updates) {
-        if (previousById.has(update.id)) continue;
-        const task = eligibleTasks.find((candidate) => candidate.id === update.id);
-        previousById.set(update.id, { id: update.id, sectionId: task?.viewSectionIds?.someday });
-      }
-      const previous = [...previousById.values()];
+      const { updates, previous, resumed } = planSomedaySectionMove({
+        ids: moveTargetIds,
+        tasks: eligibleTasks,
+        destination,
+        pending: pendingMoveRef.current,
+      });
       if (previous.length === 0) {
         setMoveTargetIds(null);
         exitSelectionMode();
@@ -149,7 +137,7 @@ export function useSomedaySectionMove(
         assertBulkActionSucceeded(await latest.batchUpdateTasks(updates));
       }
       pendingMoveRef.current = { ids: moveTargetIds, destination, previous };
-      if (resume && updates.length === 0) {
+      if (resumed && updates.length === 0) {
         await useTaskStore.getState().retryPersistence();
       }
       await flushPendingSave();
@@ -161,13 +149,11 @@ export function useSomedaySectionMove(
         scope: 'tasks',
         extra: { releaseCheck: 'v1.3.1/someday-section-move', count: previous.length, operation: 'move' },
       });
-      const sectionTitle = section?.title ?? tFallback(t, 'viewSections.noSection', 'No section');
       showToast({
-        message: tFallback(t, 'viewSections.moved', 'Moved to {section} ({count})')
-          .replace('{count}', String(previous.length)).replace('{section}', sectionTitle),
+        message: formatSomedaySectionMoved(t, previous.length, section?.title),
         tone: 'success',
         durationMs: 5200,
-        actionLabel: tFallback(t, 'common.undo', 'Undo'),
+        actionLabel: getSomedaySectionMoveText(t).undoLabel,
         onAction: () => { void undo(previous, destination); },
       });
     } catch {

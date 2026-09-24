@@ -180,6 +180,7 @@ import {
     type ListConfirmation,
 } from './trash-view-model';
 import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskSortBy } from './types';
+import { createMenuViewMethods } from './native-host-contract-menu-views';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -911,6 +912,19 @@ export function createNativeHostContract() {
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             dataRevision: () => `${revision()}:${settingsRevision()}`,
             rowMeta: (task, now) => rowMeta(task, now),
+        }),
+        // More sheet, Waiting, Someday, Reference and Done: native-host-contract-menu-views.ts.
+        ...createMenuViewMethods({
+            readiness,
+            save,
+            t: () => translate,
+            formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            rows: (tasks, now) => {
+                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
+            },
+            requestIdPattern: CAPTURE_ID_PATTERN,
         }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {

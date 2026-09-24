@@ -1,7 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { sortViewSectionDefinitions, tFallback, type ViewSectionDefinition } from '@mindwtr/core';
+import {
+  buildSomedaySectionManagerRows,
+  getSomedaySectionManagerText,
+  moveSomedaySection,
+  renameSomedaySection,
+  type ViewSectionDefinition,
+} from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
@@ -14,34 +20,33 @@ type SomedaySectionManagerProps = {
 };
 
 export function SomedaySectionManager({ definitions, onChange, onDelete, t, themeColors: tc }: SomedaySectionManagerProps) {
-  const sorted = useMemo(() => sortViewSectionDefinitions(definitions), [definitions]);
+  // Row order, labels and the rename/reorder results come from core, shared with the native host.
+  const rows = useMemo(() => buildSomedaySectionManagerRows(definitions, t), [definitions, t]);
+  const text = getSomedaySectionManagerText(t);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
 
   const saveRename = () => {
-    const title = renameTitle.trim();
-    if (!renamingId || !title) return;
-    void onChange(sorted.map((section) => section.id === renamingId ? { ...section, title } : section));
+    if (!renamingId) return;
+    const next = renameSomedaySection(definitions, renamingId, renameTitle);
+    if (!next) return;
+    void onChange(next);
     setRenamingId(null);
     setRenameTitle('');
   };
 
-  const moveSection = (index: number, offset: -1 | 1) => {
-    const targetIndex = index + offset;
-    if (targetIndex < 0 || targetIndex >= sorted.length) return;
-    const reordered = [...sorted];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-    void onChange(reordered.map((section, order) => ({ ...section, order })));
+  const moveSection = (id: string, offset: -1 | 1) => {
+    const next = moveSomedaySection(definitions, id, offset);
+    if (next) void onChange(next);
   };
 
   return (
     <View>
-      {sorted.map((section, index) => (
+      {rows.map((section) => (
         <View key={section.id} style={[styles.row, { borderBottomColor: tc.border }]}>
           {renamingId === section.id ? (
             <TextInput
-              accessibilityLabel={tFallback(t, 'viewSections.nameHint', 'Section name')}
+              accessibilityLabel={text.nameLabel}
               autoFocus
               value={renameTitle}
               onChangeText={setRenameTitle}
@@ -53,32 +58,32 @@ export function SomedaySectionManager({ definitions, onChange, onDelete, t, them
           )}
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel={`${tFallback(t, 'projects.moveUp', 'Move up')}: ${section.title}`}
-            disabled={index === 0}
+            accessibilityLabel={section.moveUp.label}
+            disabled={section.moveUp.disabled}
             hitSlop={{ top: 10, right: 6, bottom: 10, left: 6 }}
-            onPress={() => moveSection(index, -1)}
-            style={[styles.iconButton, index === 0 && styles.disabled]}
+            onPress={() => moveSection(section.id, -1)}
+            style={[styles.iconButton, section.moveUp.disabled && styles.disabled]}
           >
             <Ionicons name="chevron-up" size={18} color={tc.secondaryText} />
           </TouchableOpacity>
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel={`${tFallback(t, 'projects.moveDown', 'Move down')}: ${section.title}`}
-            disabled={index === sorted.length - 1}
+            accessibilityLabel={section.moveDown.label}
+            disabled={section.moveDown.disabled}
             hitSlop={{ top: 10, right: 6, bottom: 10, left: 6 }}
-            onPress={() => moveSection(index, 1)}
-            style={[styles.iconButton, index === sorted.length - 1 && styles.disabled]}
+            onPress={() => moveSection(section.id, 1)}
+            style={[styles.iconButton, section.moveDown.disabled && styles.disabled]}
           >
             <Ionicons name="chevron-down" size={18} color={tc.secondaryText} />
           </TouchableOpacity>
           {renamingId === section.id ? (
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('common.save')} onPress={saveRename} style={styles.iconButton}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={text.saveLabel} onPress={saveRename} style={styles.iconButton}>
               <Ionicons name="checkmark" size={18} color={tc.tint} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityLabel={`${tFallback(t, 'viewSections.rename', 'Rename section')}: ${section.title}`}
+              accessibilityLabel={section.renameLabel}
               onPress={() => {
                 setRenamingId(section.id);
                 setRenameTitle(section.title);
@@ -90,7 +95,7 @@ export function SomedaySectionManager({ definitions, onChange, onDelete, t, them
           )}
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel={`${t('common.delete')}: ${section.title}`}
+            accessibilityLabel={section.deleteLabel}
             onPress={() => onDelete(section.id)}
             style={styles.iconButton}
           >
