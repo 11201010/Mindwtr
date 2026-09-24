@@ -491,6 +491,7 @@ export const daOverrides: Record<string, string> = {
     'recurrence.onNthWeekday': '{ordinal} {weekday}',
     'recurrence.ordinalSelectLabel': 'Gentagelse ordinal',
     'recurrence.weekdaySelectLabel': 'Gentagelse hverdag',
+    'recurrence.weekdayMonFri': 'Mandag–fredag',
     'recurrence.ordinal.first': 'Først',
     'recurrence.ordinal.second': 'For det andet',
     'recurrence.ordinal.third': 'For det tredje',

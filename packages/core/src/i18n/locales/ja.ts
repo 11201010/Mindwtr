@@ -511,6 +511,7 @@ export const jaOverrides: Record<string, string> = {
         'recurrence.onNthWeekday': '{ordinal}{weekday}',
         'recurrence.ordinalSelectLabel': '第何週かを選ぶ',
         'recurrence.weekdaySelectLabel': '曜日を選ぶ',
+        'recurrence.weekdayMonFri': '月〜金',
         'recurrence.ordinal.first': '第1',
         'recurrence.ordinal.second': '第2',
         'recurrence.ordinal.third': '第3',

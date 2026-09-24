@@ -488,6 +488,7 @@ export const faOverrides: Record<string, string> = {
         'recurrence.onNthWeekday': '{ordinal} {weekday}',
         'recurrence.ordinalSelectLabel': 'ترتیب تکرار',
         'recurrence.weekdaySelectLabel': 'روز هفته تکرار',
+        'recurrence.weekdayMonFri': 'دوشنبه تا جمعه',
         'recurrence.ordinal.first': 'اول',
         'recurrence.ordinal.second': 'دوم',
         'recurrence.ordinal.third': 'سوم',

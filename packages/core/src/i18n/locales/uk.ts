@@ -474,6 +474,7 @@ export const ukOverrides: Record<string, string> = {
     "recurrence.onNthWeekday": "{ordinal} {weekday}",
     "recurrence.ordinalSelectLabel": "Порядковий номер повторення",
     "recurrence.weekdaySelectLabel": "Повторюваний будній день",
+    "recurrence.weekdayMonFri": "Понеділок–п’ятниця",
     "recurrence.ordinal.first": "перше",
     "recurrence.ordinal.second": "друге",
     "recurrence.ordinal.third": "По-третє",

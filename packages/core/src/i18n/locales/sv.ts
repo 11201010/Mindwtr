@@ -488,6 +488,7 @@ export const svOverrides: Record<string, string> = {
         'recurrence.onNthWeekday': 'Den {ordinal} {weekday}',
         'recurrence.ordinalSelectLabel': 'Upprepningens ordningstal',
         'recurrence.weekdaySelectLabel': 'Upprepningens veckodag',
+        'recurrence.weekdayMonFri': 'Måndag–fredag',
         'recurrence.ordinal.first': 'Första',
         'recurrence.ordinal.second': 'Andra',
         'recurrence.ordinal.third': 'Tredje',

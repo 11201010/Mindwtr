@@ -478,6 +478,7 @@ export const huOverrides: Record<string, string> = {
     'recurrence.onNthWeekday': 'A {ordinal} {weekday}',
     'recurrence.ordinalSelectLabel': 'Ismétlődés sorszáma',
     'recurrence.weekdaySelectLabel': 'Ismétlődés napja',
+    'recurrence.weekdayMonFri': 'Hétfő–péntek',
     'recurrence.ordinal.first': 'Első',
     'recurrence.ordinal.second': 'Második',
     'recurrence.ordinal.third': 'Harmadik',
