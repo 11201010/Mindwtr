@@ -103,10 +103,11 @@ import { styles as taskListStyles } from '../../../components/task-list/task-lis
 
 let InboxScreen: typeof import('./inbox').default;
 
+// The core mock imports all of core, which takes seconds on a loaded machine.
 beforeAll(async () => {
   vi.stubGlobal('React', React);
   InboxScreen = (await import('./inbox')).default;
-});
+}, 30_000);
 
 const flattenStyle = (style: unknown): Record<string, number> => (
   (Array.isArray(style) ? style : [style])
