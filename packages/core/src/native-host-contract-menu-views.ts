@@ -54,6 +54,7 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
+import { createNativeRequestReceipts } from './native-request-receipts';
 import {
     buildSomedaySectionManagerRows,
     buildSomedaySectionMoveDialog,
@@ -383,70 +384,39 @@ const filterChips = (resolved: ResolvedListFilter): NativeListChip[] => resolved
     id: chip.id, label: chip.label, excluded: chip.excluded, action: { filterEdit: chip.edit },
 }));
 
-type Receipt<T> = { key: string; value: T; saved: boolean };
-type MoveReceipt = {
-    moved: number;
-    toast: { message: string; undoLabel: string } | null;
-    /** What Undo restores; only moves recorded here can be undone. */
-    undo: { previous: SomedaySectionAssignment[]; sectionId: string | null } | null;
-};
+type MoveUndo = { previous: SomedaySectionAssignment[]; sectionId: string | null };
 
 /** A view's data, its revision (from the resolved inputs) and its collections. */
 type Built<T> = { revision: string; now: Date; data: T; collections: Partial<Record<MenuViewCollectionName, readonly unknown[]>> };
 
 export function createMenuViewMethods(deps: MenuViewDeps) {
-    // ponytail: keeps the 50 most recent requests in memory. Moves and the other writes are
-    // target-state, so a retry after eviction or a restart writes nothing again; Undo, like
-    // mobile's Undo toast, does not survive a restart. The shared native-request-receipts.ts
-    // replaces this map when it lands.
-    const receipts = new Map<string, Receipt<unknown>>();
-    const remember = <T,>(requestId: string, receipt: Receipt<T>) => {
-        receipts.set(requestId, receipt as Receipt<unknown>);
-        if (receipts.size > 50) receipts.delete(receipts.keys().next().value!);
-    };
-    const markAllSaved = () => {
-        for (const receipt of receipts.values()) receipt.saved = true;
-    };
     const writeFailure = (message: string | undefined): NativeHostResult<never> => {
         const failure = useTaskStore.getState().persistenceFailure;
         return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? message ?? 'Write failed');
     };
     const caught = (error: unknown) => writeFailure(error instanceof Error ? error.message : String(error));
-    /** Nothing new to write: finish an earlier failed save, then acknowledge durably. */
-    const settle = async <T,>(value: T): Promise<NativeHostResult<T>> => {
+    /** Makes every write so far durable: retries a failed save, then flushes. */
+    const durableSave = async (): Promise<NativeHostResult<null>> => {
         try {
             if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
         } catch (error) {
             return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
         }
-        const saved = await deps.save();
-        if (!saved.ok) return saved;
-        markAllSaved();
-        return { ok: true, value };
+        return deps.save();
     };
-    /**
-     * Run a request once. A retry with the same requestId and input writes nothing
-     * again: it finishes the save and returns the first outcome.
-     */
-    const once = async <T,>(
-        requestId: string,
-        key: string,
-        run: () => Promise<NativeHostResult<{ value: T; wrote: boolean }>>,
-    ): Promise<NativeHostResult<T>> => {
-        const done = receipts.get(requestId) as Receipt<T> | undefined;
-        if (done && done.key !== key) return fail('INVALID_INPUT', 'Request ID already belongs to another action');
-        if (done) {
-            if (done.saved) return { ok: true, value: done.value };
-            return settle(done.value);
-        }
-        const outcome = await run();
-        if (!outcome.ok) return outcome;
-        if (!outcome.value.wrote) return settle(outcome.value.value);
-        remember(requestId, { key, value: outcome.value.value, saved: false });
-        const saved = await deps.save();
-        if (!saved.ok) return saved;
-        markAllSaved();
-        return { ok: true, value: outcome.value.value };
+    /** Nothing new to write: finish an earlier failed save, then acknowledge durably. */
+    const settle = async <T,>(value: T): Promise<NativeHostResult<T>> => {
+        const saved = await durableSave();
+        return saved.ok ? { ok: true, value } : saved;
+    };
+    // Moves, their Undo and Add task retry exactly through the shared helper.
+    const receipts = createNativeRequestReceipts({ save: durableSave });
+    // ponytail: the 50 most recent moves keep their Undo, in memory like mobile's Undo toast;
+    // an older move, or any move after a restart, can no longer be undone.
+    const undoByMove = new Map<string, MoveUndo>();
+    const rememberUndo = (requestId: string, undo: MoveUndo) => {
+        undoByMove.set(requestId, undo);
+        if (undoByMove.size > 50) undoByMove.delete(undoByMove.keys().next().value!);
     };
 
     const visibleContext = () => {
@@ -1019,7 +989,6 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const saved = await deps.save();
             if (!saved.ok) return saved;
-            markAllSaved();
             return { ok: true, value: { id: project.id, changed: true } };
         },
 
@@ -1039,42 +1008,38 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const ids = Array.from(new Set(input.taskIds));
             const destination = input.sectionId ?? undefined;
-            const outcome = await once<MoveReceipt | NativeMenuViewRefusal>(input.requestId, JSON.stringify(['move', ids, input.sectionId]), async () => {
+            const requestId = input.requestId;
+            return receipts.run<NativeSomedayMoveResult>(requestId, JSON.stringify(['move', ids, input.sectionId]), async () => {
                 const t = deps.t();
                 const text = getSomedaySectionMoveText(t);
-                const refuse = { value: { refused: { title: text.errorTitle, message: text.moveFailed } }, wrote: false };
+                const refused: NativeHostResult<NativeSomedayMoveResult> = { ok: true, value: { refused: { title: text.errorTitle, message: text.moveFailed } } };
                 const state = useTaskStore.getState();
                 const section = destination ? sortViewSectionDefinitions(somedaySections()).find((entry) => entry.id === destination) : undefined;
-                if (destination && !section) return { ok: true, value: refuse };
+                if (destination && !section) return refused;
                 const { resolvedAreaFilter } = visibleContext();
                 const tasks = getSomedaySectionMoveTasks({
                     tasks: state.tasks, projects: state.projects, areas: state.areas, ids, resolvedAreaFilter,
                 });
-                if (!tasks) return { ok: true, value: refuse };
+                if (!tasks) return refused;
+                // Target state: tasks already in the section are not written.
                 const { updates, previous } = planSomedaySectionMove({ ids, tasks, destination });
-                if (previous.length === 0) return { ok: true, value: { value: { moved: 0, toast: null, undo: null }, wrote: false } };
+                if (previous.length === 0) return { ok: true, value: { moved: 0, toast: null, undoRequestId: null } };
                 try {
                     const result = await state.batchUpdateTasks(updates);
                     if (!result.success) return writeFailure(result.error);
                 } catch (error) {
                     return caught(error);
                 }
+                rememberUndo(requestId, { previous, sectionId: input.sectionId });
                 return {
                     ok: true,
                     value: {
-                        value: {
-                            moved: previous.length,
-                            toast: { message: formatSomedaySectionMoved(t, previous.length, section?.title), undoLabel: text.undoLabel },
-                            undo: { previous, sectionId: input.sectionId },
-                        },
-                        wrote: true,
+                        moved: previous.length,
+                        toast: { message: formatSomedaySectionMoved(t, previous.length, section?.title), undoLabel: text.undoLabel },
+                        undoRequestId: requestId,
                     },
                 };
             });
-            if (!outcome.ok) return outcome;
-            if ('refused' in outcome.value) return { ok: true, value: outcome.value };
-            const { moved, toast, undo } = outcome.value;
-            return { ok: true, value: { moved, toast, undoRequestId: undo ? input.requestId : null } };
         },
 
         /**
@@ -1089,24 +1054,23 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId) || input.requestId === input.moveRequestId) {
                 return fail('INVALID_INPUT', 'The move\'s request ID and a new request UUID are required');
             }
-            const move = receipts.get(input.moveRequestId) as Receipt<MoveReceipt | NativeMenuViewRefusal> | undefined;
-            const undo = move && !('refused' in move.value) ? move.value.undo : null;
+            const undo = undoByMove.get(input.moveRequestId);
             if (!undo) return fail('STALE_REVISION', 'That move can no longer be undone');
-            return once<{ reverted: number }>(input.requestId, JSON.stringify(['undo', input.moveRequestId]), async () => {
+            return receipts.run<{ reverted: number }>(input.requestId, JSON.stringify(['undo', input.moveRequestId]), async () => {
                 const state = useTaskStore.getState();
                 // Only tasks still in Someday: a task filed elsewhere since keeps its state.
                 const latest = undo.previous
                     .map(({ id }) => state.tasks.find((task) => task.id === id))
                     .filter((task): task is Task => task?.status === 'someday');
                 const updates = buildTaskViewSectionUndoUpdates(latest, 'someday', undo.previous, undo.sectionId ?? undefined);
-                if (updates.length === 0) return { ok: true, value: { value: { reverted: 0 }, wrote: false } };
+                if (updates.length === 0) return { ok: true, value: { reverted: 0 } };
                 try {
                     const result = await state.batchUpdateTasks(updates);
                     if (!result.success) return writeFailure(result.error);
                 } catch (error) {
                     return caught(error);
                 }
-                return { ok: true, value: { value: { reverted: updates.length }, wrote: true } };
+                return { ok: true, value: { reverted: updates.length } };
             });
         },
 
@@ -1126,27 +1090,32 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 return fail('INVALID_INPUT', 'A task title, a section ID or null, and a capture UUID are required');
             }
             const text = getSomedaySectionTaskText(deps.t(), '');
-            // A retry after a failed save finds the task it created: finish the save only.
-            const id = input.captureId.toLowerCase();
-            const existing = useTaskStore.getState()._allTasks.find((task) => task.id === id);
-            if (existing) {
-                if (existing.title !== input.title.trim() || (existing.viewSectionIds?.someday ?? null) !== input.sectionId) {
-                    return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
-                }
-                return settle({ id, toast: text.created });
-            }
-            const plan = planSomedaySectionTaskAdd({ title: input.title, sectionId: input.sectionId ?? undefined, stored: somedaySections() });
-            if (plan.kind !== 'add') return { ok: true, value: { refused: { title: null, message: text.failed } } };
-            try {
-                const result = await useTaskStore.getState().addTask(plan.title, plan.props, { captureId: input.captureId });
-                if (!result.success || !result.id) return writeFailure(result.error ?? 'Task creation failed');
-                const saved = await deps.save();
-                if (!saved.ok) return saved;
-                markAllSaved();
-                return { ok: true, value: { id: result.id, toast: text.created } };
-            } catch (error) {
-                return caught(error);
-            }
+            const title = input.title.trim();
+            return receipts.run<{ id: string; toast: string } | NativeMenuViewRefusal>(
+                input.captureId,
+                JSON.stringify(['add', title, input.sectionId]),
+                async () => {
+                    // After a restart the receipt is gone: the task the captureId created still
+                    // answers a retry, and refuses a different payload.
+                    const id = input.captureId.toLowerCase();
+                    const existing = useTaskStore.getState()._allTasks.find((task) => task.id === id);
+                    if (existing) {
+                        if (existing.title !== title || (existing.viewSectionIds?.someday ?? null) !== input.sectionId) {
+                            return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
+                        }
+                        return { ok: true, value: { id, toast: text.created } };
+                    }
+                    const plan = planSomedaySectionTaskAdd({ title, sectionId: input.sectionId ?? undefined, stored: somedaySections() });
+                    if (plan.kind !== 'add') return { ok: true, value: { refused: { title: null, message: text.failed } } };
+                    try {
+                        const result = await useTaskStore.getState().addTask(plan.title, plan.props, { captureId: input.captureId });
+                        if (!result.success || !result.id) return writeFailure(result.error ?? 'Task creation failed');
+                        return { ok: true, value: { id: result.id, toast: text.created } };
+                    } catch (error) {
+                        return caught(error);
+                    }
+                },
+            );
         },
 
         /** New Someday section. A title that exists (any case) returns that section; a retry writes nothing again. */
@@ -1165,7 +1134,6 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             if (!sortViewSectionDefinitions(somedaySections()).some((section) => section.id === plan.id)) return writeFailure('Section creation failed');
             const saved = await deps.save();
             if (!saved.ok) return saved;
-            markAllSaved();
             return { ok: true, value: { id: plan.id, existing: false } };
         },
 
@@ -1187,7 +1155,6 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const saved = await deps.save();
             if (!saved.ok) return saved;
-            markAllSaved();
             return { ok: true, value: { id: input.id, changed: true } };
         },
 
@@ -1209,7 +1176,6 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const saved = await deps.save();
             if (!saved.ok) return saved;
-            markAllSaved();
             return { ok: true, value: { changed: true } };
         },
 
@@ -1230,7 +1196,6 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const saved = await deps.save();
             if (!saved.ok) return saved;
-            markAllSaved();
             return { ok: true, value: { id: input.id, changed: true } };
         },
 
@@ -1250,7 +1215,6 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const saved = await deps.save();
             if (!saved.ok) return saved;
-            markAllSaved();
             return { ok: true, value: { sortBy, changed: true } };
         },
     };

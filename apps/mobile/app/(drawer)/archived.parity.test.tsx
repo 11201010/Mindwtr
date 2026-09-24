@@ -569,20 +569,11 @@ describe('React Native Archive parity fixture', () => {
     }
   }, 120_000);
 
-  // Archive groups through core; TaskList and Someday still group through the mobile
-  // copy. Until that copy re-exports core's, the two must not drift apart.
-  it('groups exactly like the mobile grouping copy', () => {
-    const t = (key: string) => harness.strings[key] ?? key;
-    const projectById = new Map(projects.map((project) => [project.id, project]));
-    const tasks = allTasks.filter((entry) => !entry.deletedAt);
+  // One home: Archive, TaskList and Someday all group through core; the mobile
+  // module only re-exports it.
+  it('groups through core: the mobile grouping module re-exports it', () => {
     expect([...ARCHIVE_TASK_GROUP_OPTIONS]).toEqual([...ARCHIVED_LIST_GROUP_OPTIONS]);
-    for (const groupBy of ARCHIVE_TASK_GROUP_OPTIONS) {
-      expect(getCoreTaskGroupByLabel(groupBy, t)).toBe(getTaskGroupByLabel(groupBy, t));
-      if (groupBy === 'none') continue;
-      for (const collapsedGroupIds of [undefined, new Set(['general', 'completedDate:today', 'tag:none', 'project:p-launch'])]) {
-        const input = { groupBy, tasks, areas, projectById, t, collapsedGroupIds, now: new Date(NOW) };
-        expect(buildCoreTaskGroupSections(input)).toEqual(buildTaskGroupSections(input));
-      }
-    }
+    expect(buildTaskGroupSections).toBe(buildCoreTaskGroupSections);
+    expect(getTaskGroupByLabel).toBe(getCoreTaskGroupByLabel);
   });
 });
