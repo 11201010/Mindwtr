@@ -1,11 +1,13 @@
 import {
   CALENDAR_TIME_ESTIMATE_OPTIONS,
   createCalendarLocaleDates,
+  formatCalendarComposerClockValue,
   getCalendarComposerText,
   isCalendarComposerSaveDisabled,
   resolveFeatureFlags,
   useTaskStore,
   type CalendarViewComposerState,
+  type DateFormatter,
   type Task,
 } from '@mindwtr/core';
 import React from 'react';
@@ -31,6 +33,7 @@ type CalendarTaskComposerModalProps = {
   composer: MobileCalendarComposerState | null;
   endTimePlaceholder: string;
   error: string | null;
+  formatDate: DateFormatter;
   formatDurationLabel: (minutes: number) => string;
   isDark: boolean;
   keyboardInset: number;
@@ -57,6 +60,7 @@ export function CalendarTaskComposerModal({
   composer,
   endTimePlaceholder,
   error,
+  formatDate,
   formatDurationLabel,
   isDark,
   keyboardInset,
@@ -76,8 +80,13 @@ export function CalendarTaskComposerModal({
   toRgba,
 }: CalendarTaskComposerModalProps) {
   const prioritiesEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).priorities);
+  const [focusedTime, setFocusedTime] = React.useState<'start' | 'end' | null>(null);
+  React.useEffect(() => {
+    if (!composer) setFocusedTime(null);
+  }, [composer]);
   const saveDisabled = isCalendarComposerSaveDisabled(composer);
   const text = getCalendarComposerText(t, { priorities: prioritiesEnabled });
+  const end = composer?.startAt ? new Date(composer.startAt.getTime() + composer.durationMinutes * 60_000) : null;
 
   return (
     <Modal
@@ -223,10 +232,12 @@ export function CalendarTaskComposerModal({
                   accessibilityLabel={text.start}
                   keyboardType="numbers-and-punctuation"
                   onChangeText={setStartTime}
+                  onFocus={() => setFocusedTime('start')}
+                  onBlur={() => setFocusedTime(null)}
                   placeholder={startTimePlaceholder}
                   placeholderTextColor={tc.secondaryText}
                   style={[styles.input, styles.composerTimeInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-                  value={composer.startTimeValue}
+                  value={focusedTime === 'start' ? composer.startTimeValue : formatCalendarComposerClockValue(composer.startTimeValue, composer.startAt, formatDate)}
                 />
               </View>
               <View style={styles.composerTimeField}>
@@ -235,10 +246,12 @@ export function CalendarTaskComposerModal({
                   accessibilityLabel={text.end}
                   keyboardType="numbers-and-punctuation"
                   onChangeText={setEndTime}
+                  onFocus={() => setFocusedTime('end')}
+                  onBlur={() => setFocusedTime(null)}
                   placeholder={endTimePlaceholder}
                   placeholderTextColor={tc.secondaryText}
                   style={[styles.input, styles.composerTimeInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-                  value={composer.endTimeValue}
+                  value={focusedTime === 'end' ? composer.endTimeValue : formatCalendarComposerClockValue(composer.endTimeValue, end, formatDate)}
                 />
               </View>
             </View>

@@ -685,6 +685,8 @@ export const en: Record<string, string> = {
         'calendar.scheduleResults': 'Schedule',
         'calendar.scheduleAction': 'Schedule',
         'calendar.events': 'Events',
+        'calendar.eventSingular': 'event',
+        'calendar.eventPlural': 'events',
         'calendar.allDay': 'All day',
         'calendar.deadline': 'Deadline',
         'calendar.showCompleted': 'Completed',

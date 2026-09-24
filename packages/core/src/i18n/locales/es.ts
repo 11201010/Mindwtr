@@ -651,6 +651,8 @@ export const esOverrides: Record<string, string> = {
 'calendar.scheduleResults': "Programar",
 'calendar.scheduleAction': "Programar",
 'calendar.events': "Eventos",
+'calendar.eventSingular': 'evento',
+'calendar.eventPlural': 'eventos',
 'calendar.allDay': "Todo el día",
 'calendar.deadline': "Fecha de vencimiento",
 'calendar.showCompleted': "Completadas",

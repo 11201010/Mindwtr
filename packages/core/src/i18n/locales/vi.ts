@@ -707,6 +707,8 @@ export const viOverrides: Record<string, string> = {
         'calendar.scheduleResults': 'Lên lịch',
         'calendar.scheduleAction': 'Lên lịch',
         'calendar.events': 'Sự kiện',
+        'calendar.eventSingular': 'sự kiện',
+        'calendar.eventPlural': 'sự kiện',
         'calendar.allDay': 'Cả ngày',
         'calendar.deadline': 'Hạn chót',
         'calendar.projectedRecurrence': 'Dự kiến',

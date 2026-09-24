@@ -1,5 +1,7 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    'calendar.eventSingular': 'подія',
+    'calendar.eventPlural': 'події',
     'filters.searchTasks': "Пошук за назвами завдань",
     'filters.searchOptions': "Пошук варіантів",
     'filters.tokenCycleHint': "Натисніть, щоб включити, ще раз — виключити, і втретє — скинути вибір.",

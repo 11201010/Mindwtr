@@ -10,7 +10,12 @@ import {
     compactHourLabel,
     createCalendarLocaleDates,
     createCalendarPatternDates,
+    getCalendarDayTimeline,
+    getCalendarWallMinutes,
+    getCalendarMovedStart,
     getCalendarMonthCell,
+    getCalendarMonthCellAccessibilityLabel,
+    planCalendarTaskMove,
     indexCalendarScheduledTasks,
     calendarDateKey,
     isAllDayScheduledTask,
@@ -74,6 +79,30 @@ const task = (overrides: Partial<Task>): Task => ({
 });
 
 describe('calendar view model', () => {
+    it.each([[2026, 2, 8], [2026, 10, 1]])('keeps a drawn block at 10:00 when dropped in place on %i-%i-%i', (year, month, day) => {
+        const start = new Date(year, month, day, 10);
+        const dayStart = new Date(year, month, day);
+        const timeline = getCalendarDayTimeline({ events: [], tasks: [task({ startTime: start.toISOString() })], dayStart, dayEnd: new Date(year, month, day + 1), timeEstimateToMinutes: () => 30, formatDate: createDateFormatter({}), projectedLabel: 'Projected' });
+        expect(getCalendarWallMinutes(dayStart, timeline.tasks[0].displayStart)).toBe(600);
+        expect(getCalendarMovedStart(dayStart.getTime(), getCalendarWallMinutes(dayStart, timeline.tasks[0].displayStart)).getTime()).toBe(start.getTime());
+        expect(getCalendarMovedStart(dayStart.getTime(), 8 * 60).getHours()).toBe(8);
+    });
+    it('keeps the second 1:30 AM instant when dropped in place on the fall DST day', () => {
+        // Pinned: CI runs in UTC, which has no DST day.
+        const previous = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            const dayStart = new Date(2026, 10, 1);
+            const later = new Date('2026-11-01T06:30:00.000Z');
+            const minute = getCalendarWallMinutes(dayStart, later);
+            expect(minute).toBe(90);
+            expect(getCalendarMovedStart(dayStart.getTime(), minute, later).getTime()).toBe(later.getTime());
+            expect(planCalendarTaskMove({ taskId: 'task-1', dayStartMs: dayStart.getTime(), startMinutes: minute, durationMinutes: 30, currentStart: later, isSlotFree: () => false })).toEqual({ kind: 'move', updates: { startTime: later.toISOString() } });
+        } finally {
+            if (previous === undefined) delete process.env.TZ;
+            else process.env.TZ = previous;
+        }
+    });
     it('indexes date-only start dates on their local calendar day', () => {
         const dateOnly = task({ id: 'date-only', startTime: '2026-04-20' });
         const timed = task({ id: 'timed', startTime: '2026-04-20T09:00:00' });
@@ -134,6 +163,29 @@ describe('calendar view model', () => {
         } finally {
             if (originalTz === undefined) delete process.env.TZ;
             else process.env.TZ = originalTz;
+        }
+    });
+
+    it('speaks singular and plural task and event counts', () => {
+        const t = (key: string) => ({ 'list.countTaskSingular': 'task', 'common.tasks': 'tasks', 'calendar.eventSingular': 'event', 'calendar.eventPlural': 'events' }[key] ?? key);
+        const options = { dates: createCalendarLocaleDates('en-US'), t };
+        const date = new Date(2026, 9, 28);
+        expect(getCalendarMonthCellAccessibilityLabel(date, { taskCount: 1, eventCount: 1 }, options)).toBe('Wednesday, October 28. 1 task. 1 event');
+        expect(getCalendarMonthCellAccessibilityLabel(date, { taskCount: 2, eventCount: 2 }, options)).toBe('Wednesday, October 28. 2 tasks. 2 events');
+    });
+
+    it.each(['2026-03-08', '2026-11-01'])('moves to 08:00 wall-clock time on %s', (dayKey) => {
+        const previous = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            const [year, month, day] = dayKey.split('-').map(Number);
+            const midnight = new Date(year, month - 1, day);
+            const plan = planCalendarTaskMove({ taskId: 'task-1', dayStartMs: midnight.getTime(), startMinutes: 480, durationMinutes: 30, isSlotFree: () => true });
+            expect(plan.kind).toBe('move');
+            if (plan.kind === 'move') expect(new Date(plan.updates.startTime!).getHours()).toBe(8);
+        } finally {
+            if (previous === undefined) delete process.env.TZ;
+            else process.env.TZ = previous;
         }
     });
 

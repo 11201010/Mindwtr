@@ -666,6 +666,8 @@ export const svOverrides: Record<string, string> = {
         'calendar.scheduleResults': 'Schema',
         'calendar.scheduleAction': 'Schemalägg',
         'calendar.events': 'Händelser',
+        'calendar.eventSingular': 'händelse',
+        'calendar.eventPlural': 'händelser',
         'calendar.allDay': 'Heldag',
         'calendar.deadline': 'Tidsfrist',
         'calendar.showCompleted': 'Slutförda',

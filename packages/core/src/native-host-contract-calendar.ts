@@ -28,6 +28,7 @@
  * the import cycle between the two files is safe.
  */
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
+import { formatCalendarTimeInputValue } from './calendar-scheduling';
 import {
     applyComposerCreatedProject,
     openComposerAt,
@@ -57,6 +58,7 @@ import {
     createCalendarSourceColorResolver,
     findCalendarFreeSlot,
     formatCalendarDurationChip,
+    formatCalendarComposerClockValue,
     formatCalendarMonthTitle,
     formatCalendarScheduleDayTitle,
     formatCalendarSelectedDateLabels,
@@ -70,6 +72,7 @@ import {
     getCalendarDayBounds,
     getCalendarDayItems,
     getCalendarDayLists,
+    getCalendarDetailsTaskLists,
     getCalendarDayNames,
     getCalendarDayTimeline,
     getCalendarDetailsEventRow,
@@ -80,6 +83,8 @@ import {
     createCalendarPatternDates,
     getCalendarModeOptions,
     getCalendarMonthCell,
+    getCalendarMovedStart,
+    getCalendarWallMinutes,
     getCalendarMonthDates,
     getCalendarMonthGrid,
     getCalendarMonthPreviewTones,
@@ -188,7 +193,7 @@ export type NativeCalendarItem = {
     detail: string | null;
     accessibilityLabel: string | null;
     projected: boolean;
-    /** Pressing opens getCalendarItemSheet. False for a projected occurrence where the screen disables it. */
+    /** Pressing opens getCalendarItemSheet. False for completed or projected items where the screen disables it. */
     pressable: boolean;
     /** Theme tones: `fill` behind the item, `accent` on its left edge, `text` its title; `source` means `sourceColor`. */
     tones: { fill: CalendarTone | null; accent: CalendarTone | null; text: CalendarTone | null; dashed: boolean; struck: boolean; faded: boolean };
@@ -307,6 +312,7 @@ export type NativeCalendarComposer = {
 
 export type NativeCalendarComposerView = {
     composer: NativeCalendarComposer;
+    timeLabels: { start: string; end: string };
     text: ReturnType<typeof getCalendarComposerText>;
     dateLabel: string;
     placeholders: { start: string; end: string };
@@ -425,7 +431,7 @@ const readFeed = (value: unknown): Feed | null => {
     if (!isList(calendars, MAX_CALENDARS, isCalendarSource)) return null;
     if (value.status === 'loading') {
         const events = value.events === undefined ? [] : value.events;
-        return isList(events, MAX_EVENTS, isEvent) ? { calendars, events, loading: true, error: null } : null;
+        return isList(events, MAX_EVENTS, isEvent) ? { calendars, events: [], loading: true, error: null } : null;
     }
     if (value.status === 'error' && isText(value.message, 2000)) return { calendars, events: [], loading: false, error: value.message };
     if (value.status === 'ready' && isList(value.events, MAX_EVENTS, isEvent)) return { calendars, events: value.events, loading: false, error: null };
@@ -445,7 +451,7 @@ const toComposer = (state: CalendarViewComposerState): NativeCalendarComposer =>
     error: state.error,
 });
 const COMPOSER_ERROR_CODES = new Set(['invalid_range', 'title_required', 'task_required', 'overlap', 'invalid_date_command', 'start_after_due', 'save_failed']);
-const readComposer = (value: unknown): CalendarViewComposerState | null => {
+const readComposer = (value: unknown, formatDate: DateFormatter): CalendarViewComposerState | null => {
     if (!isObjectRecord(value)) return null;
     const date = isText(value.date, ISO_INSTANT_LIMIT) ? safeParseDate(value.date) : null;
     const startAt = value.startAt === null ? null : isText(value.startAt, ISO_INSTANT_LIMIT) ? safeParseDate(value.startAt) : undefined;
@@ -460,11 +466,14 @@ const readComposer = (value: unknown): CalendarViewComposerState | null => {
         || (value.selectedTaskId !== null && !isText(value.selectedTaskId))) {
         return null;
     }
+    const rawStart = startAt ? formatCalendarTimeInputValue(startAt) : null;
+    const end = startAt ? new Date(startAt.getTime() + (value.durationMinutes as number) * 60_000) : null;
+    const rawEnd = end ? formatCalendarTimeInputValue(end) : null;
     return {
         date,
-        startTimeValue: value.startTimeValue,
+        startTimeValue: rawStart && value.startTimeValue === formatDate(startAt, 'p', rawStart) ? rawStart : value.startTimeValue,
         startAt,
-        endTimeValue: value.endTimeValue,
+        endTimeValue: rawEnd && value.endTimeValue === formatDate(end, 'p', rawEnd) ? rawEnd : value.endTimeValue,
         durationMinutes: value.durationMinutes as number,
         mode: value.mode,
         title: value.title,
@@ -532,7 +541,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             now,
             dataRevision,
             // No Intl on the native host: headings come from date-fns patterns.
-            dates: createCalendarPatternDates(formatDate),
+            dates: createCalendarPatternDates(createDateFormatter(config, { jalaliMonthNames: true })),
             calendarSystem: getCalendarSystem({ language, settings, systemLocale }),
             formatDate,
             weekStartIndex: getWeekStartsOnIndex(settings.weekStart),
@@ -632,8 +641,8 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     const sourceTask = (entry: CalendarDayItem): Task | null => (entry.kind === 'event' ? null : entry.task);
     const sourceEvent = (entry: CalendarDayItem): ExternalCalendarEvent | null => (entry.kind === 'event' ? entry.event : null);
     const minutesIn = (dayStart: Date, from: Date, to: Date, layout: CalendarTimedLayout | undefined, durationMinutes?: number) => {
-        const startMinutes = (from.getTime() - dayStart.getTime()) / 60_000;
-        const endMinutes = (to.getTime() - dayStart.getTime()) / 60_000;
+        const startMinutes = getCalendarWallMinutes(dayStart, from);
+        const endMinutes = getCalendarWallMinutes(dayStart, to);
         return { startMinutes, endMinutes, durationMinutes: durationMinutes ?? endMinutes - startMinutes, column: layout ?? null };
     };
 
@@ -699,7 +708,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 const day = dayKey(selected);
                 const dayLists = lists(selected);
                 for (const task of searchResults) entries.push(scheduleRow(task, 'search'));
-                const showEvents = feed.calendars.length > 0;
+                const showEvents = feed.calendars.length > 0 || feed.error !== null;
                 if (showEvents) {
                     for (const event of dayLists.events) {
                         const row = getCalendarDetailsEventRow(event, { t, formatDate, sourceNames });
@@ -710,8 +719,9 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                         }, null, event) });
                     }
                 }
+                const detailTasks = getCalendarDetailsTaskLists(dayLists);
                 for (const kind of ['deadline', 'scheduled'] as const) {
-                    for (const task of kind === 'deadline' ? dayLists.deadlines : dayLists.scheduled) {
+                    for (const task of detailTasks[kind === 'deadline' ? 'deadlines' : 'scheduled']) {
                         const row = getCalendarDetailsTaskRow(task, kind, { t, formatDate, projectedLabel, timeEstimateToMinutes: ctx.estimateMinutes });
                         entries.push({ type: 'item', dayKey: day, lane: kind === 'deadline' ? 'deadlines' : 'scheduled', item: item(null, {
                             id: task.id, kind, title: task.title, detail: row.detail, projected: row.projected, pressable: !row.projected,
@@ -720,7 +730,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                         }, task, null) });
                     }
                 }
-                const empty = dayLists.deadlines.length === 0 && dayLists.scheduled.length === 0 && dayLists.events.length === 0;
+                const empty = detailTasks.deadlines.length === 0 && detailTasks.scheduled.length === 0 && dayLists.events.length === 0;
                 details = {
                     title: dateLabels.long,
                     close: toState({ ...period, selectedDate: null }),
@@ -799,7 +809,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 const event = sourceEvent(entry);
                 entries.push({ type: 'item', dayKey: dayKey(day), lane: 'allDay', item: item(entry, {
                     title: getCalendarItemTitle(entry, projectedLabel, formatDate),
-                    projected: getCalendarDayAllDayTones(entry).text === 'tint',
+                    projected: getCalendarDayAllDayTones(entry).text === 'tint', pressable: !getCalendarDayAllDayTones(entry).disabled,
                     tones: { fill: null, accent: null, text: getCalendarDayAllDayTones(entry).text, dashed: false, struck: false, faded: false },
                 }, sourceTask(entry), event) });
             }
@@ -921,6 +931,10 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         const selectedTask = state.selectedTaskId ? ctx.store.tasks.find((task) => task.id === state.selectedTaskId) ?? null : null;
         return {
             composer: toComposer(state),
+            timeLabels: {
+                start: formatCalendarComposerClockValue(state.startTimeValue, state.startAt, ctx.formatDate),
+                end: formatCalendarComposerClockValue(state.endTimeValue, state.startAt ? new Date(state.startAt.getTime() + state.durationMinutes * 60_000) : null, ctx.formatDate),
+            },
             text: getCalendarComposerText(ctx.t, { priorities: ctx.flags.priorities }),
             dateLabel: ctx.dates.shortDate(state.date),
             placeholders: getCalendarComposerPlaceholders(ctx.formatDate),
@@ -980,10 +994,11 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     );
     const taskById = (id: string) => useTaskStore.getState()._allTasks.find((task) => task.id === id);
     const moveTarget = (action: Extract<NativeCalendarAction, { type: 'moveTask' }>) => (
-        new Date(parseDayKey(action.day)!.getTime() + action.startMinutes * 60 * 1000).toISOString()
+        getCalendarMovedStart(parseDayKey(action.day)!.getTime(), action.startMinutes, safeParseDate(taskById(action.taskId)?.startTime)).toISOString()
     );
     const isMoveFree = (ctx: Context, feed: Feed, action: Extract<NativeCalendarAction, { type: 'moveTask' }>, taskId: string) => planCalendarTaskMove({
         taskId, dayStartMs: parseDayKey(action.day)!.getTime(), startMinutes: action.startMinutes, durationMinutes: action.durationMinutes,
+        currentStart: safeParseDate(taskById(taskId)?.startTime),
         isSlotFree: (day, start, durationMinutes, excludeTaskId) => isCalendarSlotFree(day, start, durationMinutes, slotOptions(ctx, eventsByDay(feed)(day), excludeTaskId)),
     });
 
@@ -997,7 +1012,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         const events = eventsByDay(feed);
         switch (action.type) {
             case 'saveComposer': {
-                const composer = readComposer(action.composer)!;
+                const composer = readComposer(action.composer, ctx.formatDate)!;
                 const createdId = requestId.toLowerCase();
                 // The whole save is validated here, before any write: the task plan, its
                 // dates and the slot. No refusal can follow a project write.
@@ -1110,7 +1125,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     const check = (requestId: string, action: NativeCalendarAction, ctx: Context, feed: Feed): Outcome | null => {
         switch (action.type) {
             case 'saveComposer': {
-                const composer = readComposer(action.composer);
+                const composer = readComposer(action.composer, ctx.formatDate);
                 if (!composer) return fail('INVALID_INPUT', 'A composer from openCalendarComposer is required');
                 // A task under this ID is a replay: the write checks it is this request's.
                 if (taskById(requestId.toLowerCase())) return null;
@@ -1253,7 +1268,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             if (!ready.ok) return ready;
             const now = new Date();
             const ctx = context(now);
-            const state = isObjectRecord(input) ? readComposer(input.composer) : null;
+            const state = isObjectRecord(input) ? readComposer(input.composer, ctx.formatDate) : null;
             const feed = isObjectRecord(input) ? readFeed(input.calendar) : null;
             const edit = isObjectRecord(input) && isObjectRecord(input.edit) ? input.edit as NativeCalendarComposerEdit : null;
             if (!state || !feed || !edit) return fail('INVALID_INPUT', 'A composer, an edit and the calendar are required');

@@ -681,6 +681,8 @@ export const csOverrides: Record<string, string> = {
         'calendar.scheduleResults': 'Naplánovat',
         'calendar.scheduleAction': 'Naplánovat',
         'calendar.events': 'Události',
+        'calendar.eventSingular': 'událost',
+        'calendar.eventPlural': 'události',
         'calendar.allDay': 'Celý den',
         'calendar.deadline': 'Uzávěrka',
         'calendar.showCompleted': 'Dokončené',

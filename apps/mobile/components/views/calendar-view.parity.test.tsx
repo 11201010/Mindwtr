@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import React from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
@@ -50,6 +51,7 @@ const harness = vi.hoisted(() => ({
   feed: { calendars: [] as unknown[], events: [] as unknown[] },
   /** How each fetch answers, in order; the last one repeats. */
   fetchPlan: ['ready'] as ('ready' | 'loading' | 'error' | 'none')[],
+  appStateListener: null as ((state: AppStateStatus) => void) | null,
 }));
 
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: () => undefined }));
@@ -613,12 +615,14 @@ async function perform(renderer: ReactTestRenderer, action: [string, ...unknown[
       const editor = hostsOf(root, 'TaskEditModal')[0];
       return run('close editor', editor?.props.onClose);
     }
+    case 'appState':
+      return run(`app state ${String(target)}`, harness.appStateListener ? () => harness.appStateListener!(target as AppStateStatus) : undefined);
     default:
       throw new Error(`Unknown action ${kind}`);
   }
 }
 
-async function runScenario(scenario: Scenario) {
+async function runScenario(scenario: Scenario, inspect?: (root: ReactTestInstance) => void) {
   writeLog.length = 0;
   createdIds.clear();
   harness.alerts.length = 0;
@@ -641,6 +645,7 @@ async function runScenario(scenario: Scenario) {
     await settle();
     observations.push(observe(renderer.root, seen));
   }
+  inspect?.(renderer.root);
   await act(async () => { renderer.unmount(); });
   await flushPendingSave();
   return observations;
@@ -672,6 +677,49 @@ describe('React Native Calendar screen parity fixture', () => {
     resetForTests();
     if (originalTz === undefined) delete process.env.TZ;
     else process.env.TZ = originalTz;
+  });
+
+  it('shows a first-load calendar error and clears prior-range events while loading', async () => {
+    const failed = await runScenario({ name: 'first load failure', settings: 'month', calendar: ['error'], actions: [['day', '2026-10-28']] });
+    expect((failed[1].texts as string[]).some((text) => text.includes(CALENDAR_ERROR))).toBe(true);
+    const loading = await runScenario({ name: 'new range loading', settings: 'month', calendar: ['ready', 'loading'], actions: [['day', '2026-10-28'], ['press', 'Next month'], ['day', '2026-11-01']] });
+    expect((loading.at(-1)!.texts as string[])).not.toContain('Team sync (Work calendar)');
+  });
+
+  it('keeps current-range events visible during a refresh', async () => {
+    const listener = vi.spyOn(AppState, 'addEventListener').mockImplementation((_type, callback) => {
+      harness.appStateListener = callback;
+      return { remove: () => { harness.appStateListener = null; } };
+    });
+    try {
+      const observed = await runScenario({ name: 'same range refresh', settings: 'month', calendar: ['ready', 'loading'], actions: [['day', '2026-10-31'], ['appState', 'background'], ['appState', 'active']] });
+      expect((observed.at(-1)!.texts as string[])).toContain('Weekend retreat (Personal)');
+    } finally {
+      listener.mockRestore();
+    }
+  });
+
+  it('opens a timeline tap at the wall-clock hour on the fall DST day', async () => {
+    const observed = await runScenario({ name: 'DST tap', settings: 'month', actions: [['press', 'Next month'], ['day', '2026-11-01'], ['mode', 'Day'], ['timeline', 8 * 60 * 1.4]] });
+    expect((observed.at(-1)!.inputs as string[][]).some(([label, , value]) => label === 'Start' && value === '8:00 AM')).toBe(true);
+  });
+
+  it('does not expose completed items as buttons', async () => {
+    await runScenario({ name: 'completed accessibility', settings: 'completed', actions: [['mode', 'Week']] }, (root) => {
+      const row = findPressable(root, 'Filed taxes');
+      expect(row?.props.disabled).toBe(true);
+      expect(row?.props.accessibilityRole).not.toBe('button');
+    });
+    await runScenario({ name: 'completed day accessibility', settings: 'completed', actions: [['mode', 'Day'], ['press', 'Previous day']] }, (root) => {
+      const row = findPressable(root, 'Filed taxes');
+      expect(row?.props.disabled).toBe(true);
+      expect(row?.props.accessibilityRole).not.toBe('button');
+    });
+  });
+
+  it('shows a task due and scheduled on one day once in month details', async () => {
+    const observations = await runScenario({ name: 'duplicate details', settings: 'month', actions: [['day', '2026-10-29']] });
+    expect((observations[1].texts as string[]).filter((text) => text === 'Dentist form')).toHaveLength(1);
   });
 
   it('replays every scenario exactly as frozen', async () => {

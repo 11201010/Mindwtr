@@ -651,6 +651,8 @@ export const huOverrides: Record<string, string> = {
     'calendar.scheduleResults': 'Ütemezés',
     'calendar.scheduleAction': 'Ütemezés',
     'calendar.events': 'Események',
+    'calendar.eventSingular': 'esemény',
+    'calendar.eventPlural': 'események',
     'calendar.allDay': 'Egész napos',
     'calendar.deadline': 'Határidő',
     'calendar.showCompleted': 'Befejezve',

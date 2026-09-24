@@ -713,6 +713,8 @@ export const koOverrides: Record<string, string> = {
         'calendar.scheduleResults': '일정',
         'calendar.scheduleAction': '일정',
         'calendar.events': '이벤트',
+        'calendar.eventSingular': '이벤트',
+        'calendar.eventPlural': '이벤트',
         'calendar.allDay': '하루 종일',
         'calendar.deadline': '마감',
         'calendar.projectedRecurrence': '예정됨',

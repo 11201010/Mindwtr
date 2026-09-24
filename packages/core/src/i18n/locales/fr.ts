@@ -610,6 +610,8 @@ export const frOverrides: Record<string, string> = {
         'calendar.scheduleResults': 'Planning',
         'calendar.scheduleAction': 'Planifier',
         'calendar.events': 'Événements',
+        'calendar.eventSingular': 'événement',
+        'calendar.eventPlural': 'événements',
         'calendar.allDay': 'Toute la journée',
         'calendar.deadline': 'Date limite',
         'calendar.projectedRecurrence': 'Planifié',

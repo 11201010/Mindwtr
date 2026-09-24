@@ -66,6 +66,7 @@ import {
   planCalendarTaskMove,
   resolveFeatureFlags,
   safeFormatDate,
+  safeParseDate,
   setCalendarViewComposerStartTime,
   shallow,
   shiftCalendarSelectedDate,
@@ -189,6 +190,8 @@ export function useCalendarViewController() {
   const [scheduleQuery, setScheduleQuery] = useState('');
   const [externalCalendars, setExternalCalendars] = useState<ExternalCalendarSubscription[]>([]);
   const [externalEvents, setExternalEvents] = useState<ExternalCalendarEvent[]>([]);
+  const [externalEventsRange, setExternalEventsRange] = useState('');
+  const loadedExternalRangeRef = useRef('');
   const [externalError, setExternalError] = useState<string | null>(null);
   const [isExternalLoading, setIsExternalLoading] = useState(false);
   const [externalRefreshToken, setExternalRefreshToken] = useState(0);
@@ -330,6 +333,7 @@ export function useCalendarViewController() {
   // the "unrelated state change" P19 says must not re-enumerate.
   const externalRangeStartMs = externalCalendarRange.rangeStart.getTime();
   const externalRangeEndMs = externalCalendarRange.rangeEnd.getTime();
+  const externalRangeKey = `${externalRangeStartMs}:${externalRangeEndMs}`;
   const recurrenceProjectionDayKey = calendarDateKey(new Date(nowTick));
   const recurrenceProjectedAtIso = useMemo(
     () => new Date(nowTick).toISOString(),
@@ -357,7 +361,7 @@ export function useCalendarViewController() {
 
   const deadlineTasksByDate = useMemo(() => indexCalendarDeadlineTasks(visibleTasks), [visibleTasks]);
 
-  const externalEventsByDate = useMemo(() => indexCalendarEvents(externalEvents), [externalEvents]);
+  const externalEventsByDate = useMemo(() => indexCalendarEvents(externalEventsRange === externalRangeKey ? externalEvents : []), [externalEvents, externalEventsRange, externalRangeKey]);
 
   const getDayLists = useCallback((date: Date) => getCalendarDayLists({
     completed: completedTasksByDate,
@@ -410,6 +414,7 @@ export function useCalendarViewController() {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     setIsExternalLoading(true);
     setExternalError(null);
+    if (loadedExternalRangeRef.current !== externalRangeKey) setExternalEvents([]);
     const rangeStart = new Date(externalRangeStartMs);
     const rangeEnd = new Date(externalRangeEndMs);
 
@@ -417,12 +422,16 @@ export function useCalendarViewController() {
       .then(({ calendars, events }) => {
         if (cancelled) return;
         setExternalCalendars(calendars);
+        loadedExternalRangeRef.current = externalRangeKey;
+        setExternalEventsRange(externalRangeKey);
         setExternalEvents(events);
       })
       .catch((error) => {
         if (cancelled) return;
         logCalendarError(error);
         setExternalError(String(error));
+        loadedExternalRangeRef.current = '';
+        setExternalEventsRange('');
         setExternalEvents([]);
       })
       .finally(() => {
@@ -434,7 +443,7 @@ export function useCalendarViewController() {
       cancelled = true;
       controller?.abort();
     };
-  }, [externalCalendarSettings, externalRangeEndMs, externalRangeStartMs, externalRefreshToken]);
+  }, [externalCalendarSettings, externalRangeEndMs, externalRangeStartMs, externalRangeKey, externalRefreshToken]);
 
   useFocusEffect(
     useCallback(() => {
@@ -733,12 +742,14 @@ export function useCalendarViewController() {
   };
 
   const commitTaskDrag = (taskId: string, dayStartMs: number, startMinutes: number, durationMinutes: number) => {
-    const plan = planCalendarTaskMove({ taskId, dayStartMs, startMinutes, durationMinutes, isSlotFree: isSlotFreeForDay });
+    const currentStart = safeParseDate(allTasks?.find((task) => task.id === taskId)?.startTime);
+    const plan = planCalendarTaskMove({ taskId, dayStartMs, startMinutes, durationMinutes, currentStart, isSlotFree: isSlotFreeForDay });
     if (plan.kind === 'projected') return;
     if (plan.kind === 'conflict') {
       showToast(getCalendarToasts(t).timeConflict);
       return;
     }
+    if (plan.updates.startTime === currentStart?.toISOString()) return;
     updateTask(taskId, plan.updates).catch(logCalendarError);
   };
 

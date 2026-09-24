@@ -214,6 +214,7 @@ export async function replayCalendarScenario(options: {
                 events = [];
                 feed = { status: 'ready', calendars, events };
             } else if (answer === 'loading') {
+                events = [];
                 feed = { status: 'loading', calendars, events };
             } else {
                 events = [];
@@ -456,9 +457,9 @@ export async function replayCalendarScenario(options: {
                 if (current.selectedTaskTitle) text(current.selectedTaskTitle);
             }
             text(current.text.start);
-            drawn.inputs.push([current.text.start, current.placeholders.start, current.composer.startTimeValue]);
+            drawn.inputs.push([current.text.start, current.placeholders.start, current.timeLabels.start]);
             text(current.text.end);
-            drawn.inputs.push([current.text.end, current.placeholders.end, current.composer.endTimeValue]);
+            drawn.inputs.push([current.text.end, current.placeholders.end, current.timeLabels.end]);
             for (const duration of current.durations) {
                 press({ label: duration.label, press: async () => { edit({ type: 'duration', minutes: duration.minutes }); } }, [duration.label]);
             }

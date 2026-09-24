@@ -667,6 +667,8 @@ export const daOverrides: Record<string, string> = {
     'calendar.scheduleResults': 'Tidsplan',
     'calendar.scheduleAction': 'Tidsplan',
     'calendar.events': 'Begivenheder',
+    'calendar.eventSingular': 'begivenhed',
+    'calendar.eventPlural': 'begivenheder',
     'calendar.allDay': 'Hele dagen',
     'calendar.deadline': 'Deadline',
     'calendar.showCompleted': 'Afsluttet',

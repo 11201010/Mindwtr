@@ -567,6 +567,8 @@ export const deOverrides: Record<string, string> = {
         'calendar.scheduleResults': 'Zeitplan',
         'calendar.scheduleAction': 'Zeitplan',
         'calendar.events': 'Termine',
+        'calendar.eventSingular': 'Termin',
+        'calendar.eventPlural': 'Termine',
         'calendar.allDay': 'Ganzer Tag',
         'calendar.deadline': 'Frist',
         'calendar.projectedRecurrence': 'Vorschau',

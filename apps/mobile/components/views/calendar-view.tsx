@@ -23,6 +23,7 @@ import {
   formatCalendarScheduleDayTitle,
   getCalendarComposerPlaceholders,
   getCalendarDayAllDayTones,
+  getCalendarDetailsTaskLists,
   getCalendarDayBounds,
   getCalendarDayOfMonth,
   getCalendarDayTimeline,
@@ -34,6 +35,8 @@ import {
   getCalendarMonthPreviewTones,
   getCalendarNavigationLabels,
   getCalendarNowMinutes,
+  getCalendarMovedStart,
+  getCalendarWallMinutes,
   getCalendarProjectedLabel,
   getCalendarScheduleItemText,
   getCalendarScheduleItemTones,
@@ -697,6 +700,7 @@ export function CalendarView() {
   const formatDurationLabel = formatCalendarDurationChip;
   const navigationLabels = getCalendarNavigationLabels(viewMode, t);
   const text = getCalendarScreenText(t);
+  const detailTaskLists = getCalendarDetailsTaskLists({ deadlines: selectedDateDeadlines, scheduled: selectedDateScheduled });
 
   const renderModeToggle = () => (
     <View style={[styles.modeToggle, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
@@ -749,6 +753,7 @@ export function CalendarView() {
       closeComposer={closeCalendarComposer}
       composer={calendarComposer}
       endTimePlaceholder={composerEndTimePlaceholder}
+      formatDate={safeFormatDate}
       error={calendarComposerError}
       formatDurationLabel={formatDurationLabel}
       isDark={isDark}
@@ -774,7 +779,7 @@ export function CalendarView() {
     const allDayItems = getCalendarItemsForDate(selectedDate).filter(isCalendarAllDayItem);
     const handleDayTimelinePress = (event: GestureResponderEvent) => {
       const clampedMinutes = snapCalendarTimelineMinutes(event.nativeEvent.locationY / PIXELS_PER_MINUTE);
-      openQuickAddAtDateTime(new Date(selectedDayStart.getTime() + clampedMinutes * 60_000));
+      openQuickAddAtDateTime(getCalendarMovedStart(selectedDayStart.getTime(), clampedMinutes));
     };
 
     return (
@@ -808,6 +813,7 @@ export function CalendarView() {
                 {allDayItems.map((item) => (
                   <Pressable
                     key={item.id}
+                    disabled={getCalendarDayAllDayTones(item).disabled}
                     onPress={() => {
                       if (item.kind === 'event') openExternalEvent(item.event);
                       else openTaskActions(item.task.id);
@@ -858,8 +864,8 @@ export function CalendarView() {
 
                 <View pointerEvents="box-none" style={styles.timelineItemsLayer}>
                   {selectedDayTimeline.events.map(({ event, start: clampedStart, end: clampedEnd, layout, timeLabel }) => {
-                    const startMinutes = (clampedStart.getTime() - selectedDayStart.getTime()) / 60_000;
-                    const endMinutes = (clampedEnd.getTime() - selectedDayStart.getTime()) / 60_000;
+                    const startMinutes = getCalendarWallMinutes(selectedDayStart, clampedStart);
+                    const endMinutes = getCalendarWallMinutes(selectedDayStart, clampedEnd);
                     const top = Math.max(0, startMinutes) * PIXELS_PER_MINUTE;
                     const height = Math.max(16, (endMinutes - startMinutes) * PIXELS_PER_MINUTE);
                     const eventStyle = [
@@ -897,8 +903,8 @@ export function CalendarView() {
                   })}
 
                   {selectedDayTimeline.tasks.map(({ task, durationMinutes, displayStart: clampedStart, displayEnd: clampedEnd, layout, projected, timeLabel }) => {
-                    const startMinutes = (clampedStart.getTime() - selectedDayStart.getTime()) / 60_000;
-                    const endMinutes = (clampedEnd.getTime() - selectedDayStart.getTime()) / 60_000;
+                    const startMinutes = getCalendarWallMinutes(selectedDayStart, clampedStart);
+                    const endMinutes = getCalendarWallMinutes(selectedDayStart, clampedEnd);
                     const top = Math.max(0, startMinutes) * PIXELS_PER_MINUTE;
                     const height = Math.max(24, (endMinutes - startMinutes) * PIXELS_PER_MINUTE);
                     return (
@@ -1107,7 +1113,6 @@ export function CalendarView() {
                   const nowMinutes = getCalendarNowMinutes(new Date());
                   const showNow = isToday(day) && nowMinutes !== null;
                   const { dayStart, dayEnd } = getCalendarDayBounds(day);
-                  const dayStartMs = dayStart.getTime();
                   const timedEntries = getCalendarWeekTimedEntries({
                     items: getCalendarItemsForDate(day),
                     dayStart,
@@ -1142,8 +1147,8 @@ export function CalendarView() {
                         {timedEntries.map((entry) => {
                           if (entry.kind === 'event') {
                             const { item, start: displayStart, end: displayEnd } = entry;
-                            const top = ((displayStart.getTime() - dayStartMs) / 60_000) * PIXELS_PER_MINUTE;
-                            const height = Math.max(24, ((displayEnd.getTime() - displayStart.getTime()) / 60_000) * PIXELS_PER_MINUTE);
+                            const top = getCalendarWallMinutes(dayStart, displayStart) * PIXELS_PER_MINUTE;
+                            const height = Math.max(24, (getCalendarWallMinutes(dayStart, displayEnd) - getCalendarWallMinutes(dayStart, displayStart)) * PIXELS_PER_MINUTE);
                             const eventStyle = [
                               styles.weekBlock,
                               compactWeekColumns && styles.weekBlockCompact,
@@ -1181,10 +1186,8 @@ export function CalendarView() {
                           }
 
                           const { item, projected } = entry;
-                          const displayStartMs = entry.displayStart.getTime();
-                          const displayEndMs = entry.displayEnd.getTime();
-                          const top = ((displayStartMs - dayStartMs) / 60_000) * PIXELS_PER_MINUTE;
-                          const height = Math.max(24, ((displayEndMs - displayStartMs) / 60_000) * PIXELS_PER_MINUTE);
+                          const top = getCalendarWallMinutes(dayStart, entry.displayStart) * PIXELS_PER_MINUTE;
+                          const height = Math.max(24, (getCalendarWallMinutes(dayStart, entry.displayEnd) - getCalendarWallMinutes(dayStart, entry.displayStart)) * PIXELS_PER_MINUTE);
                           return (
                             <Pressable
                               key={item.id}
@@ -1392,7 +1395,7 @@ export function CalendarView() {
                     <Pressable
                       key={item.id}
                       disabled={tones.disabled}
-                      accessibilityRole="button"
+                      accessibilityRole={tones.disabled ? undefined : 'button'}
                       accessibilityLabel={itemText.accessibilityLabel}
                       accessibilityState={{ disabled: tones.disabled }}
                       style={[
@@ -1650,7 +1653,7 @@ export function CalendarView() {
                 </View>
               )}
 
-              {externalCalendars.length > 0 && (
+              {(externalCalendars.length > 0 || externalError) && (
                 <View style={styles.scheduleResults}>
                   <Text style={[styles.scheduleResultsTitle, { color: tc.secondaryText }]}>
                     {text.events}
@@ -1693,7 +1696,7 @@ export function CalendarView() {
                 </View>
               )}
 
-              {selectedDateDeadlines.map((task) => {
+              {detailTaskLists.deadlines.map((task) => {
                 const row = getCalendarDetailsTaskRow(task, 'deadline', detailsRowOptions);
                 const projected = row.projected;
                 return (
@@ -1734,7 +1737,7 @@ export function CalendarView() {
                 );
               })}
 
-              {selectedDateScheduled.map((task) => {
+              {detailTaskLists.scheduled.map((task) => {
                 const row = getCalendarDetailsTaskRow(task, 'scheduled', detailsRowOptions);
                 const projected = row.projected;
                 return (
@@ -1776,8 +1779,8 @@ export function CalendarView() {
                 );
               })}
 
-              {selectedDateDeadlines.length === 0
-                && selectedDateScheduled.length === 0
+              {detailTaskLists.deadlines.length === 0
+                && detailTaskLists.scheduled.length === 0
                 && selectedDateExternalEvents.length === 0 && (
                 <Text style={[styles.noTasks, { color: tc.secondaryText }]}>{text.noTasks}</Text>
               )}

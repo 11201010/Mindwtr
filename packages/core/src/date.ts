@@ -515,9 +515,9 @@ export function safeFormatDate(
 }
 
 /** `safeFormatDate` under an explicit configuration, leaving the configured one alone. */
-export function createDateFormatter(config: DateFormattingConfig): DateFormatter {
+export function createDateFormatter(config: DateFormattingConfig, options?: { jalaliMonthNames?: boolean }): DateFormatter {
     const formatting = resolveDateFormatting(config);
-    return (dateStr, formatStr, fallback = '') => formatDateWith(formatting, dateStr, formatStr, fallback);
+    return (dateStr, formatStr, fallback = '') => formatDateWith(formatting, dateStr, formatStr, fallback, options);
 }
 
 function formatDateWith(
@@ -525,6 +525,7 @@ function formatDateWith(
     dateStr: string | Date | undefined | null,
     formatStr: string,
     fallback: string,
+    options?: { jalaliMonthNames?: boolean },
 ): string {
     if (!dateStr) return fallback;
 
@@ -532,7 +533,7 @@ function formatDateWith(
         const date = typeof dateStr === 'string' ? safeParseDate(dateStr) : dateStr;
         if (!date || !isValid(date)) return fallback;
         const normalizedFormat = normalizeLocalizedFormatTokens(formatStr, formatting);
-        if (formatting.calendarSystem === 'jalali' && hasLocalizedDateToken(formatStr)) {
+        if (formatting.calendarSystem === 'jalali' && (hasLocalizedDateToken(formatStr) || (options?.jalaliMonthNames && /M{3,}|L{3,}/.test(formatStr)))) {
             return formatJalali(date, normalizedFormat, { locale: jalaliFaIR });
         }
         return format(date, normalizedFormat, { locale: formatting.locale });

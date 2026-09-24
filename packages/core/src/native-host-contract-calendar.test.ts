@@ -119,7 +119,7 @@ describe('native host contract: Calendar', () => {
                 cell.previewItems.map((item) => item.id),
             ]));
         const selectedLists = getCalendarDayLists(monthIndex, new Date(2026, 9, 28));
-        expect(items(month, 'deadlines').map((item) => item.taskId)).toEqual(selectedLists.deadlines.map((task) => task.id));
+        expect(items(month, 'deadlines').map((item) => item.taskId)).toEqual(selectedLists.deadlines.filter((task) => !selectedLists.scheduled.some((scheduled) => scheduled.id === task.id)).map((task) => task.id));
         expect(items(month, 'scheduled').map((item) => item.taskId)).toEqual(selectedLists.scheduled.map((task) => task.id));
         expect(items(month, 'events').map((item) => item.eventId)).toEqual(selectedLists.events.map((event) => event.id));
         // Rows carry core meta.
@@ -136,6 +136,9 @@ describe('native host contract: Calendar', () => {
             .toEqual(weekDays.flatMap((date) => getCalendarWeekAllDayItems(getCalendarDayItems(getCalendarDayLists(weekIndex, date))).map((item) => item.id)));
         // As on mobile, a completed item offers no sheet: only the view's open tasks do.
         expect(items(week, 'allDay').some((item) => item.kind === 'completed' && item.taskId === 'd-done')).toBe(true);
+        expect(items(week, 'allDay').find((item) => item.taskId === 'd-done')?.pressable).toBe(false);
+        const completedDay = value(host.getCalendarView({ state: { viewMode: 'day', selectedDate: '2026-10-27', visibleMonth: '2026-10-27' }, calendar: ready, ...page }));
+        expect(items(completedDay, 'allDay').find((item) => item.taskId === 'd-done')?.pressable).toBe(false);
         expect(host.getCalendarItemSheet({ taskId: 'd-done', state: week.state, calendar: ready })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
         expect(value(host.getCalendarItemSheet({ taskId: 't-plan', state: week.state, calendar: ready }))).toMatchObject({
             kind: 'task', buttons: [{ id: 'edit' }, { id: 'unschedule' }, { id: 'done' }, { id: 'delete', style: 'destructive' }, { id: 'cancel', style: 'cancel' }],
@@ -143,6 +146,8 @@ describe('native host contract: Calendar', () => {
 
         // Schedule: its days and the planning list.
         const schedule = value(host.getCalendarView({ state: { viewMode: 'schedule', selectedDate: '2026-10-28', visibleMonth: '2026-10-28' }, calendar: ready, ...page }));
+        const completedSchedule = value(host.getCalendarView({ state: { viewMode: 'schedule', selectedDate: '2026-10-27', visibleMonth: '2026-10-27' }, calendar: ready, ...page }));
+        expect(items(completedSchedule, 'list').find((item) => item.taskId === 'd-done')?.pressable).toBe(false);
         const scheduleIndex = index(getCalendarVisibleRange({
             calendarSystem: 'gregorian', currentMonthDate: new Date(2026, 9, 1), selectedDate: new Date(2026, 9, 28), viewMode: 'schedule', weekStartTime: weekStart.getTime(),
         }));
@@ -164,6 +169,30 @@ describe('native host contract: Calendar', () => {
         const next = value(host.getCalendarView({ state: view.header.next!.state, ...page }));
         expect([next.header.title, next.range]).toEqual(['Nov 1 - Nov 7', { start: '2026-11-01T04:00:00.000Z', end: '2026-11-08T04:59:59.999Z' }]);
         expect(next.content.mode === 'week' && next.content.visibleDays).toBe(5);
+    });
+
+    it('shows a first-load calendar error in month details', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const view = value(host.getCalendarView({ state: { viewMode: 'month', selectedDate: '2026-10-28', visibleMonth: '2026-10-28' }, calendar: { status: 'error', message: 'Feed unavailable' }, ...page }));
+        expect(view.content.mode === 'month' && view.content.details?.events?.error).toBe('Feed unavailable');
+    });
+
+    it('shows a task due and scheduled on one day only as scheduled in month details', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const view = value(host.getCalendarView({ state: { viewMode: 'month', selectedDate: '2026-10-29', visibleMonth: '2026-10-29' }, calendar: ready, ...page }));
+        expect([...items(view, 'deadlines'), ...items(view, 'scheduled')].filter((item) => item.taskId === 't-form')).toHaveLength(1);
+        expect(items(view, 'scheduled').some((item) => item.taskId === 't-form')).toBe(true);
+    });
+
+    it('uses Jalali month and year in contract headings', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        useTaskStore.setState({ settings: { ...useTaskStore.getState().settings, calendarSystem: 'jalali' } });
+        expect(await host.setLanguage({ storedLanguage: 'fa', systemLocale: 'fa-IR' })).toMatchObject({ ok: true });
+        const month = value(host.getCalendarView({ state: { viewMode: 'month', selectedDate: '2025-03-21', visibleMonth: '2025-03-21' }, calendar: ready, ...page }));
+        expect(month.header.title).toBe('فروردین 1404');
     });
 
     it('builds its headings in the current language without Intl, as the native host runs them', async () => {
@@ -210,6 +239,40 @@ describe('native host contract: Calendar', () => {
             Date.prototype.toLocaleDateString = realToLocaleDateString;
             Date.prototype.toLocaleString = realToLocaleString;
         }
+    });
+
+    it('keeps Chinese composer edits raw while offering localized labels', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        expect(await host.setLanguage({ storedLanguage: 'zh-Hans', systemLocale: 'zh-CN' })).toMatchObject({ ok: true });
+        const at = new Date(2026, 9, 31, 8);
+        const opened = value(host.openCalendarComposer({ at: at.toISOString(), calendar: ready })).composer!;
+        expect(opened.composer.startTimeValue).toBe('08:00');
+        expect(opened.timeLabels.start).toContain('8:00');
+        const titled = value(host.editCalendarComposer({ composer: opened.composer, edit: { type: 'title', title: 'Morning call' }, calendar: ready }));
+        const edited = value(host.editCalendarComposer({ composer: titled.composer, edit: { type: 'startTime', value: '09:00' }, calendar: ready }));
+        expect(edited.composer.startTimeValue).toBe('09:00');
+        const saved = value(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'saveComposer', composer: edited.composer }, calendar: ready }));
+        expect(saved.changed).toBe(true);
+        expect(new Date(useTaskStore.getState().tasks.find((task) => task.id === saved.taskId)?.startTime ?? '').getHours()).toBe(9);
+    });
+
+    it('omits stale events supplied by a loading feed', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const state = { viewMode: 'month' as const, selectedDate: '2026-10-31', visibleMonth: '2026-10-31' };
+        const loading = value(host.getCalendarView({ state, calendar: { status: 'loading', calendars: fixture.calendars, events: fixture.calendarEvents }, ...page }));
+        expect(items(loading, 'details').some((item) => item.kind === 'event')).toBe(false);
+    });
+
+    it('leaves a task at the second fall 1:30 AM when its block is dropped in place', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const later = '2026-11-01T06:30:00.000Z';
+        await useTaskStore.getState().updateTask('t-standup', { startTime: later });
+        const result = value(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'moveTask', taskId: 't-standup', day: '2026-11-01', startMinutes: 90, durationMinutes: 30 }, calendar: ready }));
+        expect(result.changed).toBe(false);
+        expect(useTaskStore.getState().tasks.find((task) => task.id === 't-standup')?.startTime).toBe(later);
     });
 
     it('expands recurring tasks once per range: a new selected day, search or item sheet reuses it', async () => {
@@ -397,6 +460,7 @@ describe('native host contract: Calendar', () => {
         expect(value(host.getCalendarItemSheet({ taskId: projected.taskId!, state: week.state, calendar: ready }))).toMatchObject({ kind: 'projected', buttons: [{ id: 'ok' }] });
         const schedule = value(host.openCalendarComposer({ scheduleTaskId: 'n-email', day: '2026-10-28', calendar: ready }));
         expect(schedule.composer?.composer).toMatchObject({ mode: 'existing', selectedTaskId: 'n-email', startTimeValue: '10:00' });
+        expect(schedule.composer?.timeLabels.start).toBe('10:00 AM');
     });
 
     it('writes nothing when a request that already landed is replayed after a restart', async () => {

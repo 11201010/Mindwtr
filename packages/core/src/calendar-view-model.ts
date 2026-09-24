@@ -22,6 +22,7 @@
 import { taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import {
     buildCalendarDayItems,
+    getCalendarDistinctDeadlines,
     buildTimedCalendarLayouts,
     getTaskCompletionInstant,
     isCompletedCalendarTask,
@@ -32,6 +33,7 @@ import {
     type CalendarTimedLayoutInput,
 } from './calendar-day-items';
 import { setComposerStart, type CalendarComposerError, type CalendarComposerState } from './calendar-composer';
+import { formatListItemCount } from './list-count';
 import {
     DEFAULT_CALENDAR_DAY_END_HOUR,
     DEFAULT_CALENDAR_DAY_START_HOUR,
@@ -427,7 +429,7 @@ export const formatCalendarScheduleDayTitle = (date: Date, options: { dates: Cal
 
 /**
  * A month cell's spoken label: the date, then its task and event counts.
- * The counts keep their plural unit ("1 tasks") as the screen always has.
+ * Counts use each locale's singular and plural forms.
  */
 export const getCalendarMonthCellAccessibilityLabel = (
     date: Date,
@@ -435,8 +437,8 @@ export const getCalendarMonthCellAccessibilityLabel = (
     options: { dates: CalendarDates; t: Translate },
 ): string => [
     options.dates.cellDate(date),
-    counts.taskCount > 0 ? `${counts.taskCount} ${options.t('common.tasks')}` : '',
-    counts.eventCount > 0 ? `${counts.eventCount} ${translateWith(options.t)('calendar.events')}` : '',
+    counts.taskCount > 0 ? formatListItemCount(counts.taskCount, 'task', options.t) : '',
+    counts.eventCount > 0 ? formatListItemCount(counts.eventCount, 'event', options.t) : '',
 ].filter(Boolean).join('. ');
 
 export const getCalendarModeOptions = (t: Translate): { value: CalendarViewMode; label: string }[] => {
@@ -698,6 +700,11 @@ export const getCalendarDayLists = (index: CalendarDayIndex, date: Date): Calend
 
 export const getCalendarDayItems = (lists: CalendarDayLists): CalendarDayItem[] => buildCalendarDayItems(lists);
 
+/** Month details use the same scheduled-over-deadline choice as other views. */
+export const getCalendarDetailsTaskLists = (lists: Pick<CalendarDayLists, 'deadlines' | 'scheduled'>) => {
+    return { deadlines: getCalendarDistinctDeadlines(lists.deadlines, lists.scheduled), scheduled: lists.scheduled };
+};
+
 /** A day's distinct tasks: scheduled, due or completed that day. */
 export const countCalendarDayTasks = (lists: CalendarDayLists): number => {
     const ids = new Set<string>();
@@ -836,13 +843,14 @@ export const getCalendarWeekAllDayTones = (item: CalendarDayItem) => {
         fill: (item.kind === 'event' ? 'secondary' : 'input') as CalendarTone,
         accent: (item.kind === 'event' ? 'source' : projected ? 'tint' : 'danger') as CalendarTone,
         dashed: projected,
-        disabled: projected,
+        disabled: projected || item.kind === 'completed',
     };
 };
 
-/** The day view's pinned all-day list: every item, pressable; a projected one reads in the tint. */
+/** The day view's pinned all-day list; completed items have no action. */
 export const getCalendarDayAllDayTones = (item: CalendarDayItem) => ({
     text: (item.kind !== 'event' && isProjectedRecurringTask(item.task) ? 'tint' : 'text') as CalendarTone,
+    disabled: item.kind === 'completed',
 });
 
 /** A schedule view row's time line and spoken label. */
@@ -891,7 +899,7 @@ export const getCalendarScheduleItemTones = (item: CalendarDayItem) => {
         dashed: projected,
         struck: completed,
         faded: completed,
-        disabled: projected,
+        disabled: projected || completed,
     };
 };
 
@@ -936,10 +944,17 @@ const clampToDay = (startMs: number, endMs: number, dayStartMs: number, dayEndMs
     start: Math.max(startMs, dayStartMs),
     end: Math.min(endMs, dayEndMs),
 });
+/** Timeline coordinates are local clock minutes, including across a DST change. */
+export const getCalendarWallMinutes = (dayStart: Date, instant: Date): number => (
+    instant.getFullYear() !== dayStart.getFullYear() || instant.getMonth() !== dayStart.getMonth() || instant.getDate() !== dayStart.getDate()
+        ? 24 * 60
+        : instant.getHours() * 60 + instant.getMinutes() + instant.getSeconds() / 60 + instant.getMilliseconds() / 60_000
+);
 const layoutInput = (id: string, startMs: number, endMs: number, dayStartMs: number, dayEndMs: number): CalendarTimedLayoutInput | null => {
     const clamped = clampToDay(startMs, endMs, dayStartMs, dayEndMs);
     if (clamped.end <= clamped.start) return null;
-    return { id, startMinutes: (clamped.start - dayStartMs) / 60_000, endMinutes: (clamped.end - dayStartMs) / 60_000 };
+    const dayStart = new Date(dayStartMs);
+    return { id, startMinutes: getCalendarWallMinutes(dayStart, new Date(clamped.start)), endMinutes: getCalendarWallMinutes(dayStart, new Date(clamped.end)) };
 };
 
 export type CalendarTimelineEvent = {
@@ -989,13 +1004,11 @@ export function getCalendarDayTimeline(options: {
         const end = safeParseDate(event.end);
         if (!start || !end) continue;
         const clamped = clampToDay(start.getTime(), end.getTime(), dayStartMs, dayEndMs);
-        const startMinutes = (clamped.start - dayStartMs) / 60_000;
-        const endMinutes = (clamped.end - dayStartMs) / 60_000;
         events.push({
             event,
             start: new Date(clamped.start),
             end: new Date(clamped.end),
-            timeLabel: formatCalendarTimeRange(new Date(clamped.start), Math.max(1, Math.round(endMinutes - startMinutes)), options.formatDate),
+            timeLabel: formatCalendarClockRange(new Date(clamped.start), new Date(clamped.end), options.formatDate),
         });
         const input = layoutInput(`event:${event.id}`, start.getTime(), end.getTime(), dayStartMs, dayEndMs);
         if (input) inputs.push(input);
@@ -1218,6 +1231,11 @@ export const getCalendarComposerPlaceholders = (formatDate: DateFormatter) => ({
     end: formatDate(new Date(2000, 0, 1, 9, 30), 'p', '09:30'),
 });
 
+/** Show a derived time in the user's clock while preserving raw edits. */
+export const formatCalendarComposerClockValue = (value: string, date: Date | null, formatDate: DateFormatter): string => (
+    date && value === formatCalendarTimeInputValue(date) ? formatDate(date, 'p', value) : value
+);
+
 // ---------------------------------------------------------------------------
 // Actions.
 
@@ -1290,14 +1308,26 @@ export function planCalendarTaskMove(options: {
     dayStartMs: number;
     startMinutes: number;
     durationMinutes: number;
+    currentStart?: Date | null;
     isSlotFree: (day: Date, start: Date, durationMinutes: number, excludeTaskId: string) => boolean;
 }): { kind: 'projected' } | { kind: 'conflict' } | { kind: 'move'; updates: Partial<Task> } {
     if (isProjectedRecurringTaskId(options.taskId)) return { kind: 'projected' };
     const day = new Date(options.dayStartMs);
-    const nextStart = new Date(options.dayStartMs + options.startMinutes * 60 * 1000);
+    const nextStart = getCalendarMovedStart(options.dayStartMs, options.startMinutes, options.currentStart);
+    if (options.currentStart?.getTime() === nextStart.getTime()) return { kind: 'move', updates: { startTime: nextStart.toISOString() } };
     if (!options.isSlotFree(day, nextStart, options.durationMinutes, options.taskId)) return { kind: 'conflict' };
     return { kind: 'move', updates: { startTime: nextStart.toISOString() } };
 }
+
+/** Convert minutes on a local calendar day to wall-clock time across DST. */
+export const getCalendarMovedStart = (dayStartMs: number, startMinutes: number, currentStart?: Date | null): Date => {
+    const start = new Date(dayStartMs);
+    if (currentStart && calendarDateKey(currentStart) === calendarDateKey(start)
+        && getCalendarWallMinutes(start, currentStart) === startMinutes) return currentStart;
+    // ponytail: a new drop onto a repeated clock minute picks its first occurrence; choosing the second needs a fold-aware gesture coordinate.
+    start.setHours(0, startMinutes, 0, 0);
+    return start;
+};
 
 /** A task made from an event (an all-day event gives a date-only due date), and the day to show after. */
 export function planCalendarEventTask(event: ExternalCalendarEvent, options: { calendarName?: string; t: Translate }) {
