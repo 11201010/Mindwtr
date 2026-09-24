@@ -322,6 +322,7 @@ export function CalendarView() {
     calendarComposerCandidates,
     calendarComposerError,
     calendarComposerSelectedTask,
+    calendarDates,
     calendarSystem,
     calendarWeekVisibleDays,
     calendarNameById,
@@ -1028,7 +1029,7 @@ export function CalendarView() {
                   style={[styles.weekDayHeader, { width: weekColumnWidth, borderLeftColor: tc.border }, isToday(day) && { backgroundColor: toRgba(tc.tint, isDark ? 0.2 : 0.1) }]}
                 >
                   <Text style={[styles.weekDayName, compactWeekColumns && styles.weekDayNameCompact, { color: tc.secondaryText }]}>
-                    {getCalendarWeekdayLabel(day, locale)}
+                    {getCalendarWeekdayLabel(day, calendarDates)}
                   </Text>
                   <Text style={[styles.weekDayNumber, compactWeekColumns && styles.weekDayNumberCompact, { color: isToday(day) ? tc.tint : tc.text }]}>
                     {day.getDate()}
@@ -1343,7 +1344,7 @@ export function CalendarView() {
           renderItem={({ item: section }) => (
             <View style={styles.scheduleSection}>
               <Text style={[styles.scheduleDate, { color: tc.secondaryText }]}>
-                {formatCalendarScheduleDayTitle(section.date, { locale, t })}
+                {formatCalendarScheduleDayTitle(section.date, { dates: calendarDates, t })}
               </Text>
               <View style={styles.scheduleItems}>
                 {section.items.map((item) => {
@@ -1487,7 +1488,7 @@ export function CalendarView() {
 
               const date = day;
               const dateKey = calendarDateKey(date);
-              const cell = getCalendarMonthCell(date, getDayLists(date), { locale, t });
+              const cell = getCalendarMonthCell(date, getDayLists(date), { dates: calendarDates, t });
               const { taskCount, eventCount } = cell;
               const visibleItems = cell.previewItems;
               const isSelected = selectedDate && isSameDay(date, selectedDate);

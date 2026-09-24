@@ -951,6 +951,7 @@ export function createNativeHostContract() {
             t: () => translate,
             dateFormatting,
             revision: (now) => `${revision()}:${displayRevision(now)}`,
+            dataRevision: () => `${revision()}:${settingsRevision()}`,
             rows: (tasks, now) => {
                 const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
                 return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));

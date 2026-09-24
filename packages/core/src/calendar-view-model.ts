@@ -11,10 +11,13 @@
  * an event in the calendar app). Day cells and the composer reuse
  * calendar-day-items.ts, calendar-scheduling.ts and calendar-composer.ts.
  *
- * Dates in headings format with `toLocaleDateString` under the locale tag the
- * user's date settings resolve to (getCalendarLocale), exactly as the screen
- * always has; clock times format through a DateFormatter (the app's configured
- * `safeFormatDate` on mobile, `createDateFormatter` in the contract).
+ * Heading dates come from a CalendarDates: the React Native screen keeps its
+ * `toLocaleDateString` headings (createCalendarLocaleDates); the contract builds
+ * them from date-fns patterns through its DateFormatter
+ * (createCalendarPatternDates), because the native host's engine has no Intl.
+ * The patterns give the same English text. Clock times format through a
+ * DateFormatter (the app's configured `safeFormatDate` on mobile,
+ * `createDateFormatter` in the contract).
  */
 import { taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import {
@@ -326,56 +329,106 @@ export function selectCalendarViewMode(state: CalendarPeriodState, viewMode: Cal
 
 const translateWith = (t: Translate) => (key: string, values?: I18nTemplateValues) => resolveI18nText(t, key, { values });
 
-export const formatCalendarMonthTitle = (currentMonthDate: Date, locale: string): string => (
-    currentMonthDate.toLocaleDateString(locale, { year: 'numeric', month: 'long' })
-);
+/**
+ * The heading dates of the calendar: the month title, a week's day range, the
+ * day title, the details title, a short date, a month cell's spoken date, and
+ * the short weekday labels (index 0 is Sunday).
+ */
+export type CalendarDates = {
+    monthYear: (date: Date) => string;
+    monthDay: (date: Date) => string;
+    dayTitle: (date: Date) => string;
+    longDate: (date: Date) => string;
+    shortDate: (date: Date) => string;
+    cellDate: (date: Date) => string;
+    weekdays: readonly string[];
+};
 
-export const formatCalendarWeekTitle = (weekDays: readonly Date[], locale: string): string => (
-    `${weekDays[0].toLocaleDateString(locale, { month: 'short', day: 'numeric' })} - ${weekDays[6].toLocaleDateString(locale, { month: 'short', day: 'numeric' })}`
+/** Headings as the React Native screen draws them: `toLocaleDateString` under the user's locale tag. */
+export const createCalendarLocaleDates = (locale: string): CalendarDates => ({
+    monthYear: (date) => date.toLocaleDateString(locale, { year: 'numeric', month: 'long' }),
+    monthDay: (date) => date.toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
+    dayTitle: (date) => date.toLocaleDateString(locale, { weekday: 'short', month: 'long', day: 'numeric' }),
+    longDate: (date) => date.toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+    shortDate: (date) => date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' }),
+    cellDate: (date) => date.toLocaleDateString(locale, { weekday: 'long', month: 'long', day: 'numeric' }),
+    weekdays: getShortWeekdayLabels(locale),
+});
+
+// A Sunday, so index 0 is Sunday like getShortWeekdayLabels.
+const WEEKDAY_ANCHOR_SUNDAY = new Date(2023, 0, 1);
+
+/**
+ * Headings from date-fns patterns through the user's DateFormatter, with no
+ * Intl: the native host's engine has none. The patterns follow the locale's
+ * day/month order and give the React Native screen's English text (en-US and
+ * en-GB); other languages get date-fns's words in the same order. Weekday
+ * labels follow getShortWeekdayLabels' rules (no trailing period, three
+ * characters, or the narrow form when three would collide).
+ */
+export const createCalendarPatternDates = (formatDate: DateFormatter): CalendarDates => {
+    const sample = formatDate(new Date(2001, 10, 22), 'P');
+    const dayFirst = sample.indexOf('22') !== -1 && sample.indexOf('11') !== -1 && sample.indexOf('22') < sample.indexOf('11');
+    const pattern = (monthFirst: string, dayFirstPattern: string) => (date: Date) => formatDate(date, dayFirst ? dayFirstPattern : monthFirst);
+    const weekdayLabels = (token: string) => Array.from({ length: 7 }, (_, day) => {
+        const date = new Date(WEEKDAY_ANCHOR_SUNDAY);
+        date.setDate(date.getDate() + day);
+        return formatDate(date, token);
+    });
+    const short = weekdayLabels('EEE').map((label) => label.replace(/\.+$/, ''));
+    let weekdays = short;
+    if (short.some((label) => [...label].length > 3)) {
+        const truncated = short.map((label) => [...label].slice(0, 3).join(''));
+        weekdays = new Set(truncated).size === truncated.length ? truncated : weekdayLabels('EEEEE');
+    }
+    return {
+        monthYear: (date) => formatDate(date, 'LLLL yyyy'),
+        monthDay: pattern('MMM d', 'd MMM'),
+        dayTitle: pattern('EEE, MMMM d', 'EEE d MMMM'),
+        longDate: pattern('EEEE, MMMM d, yyyy', 'EEEE, d MMMM yyyy'),
+        shortDate: pattern('EEE, MMM d', 'EEE d MMM'),
+        cellDate: pattern('EEEE, MMMM d', 'EEEE d MMMM'),
+        weekdays,
+    };
+};
+
+export const formatCalendarMonthTitle = (currentMonthDate: Date, dates: CalendarDates): string => dates.monthYear(currentMonthDate);
+
+export const formatCalendarWeekTitle = (weekDays: readonly Date[], dates: CalendarDates): string => (
+    `${dates.monthDay(weekDays[0])} - ${dates.monthDay(weekDays[6])}`
 );
 
 /** The month grid's weekday header, starting on the week's first day. */
-export const getCalendarDayNames = (locale: string, weekStartIndex: number): string[] => {
-    const labels = getShortWeekdayLabels(locale);
-    return Array.from({ length: 7 }, (_, index) => labels[(index + weekStartIndex) % 7]);
-};
+export const getCalendarDayNames = (dates: CalendarDates, weekStartIndex: number): string[] => (
+    Array.from({ length: 7 }, (_, index) => dates.weekdays[(index + weekStartIndex) % 7])
+);
 
-export const getCalendarWeekdayLabel = (date: Date, locale: string): string => getShortWeekdayLabels(locale)[date.getDay()];
+export const getCalendarWeekdayLabel = (date: Date, dates: CalendarDates): string => dates.weekdays[date.getDay()];
 
 const formatWithToday = (label: string, date: Date, now: Date, today: string): string => (
     `${label}${isSameCalendarDate(date, now) ? ` · ${today}` : ''}`
 );
 
 /** The selected day's month-details title, the planning list's subtitle and the day view's title. */
-export function formatCalendarSelectedDateLabels(selectedDate: Date | null, options: { locale: string; t: Translate; now?: Date }) {
+export function formatCalendarSelectedDateLabels(selectedDate: Date | null, options: { dates: CalendarDates; t: Translate; now?: Date }) {
     if (!selectedDate) return { long: '', planning: '', dayTitle: '' };
-    const { locale, t } = options;
+    const { dates, t } = options;
     const now = options.now ?? new Date();
     return {
-        long: selectedDate.toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        planning: translateWith(t)('calendar.planningForDate', {
-            date: selectedDate.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' }),
-        }),
-        dayTitle: formatWithToday(
-            selectedDate.toLocaleDateString(locale, { weekday: 'short', month: 'long', day: 'numeric' }),
-            selectedDate,
-            now,
-            t('filters.datePreset.today'),
-        ),
+        long: dates.longDate(selectedDate),
+        planning: translateWith(t)('calendar.planningForDate', { date: dates.shortDate(selectedDate) }),
+        dayTitle: formatWithToday(dates.dayTitle(selectedDate), selectedDate, now, t('filters.datePreset.today')),
     };
 }
 
 /** The schedule view's day heading ("Wed, Oct 28 · Today"). */
-export const formatCalendarScheduleDayTitle = (date: Date, options: { locale: string; t: Translate; now?: Date }): string => formatWithToday(
-    date.toLocaleDateString(options.locale, { weekday: 'short', month: 'short', day: 'numeric' }),
+export const formatCalendarScheduleDayTitle = (date: Date, options: { dates: CalendarDates; t: Translate; now?: Date }): string => formatWithToday(
+    options.dates.shortDate(date),
     date,
     options.now ?? new Date(),
     translateWith(options.t)('filters.datePreset.today'),
 );
 
-export const formatCalendarShortDate = (date: Date, locale: string): string => (
-    date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' })
-);
 
 /**
  * A month cell's spoken label: the date, then its task and event counts.
@@ -384,9 +437,9 @@ export const formatCalendarShortDate = (date: Date, locale: string): string => (
 export const getCalendarMonthCellAccessibilityLabel = (
     date: Date,
     counts: { taskCount: number; eventCount: number },
-    options: { locale: string; t: Translate },
+    options: { dates: CalendarDates; t: Translate },
 ): string => [
-    date.toLocaleDateString(options.locale, { weekday: 'long', month: 'long', day: 'numeric' }),
+    options.dates.cellDate(date),
     counts.taskCount > 0 ? `${counts.taskCount} ${options.t('common.tasks')}` : '',
     counts.eventCount > 0 ? `${counts.eventCount} ${translateWith(options.t)('calendar.events')}` : '',
 ].filter(Boolean).join('. ');
@@ -738,7 +791,7 @@ export type CalendarTone = 'tint' | 'danger' | 'secondary' | 'text' | 'input' | 
 export function getCalendarMonthCell(
     date: Date,
     lists: CalendarDayLists,
-    options: { locale: string; t: Translate },
+    options: { dates: CalendarDates; t: Translate },
 ) {
     const items = getCalendarDayItems(lists);
     const taskCount = countCalendarDayTasks(lists);

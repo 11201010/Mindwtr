@@ -1,6 +1,6 @@
 import {
   CALENDAR_TIME_ESTIMATE_OPTIONS,
-  formatCalendarShortDate,
+  createCalendarLocaleDates,
   getCalendarComposerText,
   isCalendarComposerSaveDisabled,
   resolveFeatureFlags,
@@ -113,7 +113,7 @@ export function CalendarTaskComposerModal({
                   {text.title}
                 </Text>
                 <Text style={[styles.composerDate, { color: tc.secondaryText }]}>
-                  {formatCalendarShortDate(composer.date, locale)}
+                  {createCalendarLocaleDates(locale).shortDate(composer.date)}
                 </Text>
               </View>
               <Pressable

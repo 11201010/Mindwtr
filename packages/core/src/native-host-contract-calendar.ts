@@ -12,18 +12,24 @@
  * and sends what it has as `calendar` (loading, ready or error).
  *
  * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision. Writes go
- * through runCalendarAction with a request UUID: while a save is owed, a retry
+ * through runCalendarAction with a request UUID: a request the receipts hold
+ * (running, or owing its save) goes to them before any other check, and a retry
  * only saves (native-request-receipts.ts); every write is target-state, so a
- * replay after a restart writes nothing. Success means the change is saved. A
- * refusal the screen shows (a time conflict, a composer error) writes nothing and
- * leaves the request ID free.
+ * replay after a restart writes nothing, and a task a request made answers its
+ * replay only while it is exactly what the request writes. Success means the
+ * change is saved. A refusal the screen shows (a time conflict, a composer
+ * error) writes nothing and leaves the request ID free.
+ *
+ * Headings (month and week titles, day titles, weekday labels) come from
+ * date-fns patterns through the user's date formatter: the host's engine has no
+ * Intl. Their English text equals the React Native screen's.
  *
  * Only functions read this module's imports from native-host-contract.ts, so
  * the import cycle between the two files is safe.
  */
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import {
-    executeComposerSave,
+    applyComposerCreatedProject,
     openComposerAt,
     openComposerForDate,
     prepareComposerSave,
@@ -54,7 +60,6 @@ import {
     formatCalendarMonthTitle,
     formatCalendarScheduleDayTitle,
     formatCalendarSelectedDateLabels,
-    formatCalendarShortDate,
     formatCalendarWeekTitle,
     getCalendarComposerCandidates,
     getCalendarComposerErrorText,
@@ -72,7 +77,7 @@ import {
     getCalendarEventSheet,
     getCalendarHourLabels,
     getCalendarItemTitle,
-    getCalendarLocale,
+    createCalendarPatternDates,
     getCalendarModeOptions,
     getCalendarMonthCell,
     getCalendarMonthDates,
@@ -151,6 +156,8 @@ export type CalendarViewDeps = {
     t: () => Translate;
     /** The user's date settings; clock times format through createDateFormatter with them. */
     dateFormatting: () => DateFormattingConfig;
+    /** Data and settings revision, without the clock: what the period index reads. */
+    dataRevision: () => string;
     /** Rows with core meta, as the other contract lists build them. */
     rows: (tasks: readonly Task[], now: Date) => NativeTaskRow[];
 };
@@ -376,6 +383,7 @@ const paramsKey = (params: unknown): string => {
 };
 
 const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ENTERED_LIMIT = 200;
 const MAX_EVENTS = 2000;
 const MAX_CALENDARS = 200;
 const ISO_INSTANT_LIMIT = 64;
@@ -485,6 +493,25 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     let projectedAt = { day: '', iso: '' };
     // ponytail: one cached view per revision and inputs; paging rebuilds nothing.
     let cachedView: { key: string; value: BuiltView } | null = null;
+    // Request IDs that entered the receipts, and their payloads, so a retry reaches its
+    // receipt before any check. ponytail: the last 200; the receipts keep 50 anyway.
+    const entered = new Map<string, string>();
+
+    /** The tasks the screen may show (mobile's visible-task projection), per data and settings revision. */
+    let visible: { key: string; value: ReturnType<typeof buildVisible> } | null = null;
+    const buildVisible = () => {
+        const store = useTaskStore.getState();
+        const areas = sortAreasForDisplay(store.areas);
+        const areaById = new Map(areas.map((area) => [area.id, area]));
+        const projectById = new Map(store.projects.map((project) => [project.id, project]));
+        const resolvedAreaFilter = resolveAreaFilterSelection(store.settings.filters, areas);
+        const visibleTasks = store.tasks.filter((task) => isTaskVisibleInArea(task, { areaById, projectById, resolvedAreaFilter }));
+        return { areaById, projectById, resolvedAreaFilter, visibleTasks, schedulableTasks: getCalendarSchedulableTasks(visibleTasks) };
+    };
+    const visibleFor = (dataRevision: string) => {
+        if (visible?.key !== dataRevision) visible = { key: dataRevision, value: buildVisible() };
+        return visible.value;
+    };
 
     /** Everything a view, the composer and the actions read, as mobile's screen reads it. */
     const context = (now: Date) => {
@@ -493,29 +520,24 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         const config = deps.dateFormatting();
         const language = config.language ?? 'en';
         const systemLocale = config.systemLocale ?? '';
-        const areas = sortAreasForDisplay(store.areas);
-        const areaById = new Map(areas.map((area) => [area.id, area]));
-        const projectById = new Map(store.projects.map((project) => [project.id, project]));
-        const resolvedAreaFilter = resolveAreaFilterSelection(settings.filters, areas);
-        const visibleTasks = store.tasks.filter((task) => isTaskVisibleInArea(task, { areaById, projectById, resolvedAreaFilter }));
+        const dataRevision = deps.dataRevision();
         const flags = resolveFeatureFlags(settings);
         const t = deps.t();
+        const formatDate = createDateFormatter(config) as DateFormatter;
         anchorProjections(now);
         return {
             store,
             settings,
             t,
             now,
-            locale: getCalendarLocale({ language, settings, systemLocale }),
+            dataRevision,
+            // No Intl on the native host: headings come from date-fns patterns.
+            dates: createCalendarPatternDates(formatDate),
             calendarSystem: getCalendarSystem({ language, settings, systemLocale }),
-            formatDate: createDateFormatter(config) as DateFormatter,
+            formatDate,
             weekStartIndex: getWeekStartsOnIndex(settings.weekStart),
             flags,
-            areaById,
-            projectById,
-            resolvedAreaFilter,
-            visibleTasks,
-            schedulableTasks: getCalendarSchedulableTasks(visibleTasks),
+            ...visibleFor(dataRevision),
             estimateMinutes: (estimate: Task['timeEstimate']) => timeEstimateToMinutes(estimate, { enabled: flags.timeEstimates }),
             projectedLabel: getCalendarProjectedLabel(t),
             showCompleted: settings.calendar?.showCompleted === true,
@@ -541,13 +563,14 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         return selectCalendarViewMode({ viewMode: 'month', selectedDate, visibleMonthDate }, value.viewMode as CalendarViewMode, today);
     };
 
-    /** The period's tasks and events by day. */
-    const periodIndex = (ctx: Context, period: CalendarPeriodState, feed: Feed) => {
-        const currentMonthDate = startOfCalendarMonth(period.visibleMonthDate, ctx.calendarSystem);
-        const weekStartTime = getCalendarWeekStart(period.selectedDate ?? currentMonthDate, ctx.weekStartIndex).getTime();
-        const range = getCalendarVisibleRange({
-            calendarSystem: ctx.calendarSystem, currentMonthDate, selectedDate: period.selectedDate, viewMode: period.viewMode, weekStartTime,
-        });
+    /**
+     * The period's tasks and events by day. Cached by what it reads (the data and
+     * settings revision, the range, the events and the projection day), so a new
+     * selected day, search text or item sheet in the same range expands nothing.
+     */
+    // ponytail: the last two ranges; a host that flips between more ranges rebuilds.
+    const indexCache: { key: string; value: ReturnType<typeof buildIndex> }[] = [];
+    const buildIndex = (ctx: Context, range: { rangeStart: Date; rangeEnd: Date }, feed: Feed) => {
         const rangeTasks = getCalendarRangeTasks(
             ctx.visibleTasks,
             { rangeStartMs: range.rangeStart.getTime(), rangeEndMs: range.rangeEnd.getTime() },
@@ -561,7 +584,22 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             }),
             events: indexCalendarEvents(feed.events),
         };
-        return { currentMonthDate, weekStartTime, range, rangeTasks, index, lists: (date: Date) => getCalendarDayLists(index, date) };
+        return { rangeTasks, index, lists: (date: Date) => getCalendarDayLists(index, date) };
+    };
+    const periodIndex = (ctx: Context, period: CalendarPeriodState, feed: Feed) => {
+        const currentMonthDate = startOfCalendarMonth(period.visibleMonthDate, ctx.calendarSystem);
+        const weekStartTime = getCalendarWeekStart(period.selectedDate ?? currentMonthDate, ctx.weekStartIndex).getTime();
+        const range = getCalendarVisibleRange({
+            calendarSystem: ctx.calendarSystem, currentMonthDate, selectedDate: period.selectedDate, viewMode: period.viewMode, weekStartTime,
+        });
+        const key = [ctx.dataRevision, range.rangeStart.getTime(), range.rangeEnd.getTime(), paramsKey(feed.events), projectedAt.iso].join('|');
+        let hit = indexCache.find((entry) => entry.key === key);
+        if (!hit) {
+            hit = { key, value: buildIndex(ctx, range, feed) };
+            indexCache.unshift(hit);
+            indexCache.length = Math.min(indexCache.length, 2);
+        }
+        return { currentMonthDate, weekStartTime, range, ...hit.value };
     };
 
     const slotOptions = (ctx: Context, events: readonly ExternalCalendarEvent[], excludeTaskId?: string) => ({
@@ -600,7 +638,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     };
 
     const build = (ctx: Context, period: CalendarPeriodState, feed: Feed, query: string): BuiltView => {
-        const { t, formatDate, locale, now, projectedLabel } = ctx;
+        const { t, formatDate, dates, now, projectedLabel } = ctx;
         const periodData = periodIndex(ctx, period, feed);
         const { lists, currentMonthDate, weekStartTime } = periodData;
         // Calendar colors in the theme's variant, as mobile paints them (its theme preset).
@@ -613,7 +651,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             toState(moveCalendarPeriod(period, direction, { calendarSystem: ctx.calendarSystem, now: parseDayKey(dayKey(now))! }))
         );
         const selected = period.selectedDate;
-        const dateLabels = formatCalendarSelectedDateLabels(selected, { locale, t, now });
+        const dateLabels = formatCalendarSelectedDateLabels(selected, { dates, t, now });
         const entries: PendingEntry[] = [];
         const eventsFor = (date: Date) => lists(date).events;
 
@@ -627,17 +665,17 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         let content: NativeCalendarView['content'];
         let title: string;
         if (period.viewMode === 'month') {
-            title = formatCalendarMonthTitle(currentMonthDate, locale);
+            title = formatCalendarMonthTitle(currentMonthDate, dates);
             const grid = getCalendarMonthGrid(currentMonthDate, getCalendarMonthDates(currentMonthDate, ctx.calendarSystem), ctx.weekStartIndex);
             for (const date of grid) {
                 if (!date) continue;
-                const cell = getCalendarMonthCell(date, lists(date), { locale, t });
+                const cell = getCalendarMonthCell(date, lists(date), { dates, t });
                 entries.push({
                     type: 'day',
                     key: dayKey(date),
                     title: String(getCalendarDayOfMonth(date, ctx.calendarSystem)),
                     dayNumber: String(getCalendarDayOfMonth(date, ctx.calendarSystem)),
-                    weekday: getCalendarWeekdayLabel(date, locale),
+                    weekday: getCalendarWeekdayLabel(date, dates),
                     isToday: isSameCalendarDate(date, now),
                     selected: Boolean(selected && isSameCalendarDate(date, selected)),
                     accessibilityLabel: cell.accessibilityLabel,
@@ -694,17 +732,17 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             }
             content = {
                 mode: 'month',
-                dayNames: getCalendarDayNames(locale, ctx.weekStartIndex),
+                dayNames: getCalendarDayNames(dates, ctx.weekStartIndex),
                 leadingBlanks: grid.findIndex((date) => date !== null),
                 details,
             };
         } else if (period.viewMode === 'week') {
             const weekDays = getCalendarWeekDays(weekStartTime);
-            title = formatCalendarWeekTitle(weekDays, locale);
+            title = formatCalendarWeekTitle(weekDays, dates);
             for (const date of weekDays) {
                 entries.push({
-                    type: 'day', key: dayKey(date), title: `${getCalendarWeekdayLabel(date, locale)} ${date.getDate()}`,
-                    dayNumber: String(date.getDate()), weekday: getCalendarWeekdayLabel(date, locale),
+                    type: 'day', key: dayKey(date), title: `${getCalendarWeekdayLabel(date, dates)} ${date.getDate()}`,
+                    dayNumber: String(date.getDate()), weekday: getCalendarWeekdayLabel(date, dates),
                     isToday: isSameCalendarDate(date, now), selected: Boolean(selected && isSameCalendarDate(date, selected)),
                     accessibilityLabel: null, counts: null, preview: [],
                     opens: toState(selectCalendarViewMode({ ...period, selectedDate: date }, 'day', now)),
@@ -799,8 +837,8 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             for (const section of sections) {
                 const key = dayKey(section.date);
                 entries.push({
-                    type: 'day', key, title: formatCalendarScheduleDayTitle(section.date, { locale, t, now }),
-                    dayNumber: String(section.date.getDate()), weekday: getCalendarWeekdayLabel(section.date, locale),
+                    type: 'day', key, title: formatCalendarScheduleDayTitle(section.date, { dates, t, now }),
+                    dayNumber: String(section.date.getDate()), weekday: getCalendarWeekdayLabel(section.date, dates),
                     isToday: isSameCalendarDate(section.date, now), selected: false, accessibilityLabel: null, counts: null, preview: [], opens: null,
                 });
                 for (const entry of section.items) {
@@ -884,7 +922,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         return {
             composer: toComposer(state),
             text: getCalendarComposerText(ctx.t, { priorities: ctx.flags.priorities }),
-            dateLabel: formatCalendarShortDate(state.date, ctx.locale),
+            dateLabel: ctx.dates.shortDate(state.date),
             placeholders: getCalendarComposerPlaceholders(ctx.formatDate),
             durations: CALENDAR_TIME_ESTIMATE_OPTIONS.map((option) => ({
                 minutes: option.minutes, label: formatCalendarDurationChip(option.minutes), selected: state.durationMinutes === option.minutes,
@@ -929,63 +967,95 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         return (date: Date): readonly ExternalCalendarEvent[] => byDay.get(calendarDateKey(date)) ?? [];
     };
 
+    /**
+     * A task this request made (the request ID is its id) answers a replay only
+     * when it is still exactly what the request writes: its title and every field
+     * the request sets. Anything else under that ID is refused.
+     */
+    const matchesPlan = (task: Task, title: string, props: Partial<Task>): boolean => (
+        !task.deletedAt && !task.purgedAt && task.title === title
+        && Object.entries(props).every(([field, planned]) => (
+            JSON.stringify(task[field as keyof Task] ?? null) === JSON.stringify(planned ?? null)
+        ))
+    );
+    const taskById = (id: string) => useTaskStore.getState()._allTasks.find((task) => task.id === id);
+    const moveTarget = (action: Extract<NativeCalendarAction, { type: 'moveTask' }>) => (
+        new Date(parseDayKey(action.day)!.getTime() + action.startMinutes * 60 * 1000).toISOString()
+    );
+    const isMoveFree = (ctx: Context, feed: Feed, action: Extract<NativeCalendarAction, { type: 'moveTask' }>, taskId: string) => planCalendarTaskMove({
+        taskId, dayStartMs: parseDayKey(action.day)!.getTime(), startMinutes: action.startMinutes, durationMinutes: action.durationMinutes,
+        isSlotFree: (day, start, durationMinutes, excludeTaskId) => isCalendarSlotFree(day, start, durationMinutes, slotOptions(ctx, eventsByDay(feed)(day), excludeTaskId)),
+    });
+
+    /**
+     * The write. It runs inside the receipts, so it checks everything again: a
+     * write that does not apply returns ACTION_FAILED and leaves no receipt, and
+     * a target that already holds writes nothing.
+     */
     const perform = async (requestId: string, action: NativeCalendarAction, ctx: Context, feed: Feed, state: CalendarPeriodState): Promise<Outcome> => {
         const store = useTaskStore.getState();
         const events = eventsByDay(feed);
         switch (action.type) {
             case 'saveComposer': {
-                const state = readComposer(action.composer)!;
+                const composer = readComposer(action.composer)!;
                 const createdId = requestId.toLowerCase();
-                const existing = store._allTasks.find((task) => task.id === createdId);
-                const intent = prepareComposerSave(state, saveContext(ctx, events, createdId));
+                // The whole save is validated here, before any write: the task plan, its
+                // dates and the slot. No refusal can follow a project write.
+                const intent = prepareComposerSave(composer, saveContext(ctx, events, createdId));
                 if (intent.kind === 'error') return fail('ACTION_FAILED', getCalendarComposerErrorText(intent.error, ctx.t));
-                const start = state.startAt!;
+                const answer = { ...dayView(composer.startAt!), taskId: intent.kind === 'update' ? intent.taskId : createdId };
                 if (intent.kind === 'update') {
                     const task = liveTask(intent.taskId);
                     if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
-                    if (task.startTime === intent.updates.startTime && task.timeEstimate === intent.updates.timeEstimate) {
-                        return unchanged({ ...dayView(start), taskId: task.id });
-                    }
-                } else if (existing) {
-                    // The task this request made: the retry lands here after a restart.
-                    return !existing.deletedAt && existing.title === intent.draft.title
-                        ? unchanged({ ...dayView(start), taskId: existing.id })
+                    if (task.startTime === intent.updates.startTime && task.timeEstimate === intent.updates.timeEstimate) return unchanged(answer);
+                    return written(() => store.updateTask(task.id, intent.updates), answer);
+                }
+                const existing = taskById(createdId);
+                if (existing) {
+                    // A replay after a restart: the project is found by name, the task by the request ID.
+                    return matchesPlan(existing, intent.draft.title, intent.draft.props)
+                        ? unchanged(answer)
                         : fail('INVALID_INPUT', 'Request ID already belongs to another task');
                 }
-                return written(async () => {
-                    const saved = await executeComposerSave(state, saveContext(ctx, events), {
-                        addProject: (name, color, props) => useTaskStore.getState().addProject(name, color, props),
-                        addTask: async (title, props) => {
-                            const added = await useTaskStore.getState().addTask(title, props, { captureId: requestId });
-                            return added.success && added.id !== createdId ? { success: false, error: 'Task creation failed' } : added;
-                        },
-                        updateTask: (taskId, updates) => useTaskStore.getState().updateTask(taskId, updates),
-                    });
-                    return saved.success ? { success: true } : { success: false, error: getCalendarComposerErrorText(saved.error, ctx.t) };
-                }, { ...dayView(start), taskId: intent.kind === 'update' ? intent.taskId : createdId });
+                const landed = await runStoreWrite(async () => {
+                    let draft = intent.draft;
+                    if (intent.projectToCreate) {
+                        const { name, color, initialProps } = intent.projectToCreate;
+                        const project = await useTaskStore.getState().addProject(name, color, initialProps);
+                        if (!project) return { success: false, error: 'Project creation failed' };
+                        draft = applyComposerCreatedProject(draft, project.id);
+                    }
+                    return useTaskStore.getState().addTask(draft.title, draft.props, { captureId: requestId });
+                });
+                // Acknowledged only once the task exists. A project without its task did not
+                // land the request: no receipt, and a retry finds the project by name and adds
+                // the task.
+                if (!taskById(createdId)) return fail('ACTION_FAILED', landed.ok ? 'Task creation failed' : landed.error.message);
+                return settleWrite(landed, result({ ...answer, changed: true }));
             }
             case 'moveTask': {
-                const task = liveTask(action.taskId)!;
-                const dayStart = parseDayKey(action.day)!;
-                const plan = planCalendarTaskMove({
-                    taskId: task.id, dayStartMs: dayStart.getTime(), startMinutes: action.startMinutes, durationMinutes: action.durationMinutes,
-                    isSlotFree: () => true,
-                });
-                if (plan.kind !== 'move') return fail('INVALID_INPUT', 'A projected occurrence cannot move');
-                if (task.startTime === plan.updates.startTime) return unchanged();
-                return written(() => store.updateTask(task.id, plan.updates));
+                if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot move');
+                const task = liveTask(action.taskId);
+                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                const target = moveTarget(action);
+                if (task.startTime === target) return unchanged();
+                if (isMoveFree(ctx, feed, action, task.id).kind !== 'move') return fail('ACTION_FAILED', getCalendarToasts(ctx.t).timeConflict.message);
+                return written(() => store.updateTask(task.id, { startTime: target }));
             }
-            case 'unscheduleTask': {
-                const task = liveTask(action.taskId)!;
-                if (!task.startTime) return unchanged();
-                return written(() => store.updateTask(task.id, { ...CALENDAR_UNSCHEDULE_UPDATES }));
-            }
+            case 'unscheduleTask':
             case 'completeTask': {
-                const task = liveTask(action.taskId)!;
+                if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot change');
+                const task = liveTask(action.taskId);
+                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (action.type === 'unscheduleTask') {
+                    if (!task.startTime) return unchanged();
+                    return written(() => store.updateTask(task.id, { ...CALENDAR_UNSCHEDULE_UPDATES }));
+                }
                 if (task.status === 'done') return unchanged();
                 return written(() => store.updateTask(task.id, { ...CALENDAR_DONE_UPDATES }));
             }
             case 'deleteTask': {
+                if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot change');
                 const task = typeof action.taskId === 'string' ? store._tasksById.get(action.taskId) : undefined;
                 if (!task || task.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (task.deletedAt) return unchanged();
@@ -996,17 +1066,18 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 const createdId = requestId.toLowerCase();
                 // The screen stays in its mode and moves to the event's day.
                 const next = plan.showDate ? toState({ ...state, selectedDate: plan.showDate, visibleMonthDate: plan.showDate }) : null;
-                const toast = getCalendarToasts(ctx.t).eventTaskCreated;
-                const existing = store._allTasks.find((task) => task.id === createdId);
+                const answer = { toast: getCalendarToasts(ctx.t).eventTaskCreated, next, taskId: createdId };
+                const existing = taskById(createdId);
                 if (existing) {
-                    return !existing.deletedAt && existing.title === plan.title
-                        ? unchanged({ toast, next, taskId: existing.id })
+                    // The event's start or date, duration, place and notes: the whole task the event makes.
+                    return matchesPlan(existing, plan.title, plan.initialProps)
+                        ? unchanged(answer)
                         : fail('INVALID_INPUT', 'Request ID already belongs to another task');
                 }
                 return written(async () => {
                     const added = await store.addTask(plan.title, plan.initialProps, { captureId: requestId });
                     return added.success && added.id !== createdId ? { success: false, error: 'Task creation failed' } : added;
-                }, { toast, next, taskId: createdId });
+                }, answer);
             }
             case 'setViewMode':
             case 'setShowCompleted':
@@ -1030,43 +1101,40 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         }
     };
 
-    /** Input checks and the refusals the screen shows; a refusal writes nothing and stays out of the receipts. */
+    /**
+     * A new request's input checks and the refusals the screen shows (a time
+     * conflict, a composer error). A refusal writes nothing and stays out of the
+     * receipts, so its request ID stays free. A request the receipts already hold
+     * skips these checks (runCalendarAction).
+     */
     const check = (requestId: string, action: NativeCalendarAction, ctx: Context, feed: Feed): Outcome | null => {
-        const events = eventsByDay(feed);
         switch (action.type) {
             case 'saveComposer': {
-                const state = readComposer(action.composer);
-                if (!state) return fail('INVALID_INPUT', 'A composer from openCalendarComposer is required');
-                const createdId = requestId.toLowerCase();
-                if (useTaskStore.getState()._allTasks.some((task) => task.id === createdId)) return null;
-                if (isCalendarComposerSaveDisabled(state)) return fail('INVALID_INPUT', 'Save is not available yet');
-                const intent = prepareComposerSave(state, saveContext(ctx, events));
+                const composer = readComposer(action.composer);
+                if (!composer) return fail('INVALID_INPUT', 'A composer from openCalendarComposer is required');
+                // A task under this ID is a replay: the write checks it is this request's.
+                if (taskById(requestId.toLowerCase())) return null;
+                if (isCalendarComposerSaveDisabled(composer)) return fail('INVALID_INPUT', 'Save is not available yet');
+                const intent = prepareComposerSave(composer, saveContext(ctx, eventsByDay(feed)));
                 if (intent.kind !== 'error') return null;
-                return unchanged({ composer: composerView(ctx, { ...state, error: intent.error }) });
+                return unchanged({ composer: composerView(ctx, { ...composer, error: intent.error }) });
             }
             case 'moveTask': {
-                const task = liveTask(action.taskId);
-                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
-                const dayStart = parseDayKey(action.day);
-                if (!dayStart || !Number.isSafeInteger(action.startMinutes) || action.startMinutes < 0
+                if (!parseDayKey(action.day) || !Number.isSafeInteger(action.startMinutes) || action.startMinutes < 0
                     || !Number.isSafeInteger(action.durationMinutes) || action.durationMinutes < 1
                     || action.startMinutes + action.durationMinutes > 24 * 60) {
                     return fail('INVALID_INPUT', 'A day, a start minute and a duration inside the day are required');
                 }
-                const plan = planCalendarTaskMove({
-                    taskId: task.id, dayStartMs: dayStart.getTime(), startMinutes: action.startMinutes, durationMinutes: action.durationMinutes,
-                    isSlotFree: (day, start, durationMinutes, excludeTaskId) => isCalendarSlotFree(day, start, durationMinutes, slotOptions(ctx, events(day), excludeTaskId)),
-                });
-                if (plan.kind === 'projected') return fail('INVALID_INPUT', 'A projected occurrence cannot move');
-                if (plan.kind === 'conflict') return unchanged({ toast: getCalendarToasts(ctx.t).timeConflict });
-                return null;
+                if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot move');
+                const task = liveTask(action.taskId);
+                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (task.startTime === moveTarget(action)) return null;
+                return isMoveFree(ctx, feed, action, task.id).kind === 'move' ? null : unchanged({ toast: getCalendarToasts(ctx.t).timeConflict });
             }
             case 'unscheduleTask':
             case 'completeTask':
-                if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot change');
-                return liveTask(action.taskId) ? null : fail('TASK_NOT_FOUND', 'Task not found');
             case 'deleteTask':
-                return isProjectedRecurringTaskId(action.taskId) ? fail('INVALID_INPUT', 'A projected occurrence cannot change') : null;
+                return isText(action.taskId) ? null : fail('INVALID_INPUT', 'A task id is required');
             case 'createTaskFromEvent':
                 return isEvent(action.event) ? null : fail('INVALID_INPUT', 'An event from the calendar feed is required');
             case 'setViewMode':
@@ -1244,9 +1312,21 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             const state = readState(input.state, ctx);
             if (!feed || !state) return fail('INVALID_INPUT', 'The view\'s state and a calendar that is loading, ready or an error are required');
             const action = input.action as NativeCalendarAction;
-            const refused = check(input.requestId, action, ctx, feed);
-            if (refused) return refused as NativeHostResult<NativeCalendarActionResult>;
-            return receipts.run(input.requestId, JSON.stringify(['calendar', action]), () => perform(input.requestId, action, context(new Date()), feed, state));
+            const requestId = input.requestId;
+            const payload = JSON.stringify(['calendar', action]);
+            // The receipts come first: a request that is running or owes its save skips the
+            // checks of a new request (the slot may be taken since), and only saves.
+            const known = entered.get(requestId);
+            if (known === undefined) {
+                const refused = check(requestId, action, ctx, feed);
+                if (refused) return refused as NativeHostResult<NativeCalendarActionResult>;
+                entered.set(requestId, payload);
+                if (entered.size > ENTERED_LIMIT) entered.delete(entered.keys().next().value!);
+            }
+            const outcome = await receipts.run(requestId, payload, () => perform(requestId, action, context(new Date()), feed, state));
+            // A write that did not land leaves no receipt; another payload under a known ID was refused and changes nothing.
+            if (!outcome.ok && outcome.error.code !== 'SAVE_FAILED' && (known === undefined || known === payload)) entered.delete(requestId);
+            return outcome;
         },
     };
 }

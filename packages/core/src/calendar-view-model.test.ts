@@ -8,6 +8,8 @@ import {
 } from './calendar-view-model.replay';
 import {
     compactHourLabel,
+    createCalendarLocaleDates,
+    createCalendarPatternDates,
     getCalendarMonthCell,
     indexCalendarScheduledTasks,
     calendarDateKey,
@@ -17,7 +19,7 @@ import {
     getCalendarVisibleRange,
     getCalendarWeekStart,
 } from './calendar-view-model';
-import { configureDateFormatting } from './date';
+import { configureDateFormatting, createDateFormatter } from './date';
 import { createNativeHostContract } from './native-host-contract';
 import { resetForTests } from './store';
 import type { Task } from './types';
@@ -115,10 +117,25 @@ describe('calendar view model', () => {
     it('hides a month cell\'s previews from six items on and shows its counts', () => {
         const tasks = Array.from({ length: 6 }, (_, index) => task({ id: `t${index}`, title: `T${index}`, dueDate: '2026-10-30' }));
         const lists = { scheduled: [], deadlines: tasks, completed: [], events: [] };
-        const cell = getCalendarMonthCell(new Date(2026, 9, 30), lists, { locale: 'en-US', t: (key) => (key === 'common.tasks' ? 'tasks' : key) });
+        const cell = getCalendarMonthCell(new Date(2026, 9, 30), lists, { dates: createCalendarLocaleDates('en-US'), t: (key) => (key === 'common.tasks' ? 'tasks' : key) });
         expect(cell.previewItems).toEqual([]);
         expect(cell).toMatchObject({ showCounts: true, taskCount: 6, eventCount: 0, accessibilityLabel: 'Friday, October 30. 6 tasks' });
-        const two = getCalendarMonthCell(new Date(2026, 9, 30), { ...lists, deadlines: tasks.slice(0, 2) }, { locale: 'en-US', t: (key) => key });
+        const two = getCalendarMonthCell(new Date(2026, 9, 30), { ...lists, deadlines: tasks.slice(0, 2) }, { dates: createCalendarLocaleDates('en-US'), t: (key) => key });
         expect([two.previewItems.length, two.showCounts]).toEqual([2, false]);
+    });
+
+    it('builds the English headings from date-fns patterns as the React Native screen draws them', () => {
+        const date = new Date(2026, 9, 28);
+        const english = (dateFormat: string) => createCalendarPatternDates(createDateFormatter({ language: 'en', dateFormat, systemLocale: 'en-US' }));
+        const styles = ['monthYear', 'monthDay', 'dayTitle', 'longDate', 'shortDate', 'cellDate'] as const;
+        // What toLocaleDateString gives for en-US and en-GB (the fixture's ICU).
+        expect(styles.map((style) => english('mdy')[style](date))).toEqual([
+            'October 2026', 'Oct 28', 'Wed, October 28', 'Wednesday, October 28, 2026', 'Wed, Oct 28', 'Wednesday, October 28',
+        ]);
+        expect(styles.map((style) => english('dmy')[style](date))).toEqual([
+            'October 2026', '28 Oct', 'Wed 28 October', 'Wednesday, 28 October 2026', 'Wed 28 Oct', 'Wednesday 28 October',
+        ]);
+        expect(english('mdy').weekdays).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+        expect(english('mdy').weekdays).toEqual(createCalendarLocaleDates('en-US').weekdays);
     });
 });

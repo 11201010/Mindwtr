@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCalendarRecorder, loadCalendarViewsFixture, seedCalendarStore, type CalendarScenario } from './calendar-view-model.replay';
 import {
+    createCalendarLocaleDates,
     getCalendarDayLists,
     getCalendarMonthCell,
     getCalendarPlanningTasks,
@@ -23,6 +24,19 @@ import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
+
+// Counts recurring expansions; everything else is the real module.
+const expansion = vi.hoisted(() => ({ calls: 0 }));
+vi.mock('./recurrence', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./recurrence')>();
+    return {
+        ...actual,
+        expandCalendarRecurringTaskSetInRange: (...args: Parameters<typeof actual.expandCalendarRecurringTaskSetInRange>) => {
+            expansion.calls += 1;
+            return actual.expandCalendarRecurringTaskSetInRange(...args);
+        },
+    };
+});
 
 const fixture = loadCalendarViewsFixture();
 const scenario = (settings = 'month', extra: Partial<CalendarScenario> = {}): CalendarScenario => ({ name: 'contract', settings, actions: [], ...extra });
@@ -96,7 +110,7 @@ describe('native host contract: Calendar', () => {
         }));
         const cells = Array.from({ length: 31 }, (_, offset) => {
             const date = new Date(2026, 9, offset + 1);
-            return getCalendarMonthCell(date, getCalendarDayLists(monthIndex, date), { locale: 'en-US', t: (key) => key });
+            return getCalendarMonthCell(date, getCalendarDayLists(monthIndex, date), { dates: createCalendarLocaleDates('en-US'), t: (key) => key });
         });
         expect(days(month).map((day) => [day.key.slice(-2), day.counts, day.preview.map((item) => item.id)]))
             .toEqual(cells.map((cell, offset) => [
@@ -152,16 +166,77 @@ describe('native host contract: Calendar', () => {
         expect(next.content.mode === 'week' && next.content.visibleDays).toBe(5);
     });
 
-    it('formats its labels in the current language and dates with the user\'s settings', async () => {
+    it('builds its headings in the current language without Intl, as the native host runs them', async () => {
         freezeClock();
-        const { host } = await openHost(scenario('day'));
+        const { host } = await openHost(scenario('month'));
         expect(await host.setLanguage({ storedLanguage: 'de', systemLocale: null })).toMatchObject({ ok: true });
-        const view = value(host.getCalendarView({ calendar: ready, ...page }));
-        expect(view.header.today.label).toBe('Heute');
-        expect(view.header.title.startsWith('Mi., 28. Oktober')).toBe(true);
-        const formatDate = createDateFormatter({ language: 'de', systemLocale: null });
-        const block = items(view, 'timed').find((item) => item.taskId === 't-deep')!;
-        expect(block.detail).toBe(`${formatDate(new Date(2026, 9, 28, 13), 'p')}-${formatDate(new Date(2026, 9, 28, 15), 'p')}`);
+        // QuickJS has no Intl: the host's stub formats English only, and toLocale* ignore the locale.
+        const realIntl = globalThis.Intl;
+        const realToLocaleDateString = Date.prototype.toLocaleDateString;
+        const realToLocaleString = Date.prototype.toLocaleString;
+        class EnglishOnlyDateTimeFormat {
+            private inner: Intl.DateTimeFormat;
+            constructor(_locales?: unknown, options?: Intl.DateTimeFormatOptions) { this.inner = new realIntl.DateTimeFormat('en-US', options); }
+            format(date?: Date | number) { return this.inner.format(date); }
+            formatToParts(date?: Date | number) { return this.inner.formatToParts(date); }
+            resolvedOptions() { return this.inner.resolvedOptions(); }
+        }
+        globalThis.Intl = { ...realIntl, DateTimeFormat: EnglishOnlyDateTimeFormat } as unknown as typeof Intl;
+        Date.prototype.toLocaleDateString = function toLocaleDateString(_locales?: unknown, options?: Intl.DateTimeFormatOptions) {
+            return realToLocaleDateString.call(this, 'en-US', options);
+        };
+        Date.prototype.toLocaleString = function toLocaleString(_locales?: unknown, options?: Intl.DateTimeFormatOptions) {
+            return realToLocaleString.call(this, 'en-US', options);
+        };
+        try {
+            const state = { viewMode: 'month' as const, selectedDate: '2026-10-28', visibleMonth: '2026-10-28' };
+            const month = value(host.getCalendarView({ state, calendar: ready, ...page }));
+            expect(month.header.title).toBe('Oktober 2026');
+            expect(month.content.mode === 'month' && month.content.dayNames).toEqual(['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']);
+            expect(month.content.mode === 'month' && month.content.details?.title).toBe('Mittwoch, 28 Oktober 2026');
+            expect(days(month).find((day) => day.key === '2026-10-30')?.accessibilityLabel).toMatch(/^Freitag 30 Oktober\. 5 Aufgaben/);
+            const week = value(host.getCalendarView({ state: { ...state, viewMode: 'week' }, calendar: ready, ...page }));
+            expect(week.header.title).toBe('25 Okt. - 31 Okt.');
+            const day = value(host.getCalendarView({ state: { ...state, viewMode: 'day' }, calendar: ready, ...page }));
+            expect(day.header.title).toBe('Mi. 28 Oktober · Heute');
+            // Clock times use the user's formatter too.
+            const formatDate = createDateFormatter({ language: 'de', systemLocale: null });
+            const block = items(day, 'timed').find((item) => item.taskId === 't-deep')!;
+            expect(block.detail).toBe(`${formatDate(new Date(2026, 9, 28, 13), 'p')}-${formatDate(new Date(2026, 9, 28, 15), 'p')}`);
+            const composer = value(host.openCalendarComposer({ day: '2026-10-31', calendar: ready })).composer!;
+            expect(composer.dateLabel).toBe('Sa. 31 Okt.');
+        } finally {
+            globalThis.Intl = realIntl;
+            Date.prototype.toLocaleDateString = realToLocaleDateString;
+            Date.prototype.toLocaleString = realToLocaleString;
+        }
+    });
+
+    it('expands recurring tasks once per range: a new selected day, search or item sheet reuses it', async () => {
+        freezeClock();
+        const bulk = Array.from({ length: 5_000 }, (_, index) => ({
+            id: `bulk-${index}`, title: `Bulk ${index}`, status: 'next' as const, contexts: [], tags: [],
+            dueDate: `2026-10-${String((index % 28) + 1).padStart(2, '0')}`,
+            createdAt: fixture.now, updatedAt: fixture.now,
+            ...(index % 50 === 0 ? { recurrence: 'weekly', showFutureRecurrence: true } : {}),
+        }));
+        const recorder = createCalendarRecorder();
+        await seedCalendarStore({ ...fixture, tasks: [...fixture.tasks, ...bulk] }, scenario(), recorder);
+        const host = createNativeHostContract();
+        expect(await host.setLanguage({ storedLanguage: 'en', systemLocale: fixture.deviceLocale })).toMatchObject({ ok: true });
+        expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        const state = { viewMode: 'month' as const, selectedDate: null, visibleMonth: '2026-10-01' };
+        value(host.getCalendarView({ state, calendar: ready, ...page }));
+        const calls = expansion.calls;
+        expect(calls).toBeGreaterThan(0);
+        value(host.getCalendarView({ state: { ...state, selectedDate: '2026-10-12' }, calendar: ready, ...page }));
+        value(host.getCalendarView({ state: { ...state, selectedDate: '2026-10-19' }, scheduleQuery: 'bulk 1', calendar: ready, ...page }));
+        value(host.getCalendarView({ state: { ...state, viewMode: 'day', selectedDate: '2026-10-19' }, calendar: ready, ...page }));
+        value(host.getCalendarItemSheet({ taskId: 'bulk-7', state: { ...state, selectedDate: '2026-10-19' }, calendar: ready }));
+        expect(expansion.calls).toBe(calls);
+        // Another month is another range.
+        value(host.getCalendarView({ state: { ...state, visibleMonth: '2026-11-01' }, calendar: ready, ...page }));
+        expect(expansion.calls).toBe(calls + 1);
     });
 
     it('pages within one revision and refuses a stale page after an edit and at a day boundary', async () => {
@@ -193,20 +268,23 @@ describe('native host contract: Calendar', () => {
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario(), saveData);
         const opened = value(host.openCalendarComposer({ day: '2026-10-31', calendar: ready }));
-        const composer = value(host.editCalendarComposer({ composer: opened.composer!.composer, edit: { type: 'title', title: 'Buy paint /due:2026-11-02' }, calendar: ready }));
+        const composer = value(host.editCalendarComposer({ composer: opened.composer!.composer, edit: { type: 'title', title: 'Buy paint +Kitchen /due:2026-11-02' }, calendar: ready }));
         const input = { requestId: generateUUID(), action: { type: 'saveComposer' as const, composer: composer.composer }, calendar: ready };
         saveData.mockRejectedValue(new Error('disk unavailable'));
+        // The project and the task both land; only the save fails.
         expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
-        expect(recorder.log.filter(([name]) => name === 'addTask')).toHaveLength(1);
+        expect(recorder.log.map(([name]) => name)).toEqual(['addProject', 'addTask']);
 
         saveData.mockResolvedValue(undefined);
         const retried = value(await host.runCalendarAction(input));
         expect(retried).toMatchObject({ changed: true, taskId: input.requestId.toLowerCase(), next: { viewMode: 'day', selectedDate: '2026-10-31' }, scrollToMinutes: 8 * 60 });
-        expect(recorder.log.filter(([name]) => name === 'addTask')).toHaveLength(1);
-        const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; title: string; dueDate?: string; startTime?: string }[] };
+        expect(recorder.log.map(([name]) => name)).toEqual(['addProject', 'addTask']);
+        const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; title: string; dueDate?: string; startTime?: string; projectId?: string }[]; projects: { id: string; title: string }[] };
+        const kitchen = saved.projects.filter((project) => project.title === 'Kitchen');
+        expect(kitchen).toHaveLength(1);
         // The due date stays date-only; the start keeps its clock time.
         expect(saved.tasks.find((task) => task.id === input.requestId.toLowerCase())).toMatchObject({
-            title: 'Buy paint', dueDate: '2026-11-02', startTime: new Date(2026, 9, 31, 8).toISOString(),
+            title: 'Buy paint', dueDate: '2026-11-02', startTime: new Date(2026, 9, 31, 8).toISOString(), projectId: kitchen[0].id,
         });
         // A lost reply repeats the request: no write, no save.
         const saves = saveData.mock.calls.length;
@@ -225,6 +303,73 @@ describe('native host contract: Calendar', () => {
         saveData.mockResolvedValue(undefined);
         expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true });
         expect(recorder.log).toEqual([['updateTask', 't-standup', { startTime: '2026-10-28T14:40:00.000Z' }]]);
+    });
+
+    it('never acknowledges a composer project without its task, and a retry adds the task to that project', async () => {
+        freezeClock();
+        const { host, recorder } = await openHost();
+        const opened = value(host.openCalendarComposer({ day: '2026-10-31', calendar: ready })).composer!;
+        const composer = value(host.editCalendarComposer({ composer: opened.composer, edit: { type: 'title', title: 'Pick paint +Kitchen' }, calendar: ready }));
+        const input = { requestId: generateUUID(), action: { type: 'saveComposer' as const, composer: composer.composer }, calendar: ready };
+        const addTask = useTaskStore.getState().addTask;
+        useTaskStore.setState({ addTask: async () => ({ success: false, error: 'Task store refused' }) });
+        expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED', message: 'Task store refused' } });
+        const kitchens = () => useTaskStore.getState()._allProjects.filter((project) => project.title === 'Kitchen');
+        expect(kitchens()).toHaveLength(1);
+        expect(useTaskStore.getState()._allTasks.some((task) => task.id === input.requestId.toLowerCase())).toBe(false);
+
+        useTaskStore.setState({ addTask });
+        expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true, taskId: input.requestId.toLowerCase() });
+        expect(kitchens()).toHaveLength(1);
+        expect(useTaskStore.getState()._tasksById.get(input.requestId.toLowerCase())).toMatchObject({ title: 'Pick paint', projectId: kitchens()[0].id });
+        expect(recorder.log.map(([name]) => name)).toEqual(['addProject', 'addTask']);
+    });
+
+    it('lets a move that owes its save finish even when its slot is taken since', async () => {
+        freezeClock();
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(scenario(), saveData);
+        const move = { type: 'moveTask' as const, taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30 };
+        const input = { requestId: generateUUID(), action: move, calendar: ready };
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        // Another task now sits in that slot: a new request there is a conflict.
+        await useTaskStore.getState().updateTask('t-rent', { startTime: '2026-10-28T14:40:00.000Z', timeEstimate: '1hr' });
+        expect(value(await host.runCalendarAction({ requestId: generateUUID(), action: { ...move, taskId: 't-plan' }, calendar: ready })))
+            .toMatchObject({ changed: false, toast: { title: 'Time conflict' } });
+        saveData.mockResolvedValue(undefined);
+        // The first request only saves.
+        expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true });
+        expect(recorder.log.filter(([name, id]) => name === 'updateTask' && id === 't-standup')).toHaveLength(1);
+        const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; startTime?: string }[] };
+        expect(saved.tasks.find((task) => task.id === 't-standup')?.startTime).toBe('2026-10-28T14:40:00.000Z');
+    });
+
+    it('refuses a replayed request ID whose task is not what the request writes', async () => {
+        freezeClock();
+        const { host, recorder } = await openHost();
+        const eventRequest = generateUUID();
+        value(await host.runCalendarAction({ requestId: eventRequest, action: { type: 'createTaskFromEvent', event: fixture.calendarEvents[0] }, calendar: ready }));
+        const opened = value(host.openCalendarComposer({ at: new Date(2026, 9, 28, 5).toISOString(), calendar: ready })).composer!;
+        const titled = value(host.editCalendarComposer({ composer: opened.composer, edit: { type: 'title', title: 'Early call' }, calendar: ready }));
+        const composerRequest = generateUUID();
+        value(await host.runCalendarAction({ requestId: composerRequest, action: { type: 'saveComposer', composer: titled.composer }, calendar: ready }));
+        const writes = recorder.log.length;
+
+        const restarted = createNativeHostContract();
+        expect(await restarted.setLanguage({ storedLanguage: 'en', systemLocale: fixture.deviceLocale })).toMatchObject({ ok: true });
+        expect(await restarted.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        // Same ID and title, another start: not the task this ID made.
+        const later = { ...fixture.calendarEvents[0], start: '2026-10-29T13:15:00.000Z', end: '2026-10-29T14:00:00.000Z' };
+        expect(await restarted.runCalendarAction({ requestId: eventRequest, action: { type: 'createTaskFromEvent', event: later }, calendar: ready }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const sixOClock = value(restarted.editCalendarComposer({ composer: titled.composer, edit: { type: 'startTime', value: '06:00' }, calendar: ready }));
+        expect(await restarted.runCalendarAction({ requestId: composerRequest, action: { type: 'saveComposer', composer: sixOClock.composer }, calendar: ready }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // The same requests replay as written.
+        expect(value(await restarted.runCalendarAction({ requestId: eventRequest, action: { type: 'createTaskFromEvent', event: fixture.calendarEvents[0] }, calendar: ready })))
+            .toMatchObject({ changed: false, taskId: eventRequest.toLowerCase() });
+        expect(recorder.log).toHaveLength(writes);
     });
 
     it('refuses what the screen refuses without writing, and leaves the request ID free', async () => {

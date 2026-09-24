@@ -20,6 +20,7 @@ import {
   calendarDateKey,
   coerceCalendarViewMode,
   coerceCalendarWeekVisibleDays,
+  createCalendarLocaleDates,
   createCalendarSourceColorResolver,
   findCalendarFreeSlot,
   formatCalendarHourLabel,
@@ -296,14 +297,15 @@ export function useCalendarViewController() {
     [calendarSystem, currentMonthDate],
   );
   const locale = getCalendarLocale({ language, settings, systemLocale });
-  const monthLabel = formatCalendarMonthTitle(currentMonthDate, locale);
-  const dayNames = getCalendarDayNames(locale, weekStartIndex);
+  const calendarDates = useMemo(() => createCalendarLocaleDates(locale), [locale]);
+  const monthLabel = formatCalendarMonthTitle(currentMonthDate, calendarDates);
+  const dayNames = getCalendarDayNames(calendarDates, weekStartIndex);
   const weekStartDate = useMemo(() => (
     getCalendarWeekStart(selectedDate ?? currentMonthDate, weekStartIndex)
   ), [currentMonthDate, selectedDate, weekStartIndex]);
   const weekStartTime = weekStartDate.getTime();
   const weekDays = useMemo(() => getCalendarWeekDays(weekStartTime), [weekStartTime]);
-  const weekLabel = useMemo(() => formatCalendarWeekTitle(weekDays, locale), [locale, weekDays]);
+  const weekLabel = useMemo(() => formatCalendarWeekTitle(weekDays, calendarDates), [calendarDates, weekDays]);
   const defaultTimelineScrollKey = useMemo(() => getCalendarTimelineDefaultScrollKey({
     selectedDate,
     viewMode,
@@ -870,7 +872,7 @@ export function useCalendarViewController() {
     long: selectedDateLongLabel,
     planning: selectedDatePlanningLabel,
     dayTitle: selectedDayModeLabel,
-  } = formatCalendarSelectedDateLabels(selectedDate, { locale, t });
+  } = formatCalendarSelectedDateLabels(selectedDate, { dates: calendarDates, t });
   const scheduleSections = useMemo(
     () => getCalendarScheduleSections(selectedDate ?? currentMonthDate, getCalendarItemsForDate),
     [currentMonthDate, getCalendarItemsForDate, selectedDate],
@@ -889,6 +891,7 @@ export function useCalendarViewController() {
     calendarComposerCandidates,
     calendarComposerError,
     calendarComposerSelectedTask,
+    calendarDates,
     calendarSystem,
     calendarWeekVisibleDays,
     calendarNameById,
