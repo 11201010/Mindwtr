@@ -191,6 +191,7 @@ export * from './focus-widget-selection';
 export * from './context-color';
 export * from './capture';
 export * from './capture-session';
+export * from './quick-capture-model';
 export * from './session-restore';
 export * from './whisper-models';
 export * from './import-apply';

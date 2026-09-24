@@ -185,6 +185,7 @@ import {
 import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskSortBy } from './types';
 import { createMenuViewMethods } from './native-host-contract-menu-views';
 import { createReviewViewMethods } from './native-host-contract-review-views';
+import { createQuickCaptureMethods } from './native-host-contract-quick-capture';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -941,6 +942,15 @@ export function createNativeHostContract() {
                 const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
                 return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
             },
+        }),
+        // The capture popup: native-host-contract-quick-capture.ts.
+        ...createQuickCaptureMethods({
+            readiness,
+            save,
+            t: () => translate,
+            formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            requestIdPattern: CAPTURE_ID_PATTERN,
         }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {

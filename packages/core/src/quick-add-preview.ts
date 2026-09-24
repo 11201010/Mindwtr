@@ -1,4 +1,4 @@
-import { hasTimeComponent, safeFormatDate } from './date';
+import { hasTimeComponent, safeFormatDate, type DateFormatter } from './date';
 import { tFallback, type TranslateFn } from './i18n';
 import type { QuickAddResult } from './quick-add';
 import type { Area, Project } from './types';
@@ -51,6 +51,8 @@ export interface QuickAddPreviewOptions {
     rawInput?: string;
     /** Surfaces without pickers (desktop, capture modal) leave this unset. */
     overrides?: QuickAddPreviewOverrides;
+    /** Formats the date chips; defaults to the configured formatting (safeFormatDate). */
+    formatDate?: DateFormatter;
 }
 
 const VALUE_PREVIEW_LIMIT = 48;
@@ -64,8 +66,8 @@ function truncate(value: string, limit = VALUE_PREVIEW_LIMIT): string {
  * Formats a value the parser already resolved. Never re-parses: the string here
  * is exactly what the task will store, date-only stays date-only (#797).
  */
-function formatPreviewDate(value: string): string {
-    return safeFormatDate(value, hasTimeComponent(value) ? 'Pp' : 'P', value);
+function formatPreviewDate(value: string, formatDate: DateFormatter = safeFormatDate): string {
+    return formatDate(value, hasTimeComponent(value) ? 'Pp' : 'P', value);
 }
 
 /**
@@ -81,7 +83,7 @@ export function buildQuickAddPreviewEntries(
     parsed: QuickAddResult,
     options: QuickAddPreviewOptions,
 ): QuickAddPreviewEntry[] {
-    const { t, projects, areas, rawInput, overrides } = options;
+    const { t, projects, areas, rawInput, overrides, formatDate } = options;
     const props = parsed.props;
     const entries: QuickAddPreviewEntry[] = [];
 
@@ -118,7 +120,7 @@ export function buildQuickAddPreviewEntries(
             id: 'due',
             kind: 'due',
             label: tFallback(t, 'taskEdit.dueDateLabel', 'Due Date'),
-            value: formatPreviewDate(dueValue),
+            value: formatPreviewDate(dueValue, formatDate),
             tone: 'default',
         });
     }
@@ -128,7 +130,7 @@ export function buildQuickAddPreviewEntries(
             id: 'start',
             kind: 'start',
             label: tFallback(t, 'taskEdit.startDateLabel', 'Start Date'),
-            value: formatPreviewDate(startValue),
+            value: formatPreviewDate(startValue, formatDate),
             tone: 'default',
         });
     }
@@ -137,7 +139,7 @@ export function buildQuickAddPreviewEntries(
             id: 'review',
             kind: 'review',
             label: tFallback(t, 'taskEdit.reviewDateLabel', 'Review Date'),
-            value: formatPreviewDate(props.reviewAt),
+            value: formatPreviewDate(props.reviewAt, formatDate),
             tone: 'default',
         });
     }

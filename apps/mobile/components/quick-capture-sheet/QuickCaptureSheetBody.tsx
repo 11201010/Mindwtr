@@ -3,7 +3,7 @@ import type { RefObject } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Switch, TextInput, TouchableOpacity, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { AtSign, CalendarDays, ChevronDown, ChevronUp, Clock, FileText, Flag, Folder, Layers, Mic, SlidersHorizontal, Square, X } from 'lucide-react-native';
-import { formatQuickAddHelp, tFallback, TASK_PRIORITY_COLORS, type TaskPriority } from '@mindwtr/core';
+import { getQuickCaptureFocusLabel, getQuickCaptureText, tFallback, TASK_PRIORITY_COLORS, type TaskPriority } from '@mindwtr/core';
 import { ToastViewport } from '@/contexts/toast-context';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { CompactText, CompactTextInput } from '@/components/compact-text';
@@ -167,20 +167,20 @@ export function QuickCaptureSheetBody({
   // The full token reference is long; fold it so the More panel stays compact
   // on a keyboard-shrunk sheet (#1120 follow-up). Resets per open on purpose.
   const [syntaxHelpVisible, setSyntaxHelpVisible] = React.useState(false);
-  const optionsToggleLabel = optionsExpanded ? t('taskEdit.hideOptions') : tFallback(t, 'common.more', 'More');
+  // The popup's text is core's (getQuickCaptureText), shared with the native popup.
+  const text = getQuickCaptureText(t, { priorities: prioritiesEnabled });
+  const optionsToggleLabel = optionsExpanded ? text.hideOptions : text.more;
   const defaultProjectLabel = tFallback(t, 'taskEdit.projectLabel', 'Project');
-  const focusDisabled = !focusNewTask && !canFocusNewTask;
-  const addFocusLabel = tFallback(t, 'agenda.addToFocus', "Add to today's focus");
-  const removeFocusLabel = tFallback(t, 'agenda.removeFromFocus', 'Remove from focus');
-  const focusLabel = focusNewTask
-    ? removeFocusLabel
-    : (focusDisabled ? (focusNewTaskDisabledReason || addFocusLabel) : addFocusLabel);
+  const focusLabel = getQuickCaptureFocusLabel(t, {
+    on: focusNewTask,
+    canFocus: canFocusNewTask,
+    disabledReason: focusNewTaskDisabledReason,
+  });
   // Short visible label for the property chip; reuses the Focus screen title so it
   // stays translated everywhere without minting a new English-only string.
-  const focusChipLabel = tFallback(t, 'agenda.title', 'Focus');
-  // Drop the trailing ellipsis here so the Custom chip is narrow enough to sit on the preset row;
-  // the shared recurrence.custom string (used elsewhere) keeps its "…".
-  const customDateLabel = t('recurrence.custom').replace(/[\s.…]+$/u, '');
+  const focusChipLabel = text.focusChip;
+  // The Custom chip drops the shared "Custom…" ellipsis so it fits the preset row.
+  const customDateLabel = text.customDate;
   // iOS resizes the modal via padding behavior; Android keeps the keyboard out
   // of the way with a measured bottom inset (see android-keyboard-frame) because
   // the transparent Android modal window does not resize for the keyboard. The
@@ -549,7 +549,7 @@ export function QuickCaptureSheetBody({
                 </TouchableOpacity>
                 {syntaxHelpVisible && (
                   <CompactText style={[styles.syntaxHint, { color: tc.secondaryText }]}>
-                    {formatQuickAddHelp(t('quickAdd.help'), { priorities: prioritiesEnabled })}
+                    {text.syntaxHelpText}
                   </CompactText>
                 )}
 

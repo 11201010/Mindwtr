@@ -23,10 +23,8 @@ const {
   updateSettings,
   showToast,
   openTaskScreen,
-  getUsedTaskTokens,
   getDerivedState,
   getFocusedCount,
-  parseQuickAdd,
   splitQuickAddBulkLines,
   selectStore,
   documentPickerGetDocumentAsync,
@@ -39,14 +37,8 @@ const {
   const updateSettings = vi.fn();
   const showToast = vi.fn();
   const openTaskScreen = vi.fn();
-  const getUsedTaskTokens = vi.fn<() => string[]>(() => []);
   const getDerivedState = vi.fn(() => ({ focusedCount: 0 }));
   const getFocusedCount = vi.fn(() => 0);
-  const parseQuickAdd = vi.fn<(input: string) => any>((input: string) => ({
-    title: input,
-    props: {},
-    invalidDateCommands: [],
-  }));
   const splitQuickAddBulkLines = vi.fn((input: string) => input
     .replace(/\r\n?/g, '\n')
     .split('\n')
@@ -78,10 +70,8 @@ const {
     updateSettings,
     showToast,
     openTaskScreen,
-    getUsedTaskTokens,
     getDerivedState,
     getFocusedCount,
-    parseQuickAdd,
     splitQuickAddBulkLines,
     selectStore,
     documentPickerGetDocumentAsync,
@@ -90,14 +80,42 @@ const {
   };
 });
 
+// Spies over core's real popup functions: the parse and the context scan run
+// inside core now, so the tests watch what the sheet hands them.
+const quickCaptureSpies = vi.hoisted(() => ({
+  buildQuickCapturePreview: vi.fn(),
+  getQuickCaptureContextChoices: vi.fn(),
+  saveQuickCapture: vi.fn(),
+}));
+
 vi.mock('@mindwtr/core', async () => {
   // The shared capture transaction is real; only its store actions are substituted.
   const actual = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
+  quickCaptureSpies.buildQuickCapturePreview.mockImplementation(actual.buildQuickCapturePreview);
+  quickCaptureSpies.getQuickCaptureContextChoices.mockImplementation(actual.getQuickCaptureContextChoices);
+  quickCaptureSpies.saveQuickCapture.mockImplementation(actual.saveQuickCapture);
   const sessionActual = await vi.importActual<typeof import('../../../packages/core/src/capture-session')>(
     '../../../packages/core/src/capture-session'
   );
   return {
   CaptureSessionCoordinator: sessionActual.CaptureSessionCoordinator,
+  // The popup's logic lives in core's quick-capture-model: real, so calls it
+  // makes inside core use real core (the mocks below reach only the sheet).
+  applyQuickCaptureEdit: actual.applyQuickCaptureEdit,
+  buildQuickCapturePreview: quickCaptureSpies.buildQuickCapturePreview,
+  buildQuickCaptureRequest: actual.buildQuickCaptureRequest,
+  createQuickCaptureOptions: actual.createQuickCaptureOptions,
+  getQuickCaptureBulkConfirm: actual.getQuickCaptureBulkConfirm,
+  getQuickCaptureBulkFailedNotice: actual.getQuickCaptureBulkFailedNotice,
+  getQuickCaptureContextChoices: quickCaptureSpies.getQuickCaptureContextChoices,
+  getQuickCaptureContextPicker: actual.getQuickCaptureContextPicker,
+  getQuickCaptureLabels: actual.getQuickCaptureLabels,
+  parseQuickCaptureContextQuery: actual.parseQuickCaptureContextQuery,
+  planQuickCaptureSave: actual.planQuickCaptureSave,
+  QUICK_CAPTURE_PRIORITY_OPTIONS: actual.QUICK_CAPTURE_PRIORITY_OPTIONS,
+  resolveQuickCaptureDefaultAreaId: actual.resolveQuickCaptureDefaultAreaId,
+  saveQuickCapture: quickCaptureSpies.saveQuickCapture,
+  saveQuickCaptureBulk: actual.saveQuickCaptureBulk,
   executeCaptureTransaction: actual.executeCaptureTransaction,
   prepareCaptureTask: actual.prepareCaptureTask,
   buildQuickAddParseOptions: actual.buildQuickAddParseOptions,
@@ -113,7 +131,6 @@ vi.mock('@mindwtr/core', async () => {
     const areaId = props?.areaId || fallbackAreaId || undefined;
     return areaId ? { areaId } : undefined;
   },
-  getUsedTaskTokens,
   formatFocusTaskLimitText: (template: string, limit: number) => template.replace('{{count}}', String(limit)),
   canStarNewCapture: ({ focusedCount, focusTaskLimit }: { focusedCount: number; focusTaskLimit: number }) => focusedCount < focusTaskLimit,
   hasTimeComponent: (value?: string | null) => Boolean(value && /[T\s]\d{2}:\d{2}/.test(value)),
@@ -123,7 +140,6 @@ vi.mock('@mindwtr/core', async () => {
   isSelectableProjectForTaskAssignment: (project: any) => (
     !project.deletedAt && project.status !== 'archived' && project.status !== 'completed'
   ),
-  parseQuickAdd,
   normalizeClockTimeInput: (value?: string | null) => String(value ?? '').trim(),
   normalizeFocusTaskLimit: (value: unknown) => (typeof value === 'number' ? value : 3),
   resolveDefaultNewTaskAreaId: (settings: any, areas: any[]) => {
@@ -141,7 +157,7 @@ vi.mock('@mindwtr/core', async () => {
     if (formatStr === 'p') {
       return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
-    if (formatStr !== 'yyyy-MM-dd') return '';
+    if (formatStr !== 'yyyy-MM-dd') return actual.safeFormatDate(value, formatStr);
     return [
       date.getFullYear(),
       String(date.getMonth() + 1).padStart(2, '0'),
@@ -311,6 +327,10 @@ const withPlatform = async (os: typeof Platform.OS, run: () => Promise<void>) =>
   }
 };
 
+/** How often the sheet scanned the store's tasks for context choices (resets pass no tasks). */
+const contextScans = () => quickCaptureSpies.getQuickCaptureContextChoices.mock.calls
+  .filter(([tasks]) => tasks === selectStore.getState().tasks).length;
+
 describe('QuickCaptureSheet save handling', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -333,8 +353,9 @@ describe('QuickCaptureSheet save handling', () => {
     getDerivedState.mockReturnValue({ focusedCount: 0 });
     getFocusedCount.mockClear();
     getFocusedCount.mockReturnValue(0);
-    getUsedTaskTokens.mockClear();
-    getUsedTaskTokens.mockReturnValue([]);
+    quickCaptureSpies.buildQuickCapturePreview.mockClear();
+    quickCaptureSpies.getQuickCaptureContextChoices.mockClear();
+    quickCaptureSpies.saveQuickCapture.mockClear();
     documentPickerGetDocumentAsync.mockReset();
     fileSystemReadAsStringAsync.mockReset();
     createMobileRecoverySnapshot.mockReset();
@@ -344,12 +365,6 @@ describe('QuickCaptureSheet save handling', () => {
     clearActivitySessionMock.mockReset();
     rearmActivitySessionMock.mockReset();
     recoveryFileDeleteMock.mockReset();
-    parseQuickAdd.mockReset();
-    parseQuickAdd.mockImplementation((input: string) => ({
-      title: input,
-      props: {},
-      invalidDateCommands: [],
-    }));
     mockThemeTokens.value = { isMaterial: false, roles: null, shape: { large: 16 } };
   });
 
@@ -449,7 +464,7 @@ describe('QuickCaptureSheet save handling', () => {
     const body = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
     if (!body) throw new Error('QuickCaptureSheetBody not found');
     expect(body.props.optionsExpanded).toBe(false);
-    expect(getUsedTaskTokens).not.toHaveBeenCalled();
+    expect(contextScans()).toBe(0);
   });
 
   it('keeps the sheet lifted until the Android keyboard finishes hiding, then expands', async () => {
@@ -595,7 +610,7 @@ describe('QuickCaptureSheet save handling', () => {
 
   it('loads context autocomplete only after the context picker opens', async () => {
     vi.useFakeTimers();
-    getUsedTaskTokens.mockReturnValue(['@computer']);
+    selectStore.getState().tasks = [{ id: 'desk', title: 'Desk work', status: 'next', contexts: ['@computer'], tags: [] }] as never;
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -610,7 +625,7 @@ describe('QuickCaptureSheet save handling', () => {
       await Promise.resolve();
     });
 
-    expect(getUsedTaskTokens).not.toHaveBeenCalled();
+    expect(contextScans()).toBe(0);
 
     const body = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
     if (!body) throw new Error('QuickCaptureSheetBody not found');
@@ -619,14 +634,14 @@ describe('QuickCaptureSheet save handling', () => {
       await Promise.resolve();
     });
 
-    expect(getUsedTaskTokens).not.toHaveBeenCalled();
+    expect(contextScans()).toBe(0);
 
     await act(async () => {
       vi.runOnlyPendingTimers();
       await Promise.resolve();
     });
 
-    expect(getUsedTaskTokens).toHaveBeenCalledTimes(1);
+    expect(contextScans()).toBe(1);
     const pickers = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetPickers')[0];
     if (!pickers) throw new Error('QuickCaptureSheetPickers not found');
     expect(pickers.props.filteredContexts).toEqual(['@computer']);
@@ -635,11 +650,6 @@ describe('QuickCaptureSheet save handling', () => {
 
   it('previews the draft with the exact parse configuration its save runs', async () => {
     addTask.mockResolvedValue({ success: true, id: 'task-1' });
-    parseQuickAdd.mockImplementation((input: string) => ({
-      title: input,
-      props: { contexts: ['@errands'] },
-      invalidDateCommands: [],
-    }));
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -662,13 +672,11 @@ describe('QuickCaptureSheet save handling', () => {
 
     // The strip is fed by the draft, live.
     expect(getBody().props.preview).toBeTruthy();
-    expect(getBody().props.preview.props.entries).toEqual([
+    expect(getBody().props.preview.props.entries).toContainEqual(
       expect.objectContaining({ kind: 'context', value: '@errands' }),
-    ]);
+    );
 
-    const parseCalls = parseQuickAdd.mock.calls as unknown as unknown[][];
-    const previewCalls = parseCalls.length;
-    const previewCall = parseCalls[previewCalls - 1];
+    const previewCall = quickCaptureSpies.buildQuickCapturePreview.mock.calls.at(-1)!;
     expect(previewCall[0]).toBe('call mom @errands');
 
     await act(async () => {
@@ -676,19 +684,17 @@ describe('QuickCaptureSheet save handling', () => {
       await Promise.resolve();
     });
 
-    const saveCall = parseCalls[previewCalls];
+    const saveCall = quickCaptureSpies.saveQuickCapture.mock.calls[0]?.[0];
     expect(saveCall).toBeDefined();
-    expect(saveCall[0]).toBe(previewCall[0]);
+    expect(saveCall.text).toBe(previewCall[0]);
     // Same options object, not a look-alike rebuilt at save time.
-    expect(saveCall[4]).toBe(previewCall[4]);
-    expect(addTask).toHaveBeenCalled();
+    expect(saveCall.context.parseOptions).toBe(previewCall[2].parseOptions);
+    expect(addTask).toHaveBeenCalledWith('call mom', expect.objectContaining({ contexts: ['@errands'] }));
   });
 
   it('knows a multi-word context created earlier in the same capture burst', async () => {
     // Real parsing: the point is which tokens the SECOND capture recognizes,
     // which depends on the known-token bag being rebuilt between captures.
-    const core = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
-    parseQuickAdd.mockImplementation(core.parseQuickAdd as never);
     addTask.mockImplementation(async (title: string, props: Record<string, unknown>) => {
       selectStore.getState().tasks.push({ id: `task-${title}`, title, ...props } as never);
       return { success: true, id: `task-${title}` };
@@ -1611,11 +1617,6 @@ describe('QuickCaptureSheet save handling', () => {
   it('confirms multiline capture before creating one task per line', async () => {
     const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(vi.fn());
     addTask.mockResolvedValue({ success: true, id: 'task-1' });
-    parseQuickAdd.mockImplementation((input: string) => ({
-      title: input.replace(/\s+\/next$/u, ''),
-      props: input.endsWith('/next') ? { status: 'next' } : {},
-      invalidDateCommands: [],
-    }));
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -1623,7 +1624,7 @@ describe('QuickCaptureSheet save handling', () => {
         <QuickCaptureSheet
           visible
           openRequestId={1}
-          initialValue={'Email Bob\n\nCall Alice /next'}
+          initialValue={'Email Bob\nCall Alice /next'}
           onClose={vi.fn()}
         />
       );
@@ -1664,7 +1665,7 @@ describe('QuickCaptureSheet save handling', () => {
 
   it('dismisses bulk confirmation on modal request close without closing the sheet', async () => {
     const onClose = vi.fn();
-    const draft = 'Email Bob\n\nCall Alice /next';
+    const draft = 'Email Bob\nCall Alice /next';
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -2021,11 +2022,6 @@ describe('QuickCaptureSheet save handling', () => {
   });
 
   it('previews the picked due date instead of the one the text parsed to', async () => {
-    parseQuickAdd.mockReturnValue({
-      title: 'Ship the build',
-      props: { dueDate: '2026-05-04' },
-      invalidDateCommands: [],
-    });
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -2107,12 +2103,7 @@ describe('QuickCaptureSheet save handling', () => {
   it('creates parsed quick-add projects inside the parsed area', async () => {
     addProject.mockResolvedValue({ id: 'project-launch' });
     addTask.mockResolvedValue({ success: true, id: 'task-1' });
-    parseQuickAdd.mockReturnValue({
-      title: 'Plan campaign',
-      props: { areaId: 'area-work' },
-      projectTitle: 'Launch',
-      invalidDateCommands: [],
-    });
+    selectStore.getState().areas = [{ id: 'area-work', name: 'Work', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }] as never;
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -2249,11 +2240,6 @@ describe('QuickCaptureSheet save handling', () => {
 
   it('keeps a /note: token typed in the title after the note field text', async () => {
     addTask.mockResolvedValue({ success: true, id: 'task-1' });
-    parseQuickAdd.mockReturnValue({
-      title: 'Renew passport',
-      props: { description: 'from the token' },
-      invalidDateCommands: [],
-    });
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
