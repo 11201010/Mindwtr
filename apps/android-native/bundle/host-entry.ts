@@ -291,7 +291,7 @@ globalThis.MindwtrHost = {
                 mode,
                 preset: preset ?? 'default',
                 material: mode === 'material3-light' || mode === 'material3-dark',
-                scheme: descriptor?.scheme ?? null,
+                scheme: descriptor?.scheme === 'system' ? null : descriptor?.scheme ?? null,
                 // Core's status palettes ({ bg, text, border } per status): RN's badges, glyphs, and Done swipe.
                 status: {
                     light: STATUS_COLORS_BY_THEME[preset ?? 'light'],

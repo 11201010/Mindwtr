@@ -558,11 +558,11 @@ function App() {
         const normalizedTheme = getActiveThemeMode();
         if (!sandboxMode) localStorage.setItem(THEME_STORAGE_KEY, normalizedTheme);
         applyThemeMode(normalizedTheme);
-        if (normalizedTheme === 'system' && isTauriRuntime()) {
+        if ((normalizedTheme === 'system' || normalizedTheme === 'system-oled') && isTauriRuntime()) {
             void resolveSystemThemeCommandPreference(
                 (step, error) => void logError(error, { scope: 'theme', step: `initial-command:${step}` }),
             ).then((theme) => {
-                if (!cancelled && theme) applyThemeMode('system', theme);
+                if (!cancelled && theme) applyThemeMode(normalizedTheme, theme);
             });
         }
         applyActiveNativeTheme();
@@ -651,10 +651,10 @@ function App() {
     useEffect(() => {
         if (!hasHydratedSettings) return;
         const normalizedTheme = getActiveThemeMode();
-        if (normalizedTheme !== 'system') return;
+        if (normalizedTheme !== 'system' && normalizedTheme !== 'system-oled') return;
 
         const stopWatchingSystemTheme = watchSystemThemePreference((theme) => {
-            applyThemeMode('system', theme);
+            applyThemeMode(normalizedTheme, theme);
         });
 
         if (!isTauriRuntime()) {
@@ -666,7 +666,7 @@ function App() {
         const stopWatchingNativeTheme = watchNativeSystemThemePreference(
             () => import('@tauri-apps/api/window'),
             (theme) => {
-                applyThemeMode('system', theme);
+                applyThemeMode(normalizedTheme, theme);
             },
             (step, error) => {
                 void logError(error, { scope: 'theme', step });
@@ -675,7 +675,7 @@ function App() {
         const stopWatchingPortalTheme = watchSystemThemePortalPreference(
             () => import('@tauri-apps/api/event'),
             (theme) => {
-                applyThemeMode('system', theme);
+                applyThemeMode(normalizedTheme, theme);
             },
             (step, error) => {
                 void logError(error, { scope: 'theme', step: `portal:${step}` });
