@@ -330,6 +330,20 @@ describe('getShortWeekdayLabels (#929)', () => {
         expect(getShortWeekdayLabels('en-US')).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
     });
 
+    it('starts on Sunday after the time zone changes (no load-time anchor date)', () => {
+        const originalTz = process.env.TZ;
+        try {
+            // Fresh locales, so the per-locale cache cannot answer from an earlier zone.
+            for (const [zone, locale] of [['Pacific/Kiritimati', 'en-AU'], ['Pacific/Pago_Pago', 'en-NZ']]) {
+                process.env.TZ = zone;
+                expect(getShortWeekdayLabels(locale)[0]).toBe('Sun');
+            }
+        } finally {
+            if (originalTz === undefined) delete process.env.TZ;
+            else process.env.TZ = originalTz;
+        }
+    });
+
     it('returns Sunday at index 0', () => {
         const labels = getShortWeekdayLabels('en-US');
         const sunday = new Date(2023, 0, 1); // Jan 1, 2023 was a Sunday

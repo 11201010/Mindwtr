@@ -355,9 +355,6 @@ export const createCalendarLocaleDates = (locale: string): CalendarDates => ({
     weekdays: getShortWeekdayLabels(locale),
 });
 
-// A Sunday, so index 0 is Sunday like getShortWeekdayLabels.
-const WEEKDAY_ANCHOR_SUNDAY = new Date(2023, 0, 1);
-
 /**
  * Headings from date-fns patterns through the user's DateFormatter, with no
  * Intl: the native host's engine has none. The patterns follow the locale's
@@ -370,11 +367,9 @@ export const createCalendarPatternDates = (formatDate: DateFormatter): CalendarD
     const sample = formatDate(new Date(2001, 10, 22), 'P');
     const dayFirst = sample.indexOf('22') !== -1 && sample.indexOf('11') !== -1 && sample.indexOf('22') < sample.indexOf('11');
     const pattern = (monthFirst: string, dayFirstPattern: string) => (date: Date) => formatDate(date, dayFirst ? dayFirstPattern : monthFirst);
-    const weekdayLabels = (token: string) => Array.from({ length: 7 }, (_, day) => {
-        const date = new Date(WEEKDAY_ANCHOR_SUNDAY);
-        date.setDate(date.getDate() + day);
-        return formatDate(date, token);
-    });
+    // Index 0 is Sunday (2023-01-01), like getShortWeekdayLabels. Built in the current time
+    // zone on each call; a module-load Date shifts every label by a day after a zone change.
+    const weekdayLabels = (token: string) => Array.from({ length: 7 }, (_, day) => formatDate(new Date(2023, 0, 1 + day), token));
     const short = weekdayLabels('EEE').map((label) => label.replace(/\.+$/, ''));
     let weekdays = short;
     if (short.some((label) => [...label].length > 3)) {

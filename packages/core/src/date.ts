@@ -661,18 +661,12 @@ export function getCalendarDayOfMonth(
 }
 
 const shortWeekdayLabelsCache = new Map<string, string[]>();
-// A Sunday, local-time construction so the day-of-week cycle below is
-// timezone-safe (matches how existing weekday-header call sites already
-// build their reference date).
-const WEEKDAY_LABEL_ANCHOR_SUNDAY = new Date(2023, 0, 1);
-
 function formatWeekdayLabels(locale: string | undefined, width: 'short' | 'narrow'): string[] {
     const formatter = new Intl.DateTimeFormat(locale, { weekday: width });
-    return Array.from({ length: 7 }, (_, day) => {
-        const date = new Date(WEEKDAY_LABEL_ANCHOR_SUNDAY);
-        date.setDate(date.getDate() + day);
-        return formatter.format(date);
-    });
+    // Sunday 2023-01-01 plus `day`, built in the CURRENT time zone on each call: a Date made
+    // once at module load keeps the load-time zone, so after a zone change it formats as
+    // Saturday and every label shifts by a day.
+    return Array.from({ length: 7 }, (_, day) => formatter.format(new Date(2023, 0, 1 + day)));
 }
 
 /**

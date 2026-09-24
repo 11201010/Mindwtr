@@ -124,6 +124,19 @@ describe('calendar view model', () => {
         expect([two.previewItems.length, two.showCounts]).toEqual([2, false]);
     });
 
+    it('starts the weekday labels on Sunday after the time zone changes', () => {
+        const originalTz = process.env.TZ;
+        try {
+            for (const zone of ['Pacific/Kiritimati', 'Pacific/Pago_Pago']) {
+                process.env.TZ = zone;
+                expect(createCalendarPatternDates(createDateFormatter({ language: 'en', dateFormat: 'mdy', systemLocale: 'en-US' })).weekdays[0]).toBe('Sun');
+            }
+        } finally {
+            if (originalTz === undefined) delete process.env.TZ;
+            else process.env.TZ = originalTz;
+        }
+    });
+
     it('builds the English headings from date-fns patterns as the React Native screen draws them', () => {
         const date = new Date(2026, 9, 28);
         const english = (dateFormat: string) => createCalendarPatternDates(createDateFormatter({ language: 'en', dateFormat, systemLocale: 'en-US' }));
