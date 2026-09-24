@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/restore-snapshot-sync`** — desktop `apps/desktop/src/lib/sync-service.ts`, after the restored snapshot is prepared with fresh sync revisions, saved exactly, and reloaded. Message: `Recovery snapshot restore committed`; field: `releaseCheck`. The tester restores a recovery snapshot, confirms its tasks stay live after sync with another device, and checks that a second sync leaves them unchanged. A failed read, save, or reload emits no success line. No task content, identifiers, or snapshot paths are logged.
+
 - **`v1.3.3/ios-external-calendar-open`** — mobile `apps/mobile/components/views/calendar/useCalendarViewController.ts`, when Expo Calendar reports completion of the iOS native event editor action. Message: `Native calendar event dialog completed`; field: `releaseCheck`. The tester must also confirm Mindwtr responds to taps after the editor disappears. A missing line after dismissing the editor calls for another diagnostic log. No event content or identifiers are logged.
 
 - **`v1.3.3/android-task-list-filter-render`** — mobile `apps/mobile/components/task-list.tsx`, once per mounted Android task list when filtering reduces a list that had clipping enabled to fewer than 15 rows. Message: `Android task list clipping retained after filtering`; fields: `releaseCheck`, `count`. The tester searches for a task near the end of a long Reference or other task list; the log must show `count` below 15 and the matching row must be visible without first scrolling the unfiltered list. No task content or identifiers are logged.
