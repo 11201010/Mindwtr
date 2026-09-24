@@ -10,7 +10,7 @@ import {
     type NativeTaskEditorModel,
 } from './native-host-contract';
 import { computeGlobalSearchResults } from './global-search-filter';
-import { DEFAULT_GLOBAL_SEARCH_FILTERS, getGlobalSearchFilterOptions } from './global-search-model';
+import { clearGlobalSearchActiveChip, DEFAULT_GLOBAL_SEARCH_FILTERS, getGlobalSearchFilterOptions } from './global-search-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
@@ -179,6 +179,35 @@ describe('native host contract', () => {
             totalTasks: 2, isTruncated: true, totalResultsLabel: '3' } });
     });
 
+    it('supplies defaults, idempotent chip clears, and cancellation from the live RN task lookup', async () => {
+        freezeClock();
+        const host = await activateWith([
+            task('cancelled', '2026-09-01T00:00:00.000Z', { status: 'archived', cancelledAt: '2026-09-02T12:00:00.000Z' }),
+            task('done', '2026-09-01T00:00:00.000Z', { status: 'done' }),
+            task('active', '2026-09-01T00:00:00.000Z'),
+        ]);
+        const all = await host.searchTasks({ query: '', filters: { ...DEFAULT_GLOBAL_SEARCH_FILTERS, includeCompleted: true }, limit: 10 });
+        expect(all.ok).toBe(true);
+        if (!all.ok) return;
+        expect(all.value.defaultFilters).toEqual(DEFAULT_GLOBAL_SEARCH_FILTERS);
+        expect(Object.fromEntries(all.value.tasks.map((row) => [row.id, row.cancelled])))
+            .toEqual({ cancelled: true, done: false, active: false });
+        const filters = { ...DEFAULT_GLOBAL_SEARCH_FILTERS, selectedStatuses: ['done' as const], selectedArea: 'none',
+            selectedTokens: ['#client', '@office'], locationQuery: 'Office', duePreset: 'today' as const,
+            scope: 'tasks' as const, includeCompleted: true, includeReference: false, hideFutureTasks: true };
+        const filtered = await host.searchTasks({ query: '', filters, limit: 10 });
+        expect(filtered.ok).toBe(true);
+        if (!filtered.ok) return;
+        expect(filtered.value.activeChips).toHaveLength(10);
+        for (const chip of filtered.value.activeChips) {
+            expect(chip.clearedFilters).toEqual(clearGlobalSearchActiveChip(filters, chip.key));
+            expect(clearGlobalSearchActiveChip(chip.clearedFilters, chip.key)).toEqual(chip.clearedFilters);
+        }
+        // A direct JS consumer cannot change defaults for subsequent queries.
+        all.value.defaultFilters.selectedTokens.push('#mutated');
+        expect(DEFAULT_GLOBAL_SEARCH_FILTERS.selectedTokens).toEqual([]);
+    });
+
     it('uses the RN in-memory search fallback when the adapter has no searchAll', async () => {
         freezeClock();
         const host = await activateWith([
@@ -204,7 +233,7 @@ describe('native host contract', () => {
         expect(result).toMatchObject({ ok: true, value: {
             projects: [{ id: 'unloaded-project' }], tasks: [{ id: 'unloaded' }], totalTasks: 1,
         } });
-        if (result.ok) expect(result.value.tasks[0]).toMatchObject({ inStore: false, meta: null,
+        if (result.ok) expect(result.value.tasks[0]).toMatchObject({ inStore: false, cancelled: false, meta: null,
             date: null, canComplete: false, tap: { kind: 'list', route: '/done', id: 'unloaded' } });
     });
 

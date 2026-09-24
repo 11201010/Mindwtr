@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     createCoreBackend,
@@ -11,6 +12,10 @@ import {
 import { loadTranslations } from './i18n/i18n-loader';
 import {
     addProcessInboxToken,
+    applyProcessInboxDraftEdit,
+    createProcessInboxDraft,
+    getProcessInboxNotePreview,
+    normalizeProcessInboxPickedDate,
     backProcessInboxStep,
     formatProcessInboxScheduleValue,
     INITIAL_PROCESS_INBOX_ANSWERS,
@@ -108,5 +113,44 @@ describe('Process Inbox steps', () => {
         expect(addProcessInboxToken({ tokenInput: ' focus ', kind: 'tag', visible, contexts: [], tags: [] })).toEqual({ contexts: [], tags: ['#focus'] });
         expect(addProcessInboxToken({ tokenInput: 'desk', visible, contexts: ['@desk'], tags: [] })).toEqual({ contexts: ['@desk'], tags: [] });
         expect(addProcessInboxToken({ tokenInput: '   ', visible, contexts: [], tags: [] })).toBeNull();
+    });
+});
+
+
+describe('captured RN note and date controls', () => {
+    const captured = JSON.parse(readFileSync(new URL('./process-inbox-model-controls.fixtures.json', import.meta.url), 'utf8')) as {
+        notes: Array<{ description: string; preview: string }>;
+        dates: Array<{ timeZone: string; day: string; input: string; picked: string }>;
+    };
+
+    it('preserves preview bytes, including whitespace and the UTF-16 truncation boundary', () => {
+        for (const { description, preview } of captured.notes) {
+            expect(getProcessInboxNotePreview(description)).toBe(preview);
+        }
+    });
+
+    it('normalizes picked dates exactly like RN and resets the draft date-only mode for every date field', () => {
+        const oldTz = process.env.TZ;
+        const plan = resolveProcessInboxPlan({});
+        const draft = createProcessInboxDraft(fixture.tasks[0]);
+        try {
+            for (const { timeZone, day, input, picked } of captured.dates) {
+                process.env.TZ = timeZone;
+                const original = new Date(input);
+                expect(normalizeProcessInboxPickedDate(original).toISOString()).toBe(picked);
+                expect(original.toISOString()).toBe(input);
+                for (const field of ['startTime', 'dueDate', 'reviewAt', 'followUp'] as const) {
+                    const next = applyProcessInboxDraftEdit({ ...draft, [field]: { date: '2026-01-01', dateOnly: true } }, {
+                        type: 'setPickedDate', field, day,
+                    }, plan);
+                    expect(next[field]).toEqual({ date: day, dateOnly: false });
+                    expect(next.dirtyScheduleFields).toEqual(field === 'followUp' ? [] : [field]);
+                    expect(formatProcessInboxScheduleValue(next[field]!.date, false, '14:35')).toBe(`${day}T14:35`);
+                }
+            }
+        } finally {
+            if (oldTz === undefined) delete process.env.TZ;
+            else process.env.TZ = oldTz;
+        }
     });
 });

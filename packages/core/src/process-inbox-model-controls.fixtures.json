@@ -1,0 +1,102 @@
+{
+  "provenance": {
+    "commit": "5f44e2d1aae8cfa0fe8f9c0107dd2aa020034fc3",
+    "source": "Unmodified RN InboxCaptureCard and InboxDatePickers rendered in a temporary HEAD checkout before extraction."
+  },
+  "notes": [
+    {
+      "description": "",
+      "preview": ""
+    },
+    {
+      "description": "   \n  ",
+      "preview": ""
+    },
+    {
+      "description": "# Heading\n**Bold** and _italic_ [link](https://example.com)\n> Quote\n- Item\n`code`",
+      "preview": "Heading\nBold and italic link\nQuote\nItem\ncode"
+    },
+    {
+      "description": "**AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA😀tail**",
+      "preview": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\ud83d"
+    },
+    {
+      "description": "![alt](image.png)\n~~gone~~\n```js\nconst x = 1;\n```",
+      "preview": "!alt\ngone\njs\nconst x = 1;"
+    }
+  ],
+  "dates": [
+    {
+      "timeZone": "UTC",
+      "day": "2026-03-08",
+      "input": "2026-03-08T23:47:31.123Z",
+      "picked": "2026-03-08T09:00:00.000Z"
+    },
+    {
+      "timeZone": "UTC",
+      "day": "2026-11-01",
+      "input": "2026-11-01T23:47:31.123Z",
+      "picked": "2026-11-01T09:00:00.000Z"
+    },
+    {
+      "timeZone": "UTC",
+      "day": "2028-02-29",
+      "input": "2028-02-29T23:47:31.123Z",
+      "picked": "2028-02-29T09:00:00.000Z"
+    },
+    {
+      "timeZone": "UTC",
+      "day": "2026-12-31",
+      "input": "2026-12-31T23:47:31.123Z",
+      "picked": "2026-12-31T09:00:00.000Z"
+    },
+    {
+      "timeZone": "America/New_York",
+      "day": "2026-03-08",
+      "input": "2026-03-09T03:47:31.123Z",
+      "picked": "2026-03-08T13:00:00.000Z"
+    },
+    {
+      "timeZone": "America/New_York",
+      "day": "2026-11-01",
+      "input": "2026-11-02T04:47:31.123Z",
+      "picked": "2026-11-01T14:00:00.000Z"
+    },
+    {
+      "timeZone": "America/New_York",
+      "day": "2028-02-29",
+      "input": "2028-03-01T04:47:31.123Z",
+      "picked": "2028-02-29T14:00:00.000Z"
+    },
+    {
+      "timeZone": "America/New_York",
+      "day": "2026-12-31",
+      "input": "2027-01-01T04:47:31.123Z",
+      "picked": "2026-12-31T14:00:00.000Z"
+    },
+    {
+      "timeZone": "Asia/Tokyo",
+      "day": "2026-03-08",
+      "input": "2026-03-08T14:47:31.123Z",
+      "picked": "2026-03-08T00:00:00.000Z"
+    },
+    {
+      "timeZone": "Asia/Tokyo",
+      "day": "2026-11-01",
+      "input": "2026-11-01T14:47:31.123Z",
+      "picked": "2026-11-01T00:00:00.000Z"
+    },
+    {
+      "timeZone": "Asia/Tokyo",
+      "day": "2028-02-29",
+      "input": "2028-02-29T14:47:31.123Z",
+      "picked": "2028-02-29T00:00:00.000Z"
+    },
+    {
+      "timeZone": "Asia/Tokyo",
+      "day": "2026-12-31",
+      "input": "2026-12-31T14:47:31.123Z",
+      "picked": "2026-12-31T00:00:00.000Z"
+    }
+  ]
+}

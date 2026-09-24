@@ -163,7 +163,7 @@ describe('native host contract: Process Inbox', () => {
         });
         expect(later).toMatchObject({ ok: true, value: { notice: null, toast: null, view: { step: 'later', dateRow: { field: 'startTime', display: 'Not set' } } } });
         const picked = host.getInboxProcessingStep({
-            sessionId: sessionIdValue, taskId: 'inbox-a', step: 'later', edit: { type: 'setDate', field: 'startTime', value: '2026-10-05' },
+            sessionId: sessionIdValue, taskId: 'inbox-a', step: 'later', edit: { type: 'setPickedDate', field: 'startTime', day: '2026-10-05' },
         });
         expect(picked).toMatchObject({ ok: true, value: { dateRow: { date: '2026-10-05', display: formatDate('2026-10-05', 'P') } } });
         // The notice for a missing date is a result, not an error.
@@ -178,6 +178,51 @@ describe('native host contract: Process Inbox', () => {
             toast: null,
             view: { taskId: 'inbox-a', step: 'later' },
         } });
+    });
+
+    it('carries the note preview, More-options edit, and picked-day edit for every visible date row', async () => {
+        freezeClock();
+        const { host, recorder } = await openHost(scenario('start later'));
+        const backend = createContractBackend(host, []);
+        await backend.edit({ type: 'set', field: 'description', value: '  **Bold** [link](https://example.com)  ' });
+        expect(backend.view()!.capture.notePreview).toBe('Bold link');
+        await backend.choose('actionable');
+        await backend.choose('no');
+        await backend.choose('defer');
+        await backend.choose('single');
+        const view = backend.view()!;
+        expect(view.moreOptions!.edit).toEqual({ type: 'toggleAdvancedOptions' });
+        const open = view.moreOptions!.open;
+        await backend.edit(view.moreOptions!.edit);
+        expect(backend.view()!.moreOptions!.open).toBe(!open);
+        if (open) await backend.edit(backend.view()!.moreOptions!.edit);
+        const rows = backend.view()!.moreOptions!.scheduling!.rows;
+        expect(rows.map((row) => row.field)).toEqual(['startTime', 'dueDate', 'reviewAt']);
+        for (const row of rows) {
+            expect(row.pick).toEqual({ type: 'setPickedDate', field: row.field });
+            await backend.edit({ ...row.pick, day: '2028-02-29' });
+            expect(backend.view()!.draft[row.field]).toEqual({ date: '2028-02-29', dateOnly: false });
+        }
+        expect(recorder.log).toEqual([]);
+    });
+
+    it('rejects malformed picked dates and fields without changing the draft', async () => {
+        freezeClock();
+        const { host, recorder } = await openHost(scenario('start later'));
+        const started = host.startInboxProcessing();
+        if (!started.ok || !started.value.view) throw new Error('Expected an Inbox task');
+        const { sessionId, taskId, step, draft } = started.value.view;
+        const request = { sessionId, taskId, step };
+        for (const edit of [
+            { type: 'setPickedDate', field: 'title', day: '2026-10-05' },
+            ...['2026-02-29', '2026-02-30', '2026-13-01', '2026-1-01', '2026-10-05T09:00', '', null, 42]
+                .map((day) => ({ type: 'setPickedDate', field: 'startTime', day })),
+        ]) {
+            expect(host.getInboxProcessingStep({ ...request, edit: edit as never }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(host.getInboxProcessingStep(request)).toMatchObject({ ok: true, value: { draft } });
+        expect(recorder.log).toEqual([]);
     });
 
     it('retries a failed save exactly: one write, then the same next step', async () => {

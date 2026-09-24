@@ -1,6 +1,7 @@
 import { formatTimeEstimateLabel, resolveTimeEstimateOptions } from './calendar-scheduling';
 import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import {
+    createDateFormatter,
     getQuickDate,
     hasTimeComponent,
     isQuickDatePresetSelected,
@@ -12,6 +13,7 @@ import {
 } from './date';
 import { isTaskVisibleInInbox } from './area-filter';
 import { tFallback } from './i18n';
+import { stripMarkdown } from './markdown';
 import { getPersonSuggestionNames } from './people';
 import { buildQuickAddParseOptions, parseProcessInboxTitleInput } from './quick-add';
 import type { ProcessInboxDecision, ProcessInboxPlan } from './process-inbox-plan';
@@ -1038,6 +1040,18 @@ const pendingDate = (value: ProcessInboxDateValue): ProcessInboxPendingDate => (
     value ? { value: value.date, dateOnly: value.dateOnly } : { value: null, dateOnly: false }
 );
 
+/** The collapsed capture card's plain-text, 200 UTF-16-code-unit preview. */
+export function getProcessInboxNotePreview(description: string): string {
+    return stripMarkdown(description).trim().slice(0, 200);
+}
+
+/** RN's day picker discards the picked time before handing the date to its controller. */
+export function normalizeProcessInboxPickedDate(date: Date): Date {
+    const next = new Date(date);
+    next.setHours(9, 0, 0, 0);
+    return next;
+}
+
 export type ProcessInboxDraftEdit =
     | { type: 'set'; field: 'title' | 'description' | 'tokenInput' | 'projectSearch' | 'assignedTo' | 'delegateWho' | 'nextAction'; value: string }
     | { type: 'setExtraActions'; value: string[] }
@@ -1053,6 +1067,7 @@ export type ProcessInboxDraftEdit =
     | { type: 'addToken'; kind?: 'context' | 'tag' }
     | { type: 'applyTokenSuggestion'; value: string }
     | { type: 'setDate'; field: ProcessInboxDateField; value: string | null }
+    | { type: 'setPickedDate'; field: ProcessInboxDateField; day: string }
     | { type: 'setDateOnly'; field: ProcessInboxDateField; value: boolean }
     | { type: 'toggleAdvancedOptions' };
 
@@ -1101,6 +1116,14 @@ export function applyProcessInboxDraftEdit(
         case 'applyTokenSuggestion': {
             const next = applyProcessInboxTokenSuggestion({ ...draft, token: edit.value, visible });
             return next ? { ...draft, ...next, tokenInput: '' } : draft;
+        }
+        case 'setPickedDate': {
+            const picked = safeParseDate(edit.day);
+            if (!picked) return draft;
+            return applyProcessInboxDraftEdit(draft, {
+                type: 'setDate', field: edit.field,
+                value: createDateFormatter({ calendarSystem: 'gregorian' })(normalizeProcessInboxPickedDate(picked), 'yyyy-MM-dd'),
+            }, plan);
         }
         case 'setDate':
             return {
@@ -1340,6 +1363,8 @@ export type ProcessInboxViewDateRow = {
     clear: ProcessInboxViewOption | null;
     /** The date-only / default-time switch, shown with a default schedule time. */
     timeMode: ProcessInboxViewOption | null;
+    /** Supply the calendar day (yyyy-MM-dd); RN offers no picked time here. */
+    pick: Pick<Extract<ProcessInboxDraftEdit, { type: 'setPickedDate' }>, 'type' | 'field'>;
     quickDates: ProcessInboxViewOption[];
 };
 
@@ -1375,6 +1400,7 @@ export type ProcessInboxStepView = {
         titleLabel: string;
         returningLabel: string | null;
         description: string;
+        notePreview: string;
         descriptionLabel: string;
         descriptionPlaceholder: string;
         refineHint: string;
@@ -1419,6 +1445,7 @@ export type ProcessInboxStepView = {
     moreOptions: {
         label: string;
         open: boolean;
+        edit: Extract<ProcessInboxDraftEdit, { type: 'toggleAdvancedOptions' }>;
         scheduling: { title: string; rows: ProcessInboxViewDateRow[] } | null;
         organization: {
             title: string;
@@ -1569,6 +1596,7 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
                     edit: { type: 'setDateOnly', field, value: !value.dateOnly },
                 }
                 : null,
+            pick: { type: 'setPickedDate', field },
             quickDates: presets.map((preset) => {
                 const active = isQuickDatePresetSelected(preset, selectedDate, input.now);
                 const picked = active ? null : getQuickDate(preset, input.now);
@@ -1712,6 +1740,7 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
     const moreOptions = (): ProcessInboxStepView['moreOptions'] => ({
         label: tf('common.more', 'More options'),
         open: draft.showAdvancedOptions,
+        edit: { type: 'toggleAdvancedOptions' },
         scheduling: draft.showAdvancedOptions && sections.scheduling ? {
             title: t('taskEdit.scheduling'),
             rows: [
@@ -1782,6 +1811,7 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
             titleLabel: t(titleLabelKey),
             returningLabel: isProcessInboxReturningTask(input.task, input.now) ? tf('process.returningItem', 'Back to clarify') : null,
             description: draft.description,
+            notePreview: getProcessInboxNotePreview(draft.description),
             descriptionLabel: t('taskEdit.descriptionLabel'),
             descriptionPlaceholder: t('taskEdit.descriptionPlaceholder'),
             refineHint: tf('inbox.refineHint', 'Clarify the title and details before deciding what to do next.'),

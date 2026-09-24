@@ -30,7 +30,7 @@ import {
 } from './task-editor-model';
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import { computeGlobalSearchResults, type DuePreset, type GlobalSearchScope } from './global-search-filter';
-import { fetchGlobalSearchAdapterResults, getGlobalSearchActiveChips, getGlobalSearchFilterOptions, getGlobalSearchResultDate, getGlobalSearchTaskListTarget, resolveSavedSearch, GLOBAL_SEARCH_DUE_OPTIONS, GLOBAL_SEARCH_SCOPE_OPTIONS, GLOBAL_SEARCH_STATUS_OPTIONS, type GlobalSearchFilterState } from './global-search-model';
+import { clearGlobalSearchActiveChip, DEFAULT_GLOBAL_SEARCH_FILTERS, fetchGlobalSearchAdapterResults, getGlobalSearchActiveChips, getGlobalSearchFilterOptions, getGlobalSearchResultDate, getGlobalSearchTaskListTarget, resolveSavedSearch, GLOBAL_SEARCH_DUE_OPTIONS, GLOBAL_SEARCH_SCOPE_OPTIONS, GLOBAL_SEARCH_STATUS_OPTIONS, type GlobalSearchFilterState } from './global-search-model';
 import type { SearchProjectResult } from './storage';
 import { createSearchHighlighter } from './search-highlight';
 import { createDateFormatter, hasTimeComponent, normalizeClockTimeInput, safeParseDate, type DateFormatter, type DateFormattingConfig } from './date';
@@ -65,7 +65,7 @@ import {
 } from './focus-sections';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
-import { isTaskActionable, isTaskFinished } from './task-status';
+import { isTaskActionable, isTaskCancelled, isTaskFinished } from './task-status';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup, type TaskRowMeta, type TaskRowMetaInput } from './task-row-meta';
 import type { ProjectDeadlineBoost } from './task-utils';
 import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
@@ -190,6 +190,7 @@ export type NativeSearchView = {
     query: string;
     tasks: (Omit<NativeTaskRow, 'meta'> & {
         inStore: boolean;
+        cancelled: boolean;
         meta: TaskRowMeta | null;
         date: ReturnType<typeof getGlobalSearchResultDate>;
         titleSegments: ReturnType<ReturnType<typeof createSearchHighlighter>>;
@@ -200,7 +201,8 @@ export type NativeSearchView = {
     projects: (Pick<SearchProjectResult, 'id' | 'title' | 'status' | 'cancelledAt' | 'areaId'> & {
         titleSegments: ReturnType<ReturnType<typeof createSearchHighlighter>>;
     })[];
-    activeChips: ReturnType<typeof getGlobalSearchActiveChips>;
+    defaultFilters: GlobalSearchFilterState;
+    activeChips: (ReturnType<typeof getGlobalSearchActiveChips>[number] & { clearedFilters: GlobalSearchFilterState })[];
     hiddenCompletedCount: number;
     hasActiveFilters: boolean;
     isTruncated: boolean;
@@ -1072,6 +1074,7 @@ export function createNativeHostContract() {
                             hasNotes: false, revealDate: null, revealLabel: null, laterToday: false, meta: null,
                         };
                     return { ...row, inStore,
+                        cancelled: isTaskCancelled(full),
                         date: getGlobalSearchResultDate(inStore ? full : undefined, translate, formatDate),
                         titleSegments: highlight(item.title),
                         canComplete: inStore && !isTaskFinished(item),
@@ -1085,7 +1088,14 @@ export function createNativeHostContract() {
                     cancelledAt: item.cancelledAt, areaId: item.areaId,
                     titleSegments: highlight(item.title),
                 })),
-                activeChips: getGlobalSearchActiveChips(input.filters, state.areas, translate),
+                defaultFilters: {
+                    ...DEFAULT_GLOBAL_SEARCH_FILTERS,
+                    selectedStatuses: [...DEFAULT_GLOBAL_SEARCH_FILTERS.selectedStatuses],
+                    selectedTokens: [...DEFAULT_GLOBAL_SEARCH_FILTERS.selectedTokens],
+                },
+                activeChips: getGlobalSearchActiveChips(input.filters, state.areas, translate).map((chip) => ({
+                    ...chip, clearedFilters: clearGlobalSearchActiveChip(input.filters, chip.key),
+                })),
                 hiddenCompletedCount: model.hiddenCompletedCount,
                 hasActiveFilters: model.hasActiveFilters,
                 isTruncated: model.isTruncated,
@@ -1857,6 +1867,9 @@ function isValidInboxEdit(edit: unknown): edit is ProcessInboxDraftEdit {
         case 'setDate':
             return typeof edit.field === 'string' && INBOX_DATE_FIELDS.has(edit.field)
                 && (value === null || (typeof value === 'string' && DATE_ONLY_PATTERN.test(value) && safeParseDate(value) !== null));
+        case 'setPickedDate':
+            return typeof edit.field === 'string' && INBOX_DATE_FIELDS.has(edit.field)
+                && typeof edit.day === 'string' && DATE_ONLY_PATTERN.test(edit.day) && safeParseDate(edit.day) !== null;
         case 'setDateOnly':
             return typeof edit.field === 'string' && INBOX_DATE_FIELDS.has(edit.field) && typeof value === 'boolean';
         case 'toggleAdvancedOptions':

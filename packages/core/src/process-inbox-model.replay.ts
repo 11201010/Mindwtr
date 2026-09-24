@@ -368,7 +368,7 @@ export async function performProcessInboxAction(backend: ReplayBackend, action: 
             const id = action[1];
             if (id === 'mode') return backend.toggleMode();
             if (id === 'skip') return backend.skip();
-            if (id === 'more') return backend.edit({ type: 'toggleAdvancedOptions' });
+            if (id === 'more') return backend.edit(view.moreOptions!.edit);
             if (id === 'createProjectEarly') return backend.submitProjectSearch();
             if (id === 'back') {
                 if (!view.back) throw new Error(`No Back on ${view.step}`);
@@ -428,8 +428,7 @@ export async function performProcessInboxAction(backend: ReplayBackend, action: 
             return backend.edit(pick(findRow(view, field).quickDates, (option) => option.label === tFallback(t, labels.key, labels.fallback), preset));
         }
         case 'pickDate':
-            findRow(view, action[1]);
-            return backend.edit({ type: 'setDate', field: action[1], value: action[2] });
+            return backend.edit({ ...findRow(view, action[1]).pick, day: action[2] });
         case 'dateOnly': {
             const toggle = findRow(view, action[1]).timeMode;
             if (!toggle) throw new Error(`No date-only switch for ${action[1]}`);

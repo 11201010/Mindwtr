@@ -1,6 +1,7 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { normalizeProcessInboxPickedDate } from '@mindwtr/core';
 
 export type DatePickerConfig = {
   show: boolean;
@@ -30,9 +31,7 @@ export function InboxDatePickers({ configs }: Props) {
               }
               if (Platform.OS !== 'ios') cfg.onClose();
               if (!date) return;
-              const next = new Date(date);
-              next.setHours(9, 0, 0, 0);
-              cfg.onSelect(next);
+              cfg.onSelect(normalizeProcessInboxPickedDate(date));
             }}
           />
         ) : null,
