@@ -1429,7 +1429,7 @@ describe('FocusScreen', () => {
     expect(() => tree.root.findByProps({ children: 'All clear' })).toThrow();
   });
 
-  it('orders mobile Focus sections as Schedule, Review Due, Next Actions, Upcoming, then Projects to review', () => {
+  it('orders mobile Focus sections as Schedule, Next Actions, Review Due, Upcoming, then Projects to review', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-05T12:00:00.000Z'));
     storeState.tasks = [
@@ -1450,8 +1450,8 @@ describe('FocusScreen', () => {
     const sections = tree.root.findByType(SectionList).props.sections as { title: string }[];
     expect(sections.map((section) => section.title)).toEqual([
       'Today',
-      'Review Due',
       'Next Actions',
+      'Review Due',
       'Upcoming',
       'Projects to review',
     ]);

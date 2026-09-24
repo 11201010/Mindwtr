@@ -1685,7 +1685,7 @@ export const svOverrides: Record<string, string> = {
         'agenda.emptyStart': 'Inga uppgifter än. Lägg till allt du tänker på i Inkorgen och sortera ut det senare.',
         'focus.schedule': 'Idag',
         'focus.nextActions': 'Nästa steg',
-        'focus.groupBy': 'Gruppera efter',
+        'focus.groupBy': 'Gruppera nästa åtgärder efter',
         'focus.group.context': 'Kontext',
         'focus.group.project': 'Projekt',
         'focus.group.area': 'Område',

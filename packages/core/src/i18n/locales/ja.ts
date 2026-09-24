@@ -1720,7 +1720,7 @@ export const jaOverrides: Record<string, string> = {
         'agenda.emptyStart': 'まだタスクがありません。気になっていることをインボックスに書き出して、整理はあとで行いましょう。',
         'focus.schedule': '今日',
         'focus.nextActions': '次のアクション',
-        'focus.groupBy': 'グループ化',
+        'focus.groupBy': '次のアクションをグループ化',
         'focus.group.context': 'コンテキスト',
         'focus.group.project': 'プロジェクト',
         'focus.group.area': 'エリア',

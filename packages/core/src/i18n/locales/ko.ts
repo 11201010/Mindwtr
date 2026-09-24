@@ -1569,7 +1569,7 @@ export const koOverrides: Record<string, string> = {
         'agenda.emptyStart': '아직 할 일이 없습니다. 떠오르는 일을 수집함에 추가하고 나중에 정리하세요.',
         'focus.schedule': '오늘',
         'focus.nextActions': '다음 행동',
-        'focus.groupBy': '그룹화 기준',
+        'focus.groupBy': '다음 행동 그룹화 기준',
         'focus.group.context': '상황',
         'focus.group.project': '프로젝트',
         'focus.group.area': '영역',

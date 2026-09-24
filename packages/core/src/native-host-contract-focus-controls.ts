@@ -290,7 +290,7 @@ export function buildNativeFocusControls(model: FocusControlsModel, ctx: { t: Tr
                 })),
             },
             group: {
-                label: tf('focus.groupBy', 'Group by'),
+                label: tf('focus.groupBy', 'Group next actions by'),
                 options: getFocusGroupByOptions(model.prioritiesEnabled).map((value) => ({
                     value, label: getFocusGroupByLabel(value, t), selected: perspective.effectiveGroupBy === value,
                 })),

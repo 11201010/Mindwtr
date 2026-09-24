@@ -1785,7 +1785,7 @@ export const deOverrides: Record<string, string> = {
         'focus.group.none': 'Keine',
         'focus.group.priority': 'Priorität',
         'focus.group.project': 'Projekt',
-        'focus.groupBy': 'Gruppieren nach',
+        'focus.groupBy': 'Nächste Aktionen gruppieren nach',
         'inbox.deferWhen': 'Wann soll es beginnen?',
         'inbox.fileIt': 'Ablegen',
         'inbox.movedToTrash': '{{title}} in den Papierkorb verschoben',

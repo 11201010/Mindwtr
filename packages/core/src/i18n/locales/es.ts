@@ -1661,7 +1661,7 @@ export const esOverrides: Record<string, string> = {
 'agenda.emptyStart': "Aún no hay tareas. Añade lo que tengas en mente a la Bandeja de entrada y organízalo después.",
 'focus.schedule': "Hoy",
 'focus.nextActions': "Siguientes acciones",
-'focus.groupBy': "Agrupar por",
+'focus.groupBy': "Agrupar siguientes acciones por",
 'focus.group.context': "Contexto",
 'focus.group.project': "Proyecto",
 'focus.group.area': "Área",

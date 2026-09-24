@@ -1461,7 +1461,7 @@ export const frOverrides: Record<string, string> = {
         'agenda.emptyStart': 'Pas encore de tâches. Notez ce que vous avez en tête dans la Boîte de réception et triez plus tard.',
         'focus.schedule': 'Aujourd’hui',
         'focus.nextActions': 'Prochaines actions',
-        'focus.groupBy': 'Grouper par',
+        'focus.groupBy': 'Grouper les prochaines actions par',
         'focus.group.context': 'Contexte',
         'focus.group.project': 'Projet',
         'focus.group.area': 'Domaine',

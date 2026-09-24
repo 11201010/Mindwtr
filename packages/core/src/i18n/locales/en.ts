@@ -1714,7 +1714,7 @@ export const en: Record<string, string> = {
         'agenda.emptyStart': 'No tasks yet. Add whatever is on your mind to the Inbox and sort it out later.',
         'focus.schedule': 'Today',
         'focus.nextActions': 'Next Actions',
-        'focus.groupBy': 'Group by',
+        'focus.groupBy': 'Group next actions by',
         'focus.group.context': 'Context',
         'focus.group.project': 'Project',
         'focus.group.area': 'Area',

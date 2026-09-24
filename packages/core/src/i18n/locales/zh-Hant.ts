@@ -1585,7 +1585,7 @@ export const zhHant: Record<string, string> = {
         'agenda.emptyStart': '還沒有任務。先把想到的事情加進收集箱,之後再整理。',
         'focus.schedule': '今天',
         'focus.nextActions': '下一步行動',
-        'focus.groupBy': '分組方式',
+        'focus.groupBy': '下一步行動分組依據',
         'focus.group.context': '情境',
         'focus.group.project': '專案',
         'focus.group.area': '領域',

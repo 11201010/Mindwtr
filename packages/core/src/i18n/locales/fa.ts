@@ -1685,7 +1685,7 @@ export const faOverrides: Record<string, string> = {
         'agenda.emptyStart': 'هنوز کاری نیست. هر چیزی که در ذهن دارید را به صندوق ورودی اضافه کرده و بعداً مرتبش کنید.',
         'focus.schedule': 'امروز',
         'focus.nextActions': 'اقدامات بعدی',
-        'focus.groupBy': 'گروه‌بندی بر اساس',
+        'focus.groupBy': 'گروه‌بندی اقدام‌های بعدی بر اساس',
         'focus.group.context': 'زمینه',
         'focus.group.project': 'پروژه',
         'focus.group.area': 'حوزه',

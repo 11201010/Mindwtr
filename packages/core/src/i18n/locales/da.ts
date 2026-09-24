@@ -1768,7 +1768,7 @@ export const daOverrides: Record<string, string> = {
     'agenda.emptyStart': 'Ingen opgaver endnu. Føj hvad du tænker på til indbakken og ordne det senere.',
     'focus.schedule': 'I dag',
     'focus.nextActions': 'Næste handlinger',
-    'focus.groupBy': 'Grupper efter',
+        'focus.groupBy': 'Gruppér næste handlinger efter',
     'focus.group.context': 'Kontekst',
     'focus.group.project': 'Projekt',
     'focus.group.area': 'Område',
