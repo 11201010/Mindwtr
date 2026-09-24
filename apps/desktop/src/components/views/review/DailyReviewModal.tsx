@@ -410,7 +410,7 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
         }
         return (
             <div className="space-y-1.5">
-                {events.slice(0, 5).map((event) => {
+                {events.map((event) => {
                     const start = safeParseDate(event.start);
                     const end = safeParseDate(event.end);
                     const timeLabel = event.allDay || !start || !end

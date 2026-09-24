@@ -797,18 +797,19 @@ export const formatDailyReviewStepLabel = (t: Translate, index: number, count: n
 /** The Daily Review shows five events a day. */
 const DAILY_REVIEW_EVENT_PREVIEW = 5;
 
-/** One day's calendar card: its title and the first five events with their times. */
+/** One day's calendar card, with a five-event preview by default. */
 export function getDailyReviewCalendarDay(
     events: readonly ExternalCalendarEvent[],
     day: Date,
     text: DailyReviewText,
     formatDate: DateFormatter,
+    eventLimit = DAILY_REVIEW_EVENT_PREVIEW,
 ) {
     const dayEvents = getExternalCalendarEventsForDay(events, day);
     return {
         title: `${formatDate(day, 'P')} · ${text.events}`,
         count: dayEvents.length,
-        events: dayEvents.slice(0, DAILY_REVIEW_EVENT_PREVIEW).map((event) => {
+        events: dayEvents.slice(0, eventLimit).map((event) => {
             const start = safeParseDate(event.start);
             const end = safeParseDate(event.end);
             return {

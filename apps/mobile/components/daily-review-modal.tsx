@@ -168,8 +168,8 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     }, [today]);
 
     // Formatted each render: the app's date settings can change while the review is open.
-    const todayCalendar = getDailyReviewCalendarDay(externalEvents, today, text, safeFormatDate);
-    const tomorrowCalendar = getDailyReviewCalendarDay(externalEvents, tomorrow, text, safeFormatDate);
+    const todayCalendar = getDailyReviewCalendarDay(externalEvents, today, text, safeFormatDate, Infinity);
+    const tomorrowCalendar = getDailyReviewCalendarDay(externalEvents, tomorrow, text, safeFormatDate, Infinity);
 
     // Single source of "what needs reviewing today" (#867): shared with
     // desktop via core so a raw startTime-vs-now check can't drift back in.
