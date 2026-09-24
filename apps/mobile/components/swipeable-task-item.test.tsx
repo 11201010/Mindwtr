@@ -1197,7 +1197,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
 
     const waiting = renderRow(true, true);
     expect(hasText(waiting, 'Sam')).toBe(true);
-    expect(waiting.root.findAllByType('UserRound')).toHaveLength(1);
+    expect(waiting.root.findAll((node) => String(node.type) === 'UserRound')).toHaveLength(1);
   });
 
   it('shows the completion date and time for completed tasks', () => {
