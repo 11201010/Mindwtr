@@ -488,12 +488,19 @@ export function buildStatusListFilterOptions(input: {
     allProjects: readonly Project[];
     settings: AppSettings | undefined;
     t: Translate;
+    /** Done only: the screen offers time filters (both screens turn them off). */
+    timeEstimateFilters?: boolean;
+    /** False skips the token scan; mobile builds tokens only while its filter sheet is open. */
+    withTokens?: boolean;
 }): ListFilterOptions {
+    const withTokens = input.withTokens !== false;
     if (input.kind === 'reference') {
         const projects = projectFilterOptions(input.tasks, input.allProjects, input.t);
         return {
             // Reference tags may be stored without a leading #; only the options are normalized.
-            tokens: getUsedTaskTokens([...input.tasks], (task) => (task.tags ?? []).map((tag) => normalizeBulkTaskTokenInput(tag, 'tags'))),
+            tokens: withTokens
+                ? getUsedTaskTokens([...input.tasks], (task) => (task.tags ?? []).map((tag) => normalizeBulkTaskTokenInput(tag, 'tags')))
+                : [],
             projects,
             timeEstimates: TIME_ESTIMATE_OPTIONS,
             visibility: { energyLevel: false, location: false, priority: false, timeEstimate: false },
@@ -501,14 +508,14 @@ export function buildStatusListFilterOptions(input: {
             getProjectLabel: projectFilterLabel(input.allProjects, input.t),
         };
     }
+    const features = resolveFeatureFlags(input.settings);
     return {
-        tokens: getUsedTaskTokens([...input.tasks], (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]),
+        tokens: withTokens ? getUsedTaskTokens([...input.tasks], (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]) : [],
         projects: null,
         timeEstimates: TIME_ESTIMATE_OPTIONS,
-        // Both screens turn the time filters off.
         visibility: getTaskMetadataFilterVisibility(input.tasks, {
-            prioritiesEnabled: resolveFeatureFlags(input.settings).priorities,
-            timeEstimatesEnabled: false,
+            prioritiesEnabled: features.priorities,
+            timeEstimatesEnabled: input.timeEstimateFilters === true && features.timeEstimates,
         }),
     };
 }

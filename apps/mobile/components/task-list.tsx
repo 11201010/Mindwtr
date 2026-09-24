@@ -9,13 +9,11 @@ import {
   type Section,
   TaskStatus,
   sortTasksBy,
-  sortDoneTasksForListView,
   getUsedTaskTokens,
   type TaskSortBy,
   type ProjectSequenceTaskCue,
   shallow,
   normalizeFocusTaskLimit,
-  normalizeBulkTaskTokenInput,
   resolveFeatureFlags,
   tFallback,
   isTaskInActiveProject,
@@ -24,13 +22,18 @@ import {
   buildProjectTaskListModel,
   selectProjectTaskListTasks,
   PROJECT_COMPLETED_SECTION_ID,
-  createReferenceSearchPredicate,
-  isReferenceInVisibleProject,
-  SAVED_FILTER_NO_PROJECT_ID,
   taskMatchesAreaFilterSelection,
   DONE_TASK_LIST_SORT_OPTIONS,
   TASK_LIST_SORT_OPTIONS,
   TIME_ESTIMATE_OPTIONS,
+  buildStatusListFilterOptions,
+  buildStatusListFilterSummary,
+  buildStatusListModel,
+  DONE_LIST_GROUP_OPTIONS,
+  REFERENCE_ARCHIVED_CHIP_ID,
+  selectStatusListTasks,
+  TASK_LIST_GROUP_OPTIONS,
+  type StatusListKind,
 } from '@mindwtr/core';
 
 import { TaskEditModal } from './task-edit-modal';
@@ -98,7 +101,6 @@ import { usePruneSelectionToVisible, useTaskListSelection } from './use-task-lis
 import { useLocalDayKey } from '@/hooks/use-local-day-key';
 import { useAndroidActivitySession } from '@/hooks/use-android-activity-session';
 import { resolveTaskListSortBy } from '@/lib/task-list-sort';
-import { DONE_LIST_GROUP_OPTIONS } from '@/lib/view-state/done-list-view-state';
 import { useCollapsedTaskGroups } from '@/lib/view-state/task-group-collapse-state';
 
 const PROJECT_REORDER_ITEM_HEIGHT = 80;
@@ -540,11 +542,25 @@ function TaskListComponent({
   }, [exitSelectionMode, projectReadOnly, projectReorderMode, selectionMode, setProjectReorderMode]);
 
   const taskListDeriveStartedAt = Date.now();
+  // Reference and Done are core's status-list model, shared with the native host.
+  const statusListKind: StatusListKind | null = !projectId && (statusFilter === 'reference' || statusFilter === 'done')
+    ? statusFilter
+    : null;
   const filterableTasks = useMemo(() => {
-    const areaProjectLookup = statusFilter === 'reference' ? allProjectById : projectById;
+    if (statusListKind) {
+      return selectStatusListTasks({
+        kind: statusListKind,
+        tasks,
+        projects,
+        allProjects,
+        resolvedAreaFilter,
+        areaById,
+        includeArchivedProjects: includeArchivedReferenceProjects,
+      });
+    }
     const isVisibleInArea = (task: Task) => (statusFilter === 'inbox'
-      ? isTaskVisibleInInbox(task, { projectById: areaProjectLookup })
-      : taskMatchesAreaFilterSelection(task, resolvedAreaFilter, areaProjectLookup, areaById));
+      ? isTaskVisibleInInbox(task, { projectById })
+      : taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectById, areaById));
     if (projectId) {
       return selectProjectTaskListTasks(tasks, {
         projectId,
@@ -559,113 +575,82 @@ function TaskListComponent({
       if (statusFilter === 'all' && task.status === 'reference') return false;
       if (statusFilter === 'all' && !includeDone && task.status === 'done') return false;
       const matchesStatus = statusFilter === 'all' ? true : task.status === statusFilter;
-      if (statusFilter === 'reference') {
-        if (!isReferenceInVisibleProject(task, allProjectById, includeArchivedReferenceProjects)) return false;
-      } else if (!isTaskInActiveProject(task, projectById)) {
-        return false;
-      }
+      if (!isTaskInActiveProject(task, projectById)) return false;
       return isVisibleInArea(task) && matchesStatus;
     });
-  }, [allProjectById, areaById, includeArchived, includeArchivedReferenceProjects, includeDone, projectById, projectId, resolvedAreaFilter, statusFilter, tasks]);
-  const referenceProjectFilterOptions = useMemo(() => {
-    if (statusFilter !== 'reference') return undefined;
-    const usedProjectIds = new Set(
-      filterableTasks.map((task) => task.projectId).filter((id): id is string => Boolean(id)),
-    );
-    const noProjectOption = filterableTasks.some((task) => !task.projectId)
-      ? [{ id: SAVED_FILTER_NO_PROJECT_ID, title: tFallback(t, 'taskEdit.noProjectOption', 'No project') }]
-      : [];
-    const projectOptions = allProjects
-      .filter((candidate) => usedProjectIds.has(candidate.id) && !candidate.deletedAt && !candidate.purgedAt)
-      .sort((left, right) => {
-        const leftOrder = Number.isFinite(left.order) ? left.order : Number.POSITIVE_INFINITY;
-        const rightOrder = Number.isFinite(right.order) ? right.order : Number.POSITIVE_INFINITY;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-        return left.title.localeCompare(right.title);
-      })
-      .map((candidate) => ({ id: candidate.id, title: candidate.title }));
-    return [...noProjectOption, ...projectOptions];
-  }, [allProjects, filterableTasks, statusFilter, t]);
-  const referenceProjectFilterOptionIds = useMemo(
-    () => referenceProjectFilterOptions?.map((option) => option.id),
-    [referenceProjectFilterOptions],
-  );
-  const getReferenceProjectFilterLabel = useCallback((candidateId: string) => (
-    candidateId === SAVED_FILTER_NO_PROJECT_ID
-      ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
-      : allProjectById.get(candidateId)?.title
-  ), [allProjectById, t]);
-  const metadataFilterVisibility = useMemo(() => {
-    if (statusFilter === 'reference') {
-      return { energyLevel: false, location: false, priority: false, timeEstimate: false };
-    }
-    return getTaskMetadataFilterVisibility(filterableTasks, {
+  }, [allProjects, areaById, includeArchived, includeArchivedReferenceProjects, includeDone, projectById, projectId, projects, resolvedAreaFilter, statusFilter, statusListKind, tasks]);
+  // Scanning every visible task for its tokens only pays off once the sheet is
+  // open; until then the selected ones are all the chips anyone can see.
+  const statusListFilterOptions = useMemo(() => (statusListKind
+    ? buildStatusListFilterOptions({
+      kind: statusListKind,
+      tasks: filterableTasks,
+      allProjects,
+      settings,
+      t,
+      timeEstimateFilters: showTimeEstimateFiltersProp,
+      withTokens: filtersVisible,
+    })
+    : null), [allProjects, filterableTasks, filtersVisible, settings, showTimeEstimateFiltersProp, statusListKind, t]);
+  const referenceProjectFilterOptions = statusListFilterOptions?.projects ?? undefined;
+  const metadataFilterVisibility = useMemo(() => statusListFilterOptions?.visibility
+    ?? getTaskMetadataFilterVisibility(filterableTasks, {
       prioritiesEnabled,
       timeEstimatesEnabled: timeEstimateFiltersEnabled,
-    });
-  }, [filterableTasks, prioritiesEnabled, statusFilter, timeEstimateFiltersEnabled]);
+    }), [filterableTasks, prioritiesEnabled, statusListFilterOptions, timeEstimateFiltersEnabled]);
   const resetReferenceFilters = useCallback(() => setIncludeArchivedReferenceProjects(false), []);
   const selections = useTaskFilterSelections({
     view: 'list',
     t,
     visibility: metadataFilterVisibility,
-    retainProjects: referenceProjectFilterOptionIds,
-    getProjectLabel: statusFilter === 'reference' ? getReferenceProjectFilterLabel : undefined,
+    retainProjects: statusListFilterOptions?.retainProjects,
+    getProjectLabel: statusListFilterOptions?.getProjectLabel,
     onClear: resetReferenceFilters,
   });
   const { criteria: filterCriteria, searchQuery: filterSearchQuery } = selections;
-  // Scanning every visible task for its tokens only pays off once the sheet is
-  // open; until then the selected ones are all the chips anyone can see.
   const tokenFilterOptions = useMemo(() => {
     if (!filtersVisible) return Array.from(new Set([...selections.tokens, ...selections.excludedTokens]));
-    return getUsedTaskTokens(
-      filterableTasks,
-      statusFilter === 'reference'
-        // Reference tags may still be stored without a leading #. The picker
-        // works with typed tokens, so normalize only its options while leaving
-        // persisted task data untouched; core matching accepts both shapes.
-        ? (task) => (task.tags ?? []).map((tag) => normalizeBulkTaskTokenInput(tag, 'tags'))
-        : (task) => [...(task.contexts ?? []), ...(task.tags ?? [])],
-    );
-  }, [filterableTasks, filtersVisible, selections.tokens, selections.excludedTokens, statusFilter]);
+    return statusListFilterOptions?.tokens
+      ?? getUsedTaskTokens(filterableTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]);
+  }, [filterableTasks, filtersVisible, selections.tokens, selections.excludedTokens, statusListFilterOptions]);
   const archivedReferenceFilterActive = statusFilter === 'reference' && includeArchivedReferenceProjects;
-  const activeTaskFilterCount = selections.activeCount;
+  // Reference and Done: the header's chips and counts and the empty state, as core summarizes them.
+  const filterSummary = useMemo(() => (statusListKind
+    ? buildStatusListFilterSummary({
+      kind: statusListKind,
+      chips: selections.chips.map(({ id, label, excluded }) => ({ id, label, excluded: excluded === true })),
+      activeCount: selections.activeCount,
+      hasActive: selections.hasActive,
+      includeArchivedProjects: archivedReferenceFilterActive,
+      t,
+    })
+    : null), [archivedReferenceFilterActive, selections.activeCount, selections.chips, selections.hasActive, statusListKind, t]);
   const hasActiveTaskFilters = selections.hasActive;
-  const totalFilterActiveCount = activeTaskFilterCount + (archivedReferenceFilterActive ? 1 : 0);
-  const hasAnyActiveFilters = hasActiveTaskFilters || archivedReferenceFilterActive;
+  const totalFilterActiveCount = filterSummary?.activeCount ?? selections.activeCount;
+  const hasAnyActiveFilters = filterSummary?.hasActive ?? hasActiveTaskFilters;
   useEffect(() => {
     onFilterStateChange?.({ activeCount: totalFilterActiveCount, hasActive: hasAnyActiveFilters });
   }, [hasAnyActiveFilters, onFilterStateChange, totalFilterActiveCount]);
   const activeFilterChips = useMemo<TaskListActiveFilterChip[]>(
-    () => archivedReferenceFilterActive
-      ? [
-          ...selections.chips,
-          {
-            id: 'reference:include-archived-projects',
-            label: t('reference.includeArchivedProjects'),
-            onPress: () => setIncludeArchivedReferenceProjects(false),
-          },
-        ]
-      : selections.chips,
-    [archivedReferenceFilterActive, selections.chips, t],
+    () => (filterSummary
+      ? filterSummary.chips.map((chip) => (chip.id === REFERENCE_ARCHIVED_CHIP_ID
+        ? { id: chip.id, label: chip.label, onPress: () => setIncludeArchivedReferenceProjects(false) }
+        : selections.chips.find((candidate) => candidate.id === chip.id)!))
+      : selections.chips),
+    [filterSummary, selections.chips],
   );
   const clearAllFilters = selections.clear;
-  const filteredEmptyMessage = hasActiveTaskFilters
+  const filteredEmptyMessage = filterSummary?.empty.message ?? (hasActiveTaskFilters
     ? tFallback(t, 'filters.noMatch', 'No tasks match these filters.')
-    : emptyMessage;
-  const filteredEmptyHint = hasActiveTaskFilters
+    : emptyMessage);
+  const filteredEmptyHint = filterSummary?.empty.hint ?? (hasActiveTaskFilters
     ? activeFilterChips.slice(0, 3).map((chip) => chip.label).join(', ')
-    : emptyHint;
-  const filteredEmptyActionLabel = hasActiveTaskFilters
+    : emptyHint);
+  const filteredEmptyActionLabel = (filterSummary ? filterSummary.empty.actionLabel : hasActiveTaskFilters
     ? tFallback(t, 'filters.clear', 'Clear')
-    : emptyActionLabel;
+    : null) ?? emptyActionLabel;
   const filteredEmptyAction = hasActiveTaskFilters ? clearAllFilters : onEmptyAction;
 
-  // Memoize filtered and sorted tasks for performance
-  const referenceSearchPredicate = useMemo(
-    () => createReferenceSearchPredicate(statusFilter === 'reference' ? filterSearchQuery : ''),
-    [filterSearchQuery, statusFilter],
-  );
   // A project's list (which tasks, their order, its sections, and the Completed
   // and Reference piles) is one core model, shared with the native host.
   const projectTaskList = useMemo(() => {
@@ -709,25 +694,37 @@ function TaskListComponent({
     t,
   ]);
 
-  const filteredTasks = useMemo(() => {
-    if (projectId) return NO_TASKS;
-    const filterSelections = {
+  const statusListModel = useMemo(() => {
+    if (!statusListKind) return null;
+    // localDayKey is not read here; it is in the dependency list so crossing
+    // midnight re-buckets the completedDate axis.
+    void localDayKey;
+    return buildStatusListModel({
+      kind: statusListKind,
+      tasks: filterableTasks,
+      projects,
+      areas,
+      settings,
+      groupBy: activeGroupBy,
+      viewSortBy,
       criteria: filterCriteria,
-      searchQuery: statusFilter === 'reference' ? '' : filterSearchQuery,
-    };
-    return filterableTasks.filter((task) => (
-      referenceSearchPredicate(task) && taskMatchesFilterSelections(task, filterSelections)
-    ));
-  }, [filterCriteria, filterSearchQuery, filterableTasks, projectId, referenceSearchPredicate, statusFilter]);
+      searchQuery: filterSearchQuery,
+      collapsedGroupIds,
+      t,
+    });
+  }, [activeGroupBy, areas, collapsedGroupIds, filterCriteria, filterSearchQuery, filterableTasks, localDayKey, projects, settings, statusListKind, t, viewSortBy]);
+
+  const filteredTasks = useMemo(() => {
+    if (projectId || statusListKind) return NO_TASKS;
+    const filterSelections = { criteria: filterCriteria, searchQuery: filterSearchQuery };
+    return filterableTasks.filter((task) => taskMatchesFilterSelections(task, filterSelections));
+  }, [filterCriteria, filterSearchQuery, filterableTasks, projectId, statusListKind]);
 
   const orderedTasks = useMemo(() => {
     if (projectTaskList) return projectTaskList.orderedTasks;
-    // Done is a log: default order is completion date descending, matching desktop.
-    if (statusFilter === 'done' && sortBy === 'default') {
-      return sortDoneTasksForListView(filteredTasks);
-    }
+    if (statusListModel) return statusListModel.orderedTasks;
     return sortTasksBy(filteredTasks, sortBy);
-  }, [filteredTasks, projectTaskList, sortBy, statusFilter]);
+  }, [filteredTasks, projectTaskList, sortBy, statusListModel]);
   // #784 next-round evidence: the visible order at Task-order enter/exit. An
   // exit digest that differs from what the list later shows — with no Drop
   // line between — proves the order changed after the write, and the id:order
@@ -757,6 +754,11 @@ function TaskListComponent({
 
   const listItems = useMemo<ListItem[]>(() => {
     if (projectTaskList) return projectTaskList.items;
+    if (statusListModel) {
+      return statusListModel.items.map((item): ListItem => (item.type === 'section'
+        ? item
+        : { type: 'task', task: item.task, ...(item.groupId ? { groupId: item.groupId } : { reorderSectionId: item.task.sectionId }) }));
+    }
     if (activeGroupBy !== 'none') {
       // localDayKey is not read here; it is in the dependency list so crossing
       // midnight re-buckets the completedDate axis.
@@ -771,7 +773,7 @@ function TaskListComponent({
       });
     }
     return orderedTasks.map((task): ListItem => ({ type: 'task', task, reorderSectionId: task.sectionId }));
-  }, [activeGroupBy, areas, collapsedGroupIds, localDayKey, orderedTasks, projectById, projectTaskList, t]);
+  }, [activeGroupBy, areas, collapsedGroupIds, localDayKey, orderedTasks, projectById, projectTaskList, statusListModel, t]);
   const orderedTaskIds = useMemo(
     () => Array.from(new Set(listItems.flatMap((item) => (item.type === 'task' ? [item.task.id] : [])))),
     [listItems],
@@ -850,7 +852,7 @@ function TaskListComponent({
   // Done gets the extra axis rather than every list growing it (#945).
   const groupByOptions: readonly TaskListGroupBy[] = statusFilter === 'done'
     ? DONE_LIST_GROUP_OPTIONS
-    : ['none', 'context', 'area', 'project', 'tag'];
+    : TASK_LIST_GROUP_OPTIONS;
   const getGroupByLabel = useCallback((groupBy: TaskListGroupBy) => getTaskGroupByLabel(groupBy, t), [t]);
   const groupByLabel = getGroupByLabel(activeGroupBy);
   const groupLabel = tFallback(t, 'list.groupBy', 'Group');

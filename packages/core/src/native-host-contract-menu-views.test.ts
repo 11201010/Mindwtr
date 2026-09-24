@@ -79,7 +79,7 @@ describe('native host contract: More sheet and list views', () => {
         const waiting = buildWaitingViewModel({ tasks: visibleTasks, projects: state.projects, resolvedAreaFilter, areaById, person: 'alice', t });
         const waitingView = value(host.getWaitingView({ person: 'alice', offset: 0, limit: 100 }));
         expect(waitingView.rows.map((row) => row.id)).toEqual(waiting.tasks.map((task) => task.id));
-        expect(waitingView.deferred).toEqual(waiting.deferred);
+        expect(waitingView.deferred).toEqual({ ...waiting.deferred, rows: { total: waiting.deferred!.rows.length, items: waiting.deferred!.rows } });
 
         const tasks = selectSomedayTasks(visibleTasks);
         const options = buildSomedayFilterOptions({ tasks, projects: state.projects, settings: state.settings, t });
@@ -109,7 +109,7 @@ describe('native host contract: More sheet and list views', () => {
         const referenceView = value(host.getReferenceView({ groupBy: 'project', includeArchivedProjects: true, offset: 0, limit: 100 }));
         expect(referenceView.items.map((item) => (item.type === 'section' ? item.id : item.row.id)))
             .toEqual(reference.items.map((item) => (item.type === 'section' ? item.id : item.task.id)));
-        expect(referenceView.filters.tokens.map((token) => token.value)).toEqual(referenceOptions.tokens);
+        expect(referenceView.filters.tokens.items.map((token) => token.value)).toEqual(referenceOptions.tokens);
         // A reference filed in an archived project opens read-only, as on mobile.
         const archived = referenceView.items.find((item) => item.type === 'task' && item.row.id === 'r-c');
         expect(archived?.type === 'task' && archived.row.readOnly).toBe(true);
@@ -164,7 +164,7 @@ describe('native host contract: More sheet and list views', () => {
         expect(value(await host.createSomedaySection({ title: 'IDEAS' }))).toEqual({ id: 's-ideas', existing: true });
         expect(value(await host.deleteSomedaySection({ id: 'missing' }))).toEqual({ id: 'missing', changed: false });
         expect(value(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: 's-later', requestId: generateUUID() })))
-            .toEqual({ moved: 0, toast: null, undo: null });
+            .toEqual({ moved: 0, toast: null, undoRequestId: null });
         expect(recorder.log).toEqual([]);
     });
 
@@ -192,11 +192,7 @@ describe('native host contract: More sheet and list views', () => {
 
         saveData.mockResolvedValue(undefined);
         const retried = value(await host.moveSomedayTasksToSection(input));
-        expect(retried).toEqual({
-            moved: 2,
-            toast: { message: 'Moved to Travel (2)', undoLabel: 'Undo' },
-            undo: { previous: [{ id: 's-a', sectionId: 's-later' }, { id: 's-b', sectionId: 's-ideas' }], sectionId: 's-empty' },
-        });
+        expect(retried).toEqual({ moved: 2, toast: { message: 'Moved to Travel (2)', undoLabel: 'Undo' }, undoRequestId: input.requestId });
         expect(recorder.log).toHaveLength(1);
         const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; viewSectionIds?: { someday?: string } }[] };
         expect(saved.tasks.filter(({ id }) => id === 's-a' || id === 's-b').map((task) => task.viewSectionIds?.someday)).toEqual(['s-empty', 's-empty']);
@@ -206,7 +202,7 @@ describe('native host contract: More sheet and list views', () => {
         expect(saveData).toHaveBeenCalledTimes(saves);
         expect(await host.moveSomedayTasksToSection({ ...input, sectionId: null })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
 
-        expect(value(await host.undoSomedaySectionMove({ undo: retried && 'undo' in retried ? retried.undo! : never(), requestId: generateUUID() })))
+        expect(value(await host.undoSomedaySectionMove({ moveRequestId: input.requestId, requestId: generateUUID() })))
             .toEqual({ reverted: 2 });
         expect(['s-a', 's-b'].map((id) => useTaskStore.getState()._tasksById.get(id)?.viewSectionIds?.someday)).toEqual(['s-later', 's-ideas']);
     });
@@ -252,6 +248,91 @@ describe('native host contract: More sheet and list views', () => {
         expect(saved.projects.find((project) => project.id === 'p-vendor')?.status).toBe('active');
     });
 
+    it('windows every collection a view carries and pages the rest under the view revision', async () => {
+        freezeClock();
+        const many = Array.from({ length: 150 }, (_, index) => {
+            const n = String(index).padStart(3, '0');
+            return [
+                { ...fixture.tasks.find((task) => task.id === 's-d')!, id: `s-many-${n}`, title: `Idea ${n}`, tags: [`#t${n}`] },
+                { ...fixture.tasks.find((task) => task.id === 'w-bob')!, id: `w-many-${n}`, title: `Wait ${n}`, assignedTo: `Person ${n}` },
+            ];
+        }).flat();
+        const crowded = { ...fixture, tasks: [...fixture.tasks, ...many] };
+        const { host } = await openHost(scenario('someday', 'sections'), undefined, crowded);
+
+        const someday = value(host.getSomedayView({ groupBy: 'none', offset: 0, limit: 1 }));
+        expect(someday.items).toHaveLength(1);
+        expect(someday.filters.tokens.items).toHaveLength(100);
+        expect(someday.filters.tokens.total).toBeGreaterThan(150);
+        const params = { groupBy: 'none', filters: someday.filters.state };
+        const rest = value(host.getMenuViewCollection({
+            view: 'someday', collection: 'tokens', params, offset: 100, limit: 100, revision: someday.revision,
+        }));
+        expect(rest.total).toBe(someday.filters.tokens.total);
+        expect([...someday.filters.tokens.items, ...rest.items as { value: string }[]].map((token) => token.value))
+            .toEqual(buildSomedayFilterOptions({
+                tasks: selectSomedayTasks(visible().visibleTasks), projects: useTaskStore.getState().projects, settings: useTaskStore.getState().settings, t,
+            }).tokens);
+        expect(host.getMenuViewCollection({ view: 'someday', collection: 'people', params, offset: 0, limit: 10, revision: someday.revision }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+        const waiting = value(host.getWaitingView({ offset: 0, limit: 1 }));
+        expect(waiting.people.items).toHaveLength(100);
+        expect(waiting.people.total).toBeGreaterThan(150);
+        const people = value(host.getMenuViewCollection({ view: 'waiting', collection: 'people', offset: 100, limit: 100, revision: waiting.revision }));
+        expect(people.items.length).toBe(waiting.people.total - 100);
+
+        await useTaskStore.getState().updateTask('s-many-000', { tags: ['#changed'] });
+        expect(host.getMenuViewCollection({ view: 'someday', collection: 'tokens', params, offset: 100, limit: 100, revision: someday.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('computes the revision from the pruned filters, so the returned state continues paging', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('someday', 'sections'));
+        const first = value(host.getSomedayView({ groupBy: 'none', filters: { tokens: ['#gone'] }, offset: 0, limit: 1 }));
+        expect(first.filters.state.tokens).toEqual([]);
+        const next = host.getSomedayView({ groupBy: 'none', filters: first.filters.state, offset: 1, limit: 1, revision: first.revision });
+        expect(next).toMatchObject({ ok: true, value: { revision: first.revision } });
+    });
+
+    it('refuses a reused captureId for another task', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('someday', 'sections'));
+        const captureId = generateUUID();
+        expect(value(await host.addSomedaySectionTask({ title: 'Book flights', sectionId: 's-empty', captureId }))).toEqual({ id: captureId, toast: 'Task created' });
+        expect(await host.addSomedaySectionTask({ title: 'Book hotel', sectionId: 's-empty', captureId })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.addSomedaySectionTask({ title: 'Book flights', sectionId: null, captureId })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(value(await host.addSomedaySectionTask({ title: ' Book flights ', sectionId: 's-empty', captureId }))).toEqual({ id: captureId, toast: 'Task created' });
+    });
+
+    it('undoes only a recorded move, and leaves a task filed elsewhere since', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('someday', 'sections'));
+        expect(await host.undoSomedaySectionMove({ moveRequestId: generateUUID(), requestId: generateUUID() }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const move = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID() };
+        expect(value(await host.moveSomedayTasksToSection(move))).toMatchObject({ moved: 2, undoRequestId: move.requestId });
+        await useTaskStore.getState().updateTask('s-b', { status: 'next' });
+        expect(value(await host.undoSomedaySectionMove({ moveRequestId: move.requestId, requestId: generateUUID() }))).toEqual({ reverted: 1 });
+        expect(useTaskStore.getState()._tasksById.get('s-a')?.viewSectionIds).toEqual({ someday: 's-later' });
+        expect(useTaskStore.getState()._tasksById.get('s-b')?.viewSectionIds).toEqual({ someday: 's-empty' });
+        // A move retried after its receipt is gone is target state: it writes nothing again.
+        const again = { taskIds: ['s-a'], sectionId: 's-ideas', requestId: generateUUID() };
+        expect(value(await host.moveSomedayTasksToSection(again))).toMatchObject({ moved: 1 });
+        expect(value(await host.moveSomedayTasksToSection({ ...again, requestId: generateUUID() })))
+            .toEqual({ moved: 0, toast: null, undoRequestId: null });
+    });
+
+    it('returns SAVE_FAILED, never a rejection, when a retry fails to save again', async () => {
+        freezeClock();
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host } = await openHost(scenario('waiting', 'base'), saveData);
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.activateProject({ projectId: 'p-vendor' })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        await expect(host.activateProject({ projectId: 'p-vendor' })).resolves.toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+    }, 30_000);
+
     it('titles older completion months with the user\'s date formatting', async () => {
         freezeClock();
         const keepDone = { ...fixture, settings: { ...fixture.settings, keepDone: { gtd: { autoArchiveDays: 0 } } } };
@@ -278,7 +359,8 @@ describe('native host contract: More sheet and list views', () => {
         expect(host.getSomedayMoveDialog({ taskIds: ['s-a'] })).toMatchObject(notReady);
         expect(await host.activateProject({ projectId: 'p' })).toMatchObject(notReady);
         expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: null, requestId: generateUUID() })).toMatchObject(notReady);
-        expect(await host.undoSomedaySectionMove({ undo: { previous: [{ id: 's-a' }], sectionId: null }, requestId: generateUUID() })).toMatchObject(notReady);
+        expect(await host.undoSomedaySectionMove({ moveRequestId: generateUUID(), requestId: generateUUID() })).toMatchObject(notReady);
+        expect(host.getMenuViewCollection({ view: 'someday', collection: 'tokens', offset: 0, limit: 10, revision: 'r' })).toMatchObject(notReady);
         expect(await host.addSomedaySectionTask({ title: 'x', sectionId: null, captureId: generateUUID() })).toMatchObject(notReady);
         expect(await host.createSomedaySection({ title: 'x' })).toMatchObject(notReady);
         expect(await host.renameSomedaySection({ id: 's', title: 'x' })).toMatchObject(notReady);
@@ -287,7 +369,3 @@ describe('native host contract: More sheet and list views', () => {
         expect(await host.setTaskListSort({ sortBy: 'title' })).toMatchObject(notReady);
     });
 });
-
-function never(): never {
-    throw new Error('unreachable');
-}

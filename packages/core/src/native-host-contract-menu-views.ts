@@ -5,6 +5,11 @@
  * parallel. Every view is the React Native screen's, from the same core models
  * (menu-views-model.ts, someday-sections-model.ts, more-menu-model.ts).
  *
+ * Every collection a view carries (rows, filter options, people, parked
+ * projects, sections, saved searches) is windowed by NATIVE_HOST_MAX_WINDOW.
+ * A view returns the first window of each; getMenuViewCollection pages the rest
+ * under the same revision.
+ *
  * Only functions read this module's imports from native-host-contract.ts, so
  * the import cycle between the two files is safe.
  */
@@ -41,7 +46,7 @@ import {
     type SomedayGroupBy,
     type StatusListKind,
 } from './menu-views-model';
-import { buildMoreMenuModel, type MoreMenuModel } from './more-menu-model';
+import { buildMoreMenuModel, type MoreMenuItem, type MoreMenuModel } from './more-menu-model';
 import {
     NATIVE_HOST_CONTRACT_VERSION,
     NATIVE_HOST_MAX_WINDOW,
@@ -91,14 +96,26 @@ export type MenuViewDeps = {
 /** A user-visible refusal, shown the way mobile shows it (a toast or the dialog's error line). */
 export type NativeMenuViewRefusal = { refused: { title: string | null; message: string } };
 
+/** The first NATIVE_HOST_MAX_WINDOW items of a collection; getMenuViewCollection pages the rest. */
+export type NativeWindow<T> = { total: number; items: T[] };
+
 export type NativeSomedayMoveResult =
-    | { moved: number; toast: { message: string; undoLabel: string } | null; undo: { previous: SomedaySectionAssignment[]; sectionId: string | null } | null }
+    | {
+        moved: number;
+        toast: { message: string; undoLabel: string } | null;
+        /** Send this to undoSomedaySectionMove as `moveRequestId`; null when nothing moved. */
+        undoRequestId: string | null;
+    }
     | NativeMenuViewRefusal;
 
-export type NativeMoreMenu = MoreMenuModel & {
+export type NativeMoreMenu = Omit<MoreMenuModel, 'savedSearches'> & {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
+    savedSearches: NativeWindow<MoreMenuItem>;
 };
+
+type TokenOption = { value: string; state: 'included' | 'excluded' | 'none'; edit: ListFilterEdit };
+type ProjectOption = { id: string; title: string; selected: boolean; edit: ListFilterEdit };
 
 /** The filter picker: options carry the exact edit to send back as `filterEdit`. */
 export type NativeListFilterView = {
@@ -110,8 +127,8 @@ export type NativeListFilterView = {
     visibility: ListFilterOptions['visibility'];
     showContextMatchMode: boolean;
     showTagMatchMode: boolean;
-    tokens: { value: string; state: 'included' | 'excluded' | 'none'; edit: ListFilterEdit }[];
-    projects: { id: string; title: string; selected: boolean; edit: ListFilterEdit }[] | null;
+    tokens: NativeWindow<TokenOption>;
+    projects: NativeWindow<ProjectOption> | null;
     priorities: { value: TaskPriority; label: string; selected: boolean; edit: ListFilterEdit }[];
     energyLevels: { value: TaskEnergyLevel; label: string; selected: boolean; edit: ListFilterEdit }[];
     timeEstimates: { value: TimeEstimate; label: string; selected: boolean; edit: ListFilterEdit }[];
@@ -125,9 +142,13 @@ export type NativeListChip = {
     action: { filterEdit: ListFilterEdit } | { includeArchivedProjects: false };
 };
 
+type DeferredRow = DeferredProjectsSection['rows'][number];
+export type NativeDeferredProjects = Omit<DeferredProjectsSection, 'rows'> & { rows: NativeWindow<DeferredRow> };
+type PersonOption = { label: string; person: string; selected: boolean };
+
 type Paged<T> = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
-    /** Changes with the data, settings, language, minute and the view's own inputs. */
+    /** Changes with the data, settings, language, minute and the view's resolved inputs. */
     revision: string;
     total: number;
 } & T;
@@ -136,13 +157,15 @@ export type NativeWaitingView = Paged<{
     rows: NativeTaskRow[];
     /** The person in effect: '' when the one asked for is no longer offered. */
     person: string;
-    /** "All" first, then each person; send `person` back to choose it. */
-    people: { label: string; person: string; selected: boolean }[];
+    /** The "All" chip; sending person '' chooses it. */
+    all: { label: string; selected: boolean };
+    /** Each person; send `person` back to choose it. */
+    people: NativeWindow<PersonOption>;
     filterLabel: string;
     /** Shown while a person is chosen; sending person '' clears it. */
     clearLabel: string | null;
     stats: { value: number; label: string }[];
-    deferred: DeferredProjectsSection | null;
+    deferred: NativeDeferredProjects | null;
     empty: { title: string; hint: string } | null;
     /** Waiting rows show their detail parts. */
     showDetails: true;
@@ -179,8 +202,8 @@ export type NativeSomedayView = Paged<{
     };
     filters: NativeListFilterView;
     chips: NativeListChip[];
-    sections: ViewSectionDefinition[];
-    deferred: DeferredProjectsSection | null;
+    sections: NativeWindow<ViewSectionDefinition>;
+    deferred: NativeDeferredProjects | null;
     empty: { title: string; hint: string } | null;
     text: {
         moveToSection: string;
@@ -220,11 +243,20 @@ export type NativeStatusListView = Paged<{
     empty: { message: string; hint: string; actionLabel: string | null; clear: boolean };
 }>;
 
+export type MenuViewCollectionName = 'savedSearches' | 'people' | 'deferredProjects' | 'tokens' | 'projects' | 'sections';
+const VIEW_COLLECTIONS: Record<string, readonly MenuViewCollectionName[]> = {
+    more: ['savedSearches'],
+    waiting: ['people', 'deferredProjects'],
+    someday: ['tokens', 'projects', 'sections', 'deferredProjects'],
+    reference: ['tokens', 'projects'],
+    done: ['tokens'],
+};
+
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({ ok: false, error: { code, message } });
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
     typeof value === 'object' && value !== null && !Array.isArray(value)
 );
-// ponytail: id lists (a selection, an Undo) stop at 1000; raise with the selection UI if people select more.
+// ponytail: id lists (a selection) stop at 1000; raise with the selection UI if people select more.
 const MAX_IDS = 1000;
 const isText = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
 const isTextList = (value: unknown, max = MAX_IDS): value is string[] => (
@@ -234,11 +266,12 @@ const MATCH_MODES = new Set(['all', 'any']);
 const isTimeEstimate = (value: unknown): value is TimeEstimate => (
     typeof value === 'string' && (TIME_ESTIMATE_OPTIONS.includes(value as TimeEstimate) || isCustomTimeEstimate(value as TimeEstimate))
 );
+// Selections are bounded by the window, so the chips they make are bounded too.
 const FILTER_STATE_CHECKS: Record<keyof ListFilterState, (value: unknown) => boolean> = {
     searchQuery: (value) => isText(value, 2000),
-    tokens: (value) => isTextList(value),
-    excludedTokens: (value) => isTextList(value),
-    projects: (value) => isTextList(value),
+    tokens: (value) => isTextList(value, NATIVE_HOST_MAX_WINDOW),
+    excludedTokens: (value) => isTextList(value, NATIVE_HOST_MAX_WINDOW),
+    projects: (value) => isTextList(value, NATIVE_HOST_MAX_WINDOW),
     priorities: (value) => Array.isArray(value) && value.every((entry) => TASK_EDITOR_PRIORITY_OPTIONS.includes(entry as TaskPriority)),
     energyLevels: (value) => Array.isArray(value) && value.every((entry) => TASK_EDITOR_ENERGY_LEVEL_OPTIONS.includes(entry as TaskEnergyLevel)),
     timeEstimates: (value) => Array.isArray(value) && value.length <= 50 && value.every(isTimeEstimate),
@@ -283,6 +316,7 @@ const isFilterEdit = (edit: unknown): edit is ListFilterEdit => {
     }
 };
 
+type PageInput = { offset: number; limit: number; revision?: string };
 const isPaging = (input: Record<string, unknown>) => (
     Number.isSafeInteger(input.offset) && (input.offset as number) >= 0
     && Number.isSafeInteger(input.limit) && (input.limit as number) >= 1 && (input.limit as number) <= NATIVE_HOST_MAX_WINDOW
@@ -301,7 +335,27 @@ const paramsKey = (params: unknown): string => {
     return hash.toString(36);
 };
 
-const nativeFilterView = (resolved: ResolvedListFilter, options: ListFilterOptions, t: (key: string) => string): NativeListFilterView => {
+const page = <T,>(items: readonly T[], input: { offset: number; limit: number }) => items.slice(input.offset, input.offset + input.limit);
+const firstWindow = <T,>(items: readonly T[]): NativeWindow<T> => ({ total: items.length, items: items.slice(0, NATIVE_HOST_MAX_WINDOW) });
+
+const tokenOptions = (options: ListFilterOptions, state: ListFilterState): TokenOption[] => options.tokens.map((value) => ({
+    value,
+    state: state.tokens.includes(value) ? 'included' : state.excludedTokens.includes(value) ? 'excluded' : 'none',
+    edit: { type: 'toggleToken', value },
+}));
+const projectOptions = (options: ListFilterOptions, state: ListFilterState): ProjectOption[] | null => options.projects?.map((project) => ({
+    ...project,
+    selected: state.projects.includes(project.id),
+    edit: { type: 'toggleProject', value: project.id },
+})) ?? null;
+
+const nativeFilterView = (
+    resolved: ResolvedListFilter,
+    options: ListFilterOptions,
+    tokens: TokenOption[],
+    projects: ProjectOption[] | null,
+    t: (key: string) => string,
+): NativeListFilterView => {
     const { state } = resolved;
     return {
         state,
@@ -311,16 +365,8 @@ const nativeFilterView = (resolved: ResolvedListFilter, options: ListFilterOptio
         visibility: options.visibility,
         showContextMatchMode: resolved.showContextMatchMode,
         showTagMatchMode: resolved.showTagMatchMode,
-        tokens: options.tokens.map((value) => ({
-            value,
-            state: state.tokens.includes(value) ? 'included' : state.excludedTokens.includes(value) ? 'excluded' : 'none',
-            edit: { type: 'toggleToken', value },
-        })),
-        projects: options.projects?.map((project) => ({
-            ...project,
-            selected: state.projects.includes(project.id),
-            edit: { type: 'toggleProject', value: project.id },
-        })) ?? null,
+        tokens: firstWindow(tokens),
+        projects: projects ? firstWindow(projects) : null,
         priorities: TASK_EDITOR_PRIORITY_OPTIONS.map((value) => ({
             value, label: t(`priority.${value}`), selected: state.priorities.includes(value), edit: { type: 'togglePriority', value },
         })),
@@ -338,9 +384,21 @@ const filterChips = (resolved: ResolvedListFilter): NativeListChip[] => resolved
 }));
 
 type Receipt<T> = { key: string; value: T; saved: boolean };
+type MoveReceipt = {
+    moved: number;
+    toast: { message: string; undoLabel: string } | null;
+    /** What Undo restores; only moves recorded here can be undone. */
+    undo: { previous: SomedaySectionAssignment[]; sectionId: string | null } | null;
+};
+
+/** A view's data, its revision (from the resolved inputs) and its collections. */
+type Built<T> = { revision: string; now: Date; data: T; collections: Partial<Record<MenuViewCollectionName, readonly unknown[]>> };
 
 export function createMenuViewMethods(deps: MenuViewDeps) {
-    // ponytail: keeps the 50 most recent requests; an older retry writes again, which the target-state checks absorb.
+    // ponytail: keeps the 50 most recent requests in memory. Moves and the other writes are
+    // target-state, so a retry after eviction or a restart writes nothing again; Undo, like
+    // mobile's Undo toast, does not survive a restart. The shared native-request-receipts.ts
+    // replaces this map when it lands.
     const receipts = new Map<string, Receipt<unknown>>();
     const remember = <T,>(requestId: string, receipt: Receipt<T>) => {
         receipts.set(requestId, receipt as Receipt<unknown>);
@@ -356,7 +414,11 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
     const caught = (error: unknown) => writeFailure(error instanceof Error ? error.message : String(error));
     /** Nothing new to write: finish an earlier failed save, then acknowledge durably. */
     const settle = async <T,>(value: T): Promise<NativeHostResult<T>> => {
-        if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
+        try {
+            if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
+        } catch (error) {
+            return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+        }
         const saved = await deps.save();
         if (!saved.ok) return saved;
         markAllSaved();
@@ -397,65 +459,171 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         return { state, areas, areaById, resolvedAreaFilter, visibleTasks };
     };
 
-    const page = <T,>(items: readonly T[], input: { offset: number; limit: number }) => items.slice(input.offset, input.offset + input.limit);
-
-    // ponytail: one cached view per screen, keyed by revision; paging a large list rebuilds nothing.
-    const cache = new Map<string, { revision: string; value: unknown }>();
-    const cached = <T,>(screen: string, revision: string, build: () => T): T => {
+    // ponytail: one cached build per screen, keyed by the data and the raw inputs; paging rebuilds nothing.
+    const cache = new Map<string, { key: string; value: unknown }>();
+    const cached = <T,>(screen: string, key: string, build: () => T): T => {
         const hit = cache.get(screen);
-        if (hit?.revision === revision) return hit.value as T;
+        if (hit?.key === key) return hit.value as T;
         const value = build();
-        cache.set(screen, { revision, value });
+        cache.set(screen, { key, value });
         return value;
     };
 
-    const statusListView = (kind: StatusListKind, input: Record<string, unknown>): NativeHostResult<NativeStatusListView> => {
-        const ready = deps.readiness();
-        if (!ready.ok) return ready;
+    const buildMore = (): Built<MoreMenuModel> => {
+        const settings = useTaskStore.getState().settings;
+        const now = new Date();
+        const data = buildMoreMenuModel({
+            quickAccessView: settings.appearance?.mobileQuickAccessView,
+            savedSearches: settings.savedSearches,
+            t: deps.t(),
+        });
+        return { revision: deps.revision(now), now, data, collections: { savedSearches: data.savedSearches } };
+    };
+
+    const readWaitingParams = (input: Record<string, unknown>) => (
+        input.person === undefined || isText(input.person, 200) ? { person: (input.person as string | undefined) ?? '' } : null
+    );
+    const buildWaiting = (params: { person: string }) => {
+        const t = deps.t();
+        const now = new Date();
+        const base = deps.revision(now);
+        const data = cached('waiting', `${base}:${paramsKey(params)}`, () => {
+            const { state, areaById, resolvedAreaFilter, visibleTasks } = visibleContext();
+            const build = (person: string) => buildWaitingViewModel({
+                tasks: visibleTasks, projects: state.projects, resolvedAreaFilter, areaById, person, t,
+            });
+            const first = build(params.person);
+            // Mobile clears a person who is no longer offered.
+            const person = first.personOffered ? params.person : '';
+            const model = first.personOffered ? first : build('');
+            return {
+                model,
+                person,
+                people: model.people.map((entry): PersonOption => ({
+                    label: entry, person: entry, selected: person.toLowerCase() === entry.toLowerCase(),
+                })),
+            };
+        });
+        return {
+            revision: `${base}:${paramsKey(['waiting', data.person])}`,
+            now,
+            data,
+            collections: { people: data.people, deferredProjects: data.model.deferred?.rows ?? [] },
+        } satisfies Built<typeof data>;
+    };
+
+    const readSomedayParams = (input: Record<string, unknown>) => {
+        const filters = readFilterState(input.filters);
+        if (!filters
+            || (input.sortBy !== undefined && !TASK_LIST_SORT_OPTIONS.includes(input.sortBy as TaskSortBy))
+            || (input.groupBy !== undefined && !SOMEDAY_GROUP_OPTIONS.includes(input.groupBy as SomedayGroupBy))
+            || (input.showDetails !== undefined && typeof input.showDetails !== 'boolean')
+            || (input.filterEdit !== undefined && !isFilterEdit(input.filterEdit))) {
+            return null;
+        }
+        const edit = input.filterEdit as ListFilterEdit | undefined;
+        return {
+            sortBy: (input.sortBy as TaskSortBy | undefined) ?? 'default',
+            groupBy: (input.groupBy as SomedayGroupBy | undefined) ?? 'viewSection',
+            showDetails: input.showDetails === true,
+            filters: edit ? applyListFilterEdit(filters, edit) : filters,
+        };
+    };
+    const buildSomeday = (params: NonNullable<ReturnType<typeof readSomedayParams>>) => {
+        const t = deps.t();
+        const now = new Date();
+        const base = deps.revision(now);
+        const data = cached('someday', `${base}:${paramsKey(params)}`, () => {
+            const { state, areaById, resolvedAreaFilter, visibleTasks } = visibleContext();
+            const tasks = selectSomedayTasks(visibleTasks);
+            const options = buildSomedayFilterOptions({ tasks, projects: state.projects, settings: state.settings, t });
+            const resolved = resolveListFilterState(params.filters, {
+                visibility: options.visibility,
+                retainTokens: options.retainTokens,
+                retainProjects: options.retainProjects,
+                getProjectLabel: options.getProjectLabel,
+                t,
+            });
+            const model = buildSomedayViewModel({
+                tasks, projects: state.projects, areaById, resolvedAreaFilter, settings: state.settings,
+                sortBy: params.sortBy, groupBy: params.groupBy, showDetails: params.showDetails,
+                criteria: resolved.criteria, searchQuery: resolved.searchQuery, t,
+            });
+            const items: ({ type: 'heading'; id: string; title: string; muted: boolean } | { type: 'task'; task: Task; groupId: string | null })[] = model.groups
+                ? model.groups.flatMap((group) => [
+                    { type: 'heading' as const, id: group.id, title: group.title, muted: group.muted === true },
+                    ...group.tasks.map((task) => ({ type: 'task' as const, task, groupId: group.id })),
+                ])
+                : model.tasks.map((task) => ({ type: 'task' as const, task, groupId: null }));
+            return {
+                model, resolved, options, items,
+                tokens: tokenOptions(options, resolved.state),
+                projects: projectOptions(options, resolved.state),
+            };
+        });
+        const { sortBy, groupBy, showDetails } = params;
+        return {
+            revision: `${base}:${paramsKey(['someday', sortBy, groupBy, showDetails, data.resolved.state])}`,
+            now,
+            data,
+            collections: {
+                tokens: data.tokens,
+                projects: data.projects ?? [],
+                sections: data.model.sections,
+                deferredProjects: data.model.deferred?.rows ?? [],
+            },
+        } satisfies Built<typeof data>;
+    };
+
+    const readStatusParams = (kind: StatusListKind, input: Record<string, unknown>) => {
         const groupOptions: readonly string[] = kind === 'done' ? DONE_LIST_GROUP_OPTIONS : TASK_LIST_GROUP_OPTIONS;
-        const filters = readFilterState(input?.filters);
-        if (!isObjectRecord(input) || !isPaging(input) || !filters
+        const filters = readFilterState(input.filters);
+        if (!filters
             || (input.groupBy !== undefined && !groupOptions.includes(input.groupBy as string))
             || (input.sortBy !== undefined && (kind !== 'done' || !DONE_TASK_LIST_SORT_OPTIONS.includes(input.sortBy as TaskSortBy)))
             || (input.includeArchivedProjects !== undefined && (kind !== 'reference' || typeof input.includeArchivedProjects !== 'boolean'))
             || (input.collapsedGroupIds !== undefined && !isTextList(input.collapsedGroupIds, 200))
             || (input.filterEdit !== undefined && !isFilterEdit(input.filterEdit))) {
-            return fail('INVALID_INPUT', 'A valid offset, bounded limit, revision for later pages, and this list\'s grouping, sort and filters are required');
+            return null;
         }
-        const t = deps.t();
         const edit = input.filterEdit as ListFilterEdit | undefined;
-        const filterState = edit ? applyListFilterEdit(filters, edit) : filters;
-        // Mobile's Clear also turns archived projects off.
-        const includeArchivedProjects = kind === 'reference' && input.includeArchivedProjects === true && edit?.type !== 'clear';
-        const groupBy = (input.groupBy as TaskGroupBy | undefined) ?? (kind === 'done' ? DONE_LIST_DEFAULT_GROUP_BY : REFERENCE_LIST_DEFAULT_GROUP_BY);
-        const viewSortBy = input.sortBy as TaskSortBy | undefined;
-        const collapsedGroupIds = (input.collapsedGroupIds as string[] | undefined) ?? [];
+        return {
+            kind,
+            groupBy: (input.groupBy as TaskGroupBy | undefined) ?? (kind === 'done' ? DONE_LIST_DEFAULT_GROUP_BY : REFERENCE_LIST_DEFAULT_GROUP_BY),
+            viewSortBy: input.sortBy as TaskSortBy | undefined,
+            // Mobile's Clear also turns archived projects off.
+            includeArchivedProjects: kind === 'reference' && input.includeArchivedProjects === true && edit?.type !== 'clear',
+            collapsedGroupIds: (input.collapsedGroupIds as string[] | undefined) ?? [],
+            filters: edit ? applyListFilterEdit(filters, edit) : filters,
+        };
+    };
+    const buildStatus = (params: NonNullable<ReturnType<typeof readStatusParams>>) => {
+        const { kind } = params;
+        const t = deps.t();
         const now = new Date();
-        const params = { kind, groupBy, viewSortBy, includeArchivedProjects, collapsedGroupIds, filterState };
-        const revision = `${deps.revision(now)}:${paramsKey(params)}`;
-        if (input.revision !== undefined && input.revision !== revision) {
-            return fail('STALE_REVISION', 'The list changed; restart paging from offset zero');
-        }
-        const view = cached(kind, revision, () => {
+        const base = deps.revision(now);
+        const data = cached(kind, `${base}:${paramsKey(params)}`, () => {
             const { state, areaById, resolvedAreaFilter } = visibleContext();
             const tasks = selectStatusListTasks({
                 kind, tasks: state.tasks, projects: state.projects, allProjects: state._allProjects,
-                resolvedAreaFilter, areaById, includeArchivedProjects,
+                resolvedAreaFilter, areaById, includeArchivedProjects: params.includeArchivedProjects,
             });
             const options = buildStatusListFilterOptions({ kind, tasks, allProjects: state._allProjects, settings: state.settings, t });
-            const resolved = resolveListFilterState(filterState, {
+            const resolved = resolveListFilterState(params.filters, {
                 visibility: options.visibility,
                 retainProjects: options.retainProjects,
                 getProjectLabel: options.getProjectLabel,
                 t,
             });
             const model = buildStatusListModel({
-                kind, tasks, projects: state.projects, areas: state.areas, settings: state.settings, groupBy, viewSortBy,
+                kind, tasks, projects: state.projects, areas: state.areas, settings: state.settings,
+                groupBy: params.groupBy, viewSortBy: params.viewSortBy,
                 criteria: resolved.criteria, searchQuery: resolved.searchQuery,
-                collapsedGroupIds: new Set(collapsedGroupIds), t, now, formatDate: deps.formatDate(),
+                collapsedGroupIds: new Set(params.collapsedGroupIds), t, now, formatDate: deps.formatDate(),
             });
             const summary = buildStatusListFilterSummary({
-                kind, chips: resolved.chips, activeCount: resolved.activeCount, hasActive: resolved.hasActive, includeArchivedProjects, t,
+                kind, chips: resolved.chips, activeCount: resolved.activeCount, hasActive: resolved.hasActive,
+                includeArchivedProjects: params.includeArchivedProjects, t,
             });
             const chips = [
                 ...filterChips(resolved),
@@ -463,44 +631,65 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     ? [{ ...summary.chips[summary.chips.length - 1], action: { includeArchivedProjects: false as const } }]
                     : []),
             ];
+            const allProjects = state._allProjects;
             return {
-                model,
+                model, resolved, options, summary, chips,
                 title: getStatusListScreenText(kind, t).title,
-                filters: nativeFilterView(resolved, options, t),
-                chips,
-                summary,
-                archivedProjectsToggle: kind === 'reference' ? { label: t('reference.includeArchivedProjects'), value: includeArchivedProjects } : null,
-                readOnly: (task: Task) => isStatusListTaskReadOnly(task, state._allProjects),
+                tokens: tokenOptions(options, resolved.state),
+                projects: projectOptions(options, resolved.state),
+                archivedProjectsToggle: kind === 'reference' ? { label: t('reference.includeArchivedProjects'), value: params.includeArchivedProjects } : null,
+                readOnly: (task: Task) => isStatusListTaskReadOnly(task, allProjects),
             };
         });
-        const { model } = view;
-        const windowItems = page(model.items, input as { offset: number; limit: number });
+        const { groupBy, viewSortBy, includeArchivedProjects, collapsedGroupIds } = params;
+        return {
+            revision: `${base}:${paramsKey([kind, groupBy, viewSortBy, includeArchivedProjects, collapsedGroupIds, data.resolved.state])}`,
+            now,
+            data,
+            collections: { tokens: data.tokens, projects: data.projects ?? [] },
+        } satisfies Built<typeof data>;
+    };
+
+    const statusListView = (kind: StatusListKind, input: Record<string, unknown>): NativeHostResult<NativeStatusListView> => {
+        const ready = deps.readiness();
+        if (!ready.ok) return ready;
+        const params = isObjectRecord(input) ? readStatusParams(kind, input) : null;
+        if (!params || !isPaging(input)) {
+            return fail('INVALID_INPUT', 'A valid offset, bounded limit, revision for later pages, and this list\'s grouping, sort and filters are required');
+        }
+        const built = buildStatus(params);
+        if (input.revision !== undefined && input.revision !== built.revision) {
+            return fail('STALE_REVISION', 'The list changed; restart paging from offset zero');
+        }
+        const { data, now } = built;
+        const { model } = data;
+        const windowItems = page(model.items, input as PageInput);
         const rows = deps.rows(windowItems.flatMap((item) => (item.type === 'task' ? [item.task] : [])), now);
         let rowIndex = 0;
         return {
             ok: true,
             value: {
                 version: NATIVE_HOST_CONTRACT_VERSION,
-                revision,
+                revision: built.revision,
                 total: model.items.length,
                 kind,
-                title: view.title,
+                title: data.title,
                 items: windowItems.map((item): NativeStatusListItem => (item.type === 'section'
                     ? item
-                    : { type: 'task', row: { ...rows[rowIndex++], readOnly: view.readOnly(item.task) }, groupId: item.groupId })),
+                    : { type: 'task', row: { ...rows[rowIndex++], readOnly: data.readOnly(item.task) }, groupId: item.groupId })),
                 count: model.orderedTasks.length,
-                groupBy,
+                groupBy: params.groupBy,
                 sortBy: model.sortBy,
-                includeArchivedProjects,
-                collapsedGroupIds,
+                includeArchivedProjects: params.includeArchivedProjects,
+                collapsedGroupIds: params.collapsedGroupIds,
                 sort: { title: model.sortTitle, label: model.sortByLabel, options: model.sortOptions },
                 group: { title: model.groupTitle, label: model.groupByLabel, options: model.groupOptions },
-                filters: view.filters,
-                chips: view.chips,
-                filterActiveCount: view.summary.activeCount,
-                hasActiveFilters: view.summary.hasActive,
-                archivedProjectsToggle: view.archivedProjectsToggle,
-                empty: { ...view.summary.empty, clear: view.filters.hasActive },
+                filters: nativeFilterView(data.resolved, data.options, data.tokens, data.projects, deps.t()),
+                chips: data.chips,
+                filterActiveCount: data.summary.activeCount,
+                hasActiveFilters: data.summary.hasActive,
+                archivedProjectsToggle: data.archivedProjectsToggle,
+                empty: { ...data.summary.empty, clear: data.resolved.hasActive },
             },
         };
     };
@@ -512,23 +701,23 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         await state.updateSettings(buildSomedaySectionsSettingsUpdate(state.settings, next));
     };
 
+    const deferredWindow = (deferred: DeferredProjectsSection | null): NativeDeferredProjects | null => (
+        deferred ? { ...deferred, rows: firstWindow(deferred.rows) } : null
+    );
+
     return {
         /** The Menu tab's More sheet. */
         getMoreMenu(): NativeHostResult<NativeMoreMenu> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const settings = useTaskStore.getState().settings;
-            const now = new Date();
+            const built = buildMore();
             return {
                 ok: true,
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision: deps.revision(now),
-                    ...buildMoreMenuModel({
-                        quickAccessView: settings.appearance?.mobileQuickAccessView,
-                        savedSearches: settings.savedSearches,
-                        t: deps.t(),
-                    }),
+                    revision: built.revision,
+                    ...built.data,
+                    savedSearches: firstWindow(built.data.savedSearches),
                 },
             };
         },
@@ -537,42 +726,30 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         getWaitingView(input: { person?: string; offset: number; limit: number; revision?: string }): NativeHostResult<NativeWaitingView> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || !isPaging(input) || (input.person !== undefined && !isText(input.person, 200))) {
+            const params = isObjectRecord(input) ? readWaitingParams(input) : null;
+            if (!params || !isPaging(input)) {
                 return fail('INVALID_INPUT', 'A valid offset, bounded limit, revision for later pages, and person are required');
             }
-            const t = deps.t();
-            const now = new Date();
-            const requested = input.person ?? '';
-            const revision = `${deps.revision(now)}:${paramsKey(['waiting', requested])}`;
-            if (input.revision !== undefined && input.revision !== revision) {
+            const built = buildWaiting(params);
+            if (input.revision !== undefined && input.revision !== built.revision) {
                 return fail('STALE_REVISION', 'Waiting changed; restart paging from offset zero');
             }
-            const model = cached('waiting', revision, () => {
-                const { state, areaById, resolvedAreaFilter, visibleTasks } = visibleContext();
-                const build = (person: string) => buildWaitingViewModel({
-                    tasks: visibleTasks, projects: state.projects, resolvedAreaFilter, areaById, person, t,
-                });
-                const first = build(requested);
-                // Mobile clears a person who is no longer offered.
-                return first.personOffered ? { ...first, person: requested } : { ...build(''), person: '' };
-            });
-            const { labels, person } = model;
+            const { model, person, people } = built.data;
+            const { labels } = model;
             return {
                 ok: true,
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision,
+                    revision: built.revision,
                     total: model.tasks.length,
-                    rows: deps.rows(page(model.tasks, input), now),
+                    rows: deps.rows(page(model.tasks, input), built.now),
                     person,
-                    people: [
-                        { label: labels.all, person: '', selected: !person },
-                        ...model.people.map((entry) => ({ label: entry, person: entry, selected: person.toLowerCase() === entry.toLowerCase() })),
-                    ],
+                    all: { label: labels.all, selected: !person },
+                    people: firstWindow(people),
                     filterLabel: labels.filter,
                     clearLabel: person ? labels.clear : null,
                     stats: [{ value: model.count, label: labels.count }, { value: model.withDeadlineCount, label: labels.withDeadline }],
-                    deferred: model.deferred,
+                    deferred: deferredWindow(model.deferred),
                     empty: model.showEmptyState ? { title: labels.emptyTitle, hint: labels.emptyHint } : null,
                     showDetails: true,
                 },
@@ -596,59 +773,28 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         }): NativeHostResult<NativeSomedayView> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const filters = readFilterState(input?.filters);
-            if (!isObjectRecord(input) || !isPaging(input) || !filters
-                || (input.sortBy !== undefined && !TASK_LIST_SORT_OPTIONS.includes(input.sortBy))
-                || (input.groupBy !== undefined && !SOMEDAY_GROUP_OPTIONS.includes(input.groupBy))
-                || (input.showDetails !== undefined && typeof input.showDetails !== 'boolean')
-                || (input.filterEdit !== undefined && !isFilterEdit(input.filterEdit))) {
+            const params = isObjectRecord(input) ? readSomedayParams(input) : null;
+            if (!params || !isPaging(input)) {
                 return fail('INVALID_INPUT', 'A valid offset, bounded limit, revision for later pages, sort, grouping and filters are required');
             }
-            const t = deps.t();
-            const sortBy = input.sortBy ?? 'default';
-            const groupBy = input.groupBy ?? 'viewSection';
-            const showDetails = input.showDetails === true;
-            const filterState = input.filterEdit ? applyListFilterEdit(filters, input.filterEdit) : filters;
-            const now = new Date();
-            const revision = `${deps.revision(now)}:${paramsKey(['someday', sortBy, groupBy, showDetails, filterState])}`;
-            if (input.revision !== undefined && input.revision !== revision) {
+            const built = buildSomeday(params);
+            if (input.revision !== undefined && input.revision !== built.revision) {
                 return fail('STALE_REVISION', 'Someday changed; restart paging from offset zero');
             }
-            const view = cached('someday', revision, () => {
-                const { state, areaById, resolvedAreaFilter, visibleTasks } = visibleContext();
-                const tasks = selectSomedayTasks(visibleTasks);
-                const options = buildSomedayFilterOptions({ tasks, projects: state.projects, settings: state.settings, t });
-                const resolved = resolveListFilterState(filterState, {
-                    visibility: options.visibility,
-                    retainTokens: options.retainTokens,
-                    retainProjects: options.retainProjects,
-                    getProjectLabel: options.getProjectLabel,
-                    t,
-                });
-                const model = buildSomedayViewModel({
-                    tasks, projects: state.projects, areaById, resolvedAreaFilter, settings: state.settings,
-                    sortBy, groupBy, showDetails, criteria: resolved.criteria, searchQuery: resolved.searchQuery, t,
-                });
-                const items: ({ type: 'heading'; id: string; title: string; muted: boolean } | { type: 'task'; task: Task; groupId: string | null })[] = model.groups
-                    ? model.groups.flatMap((group) => [
-                        { type: 'heading' as const, id: group.id, title: group.title, muted: group.muted === true },
-                        ...group.tasks.map((task) => ({ type: 'task' as const, task, groupId: group.id })),
-                    ])
-                    : model.tasks.map((task) => ({ type: 'task' as const, task, groupId: null }));
-                return { model, resolved, options, items };
-            });
-            const { model, resolved, options } = view;
+            const t = deps.t();
+            const { model, resolved, options } = built.data;
             const { labels } = model;
-            const windowItems = page(view.items, input);
-            const rows = deps.rows(windowItems.flatMap((item) => (item.type === 'task' ? [item.task] : [])), now);
+            const windowItems = page(built.data.items, input);
+            const rows = deps.rows(windowItems.flatMap((item) => (item.type === 'task' ? [item.task] : [])), built.now);
             let rowIndex = 0;
             const moveText = getSomedaySectionMoveText(t);
+            const { title: _title, ...addTaskText } = getSomedaySectionTaskText(t, '');
             return {
                 ok: true,
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision,
-                    total: view.items.length,
+                    revision: built.revision,
+                    total: built.data.items.length,
                     items: windowItems.map((item): NativeSomedayItem => {
                         if (item.type === 'task') return { type: 'task', row: rows[rowIndex++], groupId: item.groupId };
                         const sectionId = model.canAddTaskToGroup ? getSomedayGroupSectionId(item.id) : null;
@@ -661,9 +807,9 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                             },
                         };
                     }),
-                    sortBy,
-                    groupBy,
-                    showDetails,
+                    sortBy: params.sortBy,
+                    groupBy: params.groupBy,
+                    showDetails: params.showDetails,
                     stats: [{ value: model.ideasCount, label: labels.ideas }, { value: model.inProjectsCount, label: labels.inProjects }],
                     filterChip: resolved.hasActive
                         ? { label: `${labels.filters} · ${resolved.activeCount}`, removeLabel: `${labels.filtersClear}: ${labels.filters}` }
@@ -682,16 +828,16 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                             value: model.menu.groupValue,
                             options: model.menu.groupOptions.map((option) => ({ ...option, accessibilityLabel: `${labels.group}: ${option.label}` })),
                         },
-                        details: { label: labels.details, selected: showDetails },
+                        details: { label: labels.details, selected: params.showDetails },
                         newSection: { label: labels.newSection },
                         backLabel: labels.back,
                         closeLabel: labels.close,
                         moreLabel: labels.more,
                     },
-                    filters: nativeFilterView(resolved, options, t),
+                    filters: nativeFilterView(resolved, options, built.data.tokens, built.data.projects, t),
                     chips: filterChips(resolved),
-                    sections: model.sections,
-                    deferred: model.deferred,
+                    sections: firstWindow(model.sections),
+                    deferred: deferredWindow(model.deferred),
                     empty: model.showEmptyState ? { title: labels.emptyTitle, hint: labels.emptyHint } : null,
                     text: {
                         moveToSection: labels.moveToSection,
@@ -699,7 +845,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                         errorTitle: moveText.errorTitle,
                         moveFailed: moveText.moveFailed,
                         undoFailed: moveText.undoFailed,
-                        addTask: (({ title: _title, ...rest }) => rest)(getSomedaySectionTaskText(t, '')),
+                        addTask: addTaskText,
                     },
                 },
             };
@@ -733,10 +879,68 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             return statusListView('done', input as Record<string, unknown>);
         },
 
-        /** Someday's sections as Settings › Manage lists them; `moveUp.ids` / `moveDown.ids` go to reorderSomedaySections. */
-        getSomedaySections(): NativeHostResult<{
+        /**
+         * A later window of one of a view's collections. `params` are the view's own
+         * inputs as last sent (with the returned `filters.state`, no `filterEdit`);
+         * `revision` is the view's.
+         */
+        getMenuViewCollection(input: {
+            view: 'more' | 'waiting' | 'someday' | 'reference' | 'done';
+            collection: MenuViewCollectionName;
+            params?: Record<string, unknown>;
+            offset: number;
+            limit: number;
+            revision: string;
+        }): NativeHostResult<{
             version: typeof NATIVE_HOST_CONTRACT_VERSION;
             revision: string;
+            view: string;
+            collection: MenuViewCollectionName;
+            total: number;
+            items: unknown[];
+        }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const params = isObjectRecord(input) && input.params !== undefined ? input.params : {};
+            if (!isObjectRecord(input) || !isObjectRecord(params) || typeof input.revision !== 'string' || !isPaging(input)
+                || !VIEW_COLLECTIONS[input.view as string]?.includes(input.collection) || params.filterEdit !== undefined) {
+                return fail('INVALID_INPUT', 'A view, one of its collections, its params, a valid window and its revision are required');
+            }
+            let built: Built<unknown> | null = null;
+            if (input.view === 'more') built = buildMore();
+            if (input.view === 'waiting') {
+                const waiting = readWaitingParams(params);
+                built = waiting ? buildWaiting(waiting) : null;
+            }
+            if (input.view === 'someday') {
+                const someday = readSomedayParams(params);
+                built = someday ? buildSomeday(someday) : null;
+            }
+            if (input.view === 'reference' || input.view === 'done') {
+                const status = readStatusParams(input.view, params);
+                built = status ? buildStatus(status) : null;
+            }
+            if (!built) return fail('INVALID_INPUT', 'The view params are not valid');
+            if (built.revision !== input.revision) return fail('STALE_REVISION', 'The view changed; read it again');
+            const items = built.collections[input.collection] ?? [];
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: built.revision,
+                    view: input.view,
+                    collection: input.collection,
+                    total: items.length,
+                    items: page(items, input),
+                },
+            };
+        },
+
+        /** Someday's sections as Settings › Manage lists them; `moveUp.ids` / `moveDown.ids` go to reorderSomedaySections. */
+        getSomedaySections(input: PageInput = { offset: 0, limit: NATIVE_HOST_MAX_WINDOW }): NativeHostResult<{
+            version: typeof NATIVE_HOST_CONTRACT_VERSION;
+            revision: string;
+            total: number;
             text: ReturnType<typeof getSomedaySectionManagerText>;
             rows: (ReturnType<typeof buildSomedaySectionManagerRows>[number] & {
                 moveUp: { ids: string[] | null };
@@ -745,16 +949,21 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         }> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isPaging(input)) return fail('INVALID_INPUT', 'A valid offset, bounded limit and revision for later pages are required');
             const t = deps.t();
+            const revision = deps.revision(new Date());
+            if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Sections changed; read them again');
             const stored = somedaySections();
+            const rows = buildSomedaySectionManagerRows(stored, t);
             const orderAfter = (id: string, offset: -1 | 1) => moveSomedaySection(stored, id, offset)?.map((section) => section.id) ?? null;
             return {
                 ok: true,
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision: deps.revision(new Date()),
+                    revision,
+                    total: rows.length,
                     text: getSomedaySectionManagerText(t),
-                    rows: buildSomedaySectionManagerRows(stored, t).map((row) => ({
+                    rows: page(rows, input).map((row) => ({
                         ...row,
                         moveUp: { ...row.moveUp, ids: orderAfter(row.id, -1) },
                         moveDown: { ...row.moveDown, ids: orderAfter(row.id, 1) },
@@ -763,17 +972,34 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             };
         },
 
-        /** The Move to section dialog for these tasks: choices with the current one selected. */
-        getSomedayMoveDialog(input: { taskIds: string[] }): NativeHostResult<ReturnType<typeof buildSomedaySectionMoveDialog>> {
+        /** The Move to section dialog for these tasks: choices ("No section" first) with the current one selected. */
+        getSomedayMoveDialog(input: { taskIds: string[]; offset?: number; limit?: number; revision?: string }): NativeHostResult<
+            Omit<ReturnType<typeof buildSomedaySectionMoveDialog>, 'choices'> & {
+                version: typeof NATIVE_HOST_CONTRACT_VERSION;
+                revision: string;
+                choices: NativeWindow<ReturnType<typeof buildSomedaySectionMoveDialog>['choices'][number]>;
+            }
+        > {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || !isTextList(input.taskIds) || input.taskIds.length === 0) {
-                return fail('INVALID_INPUT', 'Task IDs are required');
+            const window = isObjectRecord(input) ? { offset: input.offset ?? 0, limit: input.limit ?? NATIVE_HOST_MAX_WINDOW, revision: input.revision } : null;
+            if (!window || !isTextList(input.taskIds) || input.taskIds.length === 0 || !isPaging(window)) {
+                return fail('INVALID_INPUT', 'Task IDs and a valid window are required');
             }
-            const state = useTaskStore.getState();
-            const taskById = new Map(state.tasks.map((task) => [task.id, task]));
             const ids = Array.from(new Set(input.taskIds));
-            return { ok: true, value: buildSomedaySectionMoveDialog(ids.map((id) => taskById.get(id)), somedaySections(), deps.t()) };
+            const revision = `${deps.revision(new Date())}:${paramsKey(ids)}`;
+            if (window.revision !== undefined && window.revision !== revision) return fail('STALE_REVISION', 'Sections changed; read them again');
+            const taskById = new Map(useTaskStore.getState().tasks.map((task) => [task.id, task]));
+            const dialog = buildSomedaySectionMoveDialog(ids.map((id) => taskById.get(id)), somedaySections(), deps.t());
+            return {
+                ok: true,
+                value: {
+                    ...dialog,
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision,
+                    choices: { total: dialog.choices.length, items: page(dialog.choices, window) },
+                },
+            };
         },
 
         /** Waiting and Someday's parked projects: swiping one makes it active. Target state; a retry writes nothing. */
@@ -799,8 +1025,9 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
 
         /**
          * Move Someday tasks to a section (null = No section), as the move dialog
-         * does. Reuse `requestId` to retry: the retry writes nothing again and
-         * returns the same Undo. Send `undo` to undoSomedaySectionMove.
+         * does. Target state: tasks already in the section are not written, so any
+         * retry is safe. Reusing `requestId` returns the first outcome; its Undo
+         * lives in memory, like mobile's Undo toast.
          */
         async moveSomedayTasksToSection(input: { taskIds: string[]; sectionId: string | null; requestId: string }): Promise<NativeHostResult<NativeSomedayMoveResult>> {
             const ready = deps.readiness();
@@ -812,7 +1039,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             }
             const ids = Array.from(new Set(input.taskIds));
             const destination = input.sectionId ?? undefined;
-            return once<NativeSomedayMoveResult>(input.requestId, JSON.stringify(['move', ids, input.sectionId]), async () => {
+            const outcome = await once<MoveReceipt | NativeMenuViewRefusal>(input.requestId, JSON.stringify(['move', ids, input.sectionId]), async () => {
                 const t = deps.t();
                 const text = getSomedaySectionMoveText(t);
                 const refuse = { value: { refused: { title: text.errorTitle, message: text.moveFailed } }, wrote: false };
@@ -844,30 +1071,34 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     },
                 };
             });
+            if (!outcome.ok) return outcome;
+            if ('refused' in outcome.value) return { ok: true, value: outcome.value };
+            const { moved, toast, undo } = outcome.value;
+            return { ok: true, value: { moved, toast, undoRequestId: undo ? input.requestId : null } };
         },
 
-        /** Undo a section move: tasks still in the moved-to section go back; tasks moved since stay. */
-        async undoSomedaySectionMove(input: {
-            undo: { previous: SomedaySectionAssignment[]; sectionId: string | null };
-            requestId: string;
-        }): Promise<NativeHostResult<{ reverted: number }>> {
+        /**
+         * Undo a recorded move (its `requestId`): tasks still Someday tasks in the
+         * moved-to section go back; tasks moved or filed elsewhere since stay.
+         * Reuse `requestId` to retry the Undo itself.
+         */
+        async undoSomedaySectionMove(input: { moveRequestId: string; requestId: string }): Promise<NativeHostResult<{ reverted: number }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const undo = isObjectRecord(input) ? input.undo : undefined;
-            if (!isObjectRecord(undo) || !Array.isArray(undo.previous) || undo.previous.length === 0 || undo.previous.length > MAX_IDS
-                || !undo.previous.every((entry) => isObjectRecord(entry) && isText(entry.id)
-                    && (entry.sectionId === undefined || isText(entry.sectionId)))
-                || (undo.sectionId !== null && !isText(undo.sectionId))
-                || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
-                return fail('INVALID_INPUT', 'The move\'s undo and a request UUID are required');
+            if (!isObjectRecord(input) || typeof input.moveRequestId !== 'string' || !deps.requestIdPattern.test(input.moveRequestId)
+                || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId) || input.requestId === input.moveRequestId) {
+                return fail('INVALID_INPUT', 'The move\'s request ID and a new request UUID are required');
             }
-            const previous = undo.previous as SomedaySectionAssignment[];
-            return once<{ reverted: number }>(input.requestId, JSON.stringify(['undo', previous, undo.sectionId]), async () => {
+            const move = receipts.get(input.moveRequestId) as Receipt<MoveReceipt | NativeMenuViewRefusal> | undefined;
+            const undo = move && !('refused' in move.value) ? move.value.undo : null;
+            if (!undo) return fail('STALE_REVISION', 'That move can no longer be undone');
+            return once<{ reverted: number }>(input.requestId, JSON.stringify(['undo', input.moveRequestId]), async () => {
                 const state = useTaskStore.getState();
-                const latest = previous
+                // Only tasks still in Someday: a task filed elsewhere since keeps its state.
+                const latest = undo.previous
                     .map(({ id }) => state.tasks.find((task) => task.id === id))
-                    .filter((task): task is Task => Boolean(task));
-                const updates = buildTaskViewSectionUndoUpdates(latest, 'someday', previous, (undo.sectionId as string | null) ?? undefined);
+                    .filter((task): task is Task => task?.status === 'someday');
+                const updates = buildTaskViewSectionUndoUpdates(latest, 'someday', undo.previous, undo.sectionId ?? undefined);
                 if (updates.length === 0) return { ok: true, value: { value: { reverted: 0 }, wrote: false } };
                 try {
                     const result = await state.batchUpdateTasks(updates);
@@ -879,7 +1110,11 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             });
         },
 
-        /** Add a Someday task to a section (null = No section). Reuse `captureId` to retry without a duplicate. */
+        /**
+         * Add a Someday task to a section (null = No section). Reuse `captureId` to
+         * retry without a duplicate; a captureId already used for another title or
+         * section is refused.
+         */
         async addSomedaySectionTask(input: { title: string; sectionId: string | null; captureId: string }): Promise<NativeHostResult<
             { id: string; toast: string } | NativeMenuViewRefusal
         >> {
@@ -893,7 +1128,13 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             const text = getSomedaySectionTaskText(deps.t(), '');
             // A retry after a failed save finds the task it created: finish the save only.
             const id = input.captureId.toLowerCase();
-            if (useTaskStore.getState()._allTasks.some((task) => task.id === id)) return settle({ id, toast: text.created });
+            const existing = useTaskStore.getState()._allTasks.find((task) => task.id === id);
+            if (existing) {
+                if (existing.title !== input.title.trim() || (existing.viewSectionIds?.someday ?? null) !== input.sectionId) {
+                    return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
+                }
+                return settle({ id, toast: text.created });
+            }
             const plan = planSomedaySectionTaskAdd({ title: input.title, sectionId: input.sectionId ?? undefined, stored: somedaySections() });
             if (plan.kind !== 'add') return { ok: true, value: { refused: { title: null, message: text.failed } } };
             try {

@@ -3,12 +3,17 @@
  * Done, replayed against the frozen parity fixture that core's menu-views model
  * and the native host contract are tested against.
  *
- * The fixture's `provenance` names the commit it was captured at.
- * MINDWTR_CAPTURE_MENU_VIEWS=1 rewrites it. Each scenario renders the real
+ * The fixture's `provenance` names the commit it was captured at. To recapture,
+ * commit or stash every other change first, then run
+ *   MINDWTR_CAPTURE_MENU_VIEWS=1 MINDWTR_CAPTURE_MENU_VIEWS_COMMIT=$(git rev-parse HEAD) bunx vitest run components/views/menu-views-parity.test.tsx
+ * The capture refuses to run unless that commit is HEAD and the checkout holds
+ * nothing but HEAD's code, so the provenance always names the code that ran.
+ * Each scenario renders the real
  * screen with the real core store, drives it through its own controls and
  * handlers, and records what a user sees and what the store is asked to write.
  */
 import React from 'react';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { Alert } from 'react-native';
@@ -1134,6 +1139,27 @@ async function runScenario(scenario: MenuViewScenario) {
   return observations;
 }
 
+/**
+ * The commit a recapture runs at. It must be declared, equal HEAD, and the checkout
+ * must hold no other change than this harness and its fixture.
+ */
+function captureProvenance() {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: new URL('.', import.meta.url).pathname, encoding: 'utf8' });
+  const head = git('rev-parse', 'HEAD').trim();
+  const declared = process.env.MINDWTR_CAPTURE_MENU_VIEWS_COMMIT;
+  if (declared !== head) {
+    throw new Error(`Recapture needs MINDWTR_CAPTURE_MENU_VIEWS_COMMIT=${head} (the current HEAD); got ${declared ?? 'nothing'}`);
+  }
+  const allowed = new Set(['apps/mobile/components/views/menu-views-parity.test.tsx', 'packages/core/src/menu-views-parity.fixtures.json']);
+  const changed = git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean)
+    .map((line) => line.slice(3)).filter((path) => !allowed.has(path));
+  if (changed.length > 0) throw new Error(`Recapture needs HEAD's code only; changed: ${changed.join(', ')}`);
+  return {
+    command: 'cd apps/mobile && MINDWTR_CAPTURE_MENU_VIEWS=1 MINDWTR_CAPTURE_MENU_VIEWS_COMMIT=$(git rev-parse HEAD) bunx vitest run components/views/menu-views-parity.test.tsx',
+    capturedAt: head,
+  };
+}
+
 describe('React Native list views parity fixture', () => {
   const originalTz = process.env.TZ;
   beforeAll(async () => {
@@ -1163,13 +1189,7 @@ describe('React Native list views parity fixture', () => {
       timeZone: TIME_ZONE, now: NOW, tasks, projects, areas, settings: settingsVariants, scenarios,
     }) as Record<string, unknown>;
     if (CAPTURE) {
-      let previous: { provenance?: unknown } = {};
-      try {
-        previous = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
-      } catch {
-        previous = {};
-      }
-      writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance: previous.provenance, ...inputs, observations: captured }, null, 1)}\n`);
+      writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance: captureProvenance(), ...inputs, observations: captured }, null, 1)}\n`);
     }
     const fixture = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
     const { observations, provenance: _provenance, ...frozenInputs } = fixture;

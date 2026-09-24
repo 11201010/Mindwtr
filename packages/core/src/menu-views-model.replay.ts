@@ -236,6 +236,8 @@ type SomedaySession = {
     selection: string[];
     moveTargets: string[] | null;
     undo: { previous: SomedaySectionAssignment[]; sectionId: string | null } | null;
+    /** The contract's move to undo. */
+    undoRequestId: string | null;
 };
 
 type StatusSession = {
@@ -288,11 +290,16 @@ export async function replayMenuViewsScenario(options: {
     if (scenario.screen === 'more') {
         let open = false;
         let pushes: string[] = [];
-        const observe = () => {
+        const readMenu = () => {
             const settings = store().settings;
-            const menu = contract ? ok(contract.getMoreMenu()) : buildMoreMenuModel({
-                quickAccessView: settings.appearance?.mobileQuickAccessView, savedSearches: settings.savedSearches, t,
-            });
+            if (!contract) {
+                return buildMoreMenuModel({ quickAccessView: settings.appearance?.mobileQuickAccessView, savedSearches: settings.savedSearches, t });
+            }
+            const menu = ok(contract.getMoreMenu());
+            return { ...menu, savedSearches: menu.savedSearches.items };
+        };
+        const observe = () => {
+            const menu = readMenu();
             const item = (entry: typeof menu.primary[number]) => ({
                 id: entry.id, label: entry.label, text: entry.displayLabel, icon: entry.icon, iconColor: entry.iconColor, route: entry.route,
             });
@@ -312,10 +319,7 @@ export async function replayMenuViewsScenario(options: {
         for (const action of scenario.actions) {
             if (action[0] === 'openMore') open = true;
             if (action[0] === 'press') {
-                const settings = store().settings;
-                const menu = contract ? ok(contract.getMoreMenu()) : buildMoreMenuModel({
-                    quickAccessView: settings.appearance?.mobileQuickAccessView, savedSearches: settings.savedSearches, t,
-                });
+                const menu = readMenu();
                 const target = [...menu.utilities, ...menu.savedSearches, ...menu.primary].find((entry) => entry.id === action[1])!;
                 pushes = [target.route];
                 open = false;
@@ -335,14 +339,17 @@ export async function replayMenuViewsScenario(options: {
                 return {
                     stats: view.stats.map((stat) => [String(stat.value), stat.label]),
                     filterLabel: view.filterLabel,
-                    people: view.people.map((entry) => ({ label: entry.label, active: entry.selected })),
+                    people: [
+                        { label: view.all.label, active: view.all.selected },
+                        ...view.people.items.map((entry) => ({ label: entry.label, active: entry.selected })),
+                    ],
                     clear: view.clearLabel,
                     rows: rowIds(view.rows),
                     groups: null,
                     deferred: view.deferred && {
                         header: view.deferred.title,
                         headerLabel: view.deferred.title,
-                        rows: view.deferred.rows.map((row) => ({ action: view.deferred!.activateLabel, title: row.title, area: row.areaName, color: row.color })),
+                        rows: view.deferred.rows.items.map((row) => ({ action: view.deferred!.activateLabel, title: row.title, area: row.areaName, color: row.color })),
                     },
                     empty: view.empty ? [view.empty.title, view.empty.hint] : null,
                     ...drain(),
@@ -392,7 +399,7 @@ export async function replayMenuViewsScenario(options: {
     if (scenario.screen === 'someday') {
         const session: SomedaySession = {
             sortBy: 'default', groupBy: 'viewSection', showDetails: false, filters: EMPTY_LIST_FILTER_STATE,
-            selection: [], moveTargets: null, undo: null,
+            selection: [], moveTargets: null, undo: null, undoRequestId: null,
         };
         let addDialog: string[] | null = null;
         const coreView = () => {
@@ -420,7 +427,8 @@ export async function replayMenuViewsScenario(options: {
             const dialog = contract
                 ? ok(contract.getSomedayMoveDialog({ taskIds: session.moveTargets }))
                 : buildSomedaySectionMoveDialog(targets, store().settings.gtd?.viewSections?.someday, t);
-            return { title: dialog.title, choices: dialog.choices.map((choice) => ({ id: choice.sectionId ?? '', title: choice.title, selected: choice.selected })) };
+            const choices = Array.isArray(dialog.choices) ? dialog.choices : dialog.choices.items;
+            return { title: dialog.title, choices: choices.map((choice) => ({ id: choice.sectionId ?? '', title: choice.title, selected: choice.selected })) };
         };
         const somedayRead = (limit: number) => ok(contract!.getSomedayView({
             sortBy: session.sortBy, groupBy: session.groupBy, showDetails: session.showDetails,
@@ -462,8 +470,8 @@ export async function replayMenuViewsScenario(options: {
                     canMoveToSection: true,
                     showDetails: view.showDetails,
                     filterSheet: {
-                        tokens: view.filters.tokens.map((token) => token.value),
-                        projects: view.filters.projects?.map(({ id, title }) => ({ id, title })) ?? null,
+                        tokens: view.filters.tokens.items.map((token) => token.value),
+                        projects: view.filters.projects?.items.map(({ id, title }) => ({ id, title })) ?? null,
                         timeEstimates: view.filters.timeEstimates.map((estimate) => estimate.value),
                         visibility: view.filters.visibility,
                         hasAdditional: false,
@@ -476,7 +484,7 @@ export async function replayMenuViewsScenario(options: {
                     deferred: view.deferred && {
                         header: view.deferred.title,
                         headerLabel: view.deferred.title,
-                        rows: view.deferred.rows.map((row) => ({ action: view.deferred!.activateLabel, title: row.title, area: row.areaName, color: row.color })),
+                        rows: view.deferred.rows.items.map((row) => ({ action: view.deferred!.activateLabel, title: row.title, area: row.areaName, color: row.color })),
                     },
                     empty: view.empty ? [view.empty.title, view.empty.hint] : null,
                     ...drain(),
@@ -545,7 +553,7 @@ export async function replayMenuViewsScenario(options: {
                 session.moveTargets = null;
                 session.selection = [];
                 if (result.toast) toasts.push(['success', null, result.toast.message, result.toast.undoLabel]);
-                session.undo = result.undo;
+                session.undoRequestId = result.undoRequestId;
                 return undefined;
             }
             const latest = store();
@@ -593,7 +601,8 @@ export async function replayMenuViewsScenario(options: {
                 const undo = session.undo!;
                 session.undo = null;
                 if (contract) {
-                    ok(await contract.undoSomedaySectionMove({ undo, requestId: generateUUID() }));
+                    ok(await contract.undoSomedaySectionMove({ moveRequestId: session.undoRequestId!, requestId: generateUUID() }));
+                    session.undoRequestId = null;
                 } else {
                     const latest = store();
                     const latestTasks = undo.previous.map(({ id }) => latest.tasks.find((task) => task.id === id)).filter((task): task is Task => Boolean(task));
@@ -798,8 +807,8 @@ export async function replayMenuViewsScenario(options: {
                 },
                 empty: { message: view.empty.message, hint: view.empty.hint, actionLabel: view.empty.actionLabel },
                 filterSheet: {
-                    tokens: view.filters.tokens.map((token) => token.value),
-                    projects: view.filters.projects?.map(({ id, title: projectTitle }) => ({ id, title: projectTitle })) ?? null,
+                    tokens: view.filters.tokens.items.map((token) => token.value),
+                    projects: view.filters.projects?.items.map(({ id, title: projectTitle }) => ({ id, title: projectTitle })) ?? null,
                     timeEstimates: view.filters.timeEstimates.map((estimate) => estimate.value),
                     visibility: view.filters.visibility,
                     hasAdditional: view.includeArchivedProjects,
