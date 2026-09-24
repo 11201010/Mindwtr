@@ -7,18 +7,25 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { X, Calendar as CalendarIcon, Clock, Sparkles, Star, CheckCircle2, Play, ChevronDown, ChevronUp } from 'lucide-react-native';
 
 import {
+    DAILY_REVIEW_SESSION_STORAGE_KEY,
     buildReviewSteps,
-    formatFocusTaskLimitText,
+    formatDailyReviewStepLabel,
     getDailyReviewBuckets,
+    getDailyReviewCalendarDay,
+    getDailyReviewFollowUp,
+    getDailyReviewSettings,
+    getDailyReviewText,
+    getDailyReviewTodayTasks,
+    getReviewCalendarRange,
+    planDailyReviewFollowUp,
     useTaskStore,
     shallow,
-    isDueForReview,
-    normalizeFocusTaskLimit,
-    parseStoredReviewStepSession,
     resolveReviewStepSession,
+    restoreReviewSession,
     safeFormatDate,
-    safeParseDate,
-    tFallback,
+    serializeReviewSession,
+    titleDailyReviewSteps,
+    type DailyReviewStepId,
     type ExternalCalendarEvent,
     type StoredReviewStepSession,
     type Task,
@@ -37,18 +44,9 @@ import { InboxProcessingModal } from './inbox-processing-modal';
 import { ErrorBoundary } from './ErrorBoundary';
 import { SandboxWorkspaceCue } from './sandbox-workspace-cue';
 import { fetchExternalCalendarEvents } from '../lib/external-calendar';
-import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
 import { useLocalDayKey } from '@/hooks/use-local-day-key';
 
-type DailyReviewStep = 'today' | 'focus' | 'inbox' | 'waiting' | 'completed';
-type DailyReviewStepDefinition = {
-    hasWork: boolean;
-    id: DailyReviewStep;
-    title: string;
-    description: string;
-};
-const DAILY_REVIEW_STEP_STORAGE_KEY = 'mindwtr:dailyReview:currentStep';
-const DAILY_REVIEW_STEPS = new Set<DailyReviewStep>(['today', 'focus', 'inbox', 'waiting', 'completed']);
+type DailyReviewStep = DailyReviewStepId;
 
 type RenderTaskListOptions = {
     showFocusToggle?: boolean;
@@ -101,13 +99,11 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
 
     useEffect(() => {
         let cancelled = false;
-        void AsyncStorage.getItem(DAILY_REVIEW_STEP_STORAGE_KEY)
+        void AsyncStorage.getItem(DAILY_REVIEW_SESSION_STORAGE_KEY)
             .then((stored) => {
                 if (cancelled) return;
-                const restored = parseStoredReviewStepSession(stored, DAILY_REVIEW_STEPS, {
-                    cadence: 'daily',
-                });
-                if (restored && !sessionTouchedRef.current) setReviewSession(restored);
+                const { session, resumed } = restoreReviewSession<DailyReviewStep>('daily', stored, { now: new Date() });
+                if (resumed && !sessionTouchedRef.current) setReviewSession(session);
             })
             .catch(() => undefined)
             .finally(() => {
@@ -120,32 +116,28 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
 
     useEffect(() => {
         if (!sessionHydrated) return;
-        const serialized = JSON.stringify(reviewSession);
+        const serialized = serializeReviewSession(reviewSession);
         sessionWriteRef.current = sessionWriteRef.current
-            .then(() => AsyncStorage.setItem(DAILY_REVIEW_STEP_STORAGE_KEY, serialized))
+            .then(() => AsyncStorage.setItem(DAILY_REVIEW_SESSION_STORAGE_KEY, serialized))
             .catch(() => undefined);
     }, [reviewSession, sessionHydrated]);
 
-    const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
-    const includeFocusStep = settings.gtd?.dailyReview?.includeFocusStep !== false;
-    const focusTaskLimit = normalizeFocusTaskLimit(settings.gtd?.focusTaskLimit);
+    const { sortBy, includeFocusStep, focusTaskLimit } = getDailyReviewSettings(settings);
+    const text = useMemo(() => getDailyReviewText(t, focusTaskLimit), [focusTaskLimit, t]);
+    // Keyed on the strings, so the waiting rows' footers keep their identity (#766).
+    const { followUpToday, reviewDue } = text;
+    const followUpText = useMemo(() => ({ followUpToday, reviewDue }), [followUpToday, reviewDue]);
 
     const localDayKey = useLocalDayKey();
     const today = useMemo(() => {
         const [year, monthIndex, day] = localDayKey.split('-').map(Number);
         return new Date(year, monthIndex, day);
     }, [localDayKey]);
-    const followUpTodayReviewAt = useMemo(
-        () => new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString(),
-        [today],
-    );
     const tomorrow = useMemo(() => {
         const d = new Date(today);
         d.setDate(d.getDate() + 1);
         return d;
     }, [today]);
-    const followUpTodayLabel = tFallback(t, 'dailyReview.followUpToday', 'Follow up today');
-    const reviewDueLabel = tFallback(t, 'agenda.reviewDue', 'Review Due');
 
     useEffect(() => {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -153,11 +145,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
             setExternalLoading(true);
             setExternalError(null);
             try {
-                const start = new Date(today);
-                start.setHours(0, 0, 0, 0);
-                const end = new Date(start);
-                end.setDate(end.getDate() + 2);
-                end.setMilliseconds(-1);
+                const { start, end } = getReviewCalendarRange(today, 2);
                 const { events } = await fetchExternalCalendarEvents(start, end, {
                     signal: controller?.signal,
                     timeoutMs: 15_000,
@@ -178,25 +166,9 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
         };
     }, [today]);
 
-    const getExternalEventsForDate = useCallback((date: Date) => {
-        const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-        const end = new Date(start);
-        end.setDate(end.getDate() + 1);
-        return externalEvents
-            .filter((event) => {
-                const eventStart = safeParseDate(event.start);
-                const eventEnd = safeParseDate(event.end);
-                if (!eventStart || !eventEnd) return false;
-                return eventStart.getTime() < end.getTime() && eventEnd.getTime() > start.getTime();
-            })
-            .sort((a, b) => {
-                const aStart = safeParseDate(a.start)?.getTime() ?? Number.POSITIVE_INFINITY;
-                const bStart = safeParseDate(b.start)?.getTime() ?? Number.POSITIVE_INFINITY;
-                return aStart - bStart;
-            });
-    }, [externalEvents]);
-    const todayEvents = useMemo(() => getExternalEventsForDate(today), [getExternalEventsForDate, today]);
-    const tomorrowEvents = useMemo(() => getExternalEventsForDate(tomorrow), [getExternalEventsForDate, tomorrow]);
+    // Formatted each render: the app's date settings can change while the review is open.
+    const todayCalendar = getDailyReviewCalendarDay(externalEvents, today, text, safeFormatDate);
+    const tomorrowCalendar = getDailyReviewCalendarDay(externalEvents, tomorrow, text, safeFormatDate);
 
     // Single source of "what needs reviewing today" (#867): shared with
     // desktop via core so a raw startTime-vs-now check can't drift back in.
@@ -207,35 +179,16 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     const inboxTasks = dailyBuckets.inbox;
     const focusedTasks = dailyBuckets.focused;
     const waitingTasks = dailyBuckets.waiting;
-    const dueTodayTasks = dailyBuckets.dueToday;
-    const overdueTasks = dailyBuckets.overdue;
     const focusCandidates = dailyBuckets.focusCandidates;
 
     const stepFlags = useMemo(() => buildReviewSteps(dailyBuckets, {
         kind: 'daily',
         includeFocusStep,
-        todayCalendarEventCount: todayEvents.length,
-        tomorrowCalendarEventCount: tomorrowEvents.length,
+        todayCalendarEventCount: todayCalendar.count,
+        tomorrowCalendarEventCount: tomorrowCalendar.count,
         externalCalendarHasError: Boolean(externalError),
-    }), [dailyBuckets, externalError, includeFocusStep, todayEvents.length, tomorrowEvents.length]);
-    const stepHasWork = useMemo(() => new Map(stepFlags.map((flag) => [flag.id, flag.hasWork])), [stepFlags]);
-
-    const steps: DailyReviewStepDefinition[] = useMemo(() => {
-        const list: DailyReviewStepDefinition[] = [
-            { id: 'today', title: t('dailyReview.todayStep'), description: t('dailyReview.todayDesc'), hasWork: stepHasWork.get('today') ?? false },
-            { id: 'inbox', title: t('dailyReview.inboxStep'), description: t('dailyReview.inboxDesc'), hasWork: stepHasWork.get('inbox') ?? false },
-            // Waiting For comes before focus selection: items unblocked today can be
-            // switched to Next here and then picked up in the focus step.
-            { id: 'waiting', title: t('dailyReview.waitingStep'), description: t('dailyReview.waitingDesc'), hasWork: stepHasWork.get('waiting') ?? false },
-        ];
-        if (includeFocusStep) {
-            list.push({ id: 'focus', title: t('dailyReview.focusStep'), description: t('dailyReview.focusDesc'), hasWork: stepHasWork.get('focus') ?? false });
-        }
-        list.push(
-            { id: 'completed', title: t('dailyReview.completeTitle'), description: t('dailyReview.completeDesc'), hasWork: true },
-        );
-        return list;
-    }, [includeFocusStep, stepHasWork, t]);
+    }), [dailyBuckets, externalError, includeFocusStep, todayCalendar.count, tomorrowCalendar.count]);
+    const steps = useMemo(() => titleDailyReviewSteps(stepFlags, t), [stepFlags, t]);
     const {
         activeSteps,
         displayedStep,
@@ -263,7 +216,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     const finishReview = useCallback(async () => {
         try {
             await sessionWriteRef.current;
-            await AsyncStorage.removeItem(DAILY_REVIEW_STEP_STORAGE_KEY);
+            await AsyncStorage.removeItem(DAILY_REVIEW_SESSION_STORAGE_KEY);
         } finally {
             onClose();
         }
@@ -287,8 +240,9 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
         setEditingTask(null);
     };
     const handleFollowUpToday = useCallback((task: Task) => {
-        void updateTask(task.id, { reviewAt: followUpTodayReviewAt });
-    }, [followUpTodayReviewAt, updateTask]);
+        const plan = planDailyReviewFollowUp(task, today);
+        if (plan) void updateTask(task.id, plan);
+    }, [today, updateTask]);
 
     // The waiting step is the only one that gives rows a footer. Building them
     // once keeps `footerContent` identity-stable, so that
@@ -296,7 +250,8 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     const followUpFooters = useMemo(() => {
         const byTaskId = new Map<string, React.ReactNode>();
         for (const task of waitingTasks) {
-            const reviewDue = isDueForReview(task.reviewAt, today);
+            const followUp = getDailyReviewFollowUp(task, today, followUpText);
+            const reviewDue = followUp.due;
             byTaskId.set(task.id, (
                 <TouchableOpacity
                     style={[
@@ -312,17 +267,17 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                     activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityState={{ disabled: Boolean(reviewDue) }}
-                    accessibilityLabel={`${followUpTodayLabel}: ${task.title}`}
+                    accessibilityLabel={followUp.accessibilityLabel}
                 >
                     <Clock size={13} color={reviewDue ? tc.secondaryText : tc.tint} strokeWidth={2.2} />
                     <Text style={[styles.followUpButtonText, { color: reviewDue ? tc.secondaryText : tc.tint }]}>
-                        {reviewDue ? reviewDueLabel : followUpTodayLabel}
+                        {followUp.label}
                     </Text>
                 </TouchableOpacity>
             ));
         }
         return byTaskId;
-    }, [followUpTodayLabel, handleFollowUpToday, reviewDueLabel, tc, today, waitingTasks]);
+    }, [followUpText, handleFollowUpToday, tc, today, waitingTasks]);
 
     const handleNavigateToProject = (projectId: string) => {
         closeTask();
@@ -365,35 +320,28 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
         />
     );
 
-    const renderExternalEventList = (events: ExternalCalendarEvent[]) => {
+    const renderExternalEventList = (day: typeof todayCalendar) => {
         if (externalLoading) {
-            return <Text style={[styles.eventMeta, { color: tc.secondaryText }]}>{t('common.loading')}</Text>;
+            return <Text style={[styles.eventMeta, { color: tc.secondaryText }]}>{text.loading}</Text>;
         }
         if (externalError) {
             return <Text style={[styles.eventMeta, { color: tc.secondaryText }]}>{externalError}</Text>;
         }
-        if (events.length === 0) {
-            return <Text style={[styles.eventMeta, { color: tc.secondaryText }]}>{t('calendar.noTasks')}</Text>;
+        if (day.count === 0) {
+            return <Text style={[styles.eventMeta, { color: tc.secondaryText }]}>{text.noEvents}</Text>;
         }
         return (
             <View style={styles.eventList}>
-                {events.slice(0, 5).map((event) => {
-                    const start = safeParseDate(event.start);
-                    const end = safeParseDate(event.end);
-                    const timeLabel = event.allDay || !start || !end
-                        ? t('calendar.allDay')
-                        : `${safeFormatDate(start, 'p')} - ${safeFormatDate(end, 'p')}`;
-                    return (
-                        <View key={`${event.sourceId}-${event.id}-${event.start}`} style={styles.eventRow}>
-                            <Text style={[styles.eventTitle, { color: tc.text }]} numberOfLines={1}>
-                                {event.title}
-                            </Text>
-                            <Text style={[styles.eventMeta, { color: tc.secondaryText }]} numberOfLines={1}>
-                                {timeLabel}
-                            </Text>
-                        </View>
-                    );
-                })}
+                {day.events.map((event) => (
+                    <View key={event.key} style={styles.eventRow}>
+                        <Text style={[styles.eventTitle, { color: tc.text }]} numberOfLines={1}>
+                            {event.title}
+                        </Text>
+                        <Text style={[styles.eventMeta, { color: tc.secondaryText }]} numberOfLines={1}>
+                            {event.timeLabel}
+                        </Text>
+                    </View>
+                ))}
             </View>
         );
     };
@@ -401,9 +349,9 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     const renderStep = () => {
         switch (displayedStep) {
             case 'today': {
-                const topTasks = [...overdueTasks, ...dueTodayTasks];
-                const totalToday = overdueTasks.length + dueTodayTasks.length;
-                const calendarEventCount = todayEvents.length + tomorrowEvents.length;
+                const topTasks = getDailyReviewTodayTasks(dailyBuckets);
+                const totalToday = topTasks.length;
+                const calendarEventCount = todayCalendar.count + tomorrowCalendar.count;
                 return renderTaskList(topTasks, {
                     testID: 'daily-review-step-scroll-today',
                     header: (
@@ -444,15 +392,15 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                                     <View style={styles.calendarGrid}>
                                         <View style={[styles.calendarCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                                             <Text style={[styles.calendarCardTitle, { color: tc.secondaryText }]}>
-                                                {safeFormatDate(today, 'P')} · {t('calendar.events')}
+                                                {todayCalendar.title}
                                             </Text>
-                                            {renderExternalEventList(todayEvents)}
+                                            {renderExternalEventList(todayCalendar)}
                                         </View>
                                         <View style={[styles.calendarCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                                             <Text style={[styles.calendarCardTitle, { color: tc.secondaryText }]}>
-                                                {safeFormatDate(tomorrow, 'P')} · {t('calendar.events')}
+                                                {tomorrowCalendar.title}
                                             </Text>
-                                            {renderExternalEventList(tomorrowEvents)}
+                                            {renderExternalEventList(tomorrowCalendar)}
                                         </View>
                                     </View>
                                 )}
@@ -484,7 +432,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                         <View style={styles.emptyState}>
                             <Star size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
                             <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-                                {formatFocusTaskLimitText(t('agenda.focusHint'), focusTaskLimit)}
+                                {text.focusEmpty}
                             </Text>
                         </View>
                     ),
@@ -583,7 +531,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                             {displayedStepDefinition?.title ?? t('dailyReview.completeTitle')}
                         </Text>
                         <Text style={[styles.headerStep, { color: tc.secondaryText }]}>
-                            {t('review.step')} {safeActiveStepIndex + 1} {t('review.of')} {activeSteps.length}
+                            {formatDailyReviewStepLabel(t, safeActiveStepIndex, activeSteps.length)}
                         </Text>
                     </View>
                     <View style={{ width: 28 }} />

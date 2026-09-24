@@ -181,6 +181,7 @@ import {
 } from './trash-view-model';
 import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskSortBy } from './types';
 import { createMenuViewMethods } from './native-host-contract-menu-views';
+import { createReviewViewMethods } from './native-host-contract-review-views';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -925,6 +926,18 @@ export function createNativeHostContract() {
                 return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
             },
             requestIdPattern: CAPTURE_ID_PATTERN,
+        }),
+        // Review, Weekly Review and Daily Review: native-host-contract-review-views.ts.
+        ...createReviewViewMethods({
+            readiness,
+            save,
+            t: () => translate,
+            formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            rows: (tasks, now) => {
+                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
+            },
         }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {

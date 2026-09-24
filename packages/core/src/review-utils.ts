@@ -632,25 +632,34 @@ export function getExternalCalendarDaySummaries(
     for (let offset = 0; offset < days; offset += 1) {
         const dayStart = new Date(startOfToday);
         dayStart.setDate(dayStart.getDate() + offset);
-        const dayEnd = new Date(dayStart);
-        dayEnd.setDate(dayEnd.getDate() + 1);
-        const dayEvents = events
-            .filter((event) => {
-                const start = safeParseDate(event.start);
-                const end = safeParseDate(event.end);
-                if (!start || !end) return false;
-                return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
-            })
-            .sort((a, b) => {
-                const aStart = safeParseDate(a.start)?.getTime() ?? Number.POSITIVE_INFINITY;
-                const bStart = safeParseDate(b.start)?.getTime() ?? Number.POSITIVE_INFINITY;
-                return aStart - bStart;
-            });
+        const dayEvents = getExternalCalendarEventsForDay(events, dayStart);
         if (dayEvents.length > 0) {
             summaries.push({ dayStart, events: dayEvents, totalCount: dayEvents.length });
         }
     }
     return summaries;
+}
+
+/** The events that overlap `date`'s local day, earliest start first. */
+export function getExternalCalendarEventsForDay(
+    events: readonly ExternalCalendarEvent[],
+    date: Date,
+): ExternalCalendarEvent[] {
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    return events
+        .filter((event) => {
+            const start = safeParseDate(event.start);
+            const end = safeParseDate(event.end);
+            if (!start || !end) return false;
+            return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
+        })
+        .sort((a, b) => {
+            const aStart = safeParseDate(a.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+            const bStart = safeParseDate(b.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+            return aStart - bStart;
+        });
 }
 
 export type ReviewStepId =

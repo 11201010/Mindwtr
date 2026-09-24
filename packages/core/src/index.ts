@@ -97,6 +97,7 @@ export * from './i18n/i18n-constants';
 export * from './recurrence';
 export * from './recurrence-constants';
 export * from './review-utils';
+export * from './review-views-model';
 export * from './project-utils';
 export * from './project-row-meta';
 export * from './project-task-list-model';

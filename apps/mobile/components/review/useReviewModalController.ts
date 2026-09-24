@@ -1,24 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session-storage';
 import {
-    buildQuickAddParseOptions,
+    LAST_WEEKLY_REVIEW_STORAGE_KEY,
+    WEEKLY_REVIEW_SESSION_STORAGE_KEY,
     buildReviewSteps,
+    buildReviewSuggestionUpdates,
     createAIProvider,
-    filterReviewSuggestionsToKnownIds,
-    formatTimeSpentLabel,
+    filterReviewSuggestions,
     getExternalCalendarDaySummaries,
+    getReviewCalendarRange,
+    getReviewStepRail,
     getWeeklyReviewBuckets,
-    parseProjectNextActionInput,
-    parseStoredReviewStepSession,
-    resolveFeatureFlags,
+    getWeeklyReviewCompletion,
+    getWeeklyReviewLabels,
+    getWeeklyReviewProjects,
+    getWeeklyReviewScheduledList,
+    getWeeklyReviewSettings,
+    getWeeklyReviewStale,
+    isActionableReviewSuggestion,
+    planReviewProjectTask,
     resolveReviewStepSession,
+    restoreReviewSession,
+    serializeReviewSession,
+    titleWeeklyReviewSteps,
     type AIProviderId,
     type ExternalCalendarEvent,
     type ReviewSuggestion,
     type StoredReviewStepSession,
     type Task,
     type TaskStatus,
-    type WeeklyReviewProjectEntry,
+    type WeeklyReviewStepId,
     useTaskStore,
 } from '@mindwtr/core';
 import {
@@ -42,17 +53,8 @@ import { buildAIConfig, isAIKeyRequired, loadAIKey } from '../../lib/ai-config';
 import { logError } from '../../lib/app-log';
 import { fetchExternalCalendarEvents } from '../../lib/external-calendar';
 import { maybeRequestStoreReviewAfterPositiveMoment } from '../../lib/store-review-prompt';
-import { getReviewLabels } from '../review-modal.labels';
 
-export type ReviewStep =
-    | 'inbox'
-    | 'stale'
-    | 'calendar'
-    | 'waiting'
-    | 'contexts'
-    | 'projects'
-    | 'someday'
-    | 'completed';
+export type ReviewStep = WeeklyReviewStepId;
 
 export type ReviewStepDefinition = {
     Icon: LucideIcon;
@@ -70,14 +72,16 @@ export type {
     ExternalCalendarDaySummary,
 } from '@mindwtr/core';
 
-export type ReviewProjectEntry = WeeklyReviewProjectEntry & {
-    areaColor: string;
+const STEP_ICONS: Record<ReviewStep, LucideIcon> = {
+    inbox: Inbox,
+    stale: History,
+    calendar: CalendarIcon,
+    waiting: Clock,
+    contexts: Tag,
+    projects: FolderOpen,
+    someday: Lightbulb,
+    completed: CheckCircle2,
 };
-
-const WEEKLY_REVIEW_STEP_STORAGE_KEY = 'mindwtr:weeklyReview:currentStep';
-const WEEKLY_REVIEW_STEPS = new Set<ReviewStep>([
-    'inbox', 'stale', 'calendar', 'waiting', 'contexts', 'projects', 'someday', 'completed',
-]);
 
 type UseReviewModalControllerParams = {
     onClose: () => void;
@@ -122,10 +126,9 @@ export function useReviewModalController({
     const [projectTaskTitle, setProjectTaskTitle] = useState('');
     const [editModalTab, setEditModalTab] = useState<'task' | 'view'>('view');
 
-    const labels = useMemo(() => getReviewLabels(t), [t]);
+    const labels = useMemo(() => getWeeklyReviewLabels(t), [t]);
     const tc = useThemeColors();
-    const aiEnabled = settings?.ai?.enabled === true;
-    const includeContextStep = settings?.gtd?.weeklyReview?.includeContextStep !== false;
+    const { aiEnabled, includeContextStep } = getWeeklyReviewSettings(settings);
     const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
 
     useEffect(() => {
@@ -136,17 +139,11 @@ export function useReviewModalController({
         sessionTouchedRef.current = false;
         let cancelled = false;
         const now = new Date();
-        void AsyncStorage.getItem(WEEKLY_REVIEW_STEP_STORAGE_KEY)
+        void AsyncStorage.getItem(WEEKLY_REVIEW_SESSION_STORAGE_KEY)
             .then((stored) => {
                 if (cancelled) return;
-                const restored = parseStoredReviewStepSession(stored, WEEKLY_REVIEW_STEPS, {
-                    cadence: 'weekly',
-                    now,
-                    weekStart: settings?.weekStart,
-                });
-                if (!sessionTouchedRef.current) {
-                    setReviewSession(restored ?? { step: 'inbox', startedAt: now.toISOString() });
-                }
+                const { session } = restoreReviewSession<ReviewStep>('weekly', stored, { now, weekStart: settings?.weekStart });
+                if (!sessionTouchedRef.current) setReviewSession(session);
             })
             .catch(() => {
                 if (!cancelled && !sessionTouchedRef.current) {
@@ -163,9 +160,9 @@ export function useReviewModalController({
 
     useEffect(() => {
         if (!visible || !sessionHydrated) return;
-        const serialized = JSON.stringify(reviewSession);
+        const serialized = serializeReviewSession(reviewSession);
         sessionWriteRef.current = sessionWriteRef.current
-            .then(() => AsyncStorage.setItem(WEEKLY_REVIEW_STEP_STORAGE_KEY, serialized))
+            .then(() => AsyncStorage.setItem(WEEKLY_REVIEW_SESSION_STORAGE_KEY, serialized))
             .catch(() => undefined);
     }, [reviewSession, sessionHydrated, visible]);
 
@@ -212,19 +209,20 @@ export function useReviewModalController({
     }, []);
 
     const submitProjectTask = useCallback(async (options?: { openEditor?: boolean }) => {
-        const rawTitle = projectTaskTitle.trim();
         const targetProject = projectTaskPrompt;
-        if (!rawTitle || !targetProject) return;
+        if (!projectTaskTitle.trim() || !targetProject) return;
         try {
-            // Same quick-add grammar as the capture sheet, matching the
-            // project next-action prompt (#859).
-            const { title, props } = parseProjectNextActionInput(rawTitle, {
+            const plan = planReviewProjectTask({
+                title: projectTaskTitle,
                 projectId: targetProject.projectId,
                 projects,
                 areas,
-                parseOptions: buildQuickAddParseOptions(settings, { tasks, people }),
+                settings,
+                tasks,
+                people,
             });
-            const result = await addTask(title, props);
+            if (!plan) return;
+            const result = await addTask(plan.title, plan.props);
             if (result && result.success === false) {
                 throw new Error(result.error || 'Failed to add task');
             }
@@ -276,12 +274,8 @@ export function useReviewModalController({
             setExternalCalendarLoading(true);
             setExternalCalendarError(null);
             try {
-                const now = new Date();
-                const rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                const rangeEnd = new Date(rangeStart);
-                rangeEnd.setDate(rangeEnd.getDate() + 7);
-                rangeEnd.setMilliseconds(-1);
-                const { events } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
+                const range = getReviewCalendarRange(new Date(), 7);
+                const { events } = await fetchExternalCalendarEvents(range.start, range.end);
                 if (cancelled) return;
                 setExternalCalendarEvents(events);
             } catch (error) {
@@ -300,13 +294,13 @@ export function useReviewModalController({
 
     const handleFinish = useCallback(async () => {
         try {
-            await AsyncStorage.setItem('lastWeeklyReview', new Date().toISOString());
+            await AsyncStorage.setItem(LAST_WEEKLY_REVIEW_STORAGE_KEY, new Date().toISOString());
         } catch (error) {
             void logError(error, { scope: 'review', extra: { message: 'Failed to save review time' } });
         }
         try {
             await sessionWriteRef.current;
-            await AsyncStorage.removeItem(WEEKLY_REVIEW_STEP_STORAGE_KEY);
+            await AsyncStorage.removeItem(WEEKLY_REVIEW_SESSION_STORAGE_KEY);
         } catch (error) {
             void logError(error, { scope: 'review', extra: { message: 'Failed to clear review session' } });
         }
@@ -316,47 +310,19 @@ export function useReviewModalController({
         }, 650);
     }, [handleClose]);
 
-    // Core owns the complete Weekly Review model; mobile only decorates the
-    // shared project entries with a theme-aware color for rendering.
+    // Core owns the complete Weekly Review model (review-utils, review-views-model).
     const weeklyBuckets = useMemo(
         () => getWeeklyReviewBuckets(tasks, projects, { weekStart: settings?.weekStart }),
         [projects, settings?.weekStart, tasks],
     );
     const staleItems = weeklyBuckets.staleItems;
-    const reviewSummary = weeklyBuckets.summary;
-    const reviewLookBack = weeklyBuckets.lookBack;
-    const estimatedLookBackDuration = formatTimeSpentLabel(reviewLookBack.estimatedMinutes);
-    const trackedLookBackDuration = formatTimeSpentLabel(reviewLookBack.trackedMinutes);
-    // Time estimates default ON, so `=== true` read the default as OFF and hid
-    // the look-back (and the tracked row under it) for everyone who never
-    // touched the setting. Both flags go through resolveFeatureFlags.
-    const { pomodoro: pomodoroEnabled, timeEstimates: timeEstimatesEnabled } = resolveFeatureFlags(settings);
-    const showEstimateLookBack = reviewLookBack.estimatedTaskCount > 0 && timeEstimatesEnabled;
-    const showTrackedLookBack = showEstimateLookBack
-        && trackedLookBackDuration !== null
-        && pomodoroEnabled
-        && settings?.gtd?.pomodoro?.linkTask === true;
-    const staleItemTitleMap = useMemo(() => staleItems.reduce((acc, item) => {
-        acc[item.id] = item.title;
-        return acc;
-    }, {} as Record<string, string>), [staleItems]);
+    const completion = getWeeklyReviewCompletion(weeklyBuckets, settings, labels);
     // Deliberately over tasks (visible tasks), not the store's _tasksById
     // (all tasks incl. hidden) — PERF-03 leaves this site alone on purpose.
-    const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-    const staleTasks = useMemo(() => staleItems.flatMap((item) => {
-        if (item.id.startsWith('project:')) return [];
-        const task = taskById.get(item.id);
-        return task ? [task] : [];
-    }), [staleItems, taskById]);
-    const staleProjectItems = useMemo(
-        () => staleItems.filter((item) => item.id.startsWith('project:')),
-        [staleItems],
-    );
-
-    const isActionableSuggestion = useCallback((suggestion: ReviewSuggestion) => {
-        if (suggestion.id.startsWith('project:')) return false;
-        return suggestion.action === 'someday' || suggestion.action === 'archive';
-    }, []);
+    const stale = useMemo(() => getWeeklyReviewStale(staleItems, tasks, labels), [labels, staleItems, tasks]);
+    const staleTasks = stale.tasks;
+    const staleProjectItems = stale.projects;
+    const staleItemTitleMap = stale.titleById;
 
     const toggleSuggestion = useCallback((id: string) => {
         setAiSelectedIds((prev) => {
@@ -393,13 +359,10 @@ export function useReviewModalController({
             const response = await provider.analyzeReview({ items: staleItems });
             // Filter here, not in the apply path, so what is displayed and what
             // can be written never diverge.
-            const suggestions = filterReviewSuggestionsToKnownIds(
-                response.suggestions || [],
-                staleItems.map((item) => item.id),
-            );
+            const suggestions = filterReviewSuggestions(response.suggestions || [], staleItems);
             setAiSuggestions(suggestions);
             const defaultSelected = new Set(
-                suggestions.filter(isActionableSuggestion).map((suggestion) => suggestion.id),
+                suggestions.filter(isActionableReviewSuggestion).map((suggestion) => suggestion.id),
             );
             setAiSelectedIds(defaultSelected);
         } catch (error) {
@@ -408,53 +371,17 @@ export function useReviewModalController({
         } finally {
             setAiLoading(false);
         }
-    }, [aiEnabled, aiProvider, isActionableSuggestion, settings, staleItems]);
+    }, [aiEnabled, aiProvider, settings, staleItems]);
 
     const applyAiSuggestions = useCallback(async () => {
-        const updates = aiSuggestions
-            .filter((suggestion) => aiSelectedIds.has(suggestion.id))
-            .filter(isActionableSuggestion)
-            .map((suggestion) => {
-                if (suggestion.action === 'someday') {
-                    return { id: suggestion.id, updates: { status: 'someday' as TaskStatus } };
-                }
-                if (suggestion.action === 'archive') {
-                    return {
-                        id: suggestion.id,
-                        updates: { status: 'archived' as TaskStatus, completedAt: new Date().toISOString() },
-                    };
-                }
-                return null;
-            })
-            .filter(Boolean) as { id: string; updates: Partial<Task> }[];
-
+        const updates = buildReviewSuggestionUpdates(aiSuggestions, aiSelectedIds, new Date());
         if (updates.length === 0) return;
         await batchUpdateTasks(updates);
-    }, [aiSelectedIds, aiSuggestions, batchUpdateTasks, isActionableSuggestion]);
+    }, [aiSelectedIds, aiSuggestions, batchUpdateTasks]);
 
     const inboxTasks = weeklyBuckets.inbox;
-    const waitingGroups = weeklyBuckets.waitingGroups;
-    const visibleWaitingTasks = useMemo(
-        () => [...waitingGroups.due, ...waitingGroups.unscheduled],
-        [waitingGroups],
-    );
-    const scheduledWaitingTasks = waitingGroups.scheduled;
-    const somedayGroups = weeklyBuckets.somedayGroups;
-    const visibleSomedayTasks = useMemo(
-        () => [...somedayGroups.due, ...somedayGroups.unscheduled],
-        [somedayGroups],
-    );
-    const scheduledSomedayTasks = somedayGroups.scheduled;
-    // Only used for the "nothing waiting/someday at all" length checks below;
-    // the visible/scheduled slices above are what actually render.
-    const waitingTasks = useMemo(
-        () => [...waitingGroups.due, ...waitingGroups.scheduled, ...waitingGroups.unscheduled],
-        [waitingGroups],
-    );
-    const somedayTasks = useMemo(
-        () => [...somedayGroups.due, ...somedayGroups.scheduled, ...somedayGroups.unscheduled],
-        [somedayGroups],
-    );
+    const waitingList = useMemo(() => getWeeklyReviewScheduledList(weeklyBuckets.waitingGroups, labels), [labels, weeklyBuckets]);
+    const somedayList = useMemo(() => getWeeklyReviewScheduledList(weeklyBuckets.somedayGroups, labels), [labels, weeklyBuckets]);
     const calendarReviewItems = weeklyBuckets.calendarItems;
     const externalCalendarReviewItems = useMemo(
         () => getExternalCalendarDaySummaries(externalCalendarEvents),
@@ -462,16 +389,10 @@ export function useReviewModalController({
     );
     const contextReviewGroups = weeklyBuckets.contextGroups;
 
-    const projectReviewEntries = useMemo<ReviewProjectEntry[]>(
-        () => weeklyBuckets.projectEntries.map((entry) => ({
-            ...entry,
-            areaColor: (
-                entry.project.areaId
-                    ? areaById.get(entry.project.areaId)?.color
-                    : undefined
-            ) || tc.tint,
-        })),
-        [areaById, tc.tint, weeklyBuckets.projectEntries],
+    // A project without an area color takes the theme tint when drawn.
+    const projectReviewEntries = useMemo(
+        () => getWeeklyReviewProjects(weeklyBuckets.projectEntries, areaById, labels),
+        [areaById, labels, weeklyBuckets.projectEntries],
     );
 
     const stepFlags = useMemo(() => buildReviewSteps(weeklyBuckets, {
@@ -480,26 +401,10 @@ export function useReviewModalController({
         externalCalendarDayCount: externalCalendarReviewItems.length,
         externalCalendarHasError: Boolean(externalCalendarError),
     }), [externalCalendarError, externalCalendarReviewItems.length, includeContextStep, weeklyBuckets]);
-    const stepHasWork = useMemo(() => new Map(stepFlags.map((flag) => [flag.id, flag.hasWork])), [stepFlags]);
-    const steps = useMemo<ReviewStepDefinition[]>(() => {
-        const list: ReviewStepDefinition[] = [
-            { id: 'inbox', title: labels.inbox, Icon: Inbox, hasWork: stepHasWork.get('inbox') ?? false },
-            { id: 'stale', title: labels.stale, Icon: History, hasWork: stepHasWork.get('stale') ?? false },
-        ];
-        list.push(
-            { id: 'calendar', title: labels.calendar, Icon: CalendarIcon, hasWork: stepHasWork.get('calendar') ?? false },
-            { id: 'waiting', title: labels.waiting, Icon: Clock, hasWork: stepHasWork.get('waiting') ?? false },
-        );
-        if (includeContextStep) {
-            list.push({ id: 'contexts', title: labels.contexts, Icon: Tag, hasWork: stepHasWork.get('contexts') ?? false });
-        }
-        list.push(
-            { id: 'projects', title: labels.projects, Icon: FolderOpen, hasWork: stepHasWork.get('projects') ?? false },
-            { id: 'someday', title: labels.someday, Icon: Lightbulb, hasWork: stepHasWork.get('someday') ?? false },
-            { id: 'completed', title: labels.done, Icon: CheckCircle2, hasWork: true },
-        );
-        return list;
-    }, [includeContextStep, labels, stepHasWork]);
+    const steps = useMemo<ReviewStepDefinition[]>(
+        () => titleWeeklyReviewSteps(stepFlags, labels).map((step) => ({ ...step, Icon: STEP_ICONS[step.id] })),
+        [labels, stepFlags],
+    );
     const {
         displayedStep,
         currentStepIndex: safeStepIndex,
@@ -507,6 +412,8 @@ export function useReviewModalController({
         nextStep: nextStepId,
         previousStep: previousStepId,
     } = useMemo(() => resolveReviewStepSession(steps, currentStep), [currentStep, steps]);
+
+    const stepRail = useMemo(() => getReviewStepRail(steps, displayedStep, safeStepIndex), [displayedStep, safeStepIndex, steps]);
 
     useEffect(() => {
         if (currentStep !== displayedStep) {
@@ -548,6 +455,7 @@ export function useReviewModalController({
         canGoBack: previousStepId !== null,
         closeEditModal,
         closeProjectTaskPrompt,
+        completion,
         contextReviewGroups,
         currentStep: displayedStep,
         editModalTab,
@@ -568,7 +476,7 @@ export function useReviewModalController({
         handleTaskPress,
         includeContextStep,
         inboxTasks,
-        isActionableSuggestion,
+        isActionableSuggestion: isActionableReviewSuggestion,
         isDark,
         labels,
         nextStep,
@@ -579,21 +487,15 @@ export function useReviewModalController({
         projectReviewEntries,
         projectTaskPrompt,
         projectTaskTitle,
-        estimatedLookBackDuration,
-        reviewLookBack,
-        reviewSummary,
         runAiAnalysis,
         safeStepIndex,
-        scheduledSomedayTasks,
-        scheduledWaitingTasks,
         setProjectTaskTitle,
         showEditModal,
-        showEstimateLookBack,
-        showTrackedLookBack,
-        somedayTasks,
+        somedayList,
         staleItemTitleMap,
         staleProjectItems,
         staleTasks,
+        stepRail,
         steps,
         submitProjectTask,
         tc,
@@ -601,9 +503,6 @@ export function useReviewModalController({
         toggleExpandedProject,
         toggleExternalDayExpanded,
         toggleSuggestion,
-        trackedLookBackDuration,
-        visibleSomedayTasks,
-        visibleWaitingTasks,
-        waitingTasks,
+        waitingList,
     };
 }

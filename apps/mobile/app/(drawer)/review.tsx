@@ -3,11 +3,16 @@ import { BackHandler, View, Text, FlatList, Pressable, StyleSheet, TouchableOpac
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  DEFAULT_AREA_COLOR,
+  REVIEW_BULK_STATUSES,
+  buildReviewShareText,
+  decorateReviewOverviewGroups,
+  getReviewExpansionControl,
   getReviewOverviewGroups,
+  getReviewOverviewSortBy,
+  getReviewOverviewText,
+  toggleReviewExpandedId,
   useTaskStore,
   shallow,
-  tFallback,
   type Task,
   type TaskStatus,
 } from '@mindwtr/core';
@@ -27,7 +32,6 @@ import { SwipeableTaskItem, type TaskRowActions } from '@/components/swipeable-t
 import { TaskListBulkOrganizeModal } from '@/components/task-list/TaskListBulkOrganizeModal';
 import { TokenPickerModal } from '@/components/token-picker-modal';
 import { useTaskListSelection } from '@/components/use-task-list-selection';
-import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
 
 export default function ReviewScreen() {
   const router = useRouter();
@@ -65,7 +69,8 @@ export default function ReviewScreen() {
     }, {} as Record<string, Task>);
   }, [tasks]);
 
-  const restoreActionLabel = tFallback(t, 'trash.restoreToInbox', 'Restore');
+  const text = useMemo(() => getReviewOverviewText(t), [t]);
+  const restoreActionLabel = text.restore;
   const {
     bulkActionLoading,
     exitSelectionMode,
@@ -144,20 +149,7 @@ export default function ReviewScreen() {
 
   const handleBatchShare = useCallback(async () => {
     if (!hasSelection) return;
-    const selectedTasks = selectedIdsArray.map((id) => tasksById[id]).filter(Boolean);
-    const lines: string[] = [];
-
-    selectedTasks.forEach((task) => {
-      lines.push(`- ${task.title}`);
-      if (task.checklist?.length) {
-        task.checklist.forEach((item) => {
-          if (!item.title) return;
-          lines.push(`  - ${item.isCompleted ? '[x]' : '[ ]'} ${item.title}`);
-        });
-      }
-    });
-
-    const message = lines.join('\n').trim();
+    const message = buildReviewShareText(selectedIdsArray.map((id) => tasksById[id]).filter(Boolean));
     if (!message) return;
 
     try {
@@ -168,9 +160,7 @@ export default function ReviewScreen() {
     }
   }, [hasSelection, selectedIdsArray, tasksById, exitSelectionMode]);
 
-  const bulkStatuses: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done', 'reference'];
-
-  const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
+  const sortBy = getReviewOverviewSortBy(settings);
   const reviewOverviewGroups = useMemo(() => getReviewOverviewGroups({
     tasks,
     projects,
@@ -178,92 +168,30 @@ export default function ReviewScreen() {
     areaFilter: resolvedAreaFilter,
     sortBy,
   }), [projects, resolvedAreaFilter, sortBy, sortedAreas, tasks]);
-  const noAreaLabel = t('review.noArea');
-  const singleActionsLabel = t('review.singleActions');
-  const translateOr = useCallback((key: string, fallback: string) => {
-    const value = t(key);
-    return value && value !== key ? value : fallback;
-  }, [t]);
-  const unassignedLabel = translateOr('review.unassigned', 'Unassigned');
-  const projectsLabel = translateOr('review.projectsLabel', 'projects');
-  const needsActionLabel = translateOr('review.needsActionSummary', 'needs action');
-  const withoutAreaLabel = translateOr('review.withoutArea', 'without an area');
-  const activeTasksLabel = translateOr('review.activeTasks', 'active tasks');
-  const startReviewLabel = translateOr('review.startReview', 'Start Review');
-  const expandAreasLabel = translateOr('review.expandAreas', 'Expand areas');
-  const expandEverythingLabel = translateOr('review.expandEverything', 'Expand projects');
-  const collapseEverythingLabel = translateOr('review.collapseEverything', 'Collapse all');
-  const unassignedAreaColor = settings?.appearance?.unassignedAreaColor || DEFAULT_AREA_COLOR;
-  const reviewTaskGroups = useMemo(() => {
-    return reviewOverviewGroups.map((group) => {
-      const area = group.areaId ? areaById.get(group.areaId) : undefined;
-      const representativeProject = group.projectGroups.find(({ project }) => project)?.project;
-      const areaKey = group.areaId ? `area:${group.areaId}` : 'area:none';
-
-      return {
-        ...group,
-        color: group.areaId
-          ? (area?.color || representativeProject?.color || tc.tint)
-          : unassignedAreaColor,
-        id: areaKey,
-        isUnassigned: !group.areaId,
-        projectGroups: group.projectGroups.map((projectGroup) => ({
-          ...projectGroup,
-          id: projectGroup.project ? `project:${projectGroup.project.id}` : `single:${areaKey}`,
-          isSingleActions: !projectGroup.project,
-          projectId: projectGroup.project?.id,
-          title: projectGroup.project?.title || singleActionsLabel,
-        })),
-        title: area?.name || representativeProject?.areaTitle || unassignedLabel || noAreaLabel,
-      };
-    });
-  }, [areaById, noAreaLabel, reviewOverviewGroups, singleActionsLabel, tc.tint, unassignedAreaColor, unassignedLabel]);
-
-  const areaGroupIds = useMemo(() => reviewTaskGroups.map((group) => group.id), [reviewTaskGroups]);
-  const projectGroupIds = useMemo(
-    () => reviewTaskGroups.flatMap((group) => group.projectGroups.map((projectGroup) => projectGroup.id)),
-    [reviewTaskGroups],
+  const unassignedAreaColor = settings?.appearance?.unassignedAreaColor;
+  const reviewTaskGroups = useMemo(
+    () => decorateReviewOverviewGroups(reviewOverviewGroups, { areaById, unassignedAreaColor, text }),
+    [areaById, reviewOverviewGroups, text, unassignedAreaColor],
   );
-  const allAreasExpanded = areaGroupIds.length > 0 && areaGroupIds.every((areaId) => expandedAreaIds.has(areaId));
-  const allProjectsExpanded = projectGroupIds.length > 0 && projectGroupIds.every((projectId) => expandedReviewProjectIds.has(projectId));
-  const expansionControlLabel = !allAreasExpanded
-    ? expandAreasLabel
-    : allProjectsExpanded
-      ? collapseEverythingLabel
-      : expandEverythingLabel;
+  const expansionControl = useMemo(() => getReviewExpansionControl(
+    reviewTaskGroups,
+    { areaIds: expandedAreaIds, projectIds: expandedReviewProjectIds },
+    text,
+  ), [expandedAreaIds, expandedReviewProjectIds, reviewTaskGroups, text]);
 
   const toggleAreaExpanded = useCallback((areaId: string) => {
-    setExpandedAreaIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(areaId)) next.delete(areaId);
-      else next.add(areaId);
-      return next;
-    });
+    setExpandedAreaIds((prev) => toggleReviewExpandedId(prev, areaId));
   }, []);
 
+  const nextExpansion = expansionControl.next;
   const cycleReviewExpansion = useCallback(() => {
-    if (!areaGroupIds.length) return;
-    if (!allAreasExpanded) {
-      setExpandedAreaIds(new Set(areaGroupIds));
-      setExpandedReviewProjectIds(new Set());
-      return;
-    }
-    if (!allProjectsExpanded) {
-      setExpandedAreaIds(new Set(areaGroupIds));
-      setExpandedReviewProjectIds(new Set(projectGroupIds));
-      return;
-    }
-    setExpandedAreaIds(new Set());
-    setExpandedReviewProjectIds(new Set());
-  }, [allAreasExpanded, allProjectsExpanded, areaGroupIds, projectGroupIds]);
+    if (!nextExpansion) return;
+    setExpandedAreaIds(new Set(nextExpansion.areaIds));
+    setExpandedReviewProjectIds(new Set(nextExpansion.projectIds));
+  }, [nextExpansion]);
 
   const toggleReviewProjectExpanded = useCallback((projectGroupId: string) => {
-    setExpandedReviewProjectIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectGroupId)) next.delete(projectGroupId);
-      else next.add(projectGroupId);
-      return next;
-    });
+    setExpandedReviewProjectIds((prev) => toggleReviewExpandedId(prev, projectGroupId));
   }, []);
 
   // One actions object for every row on the screen, reading the current store
@@ -307,21 +235,21 @@ export default function ReviewScreen() {
         <View style={[styles.reviewActionBar, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
           <TouchableOpacity
             accessibilityRole="button"
-            accessibilityLabel={expansionControlLabel}
-            accessibilityState={{ disabled: areaGroupIds.length === 0 }}
+            accessibilityLabel={expansionControl.label}
+            accessibilityState={{ disabled: expansionControl.disabled }}
             style={[
               styles.reviewExpansionButton,
               {
                 backgroundColor: tc.filterBg,
                 borderColor: tc.border,
-                opacity: areaGroupIds.length > 0 ? 1 : 0.45,
+                opacity: expansionControl.disabled ? 0.45 : 1,
               },
             ]}
             onPress={cycleReviewExpansion}
-            disabled={areaGroupIds.length === 0}
+            disabled={expansionControl.disabled}
             activeOpacity={0.75}
           >
-            {allAreasExpanded && allProjectsExpanded
+            {expansionControl.allExpanded
               ? <ChevronsUp size={20} color={tc.secondaryText} strokeWidth={2.4} />
               : <ChevronsDown size={20} color={tc.secondaryText} strokeWidth={2.4} />}
           </TouchableOpacity>
@@ -331,7 +259,7 @@ export default function ReviewScreen() {
             activeOpacity={0.85}
           >
             <Text style={[styles.startReviewButtonText, { color: filledButton.textColor ?? tc.onTint }]} numberOfLines={2} ellipsizeMode="tail">
-              {startReviewLabel}
+              {text.startReview}
             </Text>
           </TouchableOpacity>
         </View>
@@ -360,7 +288,7 @@ export default function ReviewScreen() {
               ]}
             >
               <Text style={[styles.bulkActionText, { color: tc.onTint }]}>
-                {translateOr('bulk.organize', 'Organize')}
+                {text.organize}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -389,7 +317,7 @@ export default function ReviewScreen() {
               ]}
             >
               <Text style={[styles.bulkActionText, { color: tc.text }]}>
-                {tFallback(t, 'bulk.removeTag', 'Remove tag')}
+                {text.removeTag}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -414,22 +342,12 @@ export default function ReviewScreen() {
         data={reviewTaskGroups}
         renderItem={({ item: areaGroup }) => {
           const areaExpanded = expandedAreaIds.has(areaGroup.id);
-          const taskSummary = areaGroup.isUnassigned
-            ? `${areaGroup.taskCount} ${t('common.tasks')} ${withoutAreaLabel}`
-            : `${areaGroup.taskCount} ${t('common.tasks')}`;
-          const areaSummary = [
-            areaGroup.projectCount > 0 ? `${areaGroup.projectCount} ${projectsLabel}` : null,
-            taskSummary,
-            areaGroup.needsActionCount > 0
-              ? `${areaGroup.needsActionCount} ${needsActionLabel}`
-              : null,
-          ].filter(Boolean).join(' · ');
           return (
             <View style={styles.reviewAreaSection}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded: areaExpanded }}
-                accessibilityLabel={`${areaGroup.title}, ${areaSummary}`}
+                accessibilityLabel={areaGroup.accessibilityLabel}
                 style={({ pressed }) => [
                   styles.reviewAreaHeader,
                   {
@@ -440,7 +358,7 @@ export default function ReviewScreen() {
                 onPress={() => toggleAreaExpanded(areaGroup.id)}
               >
                 <View style={styles.reviewAreaHeaderMain}>
-                  <View style={[styles.reviewAreaDot, { backgroundColor: areaGroup.color }]} />
+                  <View style={[styles.reviewAreaDot, { backgroundColor: areaGroup.color ?? tc.tint }]} />
                   <View style={styles.reviewAreaTextBlock}>
                     <Text style={[styles.reviewAreaTitle, { color: tc.text }]} numberOfLines={2}>
                       {areaGroup.title}
@@ -449,7 +367,7 @@ export default function ReviewScreen() {
                       style={[styles.reviewAreaSummaryText, { color: tc.secondaryText }]}
                       numberOfLines={2}
                     >
-                      {areaSummary}
+                      {areaGroup.summary}
                     </Text>
                   </View>
                 </View>
@@ -462,20 +380,12 @@ export default function ReviewScreen() {
                 <View style={styles.reviewAreaBody}>
                   {areaGroup.projectGroups.map((projectGroup) => {
                     const projectExpanded = expandedReviewProjectIds.has(projectGroup.id);
-                    const projectStateLabel = projectGroup.nextActionState === 'next'
-                      ? t('review.hasNextAction')
-                      : projectGroup.nextActionState === 'waiting'
-                        ? t('status.waiting')
-                        : t('review.needsAction');
-                    const projectSummary = projectGroup.isSingleActions
-                      ? `${projectGroup.tasks.length} ${t('common.tasks')}`
-                      : `${projectGroup.tasks.length} ${activeTasksLabel} · ${projectStateLabel}`;
                     return (
                       <View key={projectGroup.id} style={styles.reviewProjectGroup}>
                         <Pressable
                           accessibilityRole="button"
                           accessibilityState={{ expanded: projectExpanded }}
-                          accessibilityLabel={`${projectGroup.title}, ${projectSummary}`}
+                          accessibilityLabel={projectGroup.accessibilityLabel}
                           style={({ pressed }) => [
                             styles.reviewProjectHeader,
                             {
@@ -494,35 +404,22 @@ export default function ReviewScreen() {
                               : <ChevronRight size={17} color={tc.secondaryText} strokeWidth={2.3} />}
                           </View>
                           <View style={styles.reviewProjectSummaryRow}>
-                            {projectGroup.projectId ? (
+                            {projectGroup.statusTone ? (
                               <View
                                 style={[
                                   styles.reviewStatusDot,
-                                  {
-                                    backgroundColor: projectGroup.nextActionState === 'next'
-                                      ? tc.success
-                                      // Delegated (waiting) stays amber; truly stuck turns red (#1086).
-                                      : projectGroup.nextActionState === 'waiting'
-                                        ? tc.warning
-                                        : tc.danger,
-                                  },
+                                  { backgroundColor: tc[projectGroup.statusTone] },
                                 ]}
                               />
                             ) : null}
                             <Text
                               style={[
                                 styles.reviewProjectSummaryText,
-                                {
-                                  color: projectGroup.projectId && projectGroup.nextActionState === 'none'
-                                    ? tc.warning
-                                    : tc.secondaryText,
-                                },
+                                { color: projectGroup.summaryTone === 'warning' ? tc.warning : tc.secondaryText },
                               ]}
                               numberOfLines={2}
                             >
-                              {projectGroup.isSingleActions
-                                ? `${projectSummary} · ${singleActionsLabel}`
-                                : projectSummary}
+                              {projectGroup.summaryText}
                             </Text>
                           </View>
                         </Pressable>
@@ -566,7 +463,7 @@ export default function ReviewScreen() {
             style={[styles.modalCard, { backgroundColor: tc.cardBg }]}
             onPress={(e) => e.stopPropagation()}
           >
-            <Text style={[styles.modalTitle, { color: tc.text }]}>{startReviewLabel}</Text>
+            <Text style={[styles.modalTitle, { color: tc.text }]}>{text.startReview}</Text>
             <TouchableOpacity
               style={[styles.reviewPickerOption, { backgroundColor: tc.filterBg, borderColor: tc.border }]}
               onPress={() => {
@@ -612,7 +509,7 @@ export default function ReviewScreen() {
           >
             <Text style={[styles.modalTitle, { color: tc.text }]}>{t('bulk.moveTo')}</Text>
             <View style={styles.moveOptions}>
-              {bulkStatuses.map((status) => (
+              {REVIEW_BULK_STATUSES.map((status) => (
                 <TouchableOpacity
                   key={status}
                   onPress={async () => {
@@ -684,8 +581,8 @@ export default function ReviewScreen() {
 
       <TokenPickerModal
         visible={removeTagPickerVisible}
-        title={tFallback(t, 'bulk.removeTag', 'Remove tag')}
-        description={tFallback(t, 'bulk.removeTag', 'Remove tag')}
+        title={text.removeTag}
+        description={text.removeTag}
         tokens={removableTagOptions}
         placeholder={t('bulk.tagPlaceholder')}
         multiSelect
