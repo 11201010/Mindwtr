@@ -76,7 +76,7 @@ private val PRESETS = mapOf(
 
 /** Core's theme reply (host-entry.ts `theme`): the preset, Material 3 or not, a fixed scheme or the system's, and core's hues. */
 object ThemeChoice {
-    class Reply(val preset: String, val material: Boolean, val scheme: String?,
+    class Reply(val mode: String, val preset: String, val material: Boolean, val scheme: String?,
                 val statusLight: Map<String, StatusColors>, val statusDark: Map<String, StatusColors>, val priority: Map<String, Color>)
 
     /** Set once at boot, before any list shows. Null until then, or when the read failed: RN's default look. */
@@ -91,7 +91,7 @@ object ThemeChoice {
         val status = json.getJSONObject("status")
         val priority = json.getJSONObject("priority")
         current = Reply(
-            json.getString("preset"), json.getBoolean("material"), if (json.isNull("scheme")) null else json.getString("scheme"),
+            json.getString("mode"), json.getString("preset"), json.getBoolean("material"), if (json.isNull("scheme")) null else json.getString("scheme"),
             palette(status.getJSONObject("light")), palette(status.getJSONObject("dark")),
             priority.keys().asSequence().associateWith { rgb(priority.getString(it)) },
         )
@@ -180,7 +180,8 @@ internal val ICON_MASK = rgb("#000000")
 fun mindwtrTheme(reply: ThemeChoice.Reply?, systemDark: Boolean): MindwtrTheme {
     val dark = reply?.scheme?.let { it == "dark" } ?: systemDark
     val material = reply?.material == true
-    val colors = PRESETS[reply?.preset] ?: when {
+    val preset = if (reply?.mode == "system-oled" && dark) "oled" else reply?.preset
+    val colors = PRESETS[preset] ?: when {
         material -> if (dark) M3_DARK else M3_LIGHT
         else -> if (dark) DARK else LIGHT
     }
