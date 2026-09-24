@@ -208,43 +208,43 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
         const allAreas = Array.isArray(data.areas) ? data.areas : [];
         const allPeople = Array.isArray(data.people) ? data.people : [];
 
-        const savePromises: Promise<{ conflictIDs: string[] }>[] = [];
+        const saveResults: { conflictIDs: string[] }[] = [];
 
         if (allTasks.length > 0) {
-            savePromises.push(
-                invokeNative('cloudkit_save_records', {
+            saveResults.push(
+                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.task,
                     recordsJson: JSON.stringify(allTasks),
                 }),
             );
         }
         if (allProjects.length > 0) {
-            savePromises.push(
-                invokeNative('cloudkit_save_records', {
+            saveResults.push(
+                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.project,
                     recordsJson: JSON.stringify(allProjects),
                 }),
             );
         }
         if (allSections.length > 0) {
-            savePromises.push(
-                invokeNative('cloudkit_save_records', {
+            saveResults.push(
+                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.section,
                     recordsJson: JSON.stringify(allSections),
                 }),
             );
         }
         if (allAreas.length > 0) {
-            savePromises.push(
-                invokeNative('cloudkit_save_records', {
+            saveResults.push(
+                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.area,
                     recordsJson: JSON.stringify(allAreas),
                 }),
             );
         }
         if (allPeople.length > 0) {
-            savePromises.push(
-                invokeNative('cloudkit_save_records', {
+            saveResults.push(
+                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.person,
                     recordsJson: JSON.stringify(allPeople),
                 }),
@@ -260,16 +260,15 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
                     updatedAt: new Date().toISOString(),
                 },
             ];
-            savePromises.push(
-                invokeNative('cloudkit_save_records', {
+            saveResults.push(
+                await invokeNative<{ conflictIDs: string[] }>('cloudkit_save_records', {
                     recordType: RECORD_TYPES.settings,
                     recordsJson: JSON.stringify(settingsRecord),
                 }),
             );
         }
 
-        const results = await Promise.all(savePromises);
-        const allConflicts = results.flatMap((r) => r.conflictIDs ?? []);
+        const allConflicts = saveResults.flatMap((r) => r.conflictIDs ?? []);
 
         if (allConflicts.length > 0) {
             void logWarn(`CloudKit save had ${allConflicts.length} conflicts (will resolve on next sync)`, {
@@ -293,7 +292,7 @@ export const writeRemoteCloudKit = async (data: AppData): Promise<void> => {
 
         void logInfo('CloudKit write complete', {
             scope: 'cloudkit',
-            extra: { conflicts: String(allConflicts.length) },
+            extra: { conflicts: String(allConflicts.length), releaseCheck: 'v1.3.3/cloudkit-large-library-write' },
         });
     } catch (error) {
         void logError(error instanceof Error ? error : new Error(String(error)), {

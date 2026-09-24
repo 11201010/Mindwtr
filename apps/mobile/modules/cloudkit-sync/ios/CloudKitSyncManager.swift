@@ -311,7 +311,9 @@ final class CloudKitSyncManager {
             let recordID = CKRecord.ID(recordName: id, zoneID: zoneID)
             if let existing = existingByID[recordID] {
                 CloudKitRecordMapper.updateRecord(existing, from: json, recordType: recordType)
-                recordsToSave.append(existing)
+                if !existing.changedKeys().isEmpty {
+                    recordsToSave.append(existing)
+                }
             } else {
                 if let newRecord = CloudKitRecordMapper.record(from: json, recordType: recordType, zoneID: zoneID) {
                     recordsToSave.append(newRecord)

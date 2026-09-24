@@ -361,11 +361,11 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         const allAreas = Array.isArray(data.areas) ? data.areas : [];
         const allPeople = Array.isArray(data.people) ? data.people : [];
 
-        const savePromises: Promise<string[]>[] = [];
+        const saveResults: string[][] = [];
 
         if (allTasks.length > 0) {
-            savePromises.push(
-                runCloudKitOperation(
+            saveResults.push(
+                await runCloudKitOperation(
                     'saveRecords:task',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.task, JSON.stringify(allTasks)),
                     options.signal,
@@ -374,8 +374,8 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
             );
         }
         if (allProjects.length > 0) {
-            savePromises.push(
-                runCloudKitOperation(
+            saveResults.push(
+                await runCloudKitOperation(
                     'saveRecords:project',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.project, JSON.stringify(allProjects)),
                     options.signal,
@@ -384,8 +384,8 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
             );
         }
         if (allSections.length > 0) {
-            savePromises.push(
-                runCloudKitOperation(
+            saveResults.push(
+                await runCloudKitOperation(
                     'saveRecords:section',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.section, JSON.stringify(allSections)),
                     options.signal,
@@ -394,8 +394,8 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
             );
         }
         if (allAreas.length > 0) {
-            savePromises.push(
-                runCloudKitOperation(
+            saveResults.push(
+                await runCloudKitOperation(
                     'saveRecords:area',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.area, JSON.stringify(allAreas)),
                     options.signal,
@@ -404,8 +404,8 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
             );
         }
         if (allPeople.length > 0) {
-            savePromises.push(
-                runCloudKitOperation(
+            saveResults.push(
+                await runCloudKitOperation(
                     'saveRecords:person',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.person, JSON.stringify(allPeople)),
                     options.signal,
@@ -423,8 +423,8 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
                     updatedAt: new Date().toISOString(),
                 },
             ];
-            savePromises.push(
-                runCloudKitOperation(
+            saveResults.push(
+                await runCloudKitOperation(
                     'saveRecords:settings',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.settings, JSON.stringify(settingsRecord)),
                     options.signal,
@@ -433,8 +433,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
             );
         }
 
-        const results = await Promise.all(savePromises);
-        const allConflicts = results.flat();
+        const allConflicts = saveResults.flat();
 
         if (allConflicts.length > 0) {
             void logWarn(`CloudKit save had ${allConflicts.length} conflicts (will resolve on next sync)`, {
@@ -463,7 +462,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
 
         void logInfo('CloudKit write complete', {
             scope: 'cloudkit',
-            extra: { conflicts: String(allConflicts.length) },
+            extra: { conflicts: String(allConflicts.length), releaseCheck: 'v1.3.3/cloudkit-large-library-write' },
         });
     } catch (error) {
         if (!isAbortLikeError(error, options.signal)) {

@@ -236,6 +236,28 @@ enum CloudKitRecordMapper {
 
     // MARK: - Internal
 
+    private static func setField(_ value: CKRecordValue?, on record: CKRecord, key: String) {
+        let current = record[key]
+        if current == nil && value == nil { return }
+        if let current = current as? NSObject,
+           let value = value as? NSObject,
+           current.isEqual(value) { return }
+        record[key] = value
+    }
+
+    private static func setJSONField(_ value: String, on record: CKRecord, key: String) {
+        if record[key] as? String == value { return }
+        if let old = record[key] as? String,
+           let oldData = old.data(using: .utf8),
+           let newData = value.data(using: .utf8),
+           let oldJSON = try? JSONSerialization.jsonObject(with: oldData),
+           let newJSON = try? JSONSerialization.jsonObject(with: newData),
+           let oldCanonical = try? JSONSerialization.data(withJSONObject: oldJSON, options: .sortedKeys),
+           let newCanonical = try? JSONSerialization.data(withJSONObject: newJSON, options: .sortedKeys),
+           oldCanonical == newCanonical { return }
+        setField(value as CKRecordValue, on: record, key: key)
+    }
+
     private static func applyFields(
         from json: [String: Any],
         to record: CKRecord,
@@ -245,43 +267,47 @@ enum CloudKitRecordMapper {
         for spec in specs {
             guard let value = json[spec.jsKey] else {
                 // Explicitly set nil for missing optional fields so CloudKit clears them.
-                record[spec.ckKey] = nil
+                setField(nil, on: record, key: spec.ckKey)
                 continue
             }
             // Handle explicit null from JSON
             if value is NSNull {
-                record[spec.ckKey] = nil
+                setField(nil, on: record, key: spec.ckKey)
                 continue
             }
             switch spec.kind {
             case .string, .date:
-                record[spec.ckKey] = value as? String
+                if let str = value as? String {
+                    setField(str as CKRecordValue, on: record, key: spec.ckKey)
+                } else {
+                    setField(nil, on: record, key: spec.ckKey)
+                }
             case .int:
                 if let n = value as? Int64 {
-                    record[spec.ckKey] = n as CKRecordValue
+                    setField(n as CKRecordValue, on: record, key: spec.ckKey)
                 } else if let n = value as? Int {
-                    record[spec.ckKey] = Int64(n) as CKRecordValue
+                    setField(Int64(n) as CKRecordValue, on: record, key: spec.ckKey)
                 } else if let n = value as? Double {
-                    record[spec.ckKey] = Int64(n) as CKRecordValue
+                    setField(Int64(n) as CKRecordValue, on: record, key: spec.ckKey)
                 }
             case .bool:
                 if let b = value as? Bool {
-                    record[spec.ckKey] = (b ? 1 : 0) as CKRecordValue
+                    setField((b ? 1 : 0) as CKRecordValue, on: record, key: spec.ckKey)
                 } else if let n = value as? Int {
-                    record[spec.ckKey] = Int64(n) as CKRecordValue
+                    setField(Int64(n) as CKRecordValue, on: record, key: spec.ckKey)
                 }
             case .stringArray:
                 if let arr = value as? [String] {
-                    record[spec.ckKey] = arr as CKRecordValue
+                    setField(arr as CKRecordValue, on: record, key: spec.ckKey)
                 }
             case .jsonString:
                 // Encode object/array to JSON string for storage
-                if let data = try? JSONSerialization.data(withJSONObject: value),
+                if let data = try? JSONSerialization.data(withJSONObject: value, options: .sortedKeys),
                    let str = String(data: data, encoding: .utf8) {
-                    record[spec.ckKey] = str as CKRecordValue
+                    setJSONField(str, on: record, key: spec.ckKey)
                 } else if let str = value as? String {
                     // Already a string (e.g., from a previous round-trip)
-                    record[spec.ckKey] = str as CKRecordValue
+                    setJSONField(str, on: record, key: spec.ckKey)
                 }
             }
         }
