@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/ios-external-calendar-open`** — mobile `apps/mobile/components/views/calendar/useCalendarViewController.ts`, when Expo Calendar reports completion of the iOS native event editor action. Message: `Native calendar event dialog completed`; field: `releaseCheck`. The tester must also confirm Mindwtr responds to taps after the editor disappears. A missing line after dismissing the editor calls for another diagnostic log. No event content or identifiers are logged.
+
 - **`v1.3.3/android-task-list-filter-render`** — mobile `apps/mobile/components/task-list.tsx`, once per mounted Android task list when filtering reduces a list that had clipping enabled to fewer than 15 rows. Message: `Android task list clipping retained after filtering`; fields: `releaseCheck`, `count`. The tester searches for a task near the end of a long Reference or other task list; the log must show `count` below 15 and the matching row must be visible without first scrolling the unfiltered list. No task content or identifiers are logged.
 
 - **`v1.3.3/cloudkit-large-library-write`** — desktop and iOS `cloudkit-sync.ts`, after all record types, purged-record deletes, and the change-token step complete without a transport error. Message: `CloudKit write complete`; fields: `releaseCheck`, `conflicts`. A line with zero conflicts proves this build completed the serialized, unchanged-record-filtered write path; confirm the other device receives edits and both devices show a successful sync. A missing line or nonzero conflicts requires another diagnostic log. No task content or identifiers are logged.
