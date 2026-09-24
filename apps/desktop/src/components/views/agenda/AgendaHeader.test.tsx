@@ -113,7 +113,7 @@ describe('AgendaHeader', () => {
         const onChangeGroupBy = vi.fn();
         renderHeader({ onChangeGroupBy });
 
-        selectToolbarOption('Group', 'Tags');
+        selectToolbarOption('Group next actions by', 'Tags');
 
         expect(onChangeGroupBy).toHaveBeenCalledWith('tag');
     });
@@ -194,7 +194,7 @@ describe('AgendaHeader', () => {
         const groupTrigger = getByRole('combobox', { name: 'Group next actions by' });
         expect(groupTrigger.className).toContain('h-9');
         expect(groupTrigger.className).toContain('rounded-lg');
-        expect(getByText('Group')).toBeInTheDocument();
+        expect(getByText('Group next actions by')).toBeInTheDocument();
 
         const buttons = [...container.querySelectorAll('button')];
         expect(buttons.length).toBeGreaterThan(0);
