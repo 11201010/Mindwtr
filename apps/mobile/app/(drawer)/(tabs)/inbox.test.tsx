@@ -25,7 +25,8 @@ vi.mock('lucide-react-native', () => ({
   ListChecks: () => null,
 }));
 
-vi.mock('@mindwtr/core', () => ({
+vi.mock('@mindwtr/core', async (importOriginal) => ({
+  buildInboxScreenModel: (await importOriginal<typeof import('@mindwtr/core')>()).buildInboxScreenModel,
   isTaskVisibleInInbox: () => true,
   useTaskStore: (selector: (state: typeof taskStore) => unknown) => selector(taskStore),
 }));
