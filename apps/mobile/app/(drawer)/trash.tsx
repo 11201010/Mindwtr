@@ -1,7 +1,24 @@
 import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
 import { Check, Trash2 } from 'lucide-react-native';
-import { buildTrashTimeline, DEFAULT_TOMBSTONE_RETENTION_DAYS, formatI18nTemplate, getInlineMarkdownPreview, projectMatchesAreaFilterSelection, resolveTrashClearScope, shallow, taskMatchesAreaFilterSelection, tFallback, useTaskStore } from '@mindwtr/core';
-import type { Project, StoreActionResult, Task } from '@mindwtr/core';
+import {
+  buildTrashTimeline,
+  formatTrashCounts,
+  getInlineMarkdownPreview,
+  getTrashEmptyState,
+  getTrashPurgeConfirmation,
+  getTrashRetentionHint,
+  getTrashRowLabels,
+  resolveTrashClearScope,
+  selectTrashedProjects,
+  selectTrashedTasks,
+  shallow,
+  tFallback,
+  useTaskStore,
+  type ListConfirmation,
+  type Project,
+  type StoreActionResult,
+  type Task,
+} from '@mindwtr/core';
 import { MarkdownInlineText } from '@/components/markdown-text';
 import { assertBulkActionSucceeded } from '@/components/use-task-list-selection';
 import { getBulkActionFailureMessage } from '@/components/task-list-utils';
@@ -237,17 +254,15 @@ export default function TrashScreen() {
   const { areaById, resolvedAreaFilter } = useMobileAreaFilter();
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
 
-  const trashedTasks = useMemo(() => _allTasks.filter((task) => (
-    task.deletedAt
-    && !task.purgedAt
-    && taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectById, areaById)
-  )), [_allTasks, areaById, projectById, resolvedAreaFilter]);
+  const trashedTasks = useMemo(
+    () => selectTrashedTasks(_allTasks, resolvedAreaFilter, projectById, areaById),
+    [_allTasks, areaById, projectById, resolvedAreaFilter],
+  );
 
-  const trashedProjects = useMemo(() => _allProjects.filter((project) => (
-      project.deletedAt
-      && !project.purgedAt
-      && projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById)
-    )), [_allProjects, areaById, resolvedAreaFilter]);
+  const trashedProjects = useMemo(
+    () => selectTrashedProjects(_allProjects, resolvedAreaFilter, areaById),
+    [_allProjects, areaById, resolvedAreaFilter],
+  );
 
   const trashItems = useMemo(
     () => buildTrashTimeline(trashedTasks, trashedProjects),
@@ -336,13 +351,14 @@ export default function TrashScreen() {
 
   const handleBulkPurge = useCallback(() => {
     if (selectionCount === 0) return;
+    const confirmation = getTrashPurgeConfirmation({ kind: 'selection' }, t);
     Alert.alert(
-      tFallback(t, 'trash.deleteConfirm', 'Delete permanently?'),
-      tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.'),
+      confirmation.title,
+      confirmation.message,
       [
-        { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },
+        { text: confirmation.cancelLabel, style: 'cancel' },
         {
-          text: tFallback(t, 'trash.deletePermanently', 'Delete'),
+          text: confirmation.confirmLabel,
           style: 'destructive',
           onPress: async () => {
             const taskIds = Array.from(selectedTaskIds);
@@ -381,58 +397,47 @@ export default function TrashScreen() {
     restoreProject(projectId);
   };
 
-  const handleDeleteTask = (taskId: string) => {
+  const confirmPurge = (confirmation: ListConfirmation, onPress: () => void) => {
     Alert.alert(
-      tFallback(t, 'trash.deleteConfirm', 'Delete Permanently?'),
-      tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.'),
+      confirmation.title,
+      confirmation.message,
       [
-        { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },
-        {
-          text: tFallback(t, 'trash.deletePermanently', 'Delete'),
-          style: 'destructive',
-          onPress: () => purgeTask(taskId),
-        },
+        { text: confirmation.cancelLabel, style: 'cancel' },
+        { text: confirmation.confirmLabel, style: 'destructive', onPress },
       ]
     );
   };
 
+  const handleDeleteTask = (taskId: string) => {
+    confirmPurge(getTrashPurgeConfirmation({ kind: 'item' }, t), () => purgeTask(taskId));
+  };
+
   const handleDeleteProject = (projectId: string) => {
-    Alert.alert(
-      tFallback(t, 'trash.deleteConfirm', 'Delete Permanently?'),
-      tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.'),
-      [
-        { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },
-        {
-          text: tFallback(t, 'trash.deletePermanently', 'Delete'),
-          style: 'destructive',
-          onPress: () => purgeProject(projectId),
-        },
-      ]
-    );
+    confirmPurge(getTrashPurgeConfirmation({ kind: 'item' }, t), () => purgeProject(projectId));
   };
 
   // Purge cannot be undone, so a filtered list may only clear what it shows.
   const handleClearAll = () => {
     if (trashItems.length === 0) return;
     const scope = resolveTrashClearScope(trashedTasks, trashedProjects, _allTasks, _allProjects);
+    const confirmation = getTrashPurgeConfirmation({
+      kind: 'clear',
+      narrowed: scope.narrowed,
+      taskCount: scope.taskIds.length,
+      projectCount: scope.projectIds.length,
+    }, t);
     Alert.alert(
-      scope.narrowed
-        ? tFallback(t, 'trash.deleteConfirm', 'Delete permanently?')
-        : tFallback(t, 'trash.clearAllConfirm', 'Clear trash?'),
-      scope.narrowed
-        // Two lines, not one sentence: a hard-coded ". " join would be user-visible
-        // text no locale file controls (zh and ja end a sentence with 。).
-        ? `${scope.taskIds.length} ${tFallback(t, 'common.tasks', 'tasks')} · ${scope.projectIds.length} ${tFallback(t, 'projects.title', 'projects')}\n${tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.')}`
-        : tFallback(t, 'trash.clearAllConfirmBodyWithProjects', 'This will permanently delete all trashed tasks and projects.'),
+      confirmation.title,
+      confirmation.message,
       [
-        { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },
+        { text: confirmation.cancelLabel, style: 'cancel' },
         {
-          text: tFallback(t, 'trash.clearAll', 'Clear Trash'),
+          text: confirmation.confirmLabel,
           style: 'destructive',
           onPress: async () => {
             // Always the ids the alert was opened for, never a fresh whole-store
             // sweep: an item that arrived meanwhile was never shown to the user.
-            await runTrashBulkAction(tFallback(t, 'trash.clearAll', 'Clear Trash'), () => Promise.all([
+            await runTrashBulkAction(confirmation.confirmLabel, () => Promise.all([
               scope.taskIds.length > 0 ? purgeTasks(scope.taskIds) : Promise.resolve(undefined),
               ...scope.projectIds.map((projectId) => purgeProject(projectId)),
             ]));
@@ -442,13 +447,16 @@ export default function TrashScreen() {
     );
   };
 
+  const rowLabels = getTrashRowLabels(t);
+  const emptyState = getTrashEmptyState(t);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: tc.bg }]}>
         {trashItems.length > 0 && (
           <View style={styles.summaryRow}>
             <Text style={[styles.summaryText, { color: tc.secondaryText }]}>
-              {trashedTasks.length} {tFallback(t, 'common.tasks', 'tasks')} · {trashedProjects.length} {tFallback(t, 'projects.title', 'projects')}
+              {formatTrashCounts(trashedTasks.length, trashedProjects.length, t)}
             </Text>
             <View style={styles.summaryActions}>
               <Pressable
@@ -474,7 +482,7 @@ export default function TrashScreen() {
         )}
         {trashItems.length > 0 && (
           <Text style={[styles.retentionHint, { color: tc.secondaryText }]}>
-            {formatI18nTemplate(tFallback(t, 'trash.retentionHint', 'Items in Trash are removed for good after {{days}} days'), { days: DEFAULT_TOMBSTONE_RETENTION_DAYS })}
+            {getTrashRetentionHint(t)}
           </Text>
         )}
         {selectionMode && (
@@ -533,13 +541,13 @@ export default function TrashScreen() {
                   onRestore={() => handleRestoreProject(item.project.id)}
                   onDelete={() => handleDeleteProject(item.project.id)}
                   onToggleSelect={() => toggleProjectSelection(item.project.id)}
-                  selectLabel={tFallback(t, 'bulk.select', 'Select')}
+                  selectLabel={rowLabels.select}
                   selectionMode={selectionMode}
                   isSelected={selectedProjectIds.has(item.project.id)}
-                  typeLabel={tFallback(t, 'trash.projectType', 'Project')}
-                  deletedLabel={tFallback(t, 'trash.deletedAt', 'Deleted')}
-                  restoreLabel={tFallback(t, 'trash.restore', 'Restore')}
-                  deleteLabel={tFallback(t, 'common.delete', 'Delete')}
+                  typeLabel={rowLabels.projectType}
+                  deletedLabel={rowLabels.deleted}
+                  restoreLabel={rowLabels.restore}
+                  deleteLabel={rowLabels.delete}
                 />
               )
               : (
@@ -549,14 +557,14 @@ export default function TrashScreen() {
                   onRestore={() => handleRestoreTask(item.task.id)}
                   onDelete={() => handleDeleteTask(item.task.id)}
                   onToggleSelect={() => toggleTaskSelection(item.task.id)}
-                  selectLabel={tFallback(t, 'bulk.select', 'Select')}
+                  selectLabel={rowLabels.select}
                   selectionMode={selectionMode}
                   isSelected={selectedTaskIds.has(item.task.id)}
                   isHighlighted={item.task.id === highlightTaskId}
-                  typeLabel={tFallback(t, 'trash.taskType', 'Task')}
-                  deletedLabel={tFallback(t, 'trash.deletedAt', 'Deleted')}
-                  restoreLabel={tFallback(t, 'trash.restore', 'Restore')}
-                  deleteLabel={tFallback(t, 'common.delete', 'Delete')}
+                  typeLabel={rowLabels.taskType}
+                  deletedLabel={rowLabels.deleted}
+                  restoreLabel={rowLabels.restore}
+                  deleteLabel={rowLabels.delete}
                 />
               )
           )}
@@ -577,9 +585,9 @@ export default function TrashScreen() {
             <View style={styles.emptyState}>
               <Trash2 size={40} color={tc.secondaryText} style={styles.emptyIcon} />
               <Text style={[styles.emptyTitle, { color: tc.text }]}>
-                {tFallback(t, 'trash.empty', 'Trash is empty')}
+                {emptyState.title}
               </Text>
-              <Text style={[styles.emptyText, { color: tc.secondaryText }]}>{tFallback(t, 'trash.emptyHintWithProjects', 'Deleted tasks and projects will appear here')}</Text>
+              <Text style={[styles.emptyText, { color: tc.secondaryText }]}>{emptyState.message}</Text>
             </View>
           }
         />

@@ -12,14 +12,20 @@ import {
 import {
   useTaskStore,
   shallow,
-  getUsedTaskTokens,
-  getFrequentTaskTokens,
-  sortTasksBy,
   buildBulkTaskTokenUpdates,
+  buildContextsViewModel,
   collectBulkTaskTokens,
-  isTaskFinished,
+  CONTEXTS_BULK_STATUSES,
+  getContextsEmptyState,
+  getContextsMatchModeLabels,
+  getContextsRouteTokens,
+  getContextsTokenPicker,
+  getContextsTokenPickerTitle,
+  resolveContextsMatchMode,
+  selectContextsRouteTokens,
   tFallback,
-  taskMatchesContextOrTagSelection,
+  toggleContextsNoContext,
+  toggleContextsToken,
   type ContextOrTagMatchMode,
   type Task,
   type TaskStatus,
@@ -38,14 +44,8 @@ import { TokenPickerModal } from '../token-picker-modal';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SwipeableTaskItem, type TaskRowActions } from '../swipeable-task-item';
 import { Tag, CheckCircle2 } from 'lucide-react-native';
-import {
-  buildContextsViewFilterSections,
-  taskHasContextOrTag,
-  taskMatchesContextOrTagFilter,
-} from './contexts-view-filter-utils';
 import { assertBulkActionSucceeded, useTaskListSelection } from '../use-task-list-selection';
 import { TASK_LIST_WINDOWING_PROPS } from '../task-list-windowing';
-import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
 
 type BulkTokenPickerState = {
   field: 'tags' | 'contexts';
@@ -84,51 +84,21 @@ export function ContextsView() {
   const tc = useThemeColors();
   const { showToast } = useToast();
   const { visibleTasks } = useVisibleTaskContext();
-  const requestedTokens = useMemo(() => {
-    if (Array.isArray(token)) return token.filter(Boolean);
-    if (typeof token === 'string' && token.trim()) return [token];
-    return [];
-  }, [token]);
-
-  const NO_CONTEXT_TOKEN = '__no_context__';
+  const requestedTokens = useMemo(() => getContextsRouteTokens(token), [token]);
 
   useEffect(() => {
     if (requestedTokens.length === 0) return;
-    setSelectedContexts(requestedTokens.includes(NO_CONTEXT_TOKEN)
-      ? [NO_CONTEXT_TOKEN]
-      : Array.from(new Set(requestedTokens)));
+    setSelectedContexts(selectContextsRouteTokens(requestedTokens));
     setMatchMode('all');
   }, [requestedTokens]);
 
-  const contextSourceTasks = visibleTasks.filter((task) => !isTaskFinished(task));
-  const allContextTokens = getUsedTaskTokens(contextSourceTasks, (task) => task.contexts, { prefix: '@' });
-  const allTagTokens = getUsedTaskTokens(contextSourceTasks, (task) => task.tags, { prefix: '#' });
-  const filterSections = useMemo(
-    () => buildContextsViewFilterSections({
-      contextTokens: allContextTokens,
-      searchQuery,
-      tagTokens: allTagTokens,
-    }),
-    [allContextTokens, allTagTokens, searchQuery]
-  );
-  const allFilterTokens = useMemo(
-    () => [...allContextTokens, ...allTagTokens],
-    [allContextTokens, allTagTokens]
-  );
-  const addTagOptions = useMemo(
-    () => Array.from(new Set([
-      ...getFrequentTaskTokens(contextSourceTasks, (task) => task.tags, 12, { prefix: '#' }),
-      ...getUsedTaskTokens(contextSourceTasks, (task) => task.tags, { prefix: '#' }),
-    ])),
-    [contextSourceTasks]
-  );
-  const addContextOptions = useMemo(
-    () => Array.from(new Set([
-      ...getFrequentTaskTokens(contextSourceTasks, (task) => task.contexts, 12, { prefix: '@' }),
-      ...getUsedTaskTokens(contextSourceTasks, (task) => task.contexts, { prefix: '@' }),
-    ])),
-    [contextSourceTasks]
-  );
+  const model = buildContextsViewModel({
+    visibleTasks,
+    settings,
+    selectedTokens: selectedContexts,
+    matchMode,
+    searchQuery,
+  });
   const tasksById = useMemo(
     () => tasks.reduce((acc, task) => {
       acc[task.id] = task;
@@ -137,21 +107,12 @@ export function ContextsView() {
     [tasks],
   );
 
-  const activeTasks = contextSourceTasks;
-  const hasContext = taskHasContextOrTag;
-  const matchesSelected = taskMatchesContextOrTagFilter;
-  const noContextSelected = selectedContexts.includes(NO_CONTEXT_TOKEN);
+  const noContextSelected = model.noContextSelected;
   useEffect(() => {
-    if (selectedContexts.length === 0 && matchMode !== 'all') setMatchMode('all');
-  }, [selectedContexts.length, matchMode]);
-  const filteredTasks = noContextSelected
-    ? activeTasks.filter((t) => !hasContext(t))
-    : selectedContexts.length > 0
-      ? activeTasks.filter((t) => taskMatchesContextOrTagSelection(t, selectedContexts, matchMode))
-      : activeTasks;
-
-  const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
-  const sortedTasks = sortTasksBy(filteredTasks, sortBy);
+    const resolved = resolveContextsMatchMode(selectedContexts, matchMode);
+    if (resolved !== matchMode) setMatchMode(resolved);
+  }, [selectedContexts, matchMode]);
+  const sortedTasks = model.tasks;
   const restoreActionLabel = tFallback(t, 'trash.restoreToInbox', 'Restore');
   const {
     bulkActionLabel,
@@ -227,25 +188,23 @@ export function ContextsView() {
     }
   }, [exitSelectionMode, multiSelectedIds.size, selectionMode]);
 
-  const removeTagLabelRaw = t('bulk.removeTag');
-  const removeTagLabel = removeTagLabelRaw === 'bulk.removeTag' ? 'Remove tag' : removeTagLabelRaw;
-  const tokenPickerTitle = (() => {
-    if (!bulkTokenPicker) return '';
-    if (bulkTokenPicker.field === 'tags') {
-      return bulkTokenPicker.action === 'add' ? t('bulk.addTag') : removeTagLabel;
-    }
-    return bulkTokenPicker.action === 'add' ? t('bulk.addContext') : t('bulk.removeContext');
-  })();
-  const tokenPickerOptions = (() => {
-    if (!bulkTokenPicker) return [] as string[];
-    if (bulkTokenPicker.field === 'tags') {
-      return bulkTokenPicker.action === 'add' ? addTagOptions : removableTagOptions;
-    }
-    return bulkTokenPicker.action === 'add' ? addContextOptions : removableContextOptions;
-  })();
+  const removeTagLabel = getContextsTokenPickerTitle('tags', 'remove', t);
+  const tokenPicker = bulkTokenPicker
+    ? getContextsTokenPicker({
+      ...bulkTokenPicker,
+      activeTasks: model.activeTasks,
+      selectedIds: selectedIdsArray,
+      tasksById,
+      t,
+    })
+    : null;
+  const tokenPickerTitle = tokenPicker?.title ?? '';
+  const tokenPickerOptions = tokenPicker?.tokens ?? [];
   const tokenPickerPlaceholder = bulkTokenPicker?.field === 'tags'
     ? t('taskEdit.tagsPlaceholder')
     : t('taskEdit.contextsPlaceholder');
+  const matchModeLabels = getContextsMatchModeLabels(t);
+  const emptyState = getContextsEmptyState({ hasTokens: model.hasTokens, selectedTokens: selectedContexts }, t);
 
   const handleBulkTokenConfirm = async (values: string[]) => {
     if (!bulkTokenPicker || !hasSelection) return;
@@ -325,7 +284,7 @@ export function ContextsView() {
                 ]}
               >
                 <Text style={[styles.contextBadgeText, { color: selectedContexts.length === 0 ? tc.text : tc.secondaryText }]}>
-                  {activeTasks.length}
+                  {model.allCount}
                 </Text>
               </View>
             </Pressable>
@@ -339,7 +298,7 @@ export function ContextsView() {
                 },
               ]}
               onPress={() => {
-                setSelectedContexts(noContextSelected ? [] : [NO_CONTEXT_TOKEN]);
+                setSelectedContexts(toggleContextsNoContext(selectedContexts));
                 setMatchMode('all');
               }}
               accessibilityRole="button"
@@ -367,13 +326,11 @@ export function ContextsView() {
                 ]}
               >
                 <Text style={[styles.contextBadgeText, { color: noContextSelected ? tc.text : tc.secondaryText }]}>
-                  {activeTasks.filter((t) => !hasContext(t)).length}
+                  {model.noContextCount}
                 </Text>
               </View>
             </Pressable>
-            {filterSections.flatMap((section) => section.tokens).map((context) => {
-              const count = activeTasks.filter((t) => matchesSelected(t, context)).length;
-              const isActive = selectedContexts.includes(context);
+            {model.tokenChips.map(({ token: context, count, selected: isActive }) => {
               return (
                 <Pressable
                   key={context}
@@ -381,12 +338,7 @@ export function ContextsView() {
                     styles.contextButton,
                     { backgroundColor: isActive ? tc.tint : tc.filterBg, borderColor: tc.border },
                   ]}
-                  onPress={() => setSelectedContexts((prev) => {
-                    if (prev.includes(NO_CONTEXT_TOKEN)) {
-                      return [context];
-                    }
-                    return prev.includes(context) ? prev.filter((item) => item !== context) : [...prev, context];
-                  })}
+                  onPress={() => setSelectedContexts((prev) => toggleContextsToken(prev, context))}
                   accessibilityRole="button"
                   accessibilityLabel={`${context} (${count})`}
                   accessibilityState={{ selected: isActive }}
@@ -418,10 +370,10 @@ export function ContextsView() {
             })}
           </ScrollView>
 
-          {selectedContexts.length > 1 && !noContextSelected ? (
+          {model.showMatchMode ? (
             <View style={styles.matchModeRow} accessibilityRole="radiogroup">
               <Text style={[styles.matchModeLabel, { color: tc.secondaryText }]}>
-                {t('contexts.title')} & {t('tags.title')}
+                {matchModeLabels.label}
               </Text>
               <View style={[styles.matchModeControl, { backgroundColor: tc.filterBg, borderColor: tc.border }]}>
                 {(['all', 'any'] as const).map((mode) => (
@@ -433,7 +385,7 @@ export function ContextsView() {
                     style={[styles.matchModeButton, matchMode === mode && { backgroundColor: tc.tint }]}
                   >
                     <Text style={[styles.matchModeButtonText, { color: matchMode === mode ? tc.onTint : tc.text }]}>
-                      {mode === 'all' ? tFallback(t, 'common.all', 'All') : tFallback(t, 'filters.matchAny', 'Any')}
+                      {mode === 'all' ? matchModeLabels.all : matchModeLabels.any}
                     </Text>
                   </Pressable>
                 ))}
@@ -477,7 +429,7 @@ export function ContextsView() {
                 </View>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bulkRow}>
-                {(['inbox', 'next', 'waiting', 'someday', 'done', 'reference'] as TaskStatus[]).map((status) => (
+                {CONTEXTS_BULK_STATUSES.map((status) => (
                   <TouchableOpacity
                     key={status}
                     onPress={() => void handleBatchMove(status)}
@@ -592,25 +544,15 @@ export function ContextsView() {
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={(
               <View style={styles.emptyState}>
-                {allFilterTokens.length === 0 ? (
-                  <>
-                    <Tag size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
-                    <Text style={[styles.emptyTitle, { color: tc.text }]}>{t('contexts.noContexts').split('.')[0]}</Text>
-                    <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-                      {t('contexts.noContexts')}
-                    </Text>
-                  </>
+                {emptyState.icon === 'tag' ? (
+                  <Tag size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
                 ) : (
-                  <>
-                    <CheckCircle2 size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
-                    <Text style={[styles.emptyTitle, { color: tc.text }]}>{t('contexts.noTasks')}</Text>
-                    <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-                      {selectedContexts.length > 0
-                        ? `${t('contexts.noTasks')} ${selectedContexts.join(', ')}`
-                        : t('contexts.noTasks')}
-                    </Text>
-                  </>
+                  <CheckCircle2 size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
                 )}
+                <Text style={[styles.emptyTitle, { color: tc.text }]}>{emptyState.title}</Text>
+                <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
+                  {emptyState.message}
+                </Text>
               </View>
             )}
           />

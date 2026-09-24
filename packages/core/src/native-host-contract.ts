@@ -108,6 +108,68 @@ import {
     type ProcessInboxSession,
 } from './process-inbox-session';
 import { createTaskSimilarityIndex, type TaskSimilarityIndex } from './task-similarity';
+// Contexts, Archive, Trash and History (the list views block at the end of this file).
+import {
+    ARCHIVE_SEGMENTS,
+    ARCHIVE_TASK_GROUP_OPTIONS,
+    buildArchiveTaskItems,
+    filterArchivedTasksByArea,
+    getArchiveConfirmation,
+    getArchivedProjectRow,
+    getArchivedTaskRow,
+    getArchiveEmptyState,
+    getArchiveMenu,
+    getArchiveRowLabels,
+    getArchiveSegmentLabel,
+    getArchiveSummary,
+    getArchiveTokenFilterOptions,
+    getHistoryTabs,
+    getTaskGroupItemIds,
+    resolveArchiveSortBy,
+    resolveHistoryTab,
+    selectArchivedProjects,
+    selectArchivedTasks,
+    showArchiveSearch,
+    sortArchivedTasks,
+    type ArchiveMenu,
+    type ArchiveSegment,
+    type ArchiveTaskGroupBy,
+    type HistoryTab,
+} from './archive-view-model';
+import { buildBulkTaskTokenUpdates, type BulkTaskTokenField, type BulkTaskTokenMode } from './bulk-task-tokens';
+import {
+    buildContextsViewModel,
+    CONTEXTS_BULK_STATUSES,
+    getContextsEmptyState,
+    getContextsMatchModeLabels,
+    getContextsTokenPicker,
+    resolveContextsMatchMode,
+    toggleContextsNoContext,
+    toggleContextsToken,
+    type ContextsTokenPicker,
+} from './contexts-view-model';
+import { formatTimeEstimateLabel } from './calendar-scheduling';
+import { countActiveFilterCriteria, criteriaFromSelections } from './filter-criteria';
+import type { ContextOrTagMatchMode } from './hierarchy-utils';
+import { getInlineMarkdownPreview } from './markdown';
+import type { StoreActionResult } from './store-types';
+import { taskMatchesFilterSelections } from './task-filter-selections';
+import type { TaskGroupItem } from './task-group-sections';
+import { DONE_TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
+import { getTaskMetadataFilterVisibility, type TaskMetadataFilterVisibility } from './task-metadata-filter-visibility';
+import { buildTrashTimeline, resolveTrashClearScope } from './task-utils';
+import {
+    formatTrashCounts,
+    getBulkTrashConfirmation,
+    getTrashEmptyState,
+    getTrashPurgeConfirmation,
+    getTrashRetentionHint,
+    getTrashRowLabels,
+    selectTrashedProjects,
+    selectTrashedTasks,
+    type ListConfirmation,
+} from './trash-view-model';
+import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskSortBy } from './types';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -833,6 +895,12 @@ export function createNativeHostContract() {
         ...createInboxProcessingMethods({
             readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
             revision: (now) => `${revision()}:${displayRevision(now)}`,
+        }),
+        ...createListViewMethods({
+            readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            dataRevision: () => `${revision()}:${settingsRevision()}`,
+            rowMeta: (task, now) => rowMeta(task, now),
         }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
@@ -2218,6 +2286,810 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
             if (entry && owesSave(entry)) entry.ended = true;
             else sessions.delete(input.sessionId);
             return { ok: true, value: null };
+        },
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Contexts, Archive, Trash and History. Kept in one block: other changes edit this file in parallel.
+
+/** A success message; `undo`, when set, is the action to send back (with a new requestId) to undo it. */
+export type NativeListToast<Action> = {
+    tone: 'success' | 'info';
+    title: string | null;
+    message: string;
+    undo: { label: string; action: Action } | null;
+};
+export type NativeListActionResult<Action> = {
+    /** False when the action had nothing to write, as a token edit that changes no task. */
+    changed: boolean;
+    toast: NativeListToast<Action> | null;
+};
+
+export type NativeContextsChip = {
+    id: string;
+    kind: 'all' | 'none' | 'contexts' | 'tags';
+    label: string;
+    accessibilityLabel: string;
+    count: number;
+    selected: boolean;
+    /** The selection after tapping this chip. */
+    next: { tokens: string[]; matchMode: ContextOrTagMatchMode };
+};
+export type NativeContextsView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    /** The selection as the screen applies it: an empty selection matches with All. */
+    selection: { tokens: string[]; matchMode: ContextOrTagMatchMode };
+    searchPlaceholder: string;
+    chips: NativeContextsChip[];
+    matchMode: { label: string; options: { mode: ContextOrTagMatchMode; label: string; selected: boolean }[] } | null;
+    total: number;
+    rows: NativeTaskRow[];
+    empty: ReturnType<typeof getContextsEmptyState> | null;
+    /** The selected ids still on screen; the bulk bar shows while any remain. */
+    selectedIds: string[];
+    bulk: {
+        countLabel: string;
+        exitLabel: string;
+        statuses: { status: TaskStatus; label: string }[];
+        tokenActions: (ContextsTokenPicker & { field: BulkTaskTokenField; mode: BulkTaskTokenMode; enabled: boolean })[];
+        deleteLabel: string;
+        deleteConfirmation: ListConfirmation;
+    } | null;
+};
+export type NativeContextsAction =
+    | { type: 'setTaskStatus'; taskId: string; status: TaskStatus }
+    | { type: 'moveTasks'; taskIds: string[]; status: TaskStatus }
+    | { type: 'editTaskTokens'; taskIds: string[]; field: BulkTaskTokenField; mode: BulkTaskTokenMode; values: string[] }
+    | { type: 'trashTask'; taskId: string }
+    | { type: 'trashTasks'; taskIds: string[] }
+    | { type: 'restoreTasks'; taskIds: string[] };
+
+export type NativeListFilters = {
+    searchQuery?: string;
+    tokens?: string[];
+    excludedTokens?: string[];
+    priorities?: TaskPriority[];
+    energyLevels?: TaskEnergyLevel[];
+    timeEstimates?: TimeEstimate[];
+    location?: string;
+    contextMatchMode?: MultiValueFilterMatchMode;
+    tagMatchMode?: MultiValueFilterMatchMode;
+};
+export type NativeArchiveItem =
+    | { type: 'section'; id: string; title: string; count: number; muted: boolean; collapsible: boolean; collapsed: boolean }
+    | {
+        type: 'task';
+        /** The heading the row sits under; a multi-tag task appears under each of its tags. */
+        groupId: string | null;
+        row: NativeTaskRow;
+        cancelled: boolean;
+        /** Completed rows show their title struck through; cancelled ones do not. */
+        struck: boolean;
+        dateLabel: string;
+        descriptionMarkdown: string | null;
+        /** Completed rows open a completion time picker at this value. */
+        completedAtValue: string | null;
+    }
+    | {
+        type: 'project';
+        id: string;
+        title: string;
+        cancelled: boolean;
+        struck: boolean;
+        dateLabel: string;
+        areaName: string | null;
+        indicatorColor: string;
+        trashConfirmation: ListConfirmation;
+    };
+export type NativeArchiveView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    segment: ArchiveSegment;
+    segments: { id: ArchiveSegment; label: string; selected: boolean }[];
+    menu: ArchiveMenu;
+    /** Null when the search row is hidden. */
+    search: { query: string; placeholder: string } | null;
+    filters: {
+        activeCount: number;
+        /** "Filters · 2" beside the search box, or null with no active filter. */
+        buttonLabel: string | null;
+        chips: { id: string; label: string; excluded: boolean }[];
+        visibility: TaskMetadataFilterVisibility;
+        tokenOptions: string[];
+        timeEstimateOptions: { value: TimeEstimate; label: string }[];
+    };
+    summary: string | null;
+    total: number;
+    items: NativeArchiveItem[];
+    /** The task rows a folded heading has not removed: what Select all selects. */
+    visibleTaskCount: number;
+    selectedIds: string[];
+    empty: ReturnType<typeof getArchiveEmptyState> | null;
+    labels: ReturnType<typeof getArchiveRowLabels> & { selectAll: string; restoreSelected: string; done: string; selected: string };
+    confirmations: { trashTask: ListConfirmation; trashTasks: ListConfirmation };
+};
+export type NativeArchiveAction =
+    | { type: 'moveToInbox'; taskId: string }
+    | { type: 'moveTasksToInbox'; taskIds: string[] }
+    | { type: 'setCompletedAt'; taskId: string; completedAt: string }
+    | { type: 'trashTask'; taskId: string }
+    | { type: 'trashTasks'; taskIds: string[] }
+    | { type: 'restoreTasks'; taskIds: string[] }
+    | { type: 'reactivateProject'; projectId: string }
+    | { type: 'trashProject'; projectId: string };
+
+export type NativeTrashItem =
+    | { type: 'task'; row: NativeTaskRow; typeLabel: string; deletedLabel: string; descriptionMarkdown: string | null }
+    | { type: 'project'; id: string; title: string; indicatorColor: string; typeLabel: string; deletedLabel: string };
+export type NativeTrashView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    /** "4 tasks · 2 projects", or null with an empty Trash. */
+    summary: string | null;
+    retentionHint: string | null;
+    taskCount: number;
+    projectCount: number;
+    total: number;
+    items: NativeTrashItem[];
+    selected: { taskIds: string[]; projectIds: string[] };
+    empty: ReturnType<typeof getTrashEmptyState> | null;
+    labels: ReturnType<typeof getTrashRowLabels> & { done: string; clearAll: string; selectAll: string; restoreSelected: string; deleteSelected: string; selected: string };
+    confirmations: { purgeItem: ListConfirmation; purgeSelection: ListConfirmation };
+    /** Clear Trash deletes exactly these shown items; send `revision` with emptyTrash. */
+    emptyTrash: { revision: string; taskCount: number; projectCount: number; confirmation: ListConfirmation } | null;
+};
+export type NativeTrashAction =
+    | { type: 'restoreItem'; kind: 'task' | 'project'; id: string }
+    | { type: 'restoreItems'; taskIds: string[]; projectIds: string[] }
+    | { type: 'purgeItem'; kind: 'task' | 'project'; id: string }
+    | { type: 'purgeItems'; taskIds: string[]; projectIds: string[] }
+    | { type: 'emptyTrash'; revision: string };
+
+type ListViewDeps = {
+    readiness: () => NativeHostResult<null>;
+    save: () => Promise<NativeHostResult<null>>;
+    /** Changes with any data, setting, language, day or minute change. */
+    revision: (now: Date) => string;
+    /** Changes with any data or setting change: what Clear Trash's scope depends on. */
+    dataRevision: () => string;
+    rowMeta: (task: Task, now: Date) => TaskRowMeta;
+    t: () => (key: string) => string;
+    formatDate: () => DateFormatter;
+};
+
+const LIST_ID_LIMIT = 10_000;
+const TASK_STATUSES: readonly TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'];
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]([01]\d|2[0-3]):?[0-5]\d)$/;
+const isIdList = (value: unknown, allowEmpty = false): value is string[] => (
+    Array.isArray(value) && value.length <= LIST_ID_LIMIT && (allowEmpty || value.length > 0)
+    && value.every((id) => typeof id === 'string' && id.length > 0) && new Set(value).size === value.length
+);
+const isStringList = (value: unknown, limit: number): value is string[] => (
+    Array.isArray(value) && value.length <= limit && value.every((entry) => typeof entry === 'string' && entry.length <= 500)
+);
+const isWindow = (input: { offset?: unknown; limit?: unknown; revision?: unknown }) => (
+    Number.isSafeInteger(input.offset) && (input.offset as number) >= 0
+    && Number.isSafeInteger(input.limit) && (input.limit as number) >= 1 && (input.limit as number) <= NATIVE_HOST_MAX_WINDOW
+    && (input.revision === undefined || typeof input.revision === 'string')
+    && ((input.offset as number) === 0 || typeof input.revision === 'string')
+);
+const isListFilters = (value: unknown): value is NativeListFilters => (
+    value === undefined || (isObjectRecord(value)
+        && (value.searchQuery === undefined || (typeof value.searchQuery === 'string' && value.searchQuery.length <= 2000))
+        && (value.tokens === undefined || isStringList(value.tokens, 500))
+        && (value.excludedTokens === undefined || isStringList(value.excludedTokens, 500))
+        && (value.priorities === undefined || (isStringList(value.priorities, 10) && value.priorities.every((entry) => EDITOR_PRIORITIES.includes(entry as TaskPriority))))
+        && (value.energyLevels === undefined || (isStringList(value.energyLevels, 10) && value.energyLevels.every((entry) => ['low', 'medium', 'high'].includes(entry))))
+        && (value.timeEstimates === undefined || (isStringList(value.timeEstimates, 20) && value.timeEstimates.every((entry) => TIME_ESTIMATE_OPTIONS.includes(entry as TimeEstimate))))
+        && (value.location === undefined || (typeof value.location === 'string' && value.location.length <= 500))
+        && (value.contextMatchMode === undefined || value.contextMatchMode === 'all' || value.contextMatchMode === 'any')
+        && (value.tagMatchMode === undefined || value.tagMatchMode === 'all' || value.tagMatchMode === 'any'))
+);
+
+/**
+ * The filter sheet's selections as mobile's useTaskFilterSelections turns them into
+ * criteria and chips (no saved filter; Archive offers no project filter). A section
+ * the tasks do not justify stops filtering, as the hook drops it.
+ */
+function resolveListFilters(filters: NativeListFilters | undefined, visibility: TaskMetadataFilterVisibility, t: (key: string) => string) {
+    const searchQuery = filters?.searchQuery ?? '';
+    const tokens = filters?.tokens ?? [];
+    const excludedTokens = filters?.excludedTokens ?? [];
+    const priorities = visibility.priority ? filters?.priorities ?? [] : [];
+    const energyLevels = visibility.energyLevel ? filters?.energyLevels ?? [] : [];
+    const timeEstimates = visibility.timeEstimate ? filters?.timeEstimates ?? [] : [];
+    const location = visibility.location ? (filters?.location ?? '').trim() : '';
+    const criteria = criteriaFromSelections({
+        tokens, excludedTokens, projects: [], locations: location ? [location] : [], priorities, energyLevels, timeEstimates,
+        contextMatchMode: filters?.contextMatchMode ?? 'all', tagMatchMode: filters?.tagMatchMode ?? 'all',
+    });
+    const search = searchQuery.trim();
+    const chips = [
+        ...(search ? [{ id: 'search', label: `${t('common.search')}: ${search}`, excluded: false }] : []),
+        ...tokens.map((token) => ({ id: `token:${token}`, label: token, excluded: false })),
+        ...excludedTokens.map((token) => ({ id: `excluded-token:${token}`, label: token, excluded: true })),
+        ...priorities.map((priority) => ({ id: `priority:${priority}`, label: t(`priority.${priority}`), excluded: false })),
+        ...energyLevels.map((level) => ({ id: `energy:${level}`, label: t(`energyLevel.${level}`), excluded: false })),
+        ...timeEstimates.map((estimate) => ({ id: `time:${estimate}`, label: formatTimeEstimateLabel(estimate), excluded: false })),
+        ...(location ? [{ id: 'location', label: `${tFallback(t, 'taskEdit.locationLabel', 'Location')}: ${location}`, excluded: false }] : []),
+    ];
+    const activeCount = (search ? 1 : 0) + countActiveFilterCriteria(criteria);
+    return { searchQuery, criteria, chips, activeCount };
+}
+
+function createListViewMethods(deps: ListViewDeps) {
+    // ponytail: keeps the 50 latest requests; an older retry runs again, which the store
+    // refuses for purged or missing items and repeats harmlessly for moves and restores.
+    const receipts = new Map<string, { key: string; result: NativeListActionResult<unknown> }>();
+    // One cached view per screen, so paging does not rebuild the list.
+    const cache = new Map<string, { key: string; value: unknown }>();
+    const cached = <T,>(screen: string, key: string, build: () => T): T => {
+        const hit = cache.get(screen);
+        if (hit?.key === key) return hit.value as T;
+        const value = build();
+        cache.set(screen, { key, value });
+        return value;
+    };
+
+    const areaScope = () => {
+        const state = useTaskStore.getState();
+        const areas = sortAreasForDisplay(state.areas);
+        return {
+            state,
+            areaById: new Map(areas.map((area) => [area.id, area])),
+            projectById: new Map(state.projects.map((project) => [project.id, project])),
+            selection: resolveAreaFilterSelection(state.settings.filters, areas),
+        };
+    };
+    const projectTitles = () => new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+
+    const writeFailure = (message: string | undefined): NativeHostResult<never> => {
+        const failure = useTaskStore.getState().persistenceFailure;
+        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? message ?? 'The list action failed');
+    };
+    /** Run the store writes together, as the screen does; any refusal fails the action. */
+    const write = async (...writes: (() => Promise<StoreActionResult | void>)[]): Promise<NativeHostResult<null>> => {
+        try {
+            const results = await Promise.all(writes.map((run) => run()));
+            const refused = results.find((result) => result && result.success === false);
+            return refused ? writeFailure(refused.error) : { ok: true, value: null };
+        } catch (error) {
+            return writeFailure(error instanceof Error ? error.message : String(error));
+        }
+    };
+    /** Run a request once; a retry of a completed request only finishes its save. */
+    const once = async <Action,>(
+        requestId: unknown,
+        key: string,
+        perform: () => Promise<NativeHostResult<NativeListActionResult<Action>>>,
+    ): Promise<NativeHostResult<NativeListActionResult<Action>>> => {
+        if (typeof requestId !== 'string' || !CAPTURE_ID_PATTERN.test(requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
+        let done = receipts.get(requestId);
+        if (done && done.key !== key) return fail('INVALID_INPUT', 'Request ID already belongs to another action');
+        if (!done) {
+            const outcome = await perform();
+            if (!outcome.ok) return outcome;
+            done = { key, result: outcome.value };
+            receipts.set(requestId, done);
+            if (receipts.size > 50) receipts.delete(receipts.keys().next().value as string);
+        } else if (useTaskStore.getState().persistenceFailure) {
+            try {
+                await useTaskStore.getState().retryPersistence();
+            } catch (error) {
+                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        }
+        const saved = await deps.save();
+        if (!saved.ok) return saved;
+        return { ok: true, value: done.result as NativeListActionResult<Action> };
+    };
+
+    const liveTask = (id: unknown): Task | undefined => {
+        const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
+        return task && !task.deletedAt ? task : undefined;
+    };
+    const inTrash = (entity: { deletedAt?: string; purgedAt?: string } | undefined) => Boolean(entity?.deletedAt && !entity.purgedAt);
+    const trashedTask = (id: unknown) => {
+        const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
+        return inTrash(task) ? task : undefined;
+    };
+    const trashedProject = (id: unknown) => {
+        const project = typeof id === 'string' ? useTaskStore.getState()._allProjects.find((entry) => entry.id === id) : undefined;
+        return inTrash(project) ? project : undefined;
+    };
+    const liveProject = (id: unknown) => {
+        const project = typeof id === 'string' ? useTaskStore.getState()._projectsById.get(id) : undefined;
+        return project && !project.deletedAt ? project : undefined;
+    };
+
+    const tasksCountMessage = (count: number, t: (key: string) => string) => `${count} ${t('common.tasks')}`;
+    const doneToast = <Action,>(count: number, t: (key: string) => string): NativeListToast<Action> => (
+        { tone: 'success', title: t('common.done'), message: tasksCountMessage(count, t), undo: null }
+    );
+
+    /** The actions Contexts and Archive share, as their mobile handlers write them. */
+    const performTaskAction = async (
+        screen: 'contexts' | 'archive',
+        action: NativeContextsAction | NativeArchiveAction,
+    ): Promise<NativeHostResult<NativeListActionResult<NativeContextsAction | NativeArchiveAction>> | null> => {
+        const t = deps.t();
+        const store = () => useTaskStore.getState();
+        const missing = (ids: string[]) => ids.some((id) => !liveTask(id));
+        switch (action.type) {
+            case 'trashTask': {
+                if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                const written = await write(() => store().deleteTask(action.taskId));
+                if (!written.ok) return written;
+                // Contexts rows offer Undo; Archive asked before deleting and offers none.
+                return { ok: true, value: { changed: true, toast: screen === 'contexts' ? {
+                    tone: 'info', title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
+                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks', taskIds: [action.taskId] } },
+                } : null } };
+            }
+            case 'trashTasks': {
+                if (!isIdList(action.taskIds) || missing(action.taskIds)) return fail('INVALID_INPUT', 'Every task must exist and not be in Trash');
+                const written = await write(() => store().batchDeleteTasks(action.taskIds));
+                if (!written.ok) return written;
+                return { ok: true, value: { changed: true, toast: {
+                    ...doneToast(action.taskIds.length, t),
+                    undo: { label: tFallback(t, 'trash.restoreToInbox', 'Restore'), action: { type: 'restoreTasks', taskIds: [...action.taskIds] } },
+                } } };
+            }
+            case 'restoreTasks': {
+                if (!isIdList(action.taskIds) || action.taskIds.some((id) => !trashedTask(id))) {
+                    return fail('INVALID_INPUT', 'Every task must be in Trash');
+                }
+                const written = await write(...action.taskIds.map((id) => () => store().restoreTask(id)));
+                return written.ok ? { ok: true, value: { changed: true, toast: null } } : written;
+            }
+            default:
+                return null;
+        }
+    };
+
+    return {
+        getContextsView(input: {
+            tokens?: string[]; matchMode?: ContextOrTagMatchMode; searchQuery?: string; selectedIds?: string[];
+            offset: number; limit: number; revision?: string;
+        }): NativeHostResult<NativeContextsView> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isWindow(input)
+                || (input.tokens !== undefined && !isStringList(input.tokens, 500))
+                || (input.matchMode !== undefined && input.matchMode !== 'all' && input.matchMode !== 'any')
+                || (input.searchQuery !== undefined && (typeof input.searchQuery !== 'string' || input.searchQuery.length > 2000))
+                || (input.selectedIds !== undefined && !isIdList(input.selectedIds, true))) {
+                return fail('INVALID_INPUT', 'Valid tokens, match mode, search, selected ids, offset, bounded limit, and revision for later pages are required');
+            }
+            const now = new Date();
+            const revision = deps.revision(now);
+            if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Contexts changed; restart paging from offset zero');
+            const t = deps.t();
+            const tokens = input.tokens ?? [];
+            const matchMode = resolveContextsMatchMode(tokens, input.matchMode ?? 'all');
+            const selectedIds = input.selectedIds ?? [];
+            const view = cached('contexts', JSON.stringify([revision, tokens, matchMode, input.searchQuery ?? '', selectedIds]), () => {
+                const { state, areaById, projectById, selection } = areaScope();
+                // Mobile's visible tasks: the store's tasks in the selected area, outside parked projects.
+                const visibleTasks = state.tasks.filter((task) => isTaskVisibleInArea(task, { areaById, projectById, resolvedAreaFilter: selection }));
+                const model = buildContextsViewModel({ visibleTasks, settings: state.settings, selectedTokens: tokens, matchMode, searchQuery: input.searchQuery ?? '' });
+                const next = (nextTokens: string[], nextMode: ContextOrTagMatchMode) => ({ tokens: nextTokens, matchMode: resolveContextsMatchMode(nextTokens, nextMode) });
+                const labels = getContextsMatchModeLabels(t);
+                const onScreen = new Set(model.tasks.map((task) => task.id));
+                const selected = selectedIds.filter((id) => onScreen.has(id));
+                const tasksById = Object.fromEntries(state.tasks.map((task) => [task.id, task]));
+                return {
+                    model,
+                    selected,
+                    chips: [
+                        { id: 'all', kind: 'all' as const, label: t('common.all'), accessibilityLabel: t('contexts.all'), count: model.allCount, selected: tokens.length === 0, next: next([], 'all') },
+                        { id: 'none', kind: 'none' as const, label: t('contexts.none'), accessibilityLabel: t('contexts.none'), count: model.noContextCount, selected: model.noContextSelected, next: next(toggleContextsNoContext(tokens), 'all') },
+                        ...model.tokenChips.map((chip) => ({
+                            id: chip.token, kind: chip.kind, label: chip.token, accessibilityLabel: `${chip.token} (${chip.count})`,
+                            count: chip.count, selected: chip.selected, next: next(toggleContextsToken(tokens, chip.token), matchMode),
+                        })),
+                    ],
+                    matchMode: model.showMatchMode ? {
+                        label: labels.label,
+                        options: (['all', 'any'] as const).map((mode) => ({ mode, label: mode === 'all' ? labels.all : labels.any, selected: matchMode === mode })),
+                    } : null,
+                    empty: model.tasks.length === 0 ? getContextsEmptyState({ hasTokens: model.hasTokens, selectedTokens: tokens }, t) : null,
+                    bulk: selected.length === 0 ? null : {
+                        countLabel: `${selected.length} ${t('bulk.selected')}`,
+                        exitLabel: t('bulk.exitSelect'),
+                        statuses: CONTEXTS_BULK_STATUSES.map((status) => ({ status, label: t(`status.${status}`) })),
+                        tokenActions: (['tags', 'contexts'] as const).flatMap((field) => (['add', 'remove'] as const).map((mode) => {
+                            const picker = getContextsTokenPicker({ field, action: mode, activeTasks: model.activeTasks, selectedIds: selected, tasksById, t });
+                            return { ...picker, field, mode, enabled: mode === 'add' || picker.tokens.length > 0 };
+                        })),
+                        deleteLabel: t('common.delete'),
+                        deleteConfirmation: getBulkTrashConfirmation(t),
+                    },
+                    titles: projectTitles(),
+                };
+            });
+            return { ok: true, value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision,
+                selection: { tokens, matchMode },
+                searchPlaceholder: t('contexts.search'),
+                chips: view.chips,
+                matchMode: view.matchMode,
+                total: view.model.tasks.length,
+                rows: view.model.tasks.slice(input.offset, input.offset + input.limit).map((task) => toNativeTaskRow(task, view.titles, deps.rowMeta(task, now))),
+                empty: view.empty,
+                selectedIds: view.selected,
+                bulk: view.bulk,
+            } };
+        },
+
+        /**
+         * One Contexts action, as the screen's rows and bulk bar write it. Reuse
+         * `requestId` to retry: a completed request writes nothing again.
+         */
+        async runContextsAction(input: { requestId: string; action: NativeContextsAction }): Promise<NativeHostResult<NativeListActionResult<NativeContextsAction>>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
+            const action = input.action as NativeContextsAction;
+            return once(input.requestId, JSON.stringify(['contexts', action]), async () => {
+                const shared = await performTaskAction('contexts', action);
+                if (shared) return shared as NativeHostResult<NativeListActionResult<NativeContextsAction>>;
+                const t = deps.t();
+                const store = useTaskStore.getState();
+                switch (action.type) {
+                    case 'setTaskStatus': {
+                        if (!TASK_STATUSES.includes(action.status)) return fail('INVALID_INPUT', 'A task status is required');
+                        if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                        const written = await write(() => store.updateTask(action.taskId, { status: action.status }));
+                        return written.ok ? { ok: true, value: { changed: true, toast: null } } : written;
+                    }
+                    case 'moveTasks': {
+                        if (!CONTEXTS_BULK_STATUSES.some((status) => status === action.status)
+                            || !isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))) {
+                            return fail('INVALID_INPUT', 'A bulk status and tasks that exist are required');
+                        }
+                        const written = await write(() => store.batchMoveTasks(action.taskIds, action.status));
+                        return written.ok ? { ok: true, value: { changed: true, toast: doneToast(action.taskIds.length, t) } } : written;
+                    }
+                    case 'editTaskTokens': {
+                        if (!isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))
+                            || (action.field !== 'tags' && action.field !== 'contexts') || (action.mode !== 'add' && action.mode !== 'remove')
+                            || !isStringList(action.values, 100)) {
+                            return fail('INVALID_INPUT', 'Tasks that exist, a tags or contexts field, add or remove, and values are required');
+                        }
+                        const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
+                        const updates = buildBulkTaskTokenUpdates(action.taskIds, tasksById, action.field, action.values, action.mode);
+                        if (updates.length === 0) return { ok: true, value: { changed: false, toast: null } };
+                        const written = await write(() => store.batchUpdateTasks(updates));
+                        // Mobile counts the selection, not the tasks that changed.
+                        return written.ok ? { ok: true, value: { changed: true, toast: doneToast(action.taskIds.length, t) } } : written;
+                    }
+                    default:
+                        return fail('INVALID_INPUT', 'Contexts does not offer that action');
+                }
+            });
+        },
+
+        getArchiveView(input: {
+            segment?: ArchiveSegment; sortBy?: TaskSortBy; groupBy?: ArchiveTaskGroupBy; filters?: NativeListFilters;
+            filterSheetOpen?: boolean; collapsedGroupIds?: string[]; selectedIds?: string[];
+            offset: number; limit: number; revision?: string;
+        }): NativeHostResult<NativeArchiveView> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isWindow(input)
+                || (input.segment !== undefined && !ARCHIVE_SEGMENTS.includes(input.segment))
+                || (input.sortBy !== undefined && !DONE_TASK_LIST_SORT_OPTIONS.includes(input.sortBy))
+                || (input.groupBy !== undefined && !ARCHIVE_TASK_GROUP_OPTIONS.includes(input.groupBy))
+                || !isListFilters(input.filters)
+                || (input.filterSheetOpen !== undefined && typeof input.filterSheetOpen !== 'boolean')
+                || (input.collapsedGroupIds !== undefined && !isStringList(input.collapsedGroupIds, 1000))
+                || (input.selectedIds !== undefined && !isIdList(input.selectedIds, true))) {
+                return fail('INVALID_INPUT', 'Valid view options, filters, offset, bounded limit, and revision for later pages are required');
+            }
+            const now = new Date();
+            const revision = deps.revision(now);
+            if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Archive changed; restart paging from offset zero');
+            const t = deps.t();
+            const segment = input.segment ?? 'tasks';
+            const groupBy = input.groupBy ?? 'none';
+            const view = cached('archive', JSON.stringify([revision, segment, input.sortBy, groupBy, input.filters, input.filterSheetOpen, input.collapsedGroupIds, input.selectedIds]), () => {
+                const { state, areaById, projectById, selection } = areaScope();
+                const sortBy = resolveArchiveSortBy(input.sortBy, state.settings);
+                const allArchived = filterArchivedTasksByArea(sortArchivedTasks(selectArchivedTasks(state._allTasks), sortBy), selection, projectById, areaById);
+                const flags = resolveFeatureFlags(state.settings);
+                const visibility = getTaskMetadataFilterVisibility(allArchived, { prioritiesEnabled: flags.priorities, timeEstimatesEnabled: flags.timeEstimates });
+                const filters = resolveListFilters(input.filters, visibility, t);
+                const archivedTasks = allArchived.filter((task) => taskMatchesFilterSelections(task, { criteria: filters.criteria, searchQuery: filters.searchQuery }));
+                const taskItems = buildArchiveTaskItems({
+                    groupBy, tasks: archivedTasks, areas: state.areas, projectById, t, collapsedGroupIds: new Set(input.collapsedGroupIds ?? []),
+                });
+                const visibleIds = getTaskGroupItemIds(taskItems);
+                const projects = selectArchivedProjects(state.projects, selection, areaById);
+                const menu = getArchiveMenu({ sortBy, groupBy, settings: state.settings }, t);
+                const onScreen = new Set(visibleIds);
+                const labels = getArchiveRowLabels(t);
+                return {
+                    taskItems, projects, visibleIds, menu, labels, visibility, areaById,
+                    filters,
+                    archivedCount: allArchived.length,
+                    shownCount: segment === 'tasks' ? archivedTasks.length : projects.length,
+                    tokenOptions: getArchiveTokenFilterOptions(allArchived, input.filterSheetOpen === true, {
+                        tokens: input.filters?.tokens ?? [], excludedTokens: input.filters?.excludedTokens ?? [],
+                    }),
+                    selected: (input.selectedIds ?? []).filter((id) => onScreen.has(id)),
+                    titles: projectTitles(),
+                };
+            });
+            const formatDate = deps.formatDate();
+            const hasActive = view.filters.activeCount > 0;
+            const toItem = (entry: TaskGroupItem | Project): NativeArchiveItem => {
+                if (!('type' in entry)) {
+                    const row = getArchivedProjectRow(entry, formatDate);
+                    return {
+                        type: 'project', id: entry.id, title: entry.title, cancelled: row.cancelled, struck: !row.cancelled,
+                        dateLabel: `${row.cancelled ? view.labels.projectCancelled : view.labels.completed}: ${row.dateLabel}`,
+                        areaName: entry.areaId ? view.areaById.get(entry.areaId)?.name ?? null : null,
+                        indicatorColor: row.indicatorColor,
+                        trashConfirmation: getArchiveConfirmation({ kind: 'project', project: entry }, t),
+                    };
+                }
+                if (entry.type === 'section') {
+                    // Month headings come from core's global formatter (buildCompletionDateSections), which
+                    // this host never configures; name the month with the host's formatter instead.
+                    const month = /^completedDate:(\d{4})-(\d{2})$/.exec(entry.id);
+                    const title = month ? formatDate(new Date(Number(month[1]), Number(month[2]) - 1, 1), 'LLLL yyyy', entry.title) : entry.title;
+                    return { type: 'section', id: entry.id, title, count: entry.count, muted: entry.muted === true, collapsible: entry.collapsible === true, collapsed: entry.collapsed === true };
+                }
+                const row = getArchivedTaskRow(entry.task, formatDate);
+                return {
+                    type: 'task',
+                    groupId: entry.groupId ?? null,
+                    row: toNativeTaskRow(entry.task, view.titles, deps.rowMeta(entry.task, now)),
+                    cancelled: row.cancelled,
+                    struck: !row.cancelled,
+                    dateLabel: `${row.cancelled ? view.labels.taskCancelled : view.labels.completed}: ${row.dateLabel}`,
+                    descriptionMarkdown: entry.task.description ? getInlineMarkdownPreview(entry.task.description) : null,
+                    completedAtValue: row.cancelled ? null : entry.task.completedAt || entry.task.updatedAt || null,
+                };
+            };
+            const entries: (TaskGroupItem | Project)[] = segment === 'tasks' ? view.taskItems : view.projects;
+            return { ok: true, value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision,
+                segment,
+                segments: ARCHIVE_SEGMENTS.map((id) => ({ id, label: getArchiveSegmentLabel(id, t), selected: id === segment })),
+                menu: view.menu,
+                search: showArchiveSearch(segment, view.archivedCount, hasActive)
+                    ? { query: view.filters.searchQuery, placeholder: tFallback(t, 'common.search', 'Search') }
+                    : null,
+                filters: {
+                    activeCount: view.filters.activeCount,
+                    buttonLabel: hasActive ? `${view.menu.filtersLabel} · ${view.filters.activeCount}` : null,
+                    chips: view.filters.chips,
+                    visibility: view.visibility,
+                    tokenOptions: view.tokenOptions,
+                    timeEstimateOptions: TIME_ESTIMATE_OPTIONS.map((value) => ({ value, label: formatTimeEstimateLabel(value) })),
+                },
+                summary: getArchiveSummary(segment, view.shownCount, t),
+                total: entries.length,
+                items: entries.slice(input.offset, input.offset + input.limit).map(toItem),
+                visibleTaskCount: view.visibleIds.length,
+                selectedIds: view.selected,
+                empty: entries.length === 0
+                    ? getArchiveEmptyState({ segment, hasActiveFilters: hasActive, filterChipLabels: view.filters.chips.map((chip) => chip.label) }, t)
+                    : null,
+                labels: {
+                    ...view.labels,
+                    selectAll: `${tFallback(t, 'bulk.select', 'Select')} ${tFallback(t, 'common.all', 'all')}`,
+                    restoreSelected: t('trash.restoreToInbox'),
+                    done: tFallback(t, 'common.done', 'Done'),
+                    selected: `${view.selected.length} ${t('bulk.selected')}`,
+                },
+                confirmations: { trashTask: getArchiveConfirmation({ kind: 'task' }, t), trashTasks: getBulkTrashConfirmation(t) },
+            } };
+        },
+
+        /** One Archive action, as the screen writes it. Reuse `requestId` to retry. */
+        async runArchiveAction(input: { requestId: string; action: NativeArchiveAction }): Promise<NativeHostResult<NativeListActionResult<NativeArchiveAction>>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
+            const action = input.action as NativeArchiveAction;
+            return once(input.requestId, JSON.stringify(['archive', action]), async () => {
+                const shared = await performTaskAction('archive', action);
+                if (shared) return shared as NativeHostResult<NativeListActionResult<NativeArchiveAction>>;
+                const store = useTaskStore.getState();
+                const done = (written: NativeHostResult<null>): NativeHostResult<NativeListActionResult<NativeArchiveAction>> => (
+                    written.ok ? { ok: true, value: { changed: true, toast: null } } : written
+                );
+                switch (action.type) {
+                    case 'moveToInbox':
+                        if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                        return done(await write(() => store.updateTask(action.taskId, { status: 'inbox' })));
+                    case 'moveTasksToInbox':
+                        if (!isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))) return fail('INVALID_INPUT', 'Tasks that exist are required');
+                        return done(await write(() => store.batchMoveTasks(action.taskIds, 'inbox')));
+                    case 'setCompletedAt': {
+                        const task = liveTask(action.taskId);
+                        if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                        if (typeof action.completedAt !== 'string' || !ISO_TIMESTAMP_PATTERN.test(action.completedAt) || !safeParseDate(action.completedAt)
+                            || isTaskCancelled(task)) {
+                            return fail('INVALID_INPUT', 'A completion timestamp for a completed task is required');
+                        }
+                        return done(await write(() => store.updateTask(action.taskId, { completedAt: action.completedAt })));
+                    }
+                    case 'reactivateProject':
+                        if (!liveProject(action.projectId)) return fail('INVALID_INPUT', 'Project is not available');
+                        return done(await write(() => store.updateProject(action.projectId, { status: 'active' })));
+                    case 'trashProject':
+                        if (!liveProject(action.projectId)) return fail('INVALID_INPUT', 'Project is not available');
+                        return done(await write(() => store.deleteProject(action.projectId)));
+                    default:
+                        return fail('INVALID_INPUT', 'Archive does not offer that action');
+                }
+            });
+        },
+
+        getTrashView(input: {
+            selected?: { taskIds: string[]; projectIds: string[] }; offset: number; limit: number; revision?: string;
+        }): NativeHostResult<NativeTrashView> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isWindow(input)
+                || (input.selected !== undefined && (!isObjectRecord(input.selected)
+                    || !isIdList(input.selected.taskIds, true) || !isIdList(input.selected.projectIds, true)))) {
+                return fail('INVALID_INPUT', 'Valid selected ids, offset, bounded limit, and revision for later pages are required');
+            }
+            const now = new Date();
+            const revision = deps.revision(now);
+            if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Trash changed; restart paging from offset zero');
+            const t = deps.t();
+            const view = cached('trash', JSON.stringify([revision, input.selected]), () => {
+                const { state, areaById, projectById, selection } = areaScope();
+                const tasks = selectTrashedTasks(state._allTasks, selection, projectById, areaById);
+                const projects = selectTrashedProjects(state._allProjects, selection, areaById);
+                const taskIds = new Set(tasks.map((task) => task.id));
+                const projectIds = new Set(projects.map((project) => project.id));
+                return {
+                    tasks, projects,
+                    items: buildTrashTimeline(tasks, projects),
+                    scope: resolveTrashClearScope(tasks, projects, state._allTasks, state._allProjects),
+                    selected: {
+                        taskIds: (input.selected?.taskIds ?? []).filter((id) => taskIds.has(id)),
+                        projectIds: (input.selected?.projectIds ?? []).filter((id) => projectIds.has(id)),
+                    },
+                    titles: projectTitles(),
+                };
+            });
+            const formatDate = deps.formatDate();
+            const labels = getTrashRowLabels(t);
+            // Mobile shows the device's short date here; the host formats it with the user's date settings.
+            const deletedLabel = (deletedAt: string | undefined) => `${labels.deleted}: ${formatDate(deletedAt, 'P', 'Unknown')}`;
+            const count = view.items.length;
+            return { ok: true, value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision,
+                summary: count > 0 ? formatTrashCounts(view.tasks.length, view.projects.length, t) : null,
+                retentionHint: count > 0 ? getTrashRetentionHint(t) : null,
+                taskCount: view.tasks.length,
+                projectCount: view.projects.length,
+                total: count,
+                items: view.items.slice(input.offset, input.offset + input.limit).map((item): NativeTrashItem => (
+                    item.type === 'project'
+                        ? {
+                            type: 'project', id: item.project.id, title: item.project.title, indicatorColor: item.project.color || '#6B7280',
+                            typeLabel: labels.projectType, deletedLabel: deletedLabel(item.project.deletedAt),
+                        }
+                        : {
+                            type: 'task', row: toNativeTaskRow(item.task, view.titles, deps.rowMeta(item.task, now)),
+                            typeLabel: labels.taskType, deletedLabel: deletedLabel(item.task.deletedAt),
+                            descriptionMarkdown: item.task.description ? getInlineMarkdownPreview(item.task.description) : null,
+                        }
+                )),
+                selected: view.selected,
+                empty: count === 0 ? getTrashEmptyState(t) : null,
+                labels: {
+                    ...labels,
+                    done: tFallback(t, 'common.done', 'Done'),
+                    clearAll: tFallback(t, 'trash.clearAll', 'Clear Trash'),
+                    selectAll: `${tFallback(t, 'bulk.select', 'Select')} ${tFallback(t, 'common.all', 'all')}`,
+                    restoreSelected: t('trash.restore'),
+                    deleteSelected: t('trash.deletePermanently'),
+                    selected: `${view.selected.taskIds.length + view.selected.projectIds.length} ${t('bulk.selected')}`,
+                },
+                confirmations: {
+                    purgeItem: getTrashPurgeConfirmation({ kind: 'item' }, t),
+                    purgeSelection: getTrashPurgeConfirmation({ kind: 'selection' }, t),
+                },
+                emptyTrash: count === 0 ? null : {
+                    revision: deps.dataRevision(),
+                    taskCount: view.scope.taskIds.length,
+                    projectCount: view.scope.projectIds.length,
+                    confirmation: getTrashPurgeConfirmation({
+                        kind: 'clear', narrowed: view.scope.narrowed, taskCount: view.scope.taskIds.length, projectCount: view.scope.projectIds.length,
+                    }, t),
+                },
+            } };
+        },
+
+        /**
+         * One Trash action, as the screen writes it. Deleting forever uses the store's
+         * purge actions, which keep a tombstone for sync, and only reaches items in
+         * Trash. `emptyTrash` needs the `emptyTrash.revision` its confirmation showed:
+         * it deletes exactly the items shown then, or refuses with STALE_REVISION.
+         */
+        async runTrashAction(input: { requestId: string; action: NativeTrashAction }): Promise<NativeHostResult<NativeListActionResult<NativeTrashAction>>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
+            const action = input.action as NativeTrashAction;
+            return once(input.requestId, JSON.stringify(['trash', action]), async () => {
+                const store = useTaskStore.getState();
+                const done = (written: NativeHostResult<null>): NativeHostResult<NativeListActionResult<NativeTrashAction>> => (
+                    written.ok ? { ok: true, value: { changed: true, toast: null } } : written
+                );
+                const itemsInTrash = (taskIds: unknown, projectIds: unknown) => isIdList(taskIds, true) && isIdList(projectIds, true)
+                    && taskIds.length + projectIds.length > 0
+                    && taskIds.every((id) => trashedTask(id)) && projectIds.every((id) => trashedProject(id));
+                // The store treats the ids as a set; hand them over in store order, as mobile's Select all does.
+                const inStoreOrder = (ids: string[], entities: { id: string }[]) => {
+                    const wanted = new Set(ids);
+                    return entities.flatMap((entity) => (wanted.has(entity.id) ? [entity.id] : []));
+                };
+                switch (action.type) {
+                    case 'restoreItem':
+                    case 'purgeItem': {
+                        const found = action.kind === 'task' ? trashedTask(action.id) : action.kind === 'project' ? trashedProject(action.id) : undefined;
+                        if (!found) return fail('TASK_NOT_FOUND', 'Item is not in Trash');
+                        if (action.type === 'restoreItem') {
+                            return done(await write(() => (action.kind === 'task' ? store.restoreTask(action.id) : store.restoreProject(action.id))));
+                        }
+                        return done(await write(() => (action.kind === 'task' ? store.purgeTask(action.id) : store.purgeProject(action.id))));
+                    }
+                    case 'restoreItems':
+                    case 'purgeItems': {
+                        if (!itemsInTrash(action.taskIds, action.projectIds)) return fail('INVALID_INPUT', 'Every item must be in Trash');
+                        const taskIds = inStoreOrder(action.taskIds, store._allTasks);
+                        const projectIds = inStoreOrder(action.projectIds, store._allProjects);
+                        const restoring = action.type === 'restoreItems';
+                        return done(await write(
+                            ...(taskIds.length > 0 ? [() => (restoring ? store.restoreTasks(taskIds) : store.purgeTasks(taskIds))] : []),
+                            ...projectIds.map((id) => () => (restoring ? store.restoreProject(id) : store.purgeProject(id))),
+                        ));
+                    }
+                    case 'emptyTrash': {
+                        if (typeof action.revision !== 'string') return fail('INVALID_INPUT', 'The Clear Trash revision is required');
+                        if (action.revision !== deps.dataRevision()) return fail('STALE_REVISION', 'Trash changed; confirm Clear Trash again');
+                        const { state, areaById, projectById, selection } = areaScope();
+                        const scope = resolveTrashClearScope(
+                            selectTrashedTasks(state._allTasks, selection, projectById, areaById),
+                            selectTrashedProjects(state._allProjects, selection, areaById),
+                            state._allTasks,
+                            state._allProjects,
+                        );
+                        if (scope.taskIds.length + scope.projectIds.length === 0) return fail('INVALID_INPUT', 'Trash is empty');
+                        return done(await write(
+                            ...(scope.taskIds.length > 0 ? [() => store.purgeTasks(scope.taskIds)] : []),
+                            ...scope.projectIds.map((id) => () => store.purgeProject(id)),
+                        ));
+                    }
+                    default:
+                        return fail('INVALID_INPUT', 'Trash does not offer that action');
+                }
+            });
+        },
+
+        /** History's Done and Archive tabs; any `tab` but "archived" opens Done. */
+        getHistoryView(input: { tab?: string | null } = {}): NativeHostResult<{ tab: HistoryTab; tabs: { id: HistoryTab; label: string; selected: boolean }[] }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || (input.tab != null && typeof input.tab !== 'string')) return fail('INVALID_INPUT', 'tab must be a string');
+            const tab = resolveHistoryTab(input.tab);
+            return { ok: true, value: { tab, tabs: getHistoryTabs(deps.t()).map((entry) => ({ ...entry, selected: entry.id === tab })) } };
         },
     };
 }

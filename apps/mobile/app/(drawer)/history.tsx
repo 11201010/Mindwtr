@@ -2,25 +2,22 @@ import React, { useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { getHistoryTabs, resolveHistoryTab, type HistoryTab } from '@mindwtr/core';
+
 import { useLanguage } from '../../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import DoneScreen from './done';
 import ArchivedScreen from './archived';
-
-export type HistoryTab = 'done' | 'archived';
 
 export default function HistoryScreen() {
     const { t } = useLanguage();
     const tc = useThemeColors();
     const router = useRouter();
     const params = useLocalSearchParams<{ tab?: string }>();
-    const requestedTab: HistoryTab = params.tab === 'archived' ? 'archived' : 'done';
+    const requestedTab = resolveHistoryTab(params.tab);
     const [tab, setTab] = useState<HistoryTab>(requestedTab);
     useEffect(() => setTab(requestedTab), [requestedTab]);
-    const options: { id: HistoryTab; label: string }[] = [
-        { id: 'done', label: t('nav.done') },
-        { id: 'archived', label: t('nav.archived') },
-    ];
+    const options = getHistoryTabs(t);
 
     return (
         <View style={[styles.root, { backgroundColor: tc.bg }]}>

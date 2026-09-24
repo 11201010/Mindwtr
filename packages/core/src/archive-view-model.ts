@@ -1,0 +1,232 @@
+import { projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
+import type { DateFormatter } from './date';
+import { tFallback } from './i18n';
+import { resolveFeatureFlags } from './resolve-feature-flags';
+import { buildTaskGroupSections, getTaskGroupByLabel, type TaskGroupItem } from './task-group-sections';
+import { DONE_TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
+import { isTaskCancelled } from './task-status';
+import { getUsedTaskTokens } from './task-token-usage';
+import { resolveTaskSortByForFeatures, sortDoneTasksForListView, sortTasksBy } from './task-utils';
+import type { ListConfirmation } from './trash-view-model';
+import type { AppSettings, Area, Project, Task, TaskSortBy } from './types';
+
+/**
+ * The React Native History screen (Done and Archive tabs) and its Archive tab:
+ * which archived tasks and projects it lists, their order, groups, row dates,
+ * menus, counts and empty states, and the confirmations its deletes show. The
+ * screens keep only React state, storage and navigation.
+ */
+
+export type HistoryTab = 'done' | 'archived';
+
+/** History opens on Archive only for `tab=archived`; anything else opens Done. */
+export function resolveHistoryTab(tab: unknown): HistoryTab {
+    return tab === 'archived' ? 'archived' : 'done';
+}
+
+export function getHistoryTabs(t: (key: string) => string): { id: HistoryTab; label: string }[] {
+    return [
+        { id: 'done', label: t('nav.done') },
+        { id: 'archived', label: t('nav.archived') },
+    ];
+}
+
+export type ArchiveSegment = 'tasks' | 'projects';
+export const ARCHIVE_SEGMENTS: readonly ArchiveSegment[] = ['tasks', 'projects'];
+
+/** Archive's grouping axes, in menu order: the Done axes, as everything filed here is finished work. */
+export const ARCHIVE_TASK_GROUP_OPTIONS = ['none', 'completedDate', 'context', 'area', 'project', 'tag'] as const;
+export type ArchiveTaskGroupBy = typeof ARCHIVE_TASK_GROUP_OPTIONS[number];
+
+export function getArchiveSegmentLabel(segment: ArchiveSegment, t: (key: string) => string): string {
+    return segment === 'tasks' ? tFallback(t, 'archived.tasksSegment', 'Tasks') : tFallback(t, 'projects.title', 'Projects');
+}
+
+export const selectArchivedTasks = (allTasks: Task[]): Task[] => (
+    allTasks.filter((task) => task.status === 'archived' && !task.deletedAt)
+);
+
+/** A stored sort for a feature that is off falls back to the default (#1107). */
+export function resolveArchiveSortBy(stored: TaskSortBy | undefined, settings: AppSettings | undefined): TaskSortBy {
+    return resolveTaskSortByForFeatures(stored ?? 'default', settings);
+}
+
+/** Archive is a log like Done: with no explicit sort, newest completion first. */
+export function sortArchivedTasks(tasks: Task[], sortBy: TaskSortBy): Task[] {
+    return sortBy === 'default' ? sortDoneTasksForListView(tasks) : sortTasksBy(tasks, sortBy);
+}
+
+export const filterArchivedTasksByArea = (
+    tasks: Task[],
+    selection: AreaFilterSelection,
+    projectById: Map<string, Project>,
+    areaById: Map<string, Area>,
+): Task[] => tasks.filter((task) => taskMatchesAreaFilterSelection(task, selection, projectById, areaById));
+
+/** The sort menu hides Time estimate while that feature is off, like the shared sort modal (#1107). */
+export function getArchiveSortOptions(settings: AppSettings | undefined): TaskSortBy[] {
+    const timeEstimates = resolveFeatureFlags(settings).timeEstimates;
+    return DONE_TASK_LIST_SORT_OPTIONS.filter((option) => option !== 'timeEstimate' || timeEstimates);
+}
+
+export type ArchiveMenu = {
+    filtersLabel: string;
+    sort: { label: string; value: string; options: { id: TaskSortBy; label: string; selected: boolean }[] };
+    group: { label: string; value: string; options: { id: ArchiveTaskGroupBy; label: string; selected: boolean }[] };
+};
+
+/** The Filters, Sort and Group entries of the list menu. */
+export function getArchiveMenu(
+    { sortBy, groupBy, settings }: { sortBy: TaskSortBy; groupBy: ArchiveTaskGroupBy; settings: AppSettings | undefined },
+    t: (key: string) => string,
+): ArchiveMenu {
+    return {
+        filtersLabel: tFallback(t, 'filters.title', 'Filters'),
+        sort: {
+            label: tFallback(t, 'sort.label', 'Sort'),
+            value: t(`sort.${sortBy}`),
+            options: getArchiveSortOptions(settings).map((id) => ({ id, label: t(`sort.${id}`), selected: sortBy === id })),
+        },
+        group: {
+            label: tFallback(t, 'list.groupBy', 'Group'),
+            value: getTaskGroupByLabel(groupBy, t),
+            options: ARCHIVE_TASK_GROUP_OPTIONS.map((id) => ({ id, label: getTaskGroupByLabel(id, t), selected: groupBy === id })),
+        },
+    };
+}
+
+/** The tokens the filter sheet offers: every one in use once it is open; before that, only the chosen ones. */
+export function getArchiveTokenFilterOptions(
+    tasks: Task[],
+    sheetOpen: boolean,
+    { tokens, excludedTokens }: { tokens: string[]; excludedTokens: string[] },
+): string[] {
+    if (!sheetOpen) return Array.from(new Set([...tokens, ...excludedTokens]));
+    return getUsedTaskTokens(tasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]);
+}
+
+/** The list rows: always the grouped row shape, with no headings when ungrouped. */
+export function buildArchiveTaskItems({
+    groupBy,
+    tasks,
+    areas,
+    projectById,
+    t,
+    collapsedGroupIds,
+}: {
+    groupBy: ArchiveTaskGroupBy;
+    tasks: Task[];
+    areas: Area[];
+    projectById: Map<string, Project>;
+    t: (key: string) => string;
+    collapsedGroupIds: ReadonlySet<string>;
+}): TaskGroupItem[] {
+    if (groupBy === 'none') return tasks.map((task) => ({ type: 'task', task }));
+    return buildTaskGroupSections({ groupBy, tasks, areas, projectById, t, collapsedGroupIds });
+}
+
+/**
+ * The tasks a folded heading has not removed, each once: Select all and the
+ * selection prune work off these, so a bulk action never reaches a hidden row.
+ */
+export function getTaskGroupItemIds(items: TaskGroupItem[]): string[] {
+    return Array.from(new Set(items.flatMap((item) => (item.type === 'task' ? [item.task.id] : []))));
+}
+
+/** Archived projects in the area filter, most recently changed first. */
+export function selectArchivedProjects(
+    projects: Project[],
+    selection: AreaFilterSelection,
+    areaById: Map<string, Area>,
+): Project[] {
+    return projects
+        .filter((project) => project.status === 'archived' && projectMatchesAreaFilterSelection(project, selection, areaById))
+        .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+}
+
+/** An archived task row's outcome and its date: when it was cancelled, else completed. */
+export function getArchivedTaskRow(task: Task, formatDate: DateFormatter): { cancelled: boolean; dateLabel: string } {
+    const cancelled = isTaskCancelled(task);
+    const timestamp = cancelled ? task.cancelledAt || task.updatedAt : task.completedAt || task.updatedAt;
+    return { cancelled, dateLabel: timestamp ? formatDate(timestamp, 'Pp', timestamp) : 'Unknown' };
+}
+
+/** An archived project row's outcome, date and status dot color. */
+export function getArchivedProjectRow(
+    project: Project,
+    formatDate: DateFormatter,
+): { cancelled: boolean; dateLabel: string; indicatorColor: string } {
+    const timestamp = project.cancelledAt || project.updatedAt;
+    return {
+        cancelled: Boolean(project.cancelledAt),
+        dateLabel: timestamp ? formatDate(timestamp, 'Pp', timestamp) : 'Unknown',
+        indicatorColor: project.color || '#6B7280',
+    };
+}
+
+export function getArchiveRowLabels(t: (key: string) => string) {
+    return {
+        completed: tFallback(t, 'list.done', 'Completed'),
+        taskCancelled: tFallback(t, 'task.cancelled', 'Cancelled'),
+        projectCancelled: tFallback(t, 'projects.cancelled', 'Cancelled'),
+        editCompletedAt: tFallback(t, 'task.editCompletedAt', 'Edit completion time'),
+        select: tFallback(t, 'bulk.select', 'Select'),
+        restore: tFallback(t, 'trash.restore', 'Restore'),
+        delete: tFallback(t, 'common.delete', 'Delete'),
+    };
+}
+
+/** The search row: on the Tasks segment while it has archived tasks or a filter is on. */
+export function showArchiveSearch(segment: ArchiveSegment, archivedTaskCount: number, hasActiveFilters: boolean): boolean {
+    return segment === 'tasks' && (archivedTaskCount > 0 || hasActiveFilters);
+}
+
+/** The count above the list, or null when the segment is empty. */
+export function getArchiveSummary(segment: ArchiveSegment, count: number, t: (key: string) => string): string | null {
+    if (count === 0) return null;
+    return segment === 'tasks'
+        ? `${count} ${tFallback(t, 'common.tasks', 'tasks')}`
+        : `${count} ${tFallback(t, 'projects.title', 'projects')}`;
+}
+
+/** The empty list: filters that match nothing name up to three of their chips. */
+export function getArchiveEmptyState(
+    { segment, hasActiveFilters, filterChipLabels }: { segment: ArchiveSegment; hasActiveFilters: boolean; filterChipLabels: string[] },
+    t: (key: string) => string,
+): { title: string; message: string; clearLabel: string | null } {
+    if (segment === 'projects') {
+        return {
+            title: tFallback(t, 'archived.emptyProjects', 'No archived projects'),
+            message: tFallback(t, 'archived.emptyProjectsHint', 'Projects you archive will appear here'),
+            clearLabel: null,
+        };
+    }
+    return hasActiveFilters
+        ? {
+            title: tFallback(t, 'filters.noMatch', 'No tasks match these filters.'),
+            message: filterChipLabels.slice(0, 3).join(', '),
+            clearLabel: tFallback(t, 'filters.clear', 'Clear'),
+        }
+        : {
+            title: tFallback(t, 'archived.empty', 'No archived tasks'),
+            message: tFallback(t, 'archived.emptyHint', 'Tasks you archive will appear here'),
+            clearLabel: null,
+        };
+}
+
+/** Moving one archived task to Trash, or deleting an archived project, asks first. */
+export function getArchiveConfirmation(
+    target: { kind: 'task' } | { kind: 'project'; project: Project | undefined },
+    t: (key: string) => string,
+): ListConfirmation {
+    const cancelLabel = tFallback(t, 'common.cancel', 'Cancel');
+    const confirmLabel = tFallback(t, 'common.delete', 'Delete');
+    return target.kind === 'task'
+        ? { title: confirmLabel, message: tFallback(t, 'task.deleteConfirmBody', 'Move this task to Trash?'), cancelLabel, confirmLabel }
+        : {
+            title: target.project?.title || confirmLabel,
+            message: tFallback(t, 'projects.deleteConfirm', 'Delete this project? Tasks in this project will be kept and moved to unassigned.'),
+            cancelLabel,
+            confirmLabel,
+        };
+}

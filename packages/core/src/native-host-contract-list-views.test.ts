@@ -1,0 +1,306 @@
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { buildArchiveTaskItems, getArchivedTaskRow, selectArchivedTasks, sortArchivedTasks } from './archive-view-model';
+import { buildContextsViewModel } from './contexts-view-model';
+import { createDateFormatter } from './date';
+import { getTranslator } from './i18n';
+import { loadTranslations } from './i18n/i18n-loader';
+import {
+    createArchiveContractBackend,
+    createContextsContractBackend,
+    createTrashContractBackend,
+    createWriteRecorder,
+    loadListViewsFixture,
+    observeHistory,
+    replayArchive,
+    replayContexts,
+    replayTrash,
+    seedListViewsStore,
+    type ListViewsPart,
+    type ListViewsScenario,
+} from './list-views-model.replay';
+import { createNativeHostContract } from './native-host-contract';
+import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { noopStorage } from './storage';
+import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
+import { buildTrashTimeline } from './task-utils';
+import { generateUUID } from './uuid';
+
+const fixture = loadListViewsFixture();
+const frozen = (observations: Record<string, unknown>[]) => observations.map(({ text: _text, ...rest }) => rest);
+const scenario = (part: ListViewsPart, name: string): ListViewsScenario => part.scenarios.find((entry) => entry.name === name)!;
+const english = () => {
+    const settings = useTaskStore.getState().settings;
+    return createDateFormatter({ language: 'en', dateFormat: settings.dateFormat, calendarSystem: settings.calendarSystem, timeFormat: settings.timeFormat, systemLocale: null });
+};
+
+describe('native host contract: Contexts, Archive, Trash and History', () => {
+    const originalTz = process.env.TZ;
+    let t: (key: string) => string = (key) => key;
+    beforeAll(async () => {
+        process.env.TZ = fixture.contexts.timeZone;
+        const strings = await loadTranslations('en');
+        t = (key) => strings[key] ?? key;
+    });
+    afterAll(() => {
+        if (originalTz === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTz;
+    });
+    afterEach(async () => {
+        vi.useRealTimers();
+        await flushPendingSave();
+        resetForTests();
+        vi.restoreAllMocks();
+    });
+
+    // Revisions carry the minute; every test runs at the fixture's instant.
+    const openHost = async (part: ListViewsPart, entry: ListViewsScenario, saveData?: (data: unknown) => Promise<void>) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(part.now));
+        const recorder = createWriteRecorder();
+        await seedListViewsStore(part, entry, recorder, { saveData });
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        return { host, recorder };
+    };
+
+    it.each(fixture.contexts.scenarios.map((entry) => [entry.name, entry] as const))('Contexts: "%s" like mobile', async (name, entry) => {
+        const { host, recorder } = await openHost(fixture.contexts, entry);
+        expect(await replayContexts(createContextsContractBackend(host, generateUUID), entry, recorder))
+            .toEqual(frozen(fixture.contexts.observations[name]));
+    });
+
+    it.each(fixture.archive.scenarios.map((entry) => [entry.name, entry] as const))('Archive: "%s" like mobile', async (name, entry) => {
+        const { host, recorder } = await openHost(fixture.archive, entry);
+        expect(await replayArchive(createArchiveContractBackend(host, generateUUID), entry, recorder, t))
+            .toEqual(frozen(fixture.archive.observations[name]));
+    });
+
+    it.each(fixture.trash.scenarios.map((entry) => [entry.name, entry] as const))('Trash: "%s" like mobile', async (name, entry) => {
+        const { host, recorder } = await openHost(fixture.trash, entry);
+        const formatDeleted = (deletedAt: string) => english()(deletedAt, 'P', 'Unknown');
+        expect(await replayTrash(createTrashContractBackend(host, generateUUID, formatDeleted), entry, recorder))
+            .toEqual(frozen(fixture.trash.observations[name]));
+    });
+
+    it('History: opens and switches tabs like mobile', async () => {
+        const { host } = await openHost(fixture.trash, scenario(fixture.trash, 'an empty trash'));
+        const tabs = (tab: string | null) => {
+            const result = host.getHistoryView({ tab });
+            if (!result.ok) throw new Error(result.error.message);
+            return result.value;
+        };
+        expect(fixture.history.observations.map(({ tab }) => observeHistory(tab, tabs))).toEqual(fixture.history.observations);
+        expect(host.getHistoryView({ tab: 7 as never })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('builds Contexts rows with core\'s list and row functions, paged by the revision', async () => {
+        const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const first = host.getContextsView({ tokens: ['#work', '@phone'], matchMode: 'any', offset: 0, limit: 2 });
+        if (!first.ok) throw new Error(first.error.message);
+        const state = useTaskStore.getState();
+        const model = buildContextsViewModel({
+            visibleTasks: state.tasks, settings: state.settings, selectedTokens: ['#work', '@phone'], matchMode: 'any', searchQuery: '',
+        });
+        const now = new Date();
+        const meta = (id: string) => {
+            const task = state._tasksById.get(id)!;
+            return buildTaskRowMeta({
+                task, lookup: resolveTaskRowLookup(task, state.projects, state.areas, state._sectionsById),
+                features: resolveTaskRowFeatures(state.settings), language: 'en',
+                dateFormatting: { language: 'en', dateFormat: state.settings.dateFormat, calendarSystem: state.settings.calendarSystem, timeFormat: state.settings.timeFormat, systemLocale: null },
+                t: getTranslator('en'), now,
+            });
+        };
+        expect(first.value.total).toBe(model.tasks.length);
+        expect(first.value.rows.map((row) => [row.id, row.meta])).toEqual(model.tasks.slice(0, 2).map((task) => [task.id, meta(task.id)]));
+        const second = host.getContextsView({ tokens: ['#work', '@phone'], matchMode: 'any', offset: 2, limit: 2, revision: first.value.revision });
+        expect(second.ok && second.value.rows.map((row) => row.id)).toEqual(model.tasks.slice(2, 4).map((task) => task.id));
+        expect(host.getContextsView({ offset: 2, limit: 2 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(host.getContextsView({ offset: 0, limit: 101 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('builds Archive groups and rows with core\'s functions and the host date formatter', async () => {
+        const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const result = host.getArchiveView({ groupBy: 'project', collapsedGroupIds: ['project:p-launch'], offset: 0, limit: 100 });
+        if (!result.ok) throw new Error(result.error.message);
+        const state = useTaskStore.getState();
+        const items = buildArchiveTaskItems({
+            groupBy: 'project', tasks: sortArchivedTasks(selectArchivedTasks(state._allTasks), 'default'), areas: state.areas,
+            projectById: new Map(state.projects.map((project) => [project.id, project])), t, collapsedGroupIds: new Set(['project:p-launch']),
+        });
+        expect(result.value.items.map((item) => (item.type === 'task' ? item.row.id : item.id)))
+            .toEqual(items.map((item) => (item.type === 'task' ? item.task.id : item.id)));
+        const formatDate = english();
+        for (const item of result.value.items) {
+            if (item.type !== 'task') continue;
+            const row = getArchivedTaskRow(state._tasksById.get(item.row.id)!, formatDate);
+            expect(item.dateLabel).toBe(`${row.cancelled ? 'Cancelled' : 'Completed'}: ${row.dateLabel}`);
+        }
+    });
+
+    it('names Archive month headings and row dates in the host language', async () => {
+        const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        expect(await host.setLanguage({ storedLanguage: 'fr', systemLocale: 'fr-FR' })).toMatchObject({ ok: true });
+        const result = host.getArchiveView({ groupBy: 'completedDate', offset: 0, limit: 100 });
+        if (!result.ok) throw new Error(result.error.message);
+        const settings = useTaskStore.getState().settings;
+        const french = createDateFormatter({ language: 'fr', dateFormat: settings.dateFormat, calendarSystem: settings.calendarSystem, timeFormat: settings.timeFormat, systemLocale: 'fr-FR' });
+        const month = result.value.items.find((item) => item.type === 'section' && item.id === 'completedDate:2026-09');
+        expect(month).toMatchObject({ title: french(new Date(2026, 8, 1), 'LLLL yyyy') });
+        expect(month).not.toMatchObject({ title: 'September 2026' });
+        const milk = result.value.items.find((item) => item.type === 'task' && item.row.id === 'ar-milk');
+        expect(milk).toMatchObject({ dateLabel: `${getTranslator('fr')('list.done')}: ${french(useTaskStore.getState()._tasksById.get('ar-milk')!.completedAt, 'Pp')}` });
+    });
+
+    it('builds Trash rows with core\'s timeline, dated by the host formatter', async () => {
+        const { host } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        const result = host.getTrashView({ offset: 0, limit: 100 });
+        if (!result.ok) throw new Error(result.error.message);
+        const state = useTaskStore.getState();
+        const timeline = buildTrashTimeline(state._allTasks, state._allProjects);
+        expect(result.value.items.map((item) => (item.type === 'task' ? item.row.id : item.id)))
+            .toEqual(timeline.map((item) => (item.type === 'task' ? item.task.id : item.project.id)));
+        expect(result.value.items[0]).toMatchObject({ type: 'task', deletedLabel: `Deleted: ${english()(state._tasksById.get('tt-report')!.deletedAt, 'P')}` });
+    });
+
+    it('changes each view\'s revision on an edit and refuses a stale page', async () => {
+        const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const reads = () => [
+            host.getContextsView({ offset: 0, limit: 1 }),
+            host.getArchiveView({ offset: 0, limit: 1 }),
+            host.getTrashView({ offset: 0, limit: 1 }),
+        ].map((result) => (result.ok ? result.value.revision : ''));
+        const before = reads();
+        expect(reads()).toEqual(before);
+        expect((await useTaskStore.getState().updateTask('ar-milk', { title: 'Buy oat milk' })).success).toBe(true);
+        const after = reads();
+        after.forEach((revision, index) => expect(revision).not.toBe(before[index]));
+        expect(host.getArchiveView({ offset: 1, limit: 1, revision: before[1] })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(host.getTrashView({ offset: 1, limit: 1, revision: before[2] })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(host.getContextsView({ offset: 1, limit: 1, revision: before[0] })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('retries a Contexts bulk move after a failed save: one write', async () => {
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'), saveData);
+        const input = { requestId: generateUUID(), action: { type: 'moveTasks' as const, taskIds: ['c-call', 'c-sink'], status: 'someday' as const } };
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.runContextsAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
+        expect(recorder.log).toEqual([['batchMoveTasks', ['c-call', 'c-sink'], 'someday']]);
+        const written = useTaskStore.getState()._tasksById.get('c-call');
+        expect(written).toMatchObject({ status: 'someday' });
+        saveData.mockResolvedValue(undefined);
+        const retried = await host.runContextsAction(input);
+        expect(retried).toEqual({ ok: true, value: { changed: true, toast: { tone: 'success', title: 'Done', message: '2 tasks', undo: null } } });
+        expect(recorder.log).toHaveLength(1);
+        expect(useTaskStore.getState()._tasksById.get('c-call')).toBe(written);
+        expect((saveData.mock.lastCall?.[0] as { tasks: { id: string; status: string }[] }).tasks.find(({ id }) => id === 'c-sink')?.status).toBe('someday');
+        // A lost reply repeats the request: no write, no save.
+        const saves = saveData.mock.calls.length;
+        expect(await host.runContextsAction(input)).toEqual(retried);
+        expect(saveData).toHaveBeenCalledTimes(saves);
+        expect(await host.runContextsAction({ ...input, action: { ...input.action, status: 'next' } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(recorder.log).toHaveLength(1);
+    });
+
+    it('retries an Archive bulk move to Trash after a failed save, then undoes it', async () => {
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'), saveData);
+        const input = { requestId: generateUUID(), action: { type: 'trashTasks' as const, taskIds: ['ar-milk', 'ar-call'] } };
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.runArchiveAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        saveData.mockResolvedValue(undefined);
+        const retried = await host.runArchiveAction(input);
+        expect(retried).toEqual({ ok: true, value: { changed: true, toast: {
+            tone: 'success', title: 'Done', message: '2 tasks',
+            undo: { label: 'Restore to Inbox', action: { type: 'restoreTasks', taskIds: ['ar-milk', 'ar-call'] } },
+        } } });
+        expect(recorder.log).toEqual([['batchDeleteTasks', ['ar-milk', 'ar-call']]]);
+        if (!retried.ok || !retried.value.toast?.undo) return;
+        expect(await host.runArchiveAction({ requestId: generateUUID(), action: retried.value.toast.undo.action }))
+            .toEqual({ ok: true, value: { changed: true, toast: null } });
+        expect(recorder.log.slice(1)).toEqual([['restoreTask', 'ar-milk'], ['restoreTask', 'ar-call']]);
+        expect(useTaskStore.getState()._tasksById.get('ar-milk')?.deletedAt).toBeUndefined();
+    });
+
+    it('retries Clear Trash after a failed save and keeps each purged item as a tombstone', async () => {
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'clear a trash the area filter narrows'), saveData);
+        const view = host.getTrashView({ offset: 0, limit: 100 });
+        if (!view.ok || !view.value.emptyTrash) throw new Error('Expected a Clear Trash scope');
+        expect(view.value.emptyTrash).toMatchObject({ taskCount: 1, projectCount: 1, confirmation: { title: 'Delete permanently?', message: '1 tasks · 1 Projects\nThis action cannot be undone.' } });
+        const input = { requestId: generateUUID(), action: { type: 'emptyTrash' as const, revision: view.value.emptyTrash.revision } };
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.runTrashAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        saveData.mockResolvedValue(undefined);
+        expect(await host.runTrashAction(input)).toEqual({ ok: true, value: { changed: true, toast: null } });
+        expect(recorder.log).toEqual([['purgeTasks', ['tt-call']], ['purgeProject', 'tp-home']]);
+        const state = useTaskStore.getState();
+        expect(state._tasksById.get('tt-call')).toMatchObject({ deletedAt: expect.any(String), purgedAt: expect.any(String) });
+        expect(state._allProjects.find((project) => project.id === 'tp-home')).toMatchObject({ purgedAt: expect.any(String) });
+        // Items outside the filtered view are untouched.
+        expect(state._tasksById.get('tt-report')?.purgedAt).toBeUndefined();
+    });
+
+    it('refuses Clear Trash once Trash changed after its confirmation, and deletes nothing', async () => {
+        const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'clear the whole trash'));
+        const view = host.getTrashView({ offset: 0, limit: 100 });
+        if (!view.ok || !view.value.emptyTrash) throw new Error('Expected a Clear Trash scope');
+        expect((await useTaskStore.getState().deleteTask('tt-live')).success).toBe(true);
+        recorder.log.length = 0;
+        expect(await host.runTrashAction({ requestId: generateUUID(), action: { type: 'emptyTrash', revision: view.value.emptyTrash.revision } }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(recorder.log).toEqual([]);
+        expect(useTaskStore.getState()._tasksById.get('tt-live')?.purgedAt).toBeUndefined();
+    });
+
+    it('never deletes forever or restores an item that is not in Trash', async () => {
+        const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        const run = (action: unknown) => host.runTrashAction({ requestId: generateUUID(), action: action as never });
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-live' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'purgeItem', kind: 'project', id: 'tp-live' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-purged' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'purgeItems', taskIds: ['tt-report', 'tt-live'], projectIds: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await run({ type: 'restoreItems', taskIds: [], projectIds: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await run({ type: 'purgeItems', taskIds: ['tt-report', 'tt-report'], projectIds: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.runTrashAction({ requestId: 'not-a-uuid', action: { type: 'purgeItem', kind: 'task', id: 'tt-report' } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(recorder.log).toEqual([]);
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-report' })).toEqual({ ok: true, value: { changed: true, toast: null } });
+        expect(recorder.log).toEqual([['purgeTask', 'tt-report']]);
+        expect(useTaskStore.getState()._tasksById.get('tt-report')).toMatchObject({ purgedAt: expect.any(String) });
+    });
+
+    it('checks each Contexts and Archive action before writing', async () => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const archive = (action: unknown) => host.runArchiveAction({ requestId: generateUUID(), action: action as never });
+        const contexts = (action: unknown) => host.runContextsAction({ requestId: generateUUID(), action: action as never });
+        expect(await archive({ type: 'setCompletedAt', taskId: 'ar-call', completedAt: '2026-09-20T10:00:00.000Z' }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'setCompletedAt', taskId: 'ar-milk', completedAt: '2026-09-20' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'moveToInbox', taskId: 'ar-gone' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await archive({ type: 'trashProject', projectId: 'p-gone' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'moveTasks', taskIds: ['ar-milk'], status: 'next' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await contexts({ type: 'moveTasks', taskIds: ['n-next'], status: 'archived' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await contexts({ type: 'restoreTasks', taskIds: ['n-next'] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await contexts({ type: 'editTaskTokens', taskIds: ['n-next'], field: 'people', mode: 'add', values: ['x'] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(recorder.log).toEqual([]);
+        expect(await contexts({ type: 'editTaskTokens', taskIds: ['n-next'], field: 'contexts', mode: 'add', values: ['@office'] }))
+            .toEqual({ ok: true, value: { changed: false, toast: null } });
+        expect(recorder.log).toEqual([]);
+    });
+
+    it('is NOT_READY until storage is activated', async () => {
+        setStorageAdapter(noopStorage);
+        const host = createNativeHostContract();
+        const requestId = generateUUID();
+        expect(host.getContextsView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getArchiveView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getTrashView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getHistoryView({ tab: 'archived' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.runContextsAction({ requestId, action: { type: 'trashTask', taskId: 'x' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.runArchiveAction({ requestId, action: { type: 'trashTask', taskId: 'x' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.runTrashAction({ requestId, action: { type: 'emptyTrash', revision: 'x' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+    });
+});
