@@ -191,9 +191,9 @@ fun ProcessInboxScreen(model: InboxViewModel, flow: InboxProcessing) = with(mode
 
     pickDate?.let { field ->
         val row = dateRows(view).firstOrNull { it.getString("field") == field }
-        // Pending core field: a picked-date edit in the date row; until then Kotlin names core's setDate edit with the picker's day.
+        // The row's own picked-day edit (core's setPickedDate) with the picker's day; RN offers no time here.
         DayPickerDialog(row?.text("date"), { pickDate = null }) { day ->
-            send(JSONObject().put("type", "setDate").put("field", field).put("value", day))
+            row?.let { send(JSONObject(it.getJSONObject("pick").toString()).put("day", day)) }
         }
     }
 }
@@ -295,8 +295,9 @@ private fun InboxViewModel.CaptureCard(flow: InboxProcessing, locked: Boolean, s
             }
         }
         val note = capture.getString("description")
-        // RN previews the note without its Markdown marks; this shows core's text as it is. Pending core field: a Markdown-free note preview.
-        if (!notesOpen && note.isNotBlank()) Text(note.trim().take(200), style = rnText(13, 400, 18), color = c.secondaryText, maxLines = 2)
+        val preview = capture.getString("notePreview")
+        // Core's Markdown-free preview, as RN shows it.
+        if (!notesOpen && preview.isNotEmpty()) Text(preview, style = rnText(13, 400, 18), color = c.secondaryText, maxLines = 2)
         val noteLabel = capture.getString("descriptionLabel")
         Row(Modifier.padding(top = 8.dp).heightIn(min = 32.dp).clickable(role = Role.Button) { notesOpen = !notesOpen }
             .semantics { contentDescription = noteLabel }, verticalAlignment = Alignment.CenterVertically) {
@@ -633,8 +634,7 @@ private fun MoreOptions(flow: InboxProcessing, more: JSONObject, locked: Boolean
     val open = more.getBoolean("open")
     val shape = RoundedCornerShape(12.dp)
     Row(Modifier.padding(bottom = 18.dp).fillMaxWidth().heightIn(min = 48.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
-        // Pending core field: the disclosure's own edit in the view; until then Kotlin names core's toggleAdvancedOptions edit.
-        .clickable(enabled = !locked, role = Role.Button) { send(JSONObject().put("type", "toggleAdvancedOptions")) }.padding(horizontal = 14.dp),
+        .clickable(enabled = !locked, role = Role.Button) { send(more.getJSONObject("edit")) }.padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text(more.getString("label"), style = rnText(15, 600), color = c.text, modifier = Modifier.weight(1f))
         Icon(if (open) Lucide.ChevronUp else Lucide.ChevronDown, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))

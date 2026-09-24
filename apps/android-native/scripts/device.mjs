@@ -124,6 +124,12 @@ export const inList = (nodes, text) => {
 };
 /** The task editor is open: its root carries the test tag `task-editor` (RN's editor has no title to find it by). */
 export const inEditor = (nodes) => nodes.some((node) => /(^|\/)task-editor$/.test(node['resource-id'] ?? ''));
+/**
+ * The failure message's Try again while a command's retry is owed: it re-sends that exact command (test tag
+ * `owed-retry`). The read refresh (`read-retry`) is offered only when no retry is owed.
+ */
+export const owedRetry = (nodes) => nodes.find((node) => (node['resource-id'] ?? '').split('/').pop() === 'owed-retry');
+export const readRetry = (nodes) => nodes.find((node) => (node['resource-id'] ?? '').split('/').pop() === 'read-retry');
 /** The node tagged [tag] (a Compose test tag, exposed as the resource id). */
 export const tagged = (nodes, tag) => nodes.find((node) => (node['resource-id'] ?? '').split('/').pop() === tag);
 /** A choice chip is on: selected (one-of-many chips are selectable, as RN's). */
@@ -141,10 +147,13 @@ export const chipOn = (nodes, description) => {
     if (!label) return false;
     if (isOn(label)) return true;
     const [x1, y1, x2, y2] = box(label);
+    const [cx, cy] = [(x1 + x2) / 2, (y1 + y2) / 2];
     const area = (node) => { const [l, t, r, b] = box(node); return (r - l) * (b - t); };
+    // The selectable's reported box can stop a few pixels short of its label (run 25: 1569-1671 around
+    // 1602-1680), so match the smallest focusable node that holds the label's center.
     const around = nodes.filter((node) => node.focusable === 'true').filter((node) => {
         const [l, t, r, b] = box(node);
-        return l <= x1 && t <= y1 && r >= x2 && b >= y2;
+        return l <= cx && cx <= r && t <= cy && cy <= b;
     }).sort((a, b) => area(a) - area(b))[0];
     return isOn(around);
 };
@@ -159,7 +168,46 @@ export const besideRow = (nodes, title, label) => {
 
 export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/dd/Android/Sdk/platform-tools/adb' }) {
     const adbRaw = (...args) => execFileSync(adb, ['-s', serial, ...args], { maxBuffer: 64 << 20 });
-    const sh = (command) => adbRaw('shell', command).toString('utf8').replace(/\r/g, '').trim();
+    const shell = (command) => adbRaw('shell', command).toString('utf8').replace(/\r/g, '').trim();
+    /**
+     * The checks type digits through the phone's own keyboard and never change its settings. A Chinese Pinyin (or
+     * any non-Latin) layout holds or reorders typed characters (run 22: "…457896" arrived as "…457869"), so every
+     * typing command first reads the current keyboard layout and stops (exit 3) unless it is English. The layout
+     * is read from `dumpsys input_method`: the current subtype line (mCurrentSubtype / mCurSubtype), or the
+     * subtype that `settings get secure selected_input_method_subtype` names in the IME's subtype list. When
+     * neither names a language, it stops too: unknown never types. MINDWTR_KEYBOARD_OK=1 skips the guard after a
+     * person has looked at the keyboard.
+     */
+    const requireEnglishKeyboard = () => {
+        if (process.env.MINDWTR_KEYBOARD_OK === '1') return;
+        const dump = shell('dumpsys input_method');
+        const language = (text) => /(?:languageTag|mSubtypeLanguageTag|locale|mSubtypeLocale)=\s*"?([A-Za-z]{2,3}(?:[-_][A-Za-z0-9]+)*)/.exec(text)?.[1];
+        const current = dump.split('\n').filter((line) => /mCur(rent)?Subtype\b/.test(line)).join(' ');
+        let tag = language(current);
+        let source = current.trim();
+        if (!tag) {
+            const hash = shell('settings get secure selected_input_method_subtype').trim();
+            if (/^-?\d+$/.test(hash)) {
+                // The IME's subtype list prints each subtype on one line ending in its hash code, for example
+                // `... mSubtypeLocale=zh_CN mSubtypeLanguageTag=zh-CN ... mSubtypeHashCode=617035939`
+                // (Gboard on this phone); take the line that carries this one.
+                const entry = dump.split('\n').find((line) => new RegExp(`\\bmSubtypeHashCode=${hash}\\b`).test(line) && language(line));
+                tag = entry ? language(entry) : undefined;
+                source = entry ? entry.trim().split('\n')[0] : `subtype ${hash}`;
+            }
+        }
+        if (!tag) {
+            throw new Stopped(`Cannot read the keyboard's language (${source || 'no current subtype in dumpsys input_method'}); `
+                + 'switch the keyboard to English with the globe key, check it, then rerun with MINDWTR_KEYBOARD_OK=1');
+        }
+        if (!/^en(?:[-_]|$)/i.test(tag)) {
+            throw new Stopped(`Keyboard is in ${tag}; switch it to English with the globe key, then rerun`);
+        }
+    };
+    const sh = (command) => {
+        if (/^input text\b/.test(command)) requireEnglishKeyboard();
+        return shell(command);
+    };
     evidenceDevice = { adbRaw, sh, uiFile };
     const home = sh('cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
         .split('\n').pop().split('/')[0];
@@ -169,6 +217,7 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         if (!front().includes(`${pkg}/`)) throw new Stopped(`${pkg} is not in front: ${front().trim()}`);
     };
     const launch = (activity) => {
+        requireEnglishKeyboard();
         const current = front();
         if (!current.includes(`${pkg}/`) && !current.includes(`${home}/`)) {
             throw new Stopped(`another app is in front; not launching over it: ${current.trim()}`);
@@ -222,6 +271,9 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     const tap = async (node) => {
         requireAppFront();
         const [x1, y1, x2, y2] = box(node);
+        // A node scrolled out of view can still be listed with empty bounds; tapping its "middle" would hit the
+        // status bar (run 22: the Status chips below the filter sheet's fold reported [0,0][0,0]).
+        if (x2 <= x1 || y2 <= y1) fail(`not on screen (empty bounds ${node.bounds}): ${node.text || node['content-desc'] || node['resource-id']}`);
         sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
         await sleep(400);
     };
@@ -247,18 +299,46 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         }
         return waitFor(description, expected, timeoutMs);
     };
+    /**
+     * Focuses the text field [node] with its cursor at the text's true end, ready for typing. A tap lands at the
+     * field's far end (a tap in the middle of a long value puts the cursor inside the text), the check waits for the
+     * keyboard so the tap's cursor placement is done, and then Ctrl+End moves to the true end (past trailing
+     * whitespace, and past line ends in a wrapped value). Run 23: with the tap in the middle and Ctrl+End sent
+     * before the tap's cursor landed, the typed "6" went in before the title's last "9".
+     */
+    const focusAtEnd = async (node) => {
+        if (node.focused !== 'true') {
+            requireAppFront();
+            const [x1, y1, x2, y2] = box(node);
+            if (x2 <= x1 || y2 <= y1) fail(`not on screen (empty bounds ${node.bounds}): ${node.text || node['content-desc']}`);
+            sh(`input tap ${Math.max(x1 + 1, x2 - 24)} ${Math.round((y1 + y2) / 2)}`);
+            for (let wait = 0; wait < 15 && !/mInputShown=true/.test(sh('dumpsys input_method')); wait += 1) await sleep(200);
+            await sleep(300);
+        }
+        requireAppFront();
+        sh('input keycombination KEYCODE_CTRL_LEFT KEYCODE_MOVE_END');
+        await sleep(200);
+    };
     /** Swipes the app's list one step: 'up' scrolls toward the top. A list that fits is not scrollable: same hierarchy. */
     const swipe = async (nodes, direction) => {
         const list = nodes.find((node) => node.scrollable === 'true');
         if (!list) return nodes;
         requireAppFront();
         const [x1, y1, x2, y2] = box(list);
-        const x = Math.round((x1 + x2) / 2);
         const [low, high] = [Math.round(y2 - (y2 - y1) * 0.15), Math.round(y1 + (y2 - y1) * 0.15)];
-        // A moderate drag: a fast one flings past rows on a short (landscape) list.
-        sh(`input swipe ${x} ${direction === 'up' ? high : low} ${x} ${direction === 'up' ? low : high} 500`);
-        await sleep(400);
-        return screen();
+        // A moderate drag: a fast one flings past rows on a short (landscape) list. The first drag is at the middle;
+        // a drag that moved nothing is tried once more further right (never in the screen-edge gesture zones), so
+        // one gesture the system or a still-settling list ignored is never read as the end of the list.
+        const drag = async (x) => {
+            sh(`input swipe ${x} ${direction === 'up' ? high : low} ${x} ${direction === 'up' ? low : high} 500`);
+            await sleep(400);
+            return screen();
+        };
+        const moved = await drag(Math.round((x1 + x2) / 2));
+        if (signature(moved) !== signature(nodes)) return moved;
+        await sleep(600);
+        requireAppFront();
+        return drag(Math.round(x1 + (x2 - x1) * 0.8));
     };
     const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
     /** Scrolls the list to its first item (the Inbox's Process button is a list item). */
@@ -278,8 +358,16 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         // The Process Inbox button (the count) is the list's first item: start from the top so the
         // capture's new count is on screen when it lands. At the top already, this is one drag.
         if (!atInboxTop(nodes)) nodes = await toTop();
-        await tap(button(nodes, 'Add Task') ?? fail('no Add Task button on screen'));
-        return waitFor('the capture sheet', (current) => Boolean(field(current)), 10_000);
+        // The tap waits until the screen holds still (two equal dumps), and it is a tapExpecting: run 24's plain tap
+        // on + was lost (10 s later the Inbox was unchanged, + enabled, nothing over it), and a plain tap is never
+        // repeated. tapExpecting repeats it once, and only when the first provably changed nothing.
+        for (let wait = 0; wait < 10; wait += 1) {
+            await sleep(300);
+            const again = await screen();
+            if (signature(again) === signature(nodes)) break;
+            nodes = again;
+        }
+        return tapExpecting(button(nodes, 'Add Task') ?? fail('no Add Task button on screen'), (current) => Boolean(field(current)), 'the capture sheet', 10_000);
     };
     const type = async (title) => {
         const nodes = await openCapture();
@@ -348,5 +436,5 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, tapExpecting, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull, swipeDone, completeUntil };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, tapExpecting, focusAtEnd, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, reveal, pull, revealAction, swipeDone, completeUntil };
 }

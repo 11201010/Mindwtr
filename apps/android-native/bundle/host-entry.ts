@@ -1,4 +1,5 @@
 import {
+    DEFAULT_GLOBAL_SEARCH_FILTERS,
     STATUS_COLORS_BY_THEME,
     SqliteAdapter,
     TASK_PRIORITY_COLORS,
@@ -348,11 +349,15 @@ globalThis.MindwtrHost = {
     setAreaFilter(json: string): string {
         return submit(async () => taskResult('areaFilter', await contract.setAreaFilter(JSON.parse(json))));
     },
-    /** `json` is `{ query, filters, limit }`, passed to core's searchTasks unchanged; the reply echoes the trimmed query. */
+    /**
+     * `json` is `{ query, filters, limit }`, passed to core's searchTasks unchanged; the reply echoes the trimmed query.
+     * `filters: null` (the screen before any filter change) is core's DEFAULT_GLOBAL_SEARCH_FILTERS.
+     */
     search(json: string): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(await contract.searchTasks(JSON.parse(json)));
+            const input = JSON.parse(json);
+            return unwrap(await contract.searchTasks({ ...input, filters: input.filters ?? DEFAULT_GLOBAL_SEARCH_FILTERS }));
         });
     },
     /** `json` is `{ query, name, requestId }`. Core saves one search per query, so a retry never adds a second. */

@@ -41,7 +41,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, Stopped, tab, tabSelected, taskRows } from './device.mjs';
+import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, owedRetry, readRetry, Stopped, tab, tabSelected, taskRows } from './device.mjs';
 
 const cliArgs = process.argv.slice(2);
 const prune = cliArgs.includes('--prune-old');
@@ -466,7 +466,9 @@ try {
         // Every row locks with the owed retry; only the failed row's swipe stays on (the same rule, check-boot-gates.mjs).
         const rows = taskRows(current);
         check(rows.length > 0 && rows.every((node) => node.enabled === 'false'), `(g${label}) ${rows.length} rows locked`);
-        check(button(current, 'Back')?.enabled === 'false' && !button(current, 'Try again'), `(g${label}) Back and Try again blocked`);
+        // The project's Back stays blocked; the failure offers only the owed Done's exact retry, never a plain read refresh.
+        check(button(current, 'Back')?.enabled === 'false' && owedRetry(current)?.enabled === 'true' && !readRetry(current),
+            `(g${label}) Back blocked; Try again is the owed Done's retry, and no read refresh is offered`);
         check(tab(current, 'Inbox')?.enabled === 'true', `(g${label}) tabs still work`);
     };
     await failedProject('the failure', '');
@@ -495,9 +497,11 @@ try {
     // Reads wait while the retry is owed, so no read failure can have replaced the Done retry.
     check(!logs(processId).includes('lock=storage'), '(g) no read failed while the retry was owed (log has no lock=storage)');
     setProp('fail_commit', '');
-    await completeUntil(editTask, 'the retry', (current) => !hasError(current) && !textNode(current, editTask));
+    // The failure's Try again re-sends the exact owed Done: one write.
+    await device.tapExpecting(owedRetry(await screen()) ?? fail('no Try again for the owed Done'),
+        (current) => !hasError(current) && !textNode(current, editTask), 'the retry from Try again');
     const retried = storedTask(editTask)[0];
-    check(retried.status === 'done' && retried.rev === beforeFailure.rev + 1, '(g) retry stored done once');
+    check(retried.status === 'done' && retried.rev === beforeFailure.rev + 1 && storedTask(editTask).length === 1, '(g) Try again stored done once');
     check(completes(processId, 'failed') >= 1 && completes(processId, 'saved') >= 1, '(g) task-command log shows the failed and the saved complete');
 
     // (h) Back returns to the list, which shows core's new count.

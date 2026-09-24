@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -70,33 +71,32 @@ import java.util.UUID
 /** RN shows 50 results. */
 private const val SEARCH_LIMIT = 50
 
-/** Core's DEFAULT_GLOBAL_SEARCH_FILTERS (global-search-model.ts). Pending core field: searchTasks's default filters; drop this copy then. */
-private fun defaultSearchFilters(): JSONObject = JSONObject().put("includeCompleted", false).put("includeReference", true)
-    .put("hideFutureTasks", false).put("selectedStatuses", JSONArray()).put("selectedArea", "all").put("selectedTokens", JSONArray())
-    .put("locationQuery", "").put("duePreset", "any").put("scope", "all")
-
 /** The screens this app has for core's list routes (getGlobalSearchTaskListTarget); the others are not built yet. */
 private val SEARCH_ROUTES = mapOf("/inbox" to Screen.Inbox, "/focus" to Screen.Focus, "/projects-screen" to Screen.Projects)
 
-/** The search screen's state, as RN keeps it: the query, the filters, the open sheet, and the save dialog with its request UUID. */
+/**
+ * The search screen's state, as RN keeps it: the query, the filters, the open sheet, and the save dialog with its
+ * request UUID. [filters] is null until the user changes one: the host then sends core's defaults, and the screen
+ * shows core's `defaultFilters`.
+ */
 data class SearchState(
     val query: String = "",
-    val filters: JSONObject = defaultSearchFilters(),
+    val filters: JSONObject? = null,
     val filtersOpen: Boolean = false,
     val saveName: String? = null,
     val saveRequestId: String = UUID.randomUUID().toString(),
     /** The name of a Save Search sent to core and not yet answered: the dialog is locked to it. */
     val submitted: String? = null,
 ) {
-    fun request(): String = JSONObject().put("query", query).put("filters", filters).put("limit", SEARCH_LIMIT).toString()
+    fun request(): String = JSONObject().put("query", query).put("filters", filters ?: JSONObject.NULL).put("limit", SEARCH_LIMIT).toString()
 
-    fun state(): JSONObject = JSONObject().put("query", query).put("filters", filters).put("filtersOpen", filtersOpen)
+    fun state(): JSONObject = JSONObject().put("query", query).put("filters", filters ?: JSONObject.NULL).put("filtersOpen", filtersOpen)
         .put("saveName", saveName ?: JSONObject.NULL).put("saveRequestId", saveRequestId).put("submitted", submitted ?: JSONObject.NULL)
 
     companion object {
         fun restore(text: String): SearchState? = runCatching {
             val saved = JSONObject(text)
-            SearchState(saved.getString("query"), saved.getJSONObject("filters"), saved.getBoolean("filtersOpen"),
+            SearchState(saved.getString("query"), saved.optJSONObject("filters"), saved.getBoolean("filtersOpen"),
                 if (saved.isNull("saveName")) null else saved.getString("saveName"), saved.getString("saveRequestId"),
                 if (saved.isNull("submitted")) null else saved.getString("submitted"))
         }.getOrNull()
@@ -112,23 +112,6 @@ private fun JSONObject.texts(name: String): List<String> = getJSONArray(name).le
 private fun JSONObject.toggled(name: String, value: String): JSONObject =
     withValue(name, JSONArray(texts(name).let { if (value in it) it - value else it + value }))
 
-/** [value] out of the list [name]; a second clear changes nothing, as core's clear does. */
-private fun JSONObject.removed(name: String, value: String): JSONObject = withValue(name, JSONArray(texts(name) - value))
-
-/** RN's clearChip (core's clearGlobalSearchActiveChip). Pending core field: each active chip's cleared filters; drop this copy then. */
-private fun JSONObject.cleared(key: String): JSONObject = when {
-    key.startsWith("status:") -> removed("selectedStatuses", key.removePrefix("status:"))
-    key.startsWith("token:") -> removed("selectedTokens", key.removePrefix("token:"))
-    key.startsWith("area:") -> withValue("selectedArea", "all")
-    key.startsWith("due:") -> withValue("duePreset", "any")
-    key.startsWith("scope:") -> withValue("scope", "all")
-    key == "location" -> withValue("locationQuery", "")
-    key == "includeCompleted" -> withValue("includeCompleted", false)
-    key == "hideReference" -> withValue("includeReference", true)
-    key == "hideFutureTasks" -> withValue("hideFutureTasks", false)
-    else -> this
-}
-
 /** Core's title highlight segments: the text and whether it matched. */
 private fun JSONArray.segments(): List<Pair<String, Boolean>> = List(length()) { getJSONObject(it).let { part -> part.getString("text") to part.getBoolean("highlighted") } }
 
@@ -141,8 +124,9 @@ data class SearchProject(val id: String, val title: String, val segments: List<P
 
 /** Core's searchTasks reply. [options] is core's filter sheet: its sections, choices and labels. */
 class SearchView(
-    val query: String, val tasks: List<SearchTask>, val projects: List<SearchProject>, val chips: List<Pair<String, String>>,
+    val query: String, val tasks: List<SearchTask>, val projects: List<SearchProject>, val chips: List<Pair<String, JSONObject>>,
     val hiddenCompleted: Int, val hasActiveFilters: Boolean, val truncated: Boolean, val totalLabel: String, val options: JSONObject,
+    val defaultFilters: JSONObject,
 ) {
     companion object {
         fun parse(json: JSONObject): SearchView {
@@ -156,19 +140,17 @@ class SearchView(
                     val row = tasks.getJSONObject(index)
                     val tap = row.getJSONObject("tap")
                     val date = if (row.isNull("date")) null else row.getJSONObject("date")
-                    // Core marks a cancelled task with its own meta part (RN's XCircle). Pending core field: a `cancelled` flag on search rows.
-                    val parts = if (row.isNull("meta")) null else row.getJSONObject("meta").getJSONArray("parts")
-                    val cancelled = parts != null && (0 until parts.length()).any { parts.getJSONObject(it).getString("kind") == "cancelled" }
                     SearchTask(row.getString("id"), row.getString("title"), row.getJSONArray("titleSegments").segments(), !row.isNull("projectTitle"),
-                        cancelled, row.getBoolean("canComplete"), date?.getString("tone"), date?.getString("label"), tap.getString("kind") == "editor",
+                        row.getBoolean("cancelled"), row.getBoolean("canComplete"), date?.getString("tone"), date?.getString("label"), tap.getString("kind") == "editor",
                         tap.optString("route").ifEmpty { null }, if (tap.isNull("projectId")) null else tap.optString("projectId").ifEmpty { null })
                 },
                 List(projects.length()) { index ->
                     projects.getJSONObject(index).let { SearchProject(it.getString("id"), it.getString("title"), it.getJSONArray("titleSegments").segments()) }
                 },
-                List(chips.length()) { index -> chips.getJSONObject(index).let { it.getString("key") to it.getString("label") } },
+                // Each chip carries core's exact filters once it is cleared.
+                List(chips.length()) { index -> chips.getJSONObject(index).let { it.getString("label") to it.getJSONObject("clearedFilters") } },
                 json.getInt("hiddenCompletedCount"), json.getBoolean("hasActiveFilters"), json.getBoolean("isTruncated"),
-                json.getString("totalResultsLabel"), json.getJSONObject("filterOptions"),
+                json.getString("totalResultsLabel"), json.getJSONObject("filterOptions"), json.getJSONObject("defaultFilters"),
             )
         }
     }
@@ -204,9 +186,11 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
             }
             val active = state.filtersOpen || view?.hasActiveFilters == true
             val filters = t("filters.label")
+            val focusManager = LocalFocusManager.current
             val shape = RoundedCornerShape(8.dp)
             Box(Modifier.clip(shape).then(if (active) Modifier.background(c.filterBg) else Modifier).border(1.dp, if (active) c.tint else c.border, shape)
-                .clickable(enabled = view != null, role = Role.Button) { showSearchFilters(true) }.semantics { contentDescription = filters }.padding(6.dp)) {
+                // RN's openFilters blurs the search field first, so the keyboard leaves and the sheet gets the screen.
+                .clickable(enabled = view != null, role = Role.Button) { focusManager.clearFocus(); showSearchFilters(true) }.semantics { contentDescription = filters }.padding(6.dp)) {
                 Icon(Lucide.SlidersHorizontal, null, tint = if (active) c.tint else c.secondaryText, modifier = Modifier.size(18.dp))
             }
             if (trimmed.isNotEmpty()) {
@@ -219,7 +203,7 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
         if (view != null && view.chips.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((key, label) in view.chips) FilterChip(label, label, true, true) { setSearchFilters(state.filters.cleared(key)) }
+                for ((label, cleared) in view.chips) FilterChip(label, label, true, true) { setSearchFilters(cleared) }
             }
         }
         val searching = trimmed.isNotEmpty() || view?.hasActiveFilters == true
@@ -233,7 +217,7 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
             Text(hidden, style = rnText(13, 600), color = c.tint,
                 textAlign = TextAlign.Center, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp).fillMaxWidth().clip(shape)
                     .background(c.cardBg).border(1.dp, c.border, shape)
-                    .clickable(role = Role.Button) { setSearchFilters(state.filters.withValue("includeCompleted", true)) }
+                    .clickable(role = Role.Button) { setSearchFilters((state.filters ?: view.defaultFilters).withValue("includeCompleted", true)) }
                     .padding(horizontal = 12.dp, vertical = 8.dp))
         }
         LazyColumn(Modifier.weight(1f).imePadding(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -340,7 +324,7 @@ private fun FilterSheet(model: InboxViewModel, state: SearchState, view: SearchV
     val options = view.options
     val presentation = options.getJSONObject("presentation")
     val sections = presentation.getJSONObject("sections")
-    val filters = state.filters
+    val filters = state.filters ?: view.defaultFilters
     val set = { next: JSONObject -> setSearchFilters(next) }
     BackHandler { showSearchFilters(false) }
     Box(Modifier.fillMaxSize().background(theme.pickerScrim).pointerInput(Unit) { detectTapGestures { showSearchFilters(false) } }) {
@@ -351,7 +335,7 @@ private fun FilterSheet(model: InboxViewModel, state: SearchState, view: SearchV
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(t("filters.label"), style = rnText(14, 600), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
                 if (view.hasActiveFilters) Text(presentation.getString("clear"), style = rnText(12, 600), color = c.tint,
-                    modifier = Modifier.heightIn(min = 36.dp).clickable(role = Role.Button) { set(JSONObject(defaultSearchFilters().toString())) }
+                    modifier = Modifier.heightIn(min = 36.dp).clickable(role = Role.Button) { set(view.defaultFilters) }
                         .padding(horizontal = 8.dp, vertical = 10.dp))
                 val close = t("common.close")
                 Box(Modifier.size(36.dp).clickable(role = Role.Button) { showSearchFilters(false) }.semantics { contentDescription = close },

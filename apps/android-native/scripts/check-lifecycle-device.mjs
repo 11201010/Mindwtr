@@ -16,7 +16,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, box, button, check, connect, draftText, evidenced, field, hasText, Stopped, taskRows, inboxCount } from './device.mjs';
+import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, owedRetry, readRetry, Stopped, taskRows, inboxCount } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -226,7 +226,8 @@ try {
     const failedState = (current, label) => {
         check(field(current)?.text === titles.d && field(current)?.enabled === 'false', `(d${label}) draft kept and locked`);
         check(button(current, 'Save')?.enabled === 'true', `(d${label}) exact retry allowed`);
-        check(!button(current, 'Try again'), `(d${label}) no read retry offered while the capture's retry is owed`);
+        // The failure offers Try again for the owed capture only, never a plain read refresh.
+        check(owedRetry(current)?.enabled === 'true' && !readRetry(current), `(d${label}) Try again is the capture's exact retry; no read refresh is offered`);
         // Rows lock with the owed retry (the same rule gates their swipe and TalkBack Done; check-boot-gates.mjs).
         const rows = taskRows(current);
         check(rows.length > 0 && rows.every((node) => node.enabled === 'false'), `(d${label}) rows locked`);
@@ -260,7 +261,9 @@ try {
     failedState(nodes, ' on a new screen');
     check(pid() === processId && boots(processId) === 1 && rowsTitled(titles.d) === 0, '(d) same process and host, still no row');
     setProp('fail_commit', '');
-    await tapAdd();
+    // The failure's Try again re-sends the exact owed capture (same capture UUID): one row.
+    await device.tapExpecting(owedRetry(await screen()) ?? fail('no Try again for the owed capture'),
+        (current) => !hasError(current), 'the retry from Try again');
     nodes = await waitFor('retry d', (current) => header(current) === total + 1 && draftText(current) === '');
     total += 1;
     check(!hasError(nodes) && taskRows(nodes).some((node) => node.enabled === 'true'),

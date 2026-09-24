@@ -49,12 +49,14 @@ assert.match(activity, /enabled = !busy && failedAction == null,[\s\S]*?modifier
 assert.match(model, /submittedTitle != null && value != submittedTitle\) setCapture\(value, UUID\.randomUUID\(\)\.toString\(\), null\)/);
 assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = title\)/);
 // A failed read offers Try again; while a failed command's retry is owed, nothing else is offered.
-assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy\)/);
+assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy, modifier = Modifier\.testTag\("read-retry"\)\)/);
 // Every owed command keeps a reachable retry: each screen's failure banner offers Try again (retryOwed), which re-sends the
 // exact recorded FailedAction, whatever screen or control started it (a status change from Focus's menu included).
-assert.match(activity, /fun OwedRetry\(model: InboxViewModel\) \{\s+if \(model\.failedAction != null\) TextButton\(onClick = model::retryOwed, enabled = !model\.busy\)/);
+assert.match(activity, /fun OwedRetry\(model: InboxViewModel\) \{\s+if \(model\.failedAction != null\) TextButton\(onClick = model::retryOwed, enabled = !model\.busy, modifier = Modifier\.testTag\("owed-retry"\)\)/);
+// The read refresh and the owed retry are told apart (test tags): the checks assert the owed one only while a retry is owed.
+assert.match(activity, /\} else OwedRetry\(model\)|else OwedRetry\(model\)/);
 for (const [name, text] of Object.entries({ activity, editorUi, searchUi, processUi })) {
-    assert.match(text, /FailureBanner\(message\) \{[\s\S]{0,200}?OwedRetry\(model\)/, `${name}: the failure banner offers the owed retry`);
+    assert.match(text, /FailureBanner\(message\) \{[\s\S]{0,320}?OwedRetry\(model\)/, `${name}: the failure banner offers the owed retry`);
 }
 {
     const retry = code(model.slice(model.indexOf('fun retryOwed()'), model.indexOf('\n    }\n', model.indexOf('fun retryOwed()'))));
@@ -492,7 +494,7 @@ assert.match(model, /enum class Screen\(val label: String\) \{ Inbox\("tab\.inbo
 assert.match(activity, /\} else if \(!writable\) \{[^}]*Text\(error\.orEmpty\(\), color = MaterialTheme\.colorScheme\.error, modifier = Modifier\.testTag\("boot-failure"\)\.padding\(24\.dp\)\)\s*\} else \{/);
 assert.match(activity, /if \(open != null && writable\) TaskEditorScreen\(model, open\)/);
 
-// Landscape: the Inbox count line is the list's first item; only the header, the tabs (and a failure) stay fixed.
+// Landscape: the Inbox's Process button and scope line are the list's first item; only the header, the tabs (and a failure) stay fixed.
 assert.match(activity, /LazyColumn\(modifier, contentPadding = PaddingValues\(12\.dp\)\) \{\s*item\(key = "header"\)[\s\S]*?items\(rows, key = \{ it\.id \}\)/);
 assert.match(activity, /Screen\.Inbox -> InboxList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Capture: RN's center tab button opens the sheet; the sheet is the Inbox capture unchanged (draft, UUID, exact retry).
@@ -634,7 +636,21 @@ assert.match(projectsUi, /BackHandler\(enabled = failedAction == null\) \{ close
 // by core's echoed query); saving a search is a perform(action) with its request UUID kept with the dialog.
 assert.match(coreHost, /fun searchTasks\(json: String\): JSONObject = callAsync\("search", json\)/);
 assert.match(coreHost, /fun saveSearch\(json: String\): JSONObject = callAsync\("saveSearch", json\)/);
-assert.match(hostEntry, /search\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(await contract\.searchTasks\(JSON\.parse\(json\)\)\);/);
+assert.match(hostEntry, /search\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const input = JSON\.parse\(json\);\s*return unwrap\(await contract\.searchTasks\(\{ \.\.\.input, filters: input\.filters \?\? DEFAULT_GLOBAL_SEARCH_FILTERS \}\)\);/);
+// Core owns what Kotlin once copied (core batch 4946dca7a): the search defaults (defaultFilters, and core's constant for the first
+// read), each chip's cleared filters, the cancelled flag, the Markdown-free note preview, the More-options edit, and the picked-day edit.
+assert.doesNotMatch(code(searchUi), /defaultSearchFilters|fun JSONObject\.(cleared|removed)\(|"cancelled"\)? *\}|getString\("kind"\) == "cancelled"|"(includeReference|hideFutureTasks|duePreset|scope|selectedArea)", *(true|false|"all"|"any")\)/,
+    'no Kotlin copy of core\'s search defaults, chip clearing, or cancelled detection');
+assert.match(searchUi, /row\.getBoolean\("cancelled"\)/);
+assert.match(searchUi, /\{ focusManager\.clearFocus\(\); showSearchFilters\(true\) \}/, 'RN blurs the search field before its filter sheet opens');
+assert.match(searchUi, /it\.getString\("label"\) to it\.getJSONObject\("clearedFilters"\)/);
+assert.match(searchUi, /json\.getJSONObject\("defaultFilters"\)/);
+assert.doesNotMatch(code(processUi), /"setDate"|"toggleAdvancedOptions"|take\(200\)|\.trim\(\)\.take/, 'no Kotlin copy of core\'s picked-day edit, More-options edit, or note preview');
+assert.match(processUi, /send\(JSONObject\(it\.getJSONObject\("pick"\)\.toString\(\)\)\.put\("day", day\)\)/);
+assert.match(processUi, /send\(more\.getJSONObject\("edit"\)\)/);
+assert.match(processUi, /capture\.getString\("notePreview"\)/);
+assert.doesNotMatch(code(searchUi + processUi), /Pending core field/);
+assert.doesNotMatch(searchUi + processUi, /Pending core field/, 'the pending-core comments are gone with the copies');
 assert.match(hostEntry, /saveSearch\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('saveSearch', await contract\.saveSearch\(JSON\.parse\(json\)\)\)\);/);
 assert.match(model, /background\(listOf\(Part\.Search\), \{ runtime -> SearchView\.parse\(runtime\.searchTasks\(request\)\) \}\) \{ view, mine ->\s+if \(fresh\(mine, Part\.Search\) && view\.query == search\?\.query\?\.trim\(\)\) searchView = view/);
 assert.equal(model.match(/runtime\.searchTasks\(/g).length, 1);
@@ -676,9 +692,8 @@ assert.match(model, /keepProcessing\(if \(it\.hidden\) null else it\.copy\(pendi
 assert.match(model, /val started = if \(reopen\) InboxProcessing\.started\([^\n]*\) else null\s+acknowledged\(action\)\s+ui \{ keepProcessing\(started\)/);
 assert.match(activity, /val flow = processing\?\.takeUnless \{ it\.hidden \}/);
 assert.match(processUi, /\.put\("hidden", hidden\)/);
-// Clearing an active chip removes its value, so a second tap changes nothing (core's clear).
-assert.match(searchUi, /key\.startsWith\("status:"\) -> removed\("selectedStatuses"/);
-assert.match(searchUi, /key\.startsWith\("token:"\) -> removed\("selectedTokens"/);
+// Clearing an active chip sends core's clearedFilters for it, so a second tap changes nothing (core's clear).
+assert.match(searchUi, /for \(\(label, cleared\) in view\.chips\) FilterChip\(label, label, true, true\) \{ setSearchFilters\(cleared\) \}/);
 assert.match(model, /acknowledged\(action\)\s+ui \{ finishAnswer\(reply\) \}/);
 assert.equal(code(model).match(/runtime\.(commitInboxProcessingStep|skipInboxProcessingTask)\(/g).length, 2);
 assert.match(model, /if \(UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\) ui \{ failedAction = null; processing\?\.let \{ keepProcessing\(if \(it\.hidden\) null else it\.copy\(pending = null\)\) \} \}/,
@@ -691,7 +706,7 @@ assert.match(processUi, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(
 assert.match(model, /val now = processing\?\.takeIf \{ it\.sessionId == current\.sessionId && it\.edits\.firstOrNull\(\) === next \}/);
 assert.match(processUi, /LaunchedEffect\(key, coreValue\) \{ if \(!pending && field\.text != coreValue\)/);
 // No Kotlin policy: every chip sends core's own edit; Kotlin builds only the picker's setDate, the typed text, and the disclosure.
-assert.equal(code(processUi).match(/"setDate"/g).length, 1, 'the date picker\'s day is the only date Kotlin writes');
+assert.match(processUi, /DayPickerDialog\(row\?\.text\("date"\)/, 'the picker starts on core\'s date and hands core only the picked day');
 assert.doesNotMatch(code(processUi), /"(inbox|next|waiting|someday|reference|done)"\s*->/, 'no status decides a Process Inbox control');
 assert.match(processUi, /const val PROCESSING_MODE_KEY = "mindwtr:view:inboxProcessingMode:v1"/);
 // The Inbox's Process button: core's Inbox count, and TalkBack hears the exact count as RN does.
@@ -800,6 +815,7 @@ export function createNativeHostContract() {
     endInboxProcessing(input) { globalThis.newInputs.push(JSON.stringify(['inboxEnd', input])); return { ok: true, value: null }; },
   };
 }
+export const DEFAULT_GLOBAL_SEARCH_FILTERS = { scope: 'all' };
 export const STATUS_COLORS_BY_THEME = {
   light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } },
   nord: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } },
@@ -972,6 +988,9 @@ ready.newInputs.length = 0;
     assert.deepEqual(ready.newInputs, [JSON.stringify(['search', searchInput]), '["saveSearch",{"query":"milk","name":"Milk","requestId":"r"}]',
         '["inboxStart",{"mode":"quick"}]', JSON.stringify(['inboxStep', stepInput]), JSON.stringify(['inboxCommit', commitInput]),
         '["inboxSkip",{"sessionId":"x","taskId":"t","requestId":"s"}]', '["inboxEnd",{"sessionId":"x"}]']);
+    // The screen's first read sends no filters: the host fills in core's defaults.
+    await poll(ready, ready.MindwtrHost.search('{"query":"","filters":null,"limit":50}'));
+    assert.deepEqual(ready.newInputs.slice(-1), [JSON.stringify(['search', { query: '', filters: { scope: 'all' }, limit: 50 }])]);
     ready.newInputs.length = 0;
 }
 ready.persistenceFailure = { message: 'disk full' };

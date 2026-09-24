@@ -247,6 +247,15 @@ try {
         await waitFor('the search field', (current) => current.some((node) => node.class === 'android.widget.EditText'), 15_000);
         requireAppFront();
         sh(`input text ${SEARCH_QUERY}`);
+        // A Pinyin keyboard holds typed letters in its own composition strip and sends none to the field
+        // (run 21: the field stayed empty with "kitchen" above the keys). Enter commits the held letters as typed.
+        await sleep(800);
+        const typed = (current) => current.some((node) => node.class === 'android.widget.EditText' && node.text === SEARCH_QUERY);
+        if (!typed(await device.screen())) {
+            requireAppFront();
+            sh('input keyevent KEYCODE_ENTER');
+        }
+        await waitFor(`"${SEARCH_QUERY}" in the search field`, typed, 10_000);
         await waitFor('the search results', (current) => hasText(current, 'Kitchen renovation'), 30_000);
         await hideKeyboard();
         await shoot(`native-search-${mode === 'yes' ? 'dark' : 'light'}`, (current) => hasText(current, 'Kitchen renovation'));

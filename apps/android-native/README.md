@@ -58,6 +58,8 @@ Debug builds read three fault properties before each create, complete, or update
 
 `node apps/android-native/scripts/check-process-inbox-device.mjs <adb-serial>` checks Process Inbox against core's own session on a database copy: the button's count, the first item and question, Yes and Back, rotation, and quick mode. Only when core's first item is a device check's own capture does it also trash it through a failed commit and its exact retry, and check process death before the write, after the write, and during the replay (the app lands on the Inbox, the item is stored at most once, and the record on disk goes only after core answers). It restores the phone's mode. It needs host `bun`.
 
+The device checks type digits through the phone's own keyboard and never change its settings. Before launching and before any typing they read the current keyboard layout from `dumpsys input_method`; unless it is English (a Chinese Pinyin layout holds or reorders typed digits), or when the layout cannot be read, they stop with exit 3 and ask you to switch it with the globe key. `MINDWTR_KEYBOARD_OK=1` skips this after you have checked the keyboard yourself.
+
 The lifecycle check also checks that the landscape Inbox shows at least three full task rows once its Process Inbox button scrolls away. The checks read the Inbox count from that button's spoken label (0 for RN's empty Inbox). All device checks clear the language property first, so they expect the phone's language to resolve to English.
 
 Rotation and process death are validated only for this development identity, not for a production identity.

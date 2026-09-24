@@ -165,7 +165,12 @@ let passedSection;
 const findRow = async (title) => {
     let nodes = await toTop();
     passedSection = undefined;
-    for (let step = 0; step < 80; step += 1) {
+    // A budget in proportion to what Focus can list: every open task may be a row (about two per swipe in
+    // landscape, five in portrait) and each 50 rows add one More. The loop still stops at the list's end.
+    // A fixed 80 ran out as the development data grew (run 21); open / 5 ran out in landscape (run 25).
+    const open = sqlite("SELECT COUNT(*) AS n FROM tasks WHERE deletedAt IS NULL AND status NOT IN ('done', 'archived', 'inbox')")[0].n;
+    const budget = Math.ceil(open / 2) + Math.ceil(open / 50) + 20;
+    for (let step = 0; step < budget; step += 1) {
         if (inList(nodes, title)) return nodes;
         passedSection = headers(nodes).sort((a, b) => b.top - a.top)[0]?.title ?? passedSection;
         const more = nodes.find((node) => node['content-desc']?.startsWith('More ') && button(nodes, node['content-desc'])?.enabled === 'true');
@@ -179,7 +184,7 @@ const findRow = async (title) => {
         if (signature(next) === signature(nodes)) break;
         nodes = next;
     }
-    return fail(`row ${title} is not in Focus`);
+    return fail(`row ${title} is not in Focus (${open} open tasks, ${budget} steps)`);
 };
 const expectSection = async (title, section, label) => {
     const nodes = await findRow(title);

@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
                         // A failure stays in view above the list. A failed read offers Try again; a failed command only its exact retry.
                         error?.let { message ->
                             FailureBanner(message) {
-                                if (failedAction == null) TextButton(onClick = { refresh() }, enabled = !busy) { Text(t("common.retry")) }
+                                if (failedAction == null) TextButton(onClick = { refresh() }, enabled = !busy, modifier = Modifier.testTag("read-retry")) { Text(t("common.retry")) }
                                 else OwedRetry(model)
                             }
                         }
@@ -216,7 +216,7 @@ fun FailureBanner(message: String, action: @Composable RowScope.() -> Unit) {
  */
 @Composable
 fun OwedRetry(model: InboxViewModel) {
-    if (model.failedAction != null) TextButton(onClick = model::retryOwed, enabled = !model.busy) { Text(t("common.retry")) }
+    if (model.failedAction != null) TextButton(onClick = model::retryOwed, enabled = !model.busy, modifier = Modifier.testTag("owed-retry")) { Text(t("common.retry")) }
 }
 
 /**

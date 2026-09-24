@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { button, chipOn, check, connect, draftText, evidenced, fail, field, inEditor, inboxCount, Stopped, tagged, withDescription } from './device.mjs';
+import { box, button, chipOn, check, connect, draftText, evidenced, fail, field, inEditor, inboxCount, Stopped, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -96,12 +96,39 @@ const inbox = () => waitFor('the Inbox', (nodes) => !inEditor(nodes) && !tagged(
 const inSearch = (nodes) => Boolean(tagged(nodes, 'global-search')) && !inEditor(nodes);
 /** The result rows' titles (test tag `search-result`), top to bottom. */
 const results = (nodes) => nodes.filter((node) => (node['resource-id'] ?? '').endsWith('search-result')).map((node) => node['content-desc'] || node.text);
+/**
+ * The filter sheet's scrolling column (the one holding core's Due date chips), scrolled until [description] shows:
+ * the sheet lists RN's sections in RN's order, so Status sits below the fold on a phone.
+ */
+const sheetShowing = async (description) => {
+    // A chip just below the fold is still listed, with empty bounds (run 22: [0,0][0,0]); only one fully inside the sheet counts.
+    const shown = (nodes) => {
+        const node = withDescription(nodes, description);
+        const heading = nodes.find((item) => item.text === en['filters.label'] && item.class === 'android.widget.TextView');
+        const sheet = heading && nodes.filter((item) => item.scrollable === 'true' && box(item)[1] >= box(heading)[3])
+            .sort((a, b) => (box(a)[3] - box(a)[1]) - (box(b)[3] - box(b)[1]))[0];
+        if (!node || !sheet) return false;
+        const [l, t, r, b] = box(node);
+        return r > l && b > t && t >= box(sheet)[1] && b <= box(sheet)[3];
+    };
+    let nodes = await screen();
+    for (let step = 0; step < 6 && !shown(nodes); step += 1) {
+        // The sheet's column starts under its "Filters" heading; the results list behind it starts higher.
+        const heading = nodes.find((node) => node.text === en['filters.label'] && node.class === 'android.widget.TextView') ?? fail('no filter sheet');
+        const sheet = nodes.filter((node) => node.scrollable === 'true' && box(node)[1] >= box(heading)[3])
+            .sort((a, b) => (box(a)[3] - box(a)[1]) - (box(b)[3] - box(b)[1]))[0] ?? fail('no scrolling filter sheet');
+        const [l, t, r, b] = box(sheet);
+        requireAppFront();
+        sh(`input swipe ${Math.round((l + r) / 2)} ${Math.round(b - (b - t) * 0.15)} ${Math.round((l + r) / 2)} ${Math.round(t + (b - t) * 0.15)} 500`);
+        await new Promise((done) => setTimeout(done, 500));
+        nodes = await screen();
+    }
+    return shown(nodes) ? nodes : fail(`the filter sheet shows no "${description}"`);
+};
 /** Types [digits] at the end of the search field (Ctrl+End: the text's true end). */
 const typeQuery = async (digits) => {
-    const input = field(await screen()) ?? fail('no search field');
-    if (input.focused !== 'true') await tap(input);
+    await device.focusAtEnd(field(await screen()) ?? fail('no search field'));
     requireAppFront();
-    sh('input keycombination KEYCODE_CTRL_LEFT KEYCODE_MOVE_END');
     sh(`input text ${digits}`);
 };
 
@@ -144,7 +171,11 @@ try {
 
     // (b) The Inbox status filter: core keeps the task; its active chip clears the filter again.
     const status = `${en['taskEdit.statusLabel']}: ${en['status.inbox']}`;
-    nodes = await tapExpecting(withDescription(nodes, en['filters.label']) ?? fail('no Filters button'), (current) => Boolean(withDescription(current, status)), 'the filter sheet');
+    // RN's sheet opens with the keyboard gone (its openFilters blurs the field); Status is below the fold.
+    await tapExpecting(withDescription(nodes, en['filters.label']) ?? fail('no Filters button'),
+        (current) => Boolean(current.find((node) => node['content-desc']?.startsWith(`${en['search.due.label']}: `))), 'the filter sheet');
+    check(!/mInputShown=true/.test(sh('dumpsys input_method')), '(b) the keyboard leaves when the filter sheet opens, as in RN');
+    nodes = await sheetShowing(status);
     await tapExpecting(withDescription(nodes, status), (current) => chipOn(current, status), 'the Inbox status chip on');
     nodes = await tapExpecting(withDescription(await screen(), en['common.close']), (current) => !withDescription(current, status) && Boolean(withDescription(current, en['status.inbox'])), 'the active Inbox chip');
     expected = core(title, { selectedStatuses: ['inbox'] });
@@ -171,10 +202,12 @@ try {
     nodes = await tapExpecting(withDescription(nodes, en['common.clear']) ?? fail('no Clear in the search field'), (current) => field(current)?.text === '', 'the empty query');
     await typeQuery(SAVED_QUERY);
     nodes = await waitFor('Save Search', (current) => Boolean(button(current, en['search.saveSearch'])), 10_000);
-    nodes = await tapExpecting(button(nodes, en['search.saveSearch']), (current) => current.filter((node) => node.class === 'android.widget.EditText').some((node) => node.text === SAVED_QUERY
-        && node['content-desc'] === en['search.saveSearchPrompt']), 'the save dialog with the query as its name');
+    // Android reports no label on a text field that holds text, so the dialog is the second field, below the search field.
+    const edits = (current) => current.filter((node) => node.class === 'android.widget.EditText').sort((a, b) => box(a)[1] - box(b)[1]);
+    nodes = await tapExpecting(button(nodes, en['search.saveSearch']), (current) => edits(current).length === 2 && edits(current)[1].text === SAVED_QUERY,
+        'the save dialog with the query as its name');
     const savesBefore = commands('saveSearch');
-    await tapExpecting(button(nodes, en['common.save']), (current) => !current.some((node) => node['content-desc'] === en['search.saveSearchPrompt']), 'the dialog to close');
+    await tapExpecting(button(nodes, en['common.save']), (current) => edits(current).length === 1, 'the dialog to close');
     await waitFor('the saveSearch command', () => commands('saveSearch') === savesBefore + 1, 10_000);
     check(core(SAVED_QUERY).saved === 1, `(e) core stores exactly one saved search for "${SAVED_QUERY}"`);
 

@@ -174,12 +174,11 @@ const pickDueDay = async (day) => {
 /** A text field: tap it, move to the end, and type [digits] (digits only: some keyboards hold letters in a composition strip). */
 const typeInto = async (node, digits, expected, erase = 0) => {
     // A tap on a focused field moves its cursor to the tap point, which can sit before a trailing ", "
-    // (editor check failure 2026-09-23T20-52-16); tap only to focus it.
-    if (node.focused !== 'true') await tap(node);
+    // (editor check failure 2026-09-23T20-52-16); tap only to focus it, at the field's far end, then Ctrl+End
+    // once the keyboard is up (device.mjs focusAtEnd). A plain End is Compose's line end, which stops before
+    // trailing whitespace (failure 2026-09-23T21-14-34).
+    await device.focusAtEnd(node);
     requireAppFront();
-    // Ctrl+End: the text's true end. A plain End is Compose's line end, which stops before trailing
-    // whitespace, so it put "79…" before the ", " a chosen suggestion leaves (failure 2026-09-23T21-14-34).
-    sh('input keycombination KEYCODE_CTRL_LEFT KEYCODE_MOVE_END');
     if (erase > 0) sh(`input keyevent ${Array(erase).fill('KEYCODE_DEL').join(' ')}`);
     sh(`input text ${digits}`);
     await waitFor(`the text ${expected}`, (nodes) => nodes.some((current) => current.class === 'android.widget.EditText' && current.text === expected), 10_000);
