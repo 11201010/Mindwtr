@@ -2696,8 +2696,8 @@ export const daOverrides: Record<string, string> = {
     'settings.taskEditorPresentation': 'Redaktør åbning',
     'settings.taskEditorPresentationDesc':
         'Vælg, hvordan opgaveredigering skal åbnes, når du bruger skrivebordseditoren.',
-    'settings.taskEditorPresentationInline': 'Sidekig',
-    'settings.taskEditorPresentationInlineDesc': 'Åbn editoren i den aktuelle visning for hurtigere redigering.',
+    'settings.taskEditorPresentationInline': 'I rækken',
+    'settings.taskEditorPresentationInlineDesc': 'Erstat opgavens række med editoren i den aktuelle liste.',
     'settings.taskEditorPresentationModal': 'Pop op-vindue',
     'settings.taskEditorPresentationModalDesc': 'Åbn editoren i et centreret vindue til koncentreret redigering.',
     'settings.taskEditorSection': 'Sektion',

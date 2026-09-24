@@ -100,6 +100,7 @@ export const getUrgencyColor = (task: Task) => {
 };
 
 const formatTimeEstimate = formatTimeEstimateLabel;
+const IS_MAC_PLATFORM = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 
 export const TaskItemDisplay = memo(function TaskItemDisplay({
     task,
@@ -291,7 +292,13 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
     };
     const cancelInlineRename = () => setRenameDraft(null);
     const handleTitleClick = (event: MouseEvent<HTMLButtonElement>) => {
-        if (selectionMode) {
+        if (selectionMode || (event.detail > 0 && !event.altKey
+            && (event.shiftKey || (IS_MAC_PLATFORM ? event.metaKey : event.ctrlKey))
+            && onToggleSelect && !interactionDisabled)) {
+            clearClickTimer();
+            event.stopPropagation();
+            if (event.detail >= 2) return;
+            event.preventDefault();
             onToggleSelect?.({ range: event.shiftKey });
             return;
         }
@@ -313,7 +320,8 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
         }, 180);
     };
     const handleTitleDoubleClick = (event: MouseEvent<HTMLButtonElement>) => {
-        if (selectionMode || readOnly) return;
+        if (selectionMode || readOnly || (onToggleSelect && !event.altKey
+            && (event.shiftKey || (IS_MAC_PLATFORM ? event.metaKey : event.ctrlKey)))) return;
         event.stopPropagation();
         clearClickTimer();
         onEdit();
