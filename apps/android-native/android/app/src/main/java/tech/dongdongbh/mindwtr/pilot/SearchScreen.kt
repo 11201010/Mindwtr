@@ -85,17 +85,20 @@ data class SearchState(
     val filtersOpen: Boolean = false,
     val saveName: String? = null,
     val saveRequestId: String = UUID.randomUUID().toString(),
+    /** The name of a Save Search sent to core and not yet answered: the dialog is locked to it. */
+    val submitted: String? = null,
 ) {
     fun request(): String = JSONObject().put("query", query).put("filters", filters).put("limit", SEARCH_LIMIT).toString()
 
     fun state(): JSONObject = JSONObject().put("query", query).put("filters", filters).put("filtersOpen", filtersOpen)
-        .put("saveName", saveName ?: JSONObject.NULL).put("saveRequestId", saveRequestId)
+        .put("saveName", saveName ?: JSONObject.NULL).put("saveRequestId", saveRequestId).put("submitted", submitted ?: JSONObject.NULL)
 
     companion object {
         fun restore(text: String): SearchState? = runCatching {
             val saved = JSONObject(text)
             SearchState(saved.getString("query"), saved.getJSONObject("filters"), saved.getBoolean("filtersOpen"),
-                if (saved.isNull("saveName")) null else saved.getString("saveName"), saved.getString("saveRequestId"))
+                if (saved.isNull("saveName")) null else saved.getString("saveName"), saved.getString("saveRequestId"),
+                if (saved.isNull("submitted")) null else saved.getString("submitted"))
         }.getOrNull()
     }
 }
@@ -109,10 +112,13 @@ private fun JSONObject.texts(name: String): List<String> = getJSONArray(name).le
 private fun JSONObject.toggled(name: String, value: String): JSONObject =
     withValue(name, JSONArray(texts(name).let { if (value in it) it - value else it + value }))
 
+/** [value] out of the list [name]; a second clear changes nothing, as core's clear does. */
+private fun JSONObject.removed(name: String, value: String): JSONObject = withValue(name, JSONArray(texts(name) - value))
+
 /** RN's clearChip (core's clearGlobalSearchActiveChip). Pending core field: each active chip's cleared filters; drop this copy then. */
 private fun JSONObject.cleared(key: String): JSONObject = when {
-    key.startsWith("status:") -> toggled("selectedStatuses", key.removePrefix("status:"))
-    key.startsWith("token:") -> toggled("selectedTokens", key.removePrefix("token:"))
+    key.startsWith("status:") -> removed("selectedStatuses", key.removePrefix("status:"))
+    key.startsWith("token:") -> removed("selectedTokens", key.removePrefix("token:"))
     key.startsWith("area:") -> withValue("selectedArea", "all")
     key.startsWith("due:") -> withValue("duePreset", "any")
     key.startsWith("scope:") -> withValue("scope", "all")
@@ -208,7 +214,7 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
                     modifier = Modifier.clickable(enabled = idle, role = Role.Button) { showSaveSearch(trimmed) }.padding(start = 4.dp))
             }
         }
-        error?.let { message -> FailureBanner(message) {} }
+        error?.let { message -> FailureBanner(message) { OwedRetry(model) } }
         if (trimmed.isNotEmpty()) HelpLine(t("search.helpOperators"))
         if (view != null && view.chips.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp),
@@ -236,7 +242,7 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
                     color = c.secondaryText, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(32.dp))
             }
             items(view?.projects.orEmpty(), key = { "project-${it.id}" }) { project ->
-                ResultRow(project.segments, project.title, t("search.resultProject"), null, null, idle, {
+                ResultRow(project.segments, project.title, t("search.resultProject"), null, null, idle, true, {
                     Icon(Lucide.Folder, null, tint = c.tint, modifier = Modifier.size(24.dp))
                 }) { openFromSearch(Screen.Projects, project.id) }
             }
@@ -244,7 +250,10 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
                 val route = task.route?.let(SEARCH_ROUTES::get)
                 val subtitle = if (task.inProject) "${t("search.resultTask")} • ${t("search.inProjectSuffix")}" else t("search.resultTask")
                 val dateColor = when (task.dateTone) { "danger" -> c.danger; "warning" -> c.warning; else -> c.secondaryText }
-                ResultRow(task.segments, task.title, subtitle, task.dateLabel, dateColor, idle && (task.editor || route != null), {
+                // A hit core routes to a list this app has not built yet (Done, Archived, Waiting, Someday, Reference) keeps
+                // RN's row look but has no tap and no chevron until those Menu screens exist.
+                val opens = task.editor || route != null
+                ResultRow(task.segments, task.title, subtitle, task.dateLabel, dateColor, idle && opens, opens, {
                     when {
                         task.canComplete -> {
                             val markDone = t("review.markDone")
@@ -287,10 +296,11 @@ private fun PlainField(value: String, onChange: (String) -> Unit, placeholder: S
 /** RN's result row: the leading glyph, core's highlighted title, the kind line, core's date line, and the chevron. */
 @Composable
 private fun ResultRow(segments: List<Pair<String, Boolean>>, title: String, subtitle: String, date: String?, dateColor: Color?, enabled: Boolean,
-                      leading: @Composable () -> Unit, onClick: () -> Unit) {
+                      opens: Boolean, leading: @Composable () -> Unit, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(8.dp)
-    Row(Modifier.fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape).clickable(enabled = enabled, onClick = onClick)
+    Row(Modifier.fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
+        .then(if (opens) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
         .padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         leading()
         Column(Modifier.weight(1f)) {
@@ -302,7 +312,7 @@ private fun ResultRow(segments: List<Pair<String, Boolean>>, title: String, subt
             Text(subtitle, style = rnText(12, 400), color = c.secondaryText)
             if (date != null && dateColor != null) Text(date, style = rnText(12, 400), color = dateColor, modifier = Modifier.padding(top = 2.dp))
         }
-        Icon(Lucide.ChevronRight, null, tint = c.secondaryText, modifier = Modifier.size(20.dp))
+        if (opens) Icon(Lucide.ChevronRight, null, tint = c.secondaryText, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -408,7 +418,8 @@ private fun FilterSheet(model: InboxViewModel, state: SearchState, view: SearchV
 private fun SaveSearchDialog(model: InboxViewModel, state: SearchState, name: String) = with(model) {
     val theme = LocalTheme.current
     val c = theme.colors
-    val owed = failedAction != null
+    // A submitted save is locked to its request until core answers (after process death too).
+    val owed = failedAction != null || state.submitted != null
     BackHandler(enabled = !owed) { if (!busy) showSaveSearch(null) }
     Box(Modifier.fillMaxSize().background(theme.menuScrim).pointerInput(Unit) { detectTapGestures { } }.padding(24.dp), contentAlignment = Alignment.Center) {
         val shape = RoundedCornerShape(12.dp)
@@ -419,12 +430,13 @@ private fun SaveSearchDialog(model: InboxViewModel, state: SearchState, name: St
             LaunchedEffect(Unit) { focus.requestFocus() }
             val prompt = t("search.saveSearchPrompt")
             val inputShape = RoundedCornerShape(8.dp)
-            PlainField(name, { showSaveSearch(it) }, prompt, prompt, rnText(16, 400), Modifier.fillMaxWidth().clip(inputShape).border(1.dp, c.border, inputShape)
+            PlainField(state.submitted ?: name, { showSaveSearch(it) }, prompt, prompt, rnText(16, 400), Modifier.fillMaxWidth().clip(inputShape).border(1.dp, c.border, inputShape)
                 .padding(horizontal = 12.dp, vertical = 8.dp).focusRequester(focus), enabled = !owed && !busy)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
-                val canSave = name.isNotBlank() && writable && !busy && (failedAction == null || failedAction == saveSearchAction(state, name))
+                val sent = state.submitted ?: name
+                val canSave = sent.isNotBlank() && writable && !busy && (failedAction == null || failedAction == saveSearchAction(state, sent))
                 DialogButton(t("common.cancel"), c.secondaryText, !owed && !busy) { showSaveSearch(null) }
-                DialogButton(t("common.save"), c.text, canSave) { saveSearch(name) }
+                DialogButton(t("common.save"), c.text, canSave) { saveSearch(sent) }
             }
         }
     }

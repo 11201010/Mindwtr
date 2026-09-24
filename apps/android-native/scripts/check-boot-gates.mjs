@@ -50,7 +50,20 @@ assert.match(model, /submittedTitle != null && value != submittedTitle\) setCapt
 assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = title\)/);
 // A failed read offers Try again; while a failed command's retry is owed, nothing else is offered.
 assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy\)/);
-assert.match(activity, /if \(failedAction\?\.kind in STEP_KINDS\) TextButton\(onClick = \{ retryAnswer\(\) \}, enabled = !busy\)/);
+// Every owed command keeps a reachable retry: each screen's failure banner offers Try again (retryOwed), which re-sends the
+// exact recorded FailedAction, whatever screen or control started it (a status change from Focus's menu included).
+assert.match(activity, /fun OwedRetry\(model: InboxViewModel\) \{\s+if \(model\.failedAction != null\) TextButton\(onClick = model::retryOwed, enabled = !model\.busy\)/);
+for (const [name, text] of Object.entries({ activity, editorUi, searchUi, processUi })) {
+    assert.match(text, /FailureBanner\(message\) \{[\s\S]{0,200}?OwedRetry\(model\)/, `${name}: the failure banner offers the owed retry`);
+}
+{
+    const retry = code(model.slice(model.indexOf('fun retryOwed()'), model.indexOf('\n    }\n', model.indexOf('fun retryOwed()'))));
+    const kinds = new Set([...code(model + activity + editorUi + searchUi + processUi + rowUi).matchAll(/FailedAction\("(\w+)"/g)].map(([, kind]) => kind));
+    for (const kind of [...kinds, 'inboxCommit', 'inboxSkip']) assert.match(retry, new RegExp(`"${kind}"`), `retryOwed re-sends a failed ${kind}`);
+    assert.match(retry, /"update" -> sendUpdate\(action\)/);
+    assert.match(retry, /"saveDraft" -> sendDraft\(action\)/);
+    assert.match(retry, /"inboxCommit", "inboxSkip" -> sendAnswer\(action,/);
+}
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("create", captureId, draft\)/);
 assert.match(rowUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
 // The swipe is core's meta.swipe (RN's getLeftAction moved to core); it and TalkBack's custom action are one command with one enabled rule.
@@ -88,7 +101,7 @@ assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s 
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
-assert.equal(code(model).match(/\bperform\(action\)/g).length, 10, 'create, complete, editor save, task star, project star, status, project create, area filter, saved search, Process Inbox answer');
+assert.equal(code(model).match(/\bperform\(action\)/g).length, 11, 'create, complete, editor save, task star, project star, status, project create, area filter, saved search, Process Inbox answer, the storage retry');
 assert.equal(code(model).match(/\bperform\s*\{/g).length, 8, 'editor, reload, Try again, three More, open project, open Process Inbox');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
@@ -234,8 +247,8 @@ assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base
 // The new contract commands: each is a perform(action) with its exact retry, acknowledged only after core's reply.
 for (const [call, fn] of [
     ['runtime\\.setTaskFocus\\(id, focused\\)', 'fun setTaskFocus('], ['runtime\\.setProjectFocus\\(id, focused\\)', 'fun setProjectFocus('],
-    ['runtime\\.updateTask\\(task\\.id, json\\(action\\.base\\), json\\(action\\.patch\\)\\)', 'fun changeStatus('],
-    ['runtime\\.createProject\\(action\\.title, areaId, action\\.id\\)', 'fun createProject('], ['runtime\\.setAreaFilter\\(option\\.next\\)', 'fun setAreaFilter('],
+    ['runtime\\.updateTask\\(action\\.id, json\\(action\\.base\\), json\\(action\\.patch\\)\\)', 'private fun sendUpdate('],
+    ['runtime\\.createProject\\(action\\.title, areaId, action\\.id\\)', 'fun createProject('], ['runtime\\.setAreaFilter\\(action\\.id\\)', 'private fun sendAreaFilter('],
 ]) {
     const body = model.slice(model.indexOf(fn), model.indexOf('\n    }\n', model.indexOf(fn)));
     assert.match(body, new RegExp(`perform\\(action\\) \\{ runtime ->\\s+(val reply = )?${call}\\s+acknowledged\\(action\\)`), `${fn} runs through perform(action) with its exact retry`);
@@ -626,10 +639,14 @@ assert.match(hostEntry, /saveSearch\(json: string\): string \{\s*return submit\(
 assert.match(model, /background\(listOf\(Part\.Search\), \{ runtime -> SearchView\.parse\(runtime\.searchTasks\(request\)\) \}\) \{ view, mine ->\s+if \(fresh\(mine, Part\.Search\) && view\.query == search\?\.query\?\.trim\(\)\) searchView = view/);
 assert.equal(model.match(/runtime\.searchTasks\(/g).length, 1);
 assert.match(model, /FailedAction\("saveSearch", current\.saveRequestId, current\.query\.trim\(\), patch = mapOf\("name" to name\.trim\(\)\)\)/);
-assert.match(model, /perform\(action\) \{ runtime ->\s+runtime\.saveSearch\([^\n]*\.put\("requestId", action\.id\)\.toString\(\)\)\s+acknowledged\(action\)/);
-assert.match(model, /if \(action\.kind == "saveSearch"\) keepSearch\(SearchState\(action\.title, saveName = action\.patch\["name"\], saveRequestId = action\.id\)\)/,
+assert.match(model, /private fun sendSaveSearch\(action: FailedAction\) = perform\(action\) \{ runtime ->\s+try \{\s+runtime\.saveSearch\([^\n]*\.put\("requestId", action\.id\)\.toString\(\)\)[\s\S]{0,400}?acknowledged\(action\)/);
+// The submitted Save Search request rides the screen state before the call, locks the dialog, and is reconciled after process death.
+assert.match(model, /keepSearch\(current\.copy\(submitted = action\.patch\["name"\]\)\)\s+sendSaveSearch\(action\)/);
+assert.match(model, /current\.submitted\?\.let \{ name -> if \(failedAction == null\) saveSearchAction\(current, name\)\.let \{ failedAction = it; sendSaveSearch\(it\) \} \}/);
+assert.match(searchUi, /val owed = failedAction != null \|\| state\.submitted != null/);
+assert.match(model, /if \(action\.kind == "saveSearch"\) keepSearch\(SearchState\(action\.title, saveName = action\.patch\["name"\], saveRequestId = action\.id, submitted = action\.patch\["name"\]\)\)/,
     'a new screen reopens the save dialog on an owed save, never re-sends it');
-assert.match(searchUi, /failedAction == null \|\| failedAction == saveSearchAction\(state, name\)/);
+assert.match(searchUi, /failedAction == null \|\| failedAction == saveSearchAction\(state, sent\)/);
 assert.match(searchUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/, 'Mark Done from search is the lists\' Done with its exact retry');
 assert.match(model, /private fun refreshAll\(\) \{[\s\S]*?if \(search != null\) readSearch\(\)\s+\}/, 'search is read again after every command');
 // Search results are core's: core's highlight segments, date line and tone, and tap target; Kotlin never sorts or filters them.
@@ -651,11 +668,20 @@ assert.match(model, /private fun sendAnswer\(action: FailedAction, reopen: Boole
 assert.match(model, /val action = stepAction\(current, kind, choice\)\s+if \(busy \|\| \(failedAction != null && failedAction != action\)\) return\s+keepProcessing\(current\.copy\(pending = action, queued = null\)\)\s+sendAnswer\(action\)/,
     'the exact request is on disk before the call');
 assert.match(model, /current\.pending\?\.takeIf \{ it\.kind == kind && it\.title == choice \}\s+\?: FailedAction\(kind, UUID\.randomUUID\(\)\.toString\(\), choice,/, 'a retry keeps its requestId');
-assert.match(model, /keepProcessing\(null\)\s+val action = restored\.pending \?: return\s+if \(failedAction != null\) return\s+failedAction = action\s+sendAnswer\(action, reopen = false\)/,
-    'after process death the app lands on the Inbox and the uncertain answer is sent again first, in the background');
+assert.match(model, /keepProcessing\(restored\.copy\(hidden = true\)\)\s+failedAction = action\s+sendAnswer\(action, reopen = false\)/,
+    'after process death the app lands on the Inbox; the record and its request stay on disk while they are sent again');
+// The durable record goes only after core acknowledges (finishAnswer) or conclusively refuses (a stale session, an invalid request).
+assert.match(model, /if \(current\.hidden\) \{ keepProcessing\(null\); return \}/);
+assert.match(model, /keepProcessing\(if \(it\.hidden\) null else it\.copy\(pending = null\)\)/);
+assert.match(model, /val started = if \(reopen\) InboxProcessing\.started\([^\n]*\) else null\s+acknowledged\(action\)\s+ui \{ keepProcessing\(started\)/);
+assert.match(activity, /val flow = processing\?\.takeUnless \{ it\.hidden \}/);
+assert.match(processUi, /\.put\("hidden", hidden\)/);
+// Clearing an active chip removes its value, so a second tap changes nothing (core's clear).
+assert.match(searchUi, /key\.startsWith\("status:"\) -> removed\("selectedStatuses"/);
+assert.match(searchUi, /key\.startsWith\("token:"\) -> removed\("selectedTokens"/);
 assert.match(model, /acknowledged\(action\)\s+ui \{ finishAnswer\(reply\) \}/);
 assert.equal(code(model).match(/runtime\.(commitInboxProcessingStep|skipInboxProcessingTask)\(/g).length, 2);
-assert.match(model, /if \(UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\) ui \{ failedAction = null; processing\?\.let \{ keepProcessing\(it\.copy\(pending = null\)\) \} \}/,
+assert.match(model, /if \(UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\) ui \{ failedAction = null; processing\?\.let \{ keepProcessing\(if \(it\.hidden\) null else it\.copy\(pending = null\)\) \} \}/,
     'a refused answer wrote nothing, so no request is owed');
 assert.match(model, /saved\["processing"\] = value != null/);
 assert.doesNotMatch(code(model), /saved\["processing"\] = (?!value != null)/, 'the Bundle holds only whether Process Inbox is open');

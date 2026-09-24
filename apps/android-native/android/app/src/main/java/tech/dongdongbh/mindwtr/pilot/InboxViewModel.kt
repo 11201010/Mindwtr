@@ -231,7 +231,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     // Control edits core had not answered before the process died are sent again, in order.
                     pumpEdits()
                     if (reopenProcessing != null) resumeProcessing(reopenProcessing) else processingStore.delete()
-                    search?.let { readSearch() }
+                    search?.let { current ->
+                        readSearch()
+                        // A Save Search whose outcome was lost with the process: its exact request first, then the dialog unlocks.
+                        current.submitted?.let { name -> if (failedAction == null) saveSearchAction(current, name).let { failedAction = it; sendSaveSearch(it) } }
+                    }
                 }
             } catch (failure: Throwable) {
                 Log.e(CoreHost.TAG, "Core boot failed", failure)
@@ -310,7 +314,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val action = pending.action
         if (action.kind == "create") { setCapture(action.title, action.id, action.title); showCapture(true) }
         // An owed saved search or Process Inbox answer reopens its screen on the same request.
-        if (action.kind == "saveSearch") keepSearch(SearchState(action.title, saveName = action.patch["name"], saveRequestId = action.id))
+        if (action.kind == "saveSearch") keepSearch(SearchState(action.title, saveName = action.patch["name"], saveRequestId = action.id, submitted = action.patch["name"]))
         if (action.kind in STEP_KINDS) storedProcessing?.let { keepProcessing(it.copy(pending = action)) }
         if (action.kind == "createProject") setProjectDraft(action.title, action.base["areaId"], action.id)
         areaFilter = pending.areas
@@ -676,10 +680,38 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun changeStatus(task: TaskRow, status: String) {
         statusMenu = null
         if (status == task.status) return
-        val action = statusAction(task, status)
-        perform(action) { runtime ->
-            runtime.updateTask(task.id, json(action.base), json(action.patch))
-            acknowledged(action)
+        sendUpdate(statusAction(task, status))
+    }
+
+    /** Core's updateTask with [action]'s exact request: the status menu, the Restore and Next swipes, and their retry. */
+    private fun sendUpdate(action: FailedAction) = perform(action) { runtime ->
+        runtime.updateTask(action.id, json(action.base), json(action.patch))
+        acknowledged(action)
+    }
+
+    /**
+     * The failure banner's Try again while a command's retry is owed: that exact request again, on every screen,
+     * so a command started where its control is gone (the status menu on Focus, a closed dialog) stays retryable.
+     */
+    fun retryOwed() {
+        val action = failedAction ?: return
+        when (action.kind) {
+            "create" -> add()
+            "complete" -> complete(action.id)
+            "update" -> sendUpdate(action)
+            "saveDraft" -> sendDraft(action)
+            "taskFocus" -> setTaskFocus(action.id, action.patch["focused"] == "true")
+            "projectFocus" -> setProjectFocus(action.id, action.patch["focused"] == "true")
+            "createProject" -> createProject(action.base["areaId"].orEmpty())
+            "areaFilter" -> sendAreaFilter(action)
+            "saveSearch" -> sendSaveSearch(action)
+            "inboxCommit", "inboxSkip" -> sendAnswer(action, reopen = processing?.hidden == false)
+            // A read that met an unsaved write: read again under the same lock; its success clears it.
+            "storage" -> perform(action) { runtime ->
+                val lists = read(runtime, depth())
+                acknowledged(action)
+                ui { showLists(lists, ++issued) }
+            }
         }
     }
 
@@ -738,15 +770,29 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun saveSearchAction(current: SearchState, name: String) =
         FailedAction("saveSearch", current.saveRequestId, current.query.trim(), patch = mapOf("name" to name.trim()))
 
-    /** RN's handleSaveSearch through core's saveSearch; the request UUID stays with the dialog, so a retry is exact. */
+    /**
+     * RN's handleSaveSearch through core's saveSearch. The submitted request (query, name, UUID) is kept with the
+     * screen before the call; until core answers, the dialog shows it and cannot change it, and after process death
+     * it is sent again before the dialog unlocks.
+     */
     fun saveSearch(name: String) {
         val current = search ?: return
         val action = saveSearchAction(current, name)
-        perform(action) { runtime ->
+        if (busy || (failedAction != null && failedAction != action)) return
+        keepSearch(current.copy(submitted = action.patch["name"]))
+        sendSaveSearch(action)
+    }
+
+    private fun sendSaveSearch(action: FailedAction) = perform(action) { runtime ->
+        try {
             runtime.saveSearch(JSONObject().put("query", action.title).put("name", action.patch["name"]).put("requestId", action.id).toString())
-            acknowledged(action)
-            ui { search?.let { keepSearch(it.copy(saveName = null, saveRequestId = UUID.randomUUID().toString())) } }
+        } catch (failure: Exception) {
+            // Refused before writing: nothing is owed, and the dialog unlocks with core's message.
+            if (UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }) ui { failedAction = null; search?.let { keepSearch(it.copy(submitted = null)) } }
+            throw failure
         }
+        acknowledged(action)
+        ui { search?.let { keepSearch(it.copy(saveName = null, submitted = null, saveRequestId = UUID.randomUUID().toString())) } }
     }
 
     /** A project hit, or a task core cannot open in the editor: the list RN routes to, when this app has it. */
@@ -777,15 +823,14 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      * so a refusal wrote nothing and only core's message shows. Another failure keeps the retry on the Inbox.
      */
     private fun resumeProcessing(restored: InboxProcessing) {
-        keepProcessing(null)
-        val action = restored.pending ?: return
-        if (failedAction != null) return
+        val action = restored.pending
+        if (action == null || failedAction != null) { keepProcessing(null); return }
+        // The screen closes, but the record and its request stay on disk until core acknowledges or conclusively
+        // refuses it: another process death during this replay finds it again.
+        keepProcessing(restored.copy(hidden = true))
         failedAction = action
         sendAnswer(action, reopen = false)
     }
-
-    /** The Inbox banner's Try again for an owed Process Inbox answer: the same request again. */
-    fun retryAnswer() { failedAction?.takeIf { it.kind in STEP_KINDS }?.let { sendAnswer(it, reopen = processing != null) } }
 
     /** RN's mode switch: kept on the device, and the same item's step in the other mode. */
     fun switchProcessingMode(mode: String) {
@@ -862,7 +907,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             val message = failure.message.orEmpty()
             if (!message.startsWith("STALE_REVISION")) {
                 // A refusal (INVALID_INPUT) wrote nothing either: no request is owed.
-                if (UPDATE_REFUSALS.any { message.startsWith(it) }) ui { failedAction = null; processing?.let { keepProcessing(it.copy(pending = null)) } }
+                if (UPDATE_REFUSALS.any { message.startsWith(it) }) ui { failedAction = null; processing?.let { keepProcessing(if (it.hidden) null else it.copy(pending = null)) } }
                 throw failure
             }
             val started = if (reopen) InboxProcessing.started(runtime.startInboxProcessing(processingMode)) else null
@@ -878,8 +923,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private fun finishAnswer(reply: JSONObject) {
         reply.optJSONObject("notice")?.let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
         reply.optJSONObject("toast")?.let { showToast(null, it.getString("message"), "info") }
-        // A background re-send after process death has no screen to move on.
+        // A background re-send after process death has no screen to move on; its record is done.
         val current = processing ?: return
+        if (current.hidden) { keepProcessing(null); return }
         val view = reply.optJSONObject("view")
         if (view == null) closeProcessing() else keepProcessing(current.copy(view = view, pending = null))
     }
@@ -925,12 +971,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun areaFilterAction(option: AreaOption) = FailedAction("areaFilter", option.next)
 
     /** RN's area sheet: one tap sends that option's `next` selection; every list is then read again. */
-    fun setAreaFilter(option: AreaOption) {
-        val action = areaFilterAction(option)
-        perform(action) { runtime ->
-            runtime.setAreaFilter(option.next)
-            acknowledged(action)
-        }
+    fun setAreaFilter(option: AreaOption) = sendAreaFilter(areaFilterAction(option))
+
+    /** Core's setAreaFilter with [action]'s `next` selection (its id), unchanged. */
+    private fun sendAreaFilter(action: FailedAction) = perform(action) { runtime ->
+        runtime.setAreaFilter(action.id)
+        acknowledged(action)
     }
 
     private fun keepProject(id: String?) {

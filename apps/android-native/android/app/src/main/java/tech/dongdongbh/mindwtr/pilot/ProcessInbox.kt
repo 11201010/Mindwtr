@@ -85,7 +85,9 @@ val STEP_KINDS = setOf("inboxCommit", "inboxSkip")
 /**
  * Process Inbox on screen: core's session, its step view, and an answer whose outcome is unknown
  * ([pending], its exact request). [edits] are control edits with core or waiting for it, sent one at
- * a time; [queued] is an answer tapped while they were.
+ * a time; [queued] is an answer tapped while they were. A [hidden] record has no screen: after process
+ * death the app lands on the Inbox while the owed request is sent again, and the record stays on disk
+ * until core acknowledges or refuses it.
  */
 data class InboxProcessing(
     val sessionId: String,
@@ -93,11 +95,12 @@ data class InboxProcessing(
     val pending: FailedAction? = null,
     val edits: List<JSONObject> = emptyList(),
     val queued: Pair<String, String>? = null,
+    val hidden: Boolean = false,
 ) {
     val taskId: String get() = view.getString("taskId")
     val step: String get() = view.getString("step")
 
-    fun state(): JSONObject = JSONObject().put("sessionId", sessionId).put("view", view).put("pending", pending?.let {
+    fun state(): JSONObject = JSONObject().put("sessionId", sessionId).put("view", view).put("hidden", hidden).put("pending", pending?.let {
         JSONObject().put("kind", it.kind).put("id", it.id).put("title", it.title).put("patch", JSONObject(it.patch))
     } ?: JSONObject.NULL)
 
@@ -111,7 +114,7 @@ data class InboxProcessing(
                 val patch = action.getJSONObject("patch")
                 FailedAction(action.getString("kind"), action.getString("id"), action.getString("title"),
                     patch = patch.keys().asSequence().associateWith<String, String?> { patch.getString(it) })
-            })
+            }, hidden = saved.optBoolean("hidden"))
     }
 }
 
@@ -163,7 +166,7 @@ fun ProcessInboxScreen(model: InboxViewModel, flow: InboxProcessing) = with(mode
 
     Column(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().semantics { testTagsAsResourceId = true }.testTag("process-inbox")) {
         ProgressHeader(model, flow, canAnswer("inboxSkip", ""), locked)
-        error?.let { message -> FailureBanner(message) {} }
+        error?.let { message -> FailureBanner(message) { OwedRetry(model) } }
         Column(Modifier.weight(1f).fillMaxWidth().imePadding()) {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 16.dp)) {
                 CaptureCard(flow, locked, send)

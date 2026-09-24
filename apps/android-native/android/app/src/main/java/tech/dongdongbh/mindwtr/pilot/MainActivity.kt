@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val open = editor
-                val flow = processing
+                val flow = processing?.takeUnless { it.hidden }
                 val searching = search
                 // Full-screen flows over the tabs, as RN presents them: the editor, then Process Inbox, then search.
                 if (open != null && writable) TaskEditorScreen(model, open)
@@ -136,8 +136,7 @@ class MainActivity : ComponentActivity() {
                         error?.let { message ->
                             FailureBanner(message) {
                                 if (failedAction == null) TextButton(onClick = { refresh() }, enabled = !busy) { Text(t("common.retry")) }
-                                // A Process Inbox answer re-sent after process death: only its exact retry.
-                                if (failedAction?.kind in STEP_KINDS) TextButton(onClick = { retryAnswer() }, enabled = !busy) { Text(t("common.retry")) }
+                                else OwedRetry(model)
                             }
                         }
                         Box(Modifier.weight(1f)) {
@@ -209,6 +208,15 @@ fun FailureBanner(message: String, action: @Composable RowScope.() -> Unit) {
             modifier = Modifier.weight(1f).padding(start = 8.dp).semantics { liveRegion = LiveRegionMode.Assertive })
         action()
     }
+}
+
+/**
+ * Try again for an owed command's exact request (InboxViewModel.retryOwed), in every screen's failure banner:
+ * a command started where its control is gone (the status menu on Focus, a closed sheet) stays retryable.
+ */
+@Composable
+fun OwedRetry(model: InboxViewModel) {
+    if (model.failedAction != null) TextButton(onClick = model::retryOwed, enabled = !model.busy) { Text(t("common.retry")) }
 }
 
 /**

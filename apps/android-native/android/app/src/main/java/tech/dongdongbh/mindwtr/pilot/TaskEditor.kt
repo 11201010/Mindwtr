@@ -373,7 +373,10 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
         // Core's message; after a conflict, "Try again" takes the stored values of the fields core named and keeps the other edits.
         error?.let { message ->
             // Reload waits while control edits are with core, so it never leaves them unsent.
-            FailureBanner(message) { if (conflict) TextButton(onClick = model::reloadEditor, enabled = !busy && !failed && !editsPending) { Text(t("common.retry")) } }
+            FailureBanner(message) {
+                if (conflict) TextButton(onClick = model::reloadEditor, enabled = !busy && !failed && !editsPending) { Text(t("common.retry")) }
+                else OwedRetry(model)
+            }
         }
         Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(20.dp)) {
             if (editor.readOnly) Text(t("projects.archivedReadOnlyHint"), style = rnText(14, 400), color = c.secondaryText,

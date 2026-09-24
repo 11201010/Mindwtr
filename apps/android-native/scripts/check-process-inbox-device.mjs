@@ -9,7 +9,9 @@
 // Back returns; (d) rotation keeps the step; (e) Quick shows core's quick choices, and Guided
 // comes back. (f) Only when core's first item is one of the device checks' own captures: a
 // Trash whose commit fails keeps its exact retry through rotation, and the retry deletes it
-// once. It touches only the development package (it refuses any other APK), never launches
+// once; (g) process death before the write, after the write, and again during the replay: the app
+// lands on the Inbox, the answer is sent again, it is stored at most once, and its record on disk goes only
+// once core has answered. It touches only the development package (it refuses any other APK), never launches
 // over another app, leaves the app on its Inbox, restores rotation and the mode, and clears
 // its debug properties on exit. Leave the device on its home screen. It needs host `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -49,6 +51,19 @@ const CHECK_CAPTURE = /^(8[1-6]|7[12]|91|5[12])[0-9]{12}/;
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting, type } = device;
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+/** Home (so Android saves the screen's state), then kill the process, as the system does in the background. */
+const killInBackground = async () => {
+    const processId = pid();
+    requireAppFront();
+    sh('input keyevent KEYCODE_HOME');
+    await waitFor('home screen', () => front().includes(`${home}/`), 10_000);
+    await sleep(1500);
+    sh(`run-as ${PKG} kill -9 ${processId}`);
+    await waitFor('process death', () => pid() !== processId, 10_000);
+};
+/** Process Inbox's record in the no-backup folder (the screen and an owed answer's exact request). */
+const record = () => { try { return sh(`run-as ${PKG} ls no_backup/process-inbox`).split(/\s+/).includes('processing'); } catch { return false; } };
 const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 const answers = (outcome) => device.logs(pid(), TAG).replace(/\\/g, '').split('\n').filter((line) => line.includes('native-android-dev-task-command')
     && line.includes('"operation":"inboxCommit"') && line.includes(`"outcome":"${outcome}"`)).length;
@@ -196,6 +211,41 @@ try {
             `(f) the retry trashed "${guided.title}" once, and the step moved on`);
     } else {
         console.log(`note - (f) core's first item "${guided.title}" is not a device check capture; the Trash retry step is skipped`);
+    }
+
+    // (g) Process death with a Trash in flight: before the write, then after the write and again during the replay.
+    for (const [label, prop, written] of [['before the write', 'delay_before_ms', false], ['after the write', 'delay_after_ms', true]]) {
+        nodes = await screen();
+        if (!inProcess(nodes)) {
+            const open = nodes.find((node) => node['content-desc']?.startsWith(`${en['inbox.processButton']} (`)) ?? fail('no Process Inbox button');
+            nodes = await tapExpecting(open, inProcess, 'Process Inbox');
+        }
+        const item = core('guided');
+        if (!CHECK_CAPTURE.test(item.title ?? '')) {
+            console.log(`note - (g) core's first item "${item.title}" is not a device check capture; the death steps are skipped`);
+            break;
+        }
+        nodes = await waitFor('the item', (current) => showsStep(current, item), 15_000);
+        setProp(prop, '8000');
+        await tapExpecting(withDescription(nodes, en['inbox.trash']), (current) => withDescription(current, en['inbox.trash'])?.enabled !== 'true', 'the Trash in flight');
+        if (written) await waitFor('the Trash on disk', () => core('guided', [], item.taskId).deleted === true, 7_000);
+        check(record(), `(g) ${label}: the answer's request is on disk before core answers`);
+        await killInBackground();
+        setProp(prop, '');
+        if (written) {
+            // A second death while the replay itself is held: the record must still be there for the next launch.
+            setProp('delay_before_ms', '8000');
+            device.launch(ACTIVITY);
+            await waitFor('the Inbox during the replay', onInbox, 60_000);
+            await killInBackground();
+            setProp('delay_before_ms', '');
+            check(record(), '(g) a death during the replay keeps the request on disk');
+        }
+        device.launch(ACTIVITY);
+        nodes = await waitFor('the Inbox, as RN lands after process death', onInbox, 60_000);
+        await waitFor('the replay to finish', () => !record(), 30_000);
+        const after = core('guided', [], item.taskId);
+        check(after.deleted === written, `(g) ${label}: the app lands on the Inbox, the replay ends the record, and "${item.title}" is ${written ? 'trashed once' : 'kept'}`);
     }
     console.log('Process Inbox device check passed');
 } catch (error) {
