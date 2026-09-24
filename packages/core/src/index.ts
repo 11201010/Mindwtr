@@ -205,6 +205,7 @@ export * from './archive-view-model';
 export * from './trash-view-model';
 export * from './calendar-composer';
 export * from './calendar-day-items';
+export * from './calendar-view-model';
 export * from './calendar-feed';
 export * from './calendar-push-scheduler';
 export * from './date-draft';

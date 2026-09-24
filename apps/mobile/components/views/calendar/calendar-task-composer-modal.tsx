@@ -1,9 +1,11 @@
 import {
   CALENDAR_TIME_ESTIMATE_OPTIONS,
-  formatQuickAddHelp,
+  formatCalendarShortDate,
+  getCalendarComposerText,
+  isCalendarComposerSaveDisabled,
   resolveFeatureFlags,
   useTaskStore,
-  type CalendarComposerState,
+  type CalendarViewComposerState,
   type Task,
 } from '@mindwtr/core';
 import React from 'react';
@@ -20,10 +22,7 @@ import type { ThemeColors } from '@/hooks/use-theme-colors';
 
 import { styles } from './calendar-view.styles';
 
-export type MobileCalendarComposerState = CalendarComposerState & {
-  date: Date;
-  startTimeValue: string;
-};
+export type MobileCalendarComposerState = CalendarViewComposerState;
 
 type CalendarTaskComposerModalProps = {
   bottomInset: number;
@@ -49,7 +48,6 @@ type CalendarTaskComposerModalProps = {
   t: (key: string) => string;
   tc: ThemeColors;
   toRgba: (hex: string, alpha: number) => string;
-  tr: (key: string) => string;
 };
 
 export function CalendarTaskComposerModal({
@@ -76,14 +74,10 @@ export function CalendarTaskComposerModal({
   t,
   tc,
   toRgba,
-  tr,
 }: CalendarTaskComposerModalProps) {
   const prioritiesEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).priorities);
-  const saveDisabled = composer
-    ? composer.mode === 'new'
-      ? !composer.title.trim()
-      : !composer.selectedTaskId
-    : true;
+  const saveDisabled = isCalendarComposerSaveDisabled(composer);
+  const text = getCalendarComposerText(t, { priorities: prioritiesEnabled });
 
   return (
     <Modal
@@ -116,14 +110,14 @@ export function CalendarTaskComposerModal({
             <View style={styles.composerHeader}>
               <View style={styles.taskItemMain}>
                 <Text accessibilityRole="header" style={[styles.composerTitle, { color: tc.text }]}>
-                  {tr('calendar.mobile.scheduleTask')}
+                  {text.title}
                 </Text>
                 <Text style={[styles.composerDate, { color: tc.secondaryText }]}>
-                  {composer.date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' })}
+                  {formatCalendarShortDate(composer.date, locale)}
                 </Text>
               </View>
               <Pressable
-                accessibilityLabel={t('common.close')}
+                accessibilityLabel={text.close}
                 accessibilityRole="button"
                 hitSlop={6}
                 onPress={closeComposer}
@@ -135,8 +129,8 @@ export function CalendarTaskComposerModal({
 
             <View style={[styles.composerModeToggle, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
               {[
-                { value: 'new' as const, label: tr('calendar.mobile.newTask') },
-                { value: 'existing' as const, label: tr('calendar.mobile.existingTask') },
+                { value: 'new' as const, label: text.newTask },
+                { value: 'existing' as const, label: text.existingTask },
               ].map((option) => {
                 const active = composer.mode === option.value;
                 return (
@@ -159,23 +153,23 @@ export function CalendarTaskComposerModal({
             {composer.mode === 'new' ? (
               <View style={styles.composerSection}>
                 <TextInput
-                  accessibilityLabel={t('calendar.addTask')}
+                  accessibilityLabel={text.titlePlaceholder}
                   onChangeText={setTitle}
-                  placeholder={t('calendar.addTask')}
+                  placeholder={text.titlePlaceholder}
                   placeholderTextColor={tc.secondaryText}
                   style={[styles.input, styles.composerInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                   value={composer.title}
                 />
                 <Text style={[styles.composerHelp, { color: tc.secondaryText }]}>
-                  {formatQuickAddHelp(t('quickAdd.help'), { priorities: prioritiesEnabled })}
+                  {text.help}
                 </Text>
               </View>
             ) : (
               <View style={styles.composerSection}>
                 <TextInput
-                  accessibilityLabel={t('calendar.schedulePlaceholder')}
+                  accessibilityLabel={text.queryPlaceholder}
                   onChangeText={setQuery}
-                  placeholder={t('calendar.schedulePlaceholder')}
+                  placeholder={text.queryPlaceholder}
                   placeholderTextColor={tc.secondaryText}
                   style={[styles.input, styles.composerInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                   value={composer.query}
@@ -206,7 +200,7 @@ export function CalendarTaskComposerModal({
                   })}
                   {candidates.length === 0 && (
                     <Text style={[styles.noTasks, { color: tc.secondaryText }]}>
-                      {tr('calendar.mobile.noMatchingTasks')}
+                      {text.noMatchingTasks}
                     </Text>
                   )}
                 </ScrollView>
@@ -224,9 +218,9 @@ export function CalendarTaskComposerModal({
 
             <View style={styles.composerTimeRow}>
               <View style={styles.composerTimeField}>
-                <Text style={[styles.composerLabel, { color: tc.secondaryText }]}>{tr('taskEdit.start')}</Text>
+                <Text style={[styles.composerLabel, { color: tc.secondaryText }]}>{text.start}</Text>
                 <TextInput
-                  accessibilityLabel={tr('taskEdit.start')}
+                  accessibilityLabel={text.start}
                   keyboardType="numbers-and-punctuation"
                   onChangeText={setStartTime}
                   placeholder={startTimePlaceholder}
@@ -236,9 +230,9 @@ export function CalendarTaskComposerModal({
                 />
               </View>
               <View style={styles.composerTimeField}>
-                <Text style={[styles.composerLabel, { color: tc.secondaryText }]}>{tr('calendar.mobile.end')}</Text>
+                <Text style={[styles.composerLabel, { color: tc.secondaryText }]}>{text.end}</Text>
                 <TextInput
-                  accessibilityLabel={tr('calendar.mobile.end')}
+                  accessibilityLabel={text.end}
                   keyboardType="numbers-and-punctuation"
                   onChangeText={setEndTime}
                   placeholder={endTimePlaceholder}
@@ -289,15 +283,15 @@ export function CalendarTaskComposerModal({
 
             <View style={styles.composerActions}>
               <Pressable
-                accessibilityLabel={t('common.cancel')}
+                accessibilityLabel={text.cancel}
                 accessibilityRole="button"
                 onPress={closeComposer}
                 style={[styles.composerCancelButton, { backgroundColor: tc.inputBg }]}
               >
-                <Text style={[styles.composerActionText, { color: tc.text }]}>{t('common.cancel')}</Text>
+                <Text style={[styles.composerActionText, { color: tc.text }]}>{text.cancel}</Text>
               </Pressable>
               <Pressable
-                accessibilityLabel={t('common.save')}
+                accessibilityLabel={text.save}
                 accessibilityRole="button"
                 accessibilityState={{ disabled: saveDisabled }}
                 disabled={saveDisabled}
@@ -310,7 +304,7 @@ export function CalendarTaskComposerModal({
                   },
                 ]}
               >
-                <Text style={[styles.composerActionText, { color: tc.onTint }]}>{t('common.save')}</Text>
+                <Text style={[styles.composerActionText, { color: tc.onTint }]}>{text.save}</Text>
               </Pressable>
             </View>
           </View>

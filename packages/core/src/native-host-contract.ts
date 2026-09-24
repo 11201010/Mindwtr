@@ -186,6 +186,7 @@ import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskSortBy } from './t
 import { createMenuViewMethods } from './native-host-contract-menu-views';
 import { createReviewViewMethods } from './native-host-contract-review-views';
 import { createQuickCaptureMethods } from './native-host-contract-quick-capture';
+import { createCalendarViewMethods } from './native-host-contract-calendar';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -937,6 +938,18 @@ export function createNativeHostContract() {
             save,
             t: () => translate,
             formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            rows: (tasks, now) => {
+                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
+            },
+        }),
+        // The Calendar screen: native-host-contract-calendar.ts.
+        ...createCalendarViewMethods({
+            readiness,
+            save,
+            t: () => translate,
+            dateFormatting,
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             rows: (tasks, now) => {
                 const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));

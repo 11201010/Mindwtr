@@ -89,7 +89,6 @@ const baseProps = {
   t,
   tc,
   toRgba: (color: string, alpha: number) => `${color}:${alpha}`,
-  tr: t,
 };
 
 describe('CalendarTaskComposerModal', () => {
