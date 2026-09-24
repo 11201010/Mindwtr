@@ -768,6 +768,7 @@ export type DailyReviewStepsOptions = {
     todayCalendarEventCount?: number;
     tomorrowCalendarEventCount?: number;
     externalCalendarHasError?: boolean;
+    externalCalendarLoading?: boolean;
 };
 
 export type WeeklyReviewStepsOptions = {
@@ -775,6 +776,7 @@ export type WeeklyReviewStepsOptions = {
     includeContextStep?: boolean;
     externalCalendarDayCount?: number;
     externalCalendarHasError?: boolean;
+    externalCalendarLoading?: boolean;
 };
 
 /**
@@ -800,7 +802,8 @@ export function buildReviewSteps(
             || b.dueToday.length > 0
             || (opts.todayCalendarEventCount ?? 0) > 0
             || (opts.tomorrowCalendarEventCount ?? 0) > 0
-            || Boolean(opts.externalCalendarHasError);
+            || Boolean(opts.externalCalendarHasError)
+            || Boolean(opts.externalCalendarLoading);
         const steps: ReviewStepFlags[] = [
             { id: 'today', hasWork: todayHasWork },
             { id: 'inbox', hasWork: b.inbox.length > 0 },
@@ -818,7 +821,8 @@ export function buildReviewSteps(
     const b = buckets as WeeklyReviewBuckets;
     const calendarHasWork = b.calendarItems.length > 0
         || (opts.externalCalendarDayCount ?? 0) > 0
-        || Boolean(opts.externalCalendarHasError);
+        || Boolean(opts.externalCalendarHasError)
+        || Boolean(opts.externalCalendarLoading);
     // "Not due yet" (scheduled) items don't count as work: nothing to act on today.
     const waitingHasWork = b.waitingGroups.due.length + b.waitingGroups.unscheduled.length > 0;
     const somedayHasWork = b.somedayGroups.due.length + b.somedayGroups.unscheduled.length > 0;

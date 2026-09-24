@@ -212,6 +212,8 @@ export const en: Record<string, string> = {
         'list.done': 'Completed',
         'list.tasks': 'Task list',
         'list.countTaskSingular': 'task',
+        'review.activeTask': 'active task',
+        'process.incubateWhen': 'When should it come back?',
         'list.countProjectSingular': 'project',
         'list.confirmBatchDelete': 'Delete selected tasks?',
         'list.taskDeleted': 'Task deleted',

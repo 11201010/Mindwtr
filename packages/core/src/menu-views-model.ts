@@ -152,6 +152,8 @@ export type WaitingViewModel = {
     people: string[];
     /** False when the person asked for is no longer offered; mobile then clears it. */
     personOffered: boolean;
+    /** A removed person falls back to All before rows are rendered. */
+    person: string;
     count: number;
     withDeadlineCount: number;
     deferredProjects: Project[];
@@ -190,8 +192,10 @@ export function buildWaitingViewModel(input: {
     }
     const people = [...spellings.values()].sort((a, b) => baseTextCollator.compare(a, b));
     const selected = input.person.toLowerCase();
+    const personOffered = !input.person || people.some((person) => person.toLowerCase() === selected);
+    const effectivePerson = personOffered ? input.person : '';
     const tasks = waitingTasks.filter((task) => {
-        if (!input.person) return true;
+        if (!effectivePerson) return true;
         const person = getWaitingPerson(task);
         return Boolean(person) && person!.toLowerCase() === selected;
     });
@@ -199,7 +203,8 @@ export function buildWaitingViewModel(input: {
     return {
         tasks,
         people,
-        personOffered: !input.person || people.some((person) => person.toLowerCase() === selected),
+        personOffered,
+        person: effectivePerson,
         count: tasks.length,
         withDeadlineCount: tasks.filter((task) => task.dueDate).length,
         deferredProjects,

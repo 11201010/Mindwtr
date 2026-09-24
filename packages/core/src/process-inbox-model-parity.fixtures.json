@@ -11,6 +11,19 @@
     "incubate needs a return date and keeps the someday section",
     "the next item keeps its dates after Start later, Next, Incubate and Waiting"
    ]
+  },
+  "recapturedAfterFix": {
+   "baseSha": "1efd948b43c7f2d5b47b243dfbf3133f1db5b1ba",
+   "sourceState": "fix commit on branch fix/rn-review-inbox-bugs (uncommitted working tree; no commit created)",
+   "cases": {
+    "processInbox": [
+     "start later needs a date; date-only and default time",
+     "incubate needs a return date and keeps the someday section",
+     "delegate with the review date visible and more options",
+     "title tokens, an invalid date command, and a timed task",
+     "dates without a default schedule time keep the date only"
+    ]
+   }
   }
  },
  "timeZone": "America/New_York",
@@ -5483,7 +5496,7 @@
        "energyLevel": "low",
        "assignedTo": "Bob",
        "timeEstimate": "30min",
-       "startTime": "2026-09-25T09:00",
+       "startTime": "2026-09-25T14:30",
        "dueDate": "2026-09-30",
        "reviewAt": "<undefined>",
        "title": "Fix sink",
@@ -6236,7 +6249,7 @@
     "toasts": []
    },
    {
-    "closed": 1,
+    "closed": 3,
     "step": "none",
     "writes": [
      [
@@ -6249,6 +6262,7 @@
        "contexts": [],
        "tags": [],
        "viewSectionIds": {},
+       "reviewAt": "<undefined>",
        "title": "Learn piano",
        "description": "<undefined>"
       }
@@ -8633,7 +8647,7 @@
        "energyLevel": "high",
        "assignedTo": "Al",
        "timeEstimate": "1hr",
-       "startTime": "2026-09-25T09:00",
+       "startTime": "2026-09-25T14:30",
        "dueDate": "<undefined>",
        "reviewAt": "2026-10-02T09:00",
        "title": "Fix sink",
@@ -15117,7 +15131,7 @@
        "energyLevel": "low",
        "assignedTo": "Alex Kim",
        "timeEstimate": "30min",
-       "startTime": "2026-09-25T09:00",
+       "startTime": "2026-09-25T14:30",
        "dueDate": "2026-09-24",
        "reviewAt": "<undefined>",
        "title": "Fix sink",
@@ -16070,7 +16084,7 @@
        "energyLevel": "low",
        "assignedTo": "Bob",
        "timeEstimate": "30min",
-       "startTime": "2026-09-25",
+       "startTime": "2026-09-25T14:30",
        "dueDate": "2026-09-30",
        "reviewAt": "<undefined>",
        "title": "Fix sink",

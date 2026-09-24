@@ -204,6 +204,8 @@ export const faOverrides: Record<string, string> = {
         'list.done': 'تکمیل‌شده',
         'list.tasks': 'فهرست کارها',
         'list.countTaskSingular': 'کار',
+        'review.activeTask': 'کار فعال',
+        'process.incubateWhen': 'چه زمانی باید دوباره برگردد؟',
         'list.countProjectSingular': 'پروژه',
         'list.confirmBatchDelete': 'کارهای انتخاب‌شده حذف شوند؟',
         'list.taskDeleted': 'کار حذف شد',

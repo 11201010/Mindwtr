@@ -108,6 +108,18 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         expect(daily.items.map((item) => [item.row.id, item.showFocusToggle])).toEqual(dailyBuckets.focusCandidates.map((task) => [task.id, true]));
     });
 
+    it('uses the singular task unit for a Daily Review count of one', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario(), undefined, { ...part,
+            tasks: part.tasks.filter((task, index, tasks) => task.status !== 'inbox'
+                || tasks.findIndex((candidate) => candidate.status === 'inbox') === index) });
+        const daily = value(host.getDailyReview({ checkpoint: JSON.stringify({ step: 'inbox', startedAt: part.now }), calendar: ready, ...page }));
+        expect(daily.content.step).toBe('inbox');
+        if (daily.content.step !== 'inbox') return;
+        expect(daily.content.count).toBe(1);
+        expect(daily.content.unit).toBe('task');
+    });
+
     it('moves through the Weekly Review by checkpoints and resumes where it stopped', async () => {
         freezeClock();
         const { host } = await openHost();
@@ -204,7 +216,7 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         const { host, recorder } = await openHost();
         const followUp = { requestId: generateUUID(), action: { type: 'followUpToday' as const, taskId: 'w-vendor' } };
         expect(value(await host.runReviewAction(followUp))).toMatchObject({ changed: true });
-        expect(recorder.log).toEqual([['updateTask', 'w-vendor', { reviewAt: getReviewDay(new Date()).toISOString() }]]);
+        expect(recorder.log).toEqual([['updateTask', 'w-vendor', { reviewAt: '2026-09-23' }]]);
         // Already due for review: nothing to write, even for a new request.
         expect(value(await host.runReviewAction({ ...followUp, requestId: generateUUID() }))).toMatchObject({ changed: false });
         expect(recorder.log).toHaveLength(1);

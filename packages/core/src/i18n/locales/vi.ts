@@ -279,6 +279,8 @@ export const viOverrides: Record<string, string> = {
         'list.done': 'Đã hoàn thành',
         'list.tasks': 'Danh sách nhiệm vụ',
         'list.countTaskSingular': 'nhiệm vụ',
+        'review.activeTask': 'nhiệm vụ đang hoạt động',
+        'process.incubateWhen': 'Khi nào việc này nên quay lại?',
         'list.countProjectSingular': 'dự án',
         'list.confirmBatchDelete': 'Xóa các nhiệm vụ đã chọn?',
         'list.taskDeleted': 'Đã xóa nhiệm vụ',

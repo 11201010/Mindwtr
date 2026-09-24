@@ -25,6 +25,7 @@ import { buildBulkOrganizeTaskUpdates, type BulkOrganizeTaskUpdateInput } from '
 import { buildBulkTaskTokenUpdates, collectBulkTaskTokens } from './bulk-task-tokens';
 import { safeParseDate, type DateFormatter } from './date';
 import { formatI18nTemplate, tFallback } from './i18n';
+import { formatListItemCountNoun } from './list-count';
 import type { ExternalCalendarEvent } from './ics';
 import {
     NATIVE_HOST_CONTRACT_VERSION,
@@ -570,6 +571,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             const days = getExternalCalendarDaySummaries(calendar.events, 7, now);
             const flags = buildReviewSteps(buckets, {
                 kind: 'weekly', includeContextStep, externalCalendarDayCount: days.length, externalCalendarHasError: Boolean(calendar.error),
+                externalCalendarLoading: calendar.loading,
             });
             const steps = titleWeeklyReviewSteps(flags, labels);
             const { session, resumed } = restoreReviewSession<WeeklyReviewStepId>('weekly', checkpoint, { now, weekStart });
@@ -732,8 +734,9 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             const days = [today, tomorrow].map((day) => getDailyReviewCalendarDay(calendar.events, day, text, formatDate));
             const buckets = getDailyReviewBuckets(state.tasks, state.projects, { now: today, sortBy, sections: state.sections });
             const flags: ReviewStepFlags[] = buildReviewSteps(buckets, {
-                kind: 'daily', includeFocusStep, todayCalendarEventCount: days[0].count, tomorrowCalendarEventCount: days[1].count,
-                externalCalendarHasError: Boolean(calendar.error),
+                kind: 'daily', includeFocusStep,
+                todayCalendarEventCount: days[0].count, tomorrowCalendarEventCount: days[1].count,
+                externalCalendarHasError: Boolean(calendar.error), externalCalendarLoading: calendar.loading,
             });
             const steps = titleDailyReviewSteps(flags, t);
             const { session, resumed } = restoreReviewSession<DailyReviewStepId>('daily', checkpoint, { now });
@@ -751,7 +754,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 items = getDailyReviewTodayTasks(buckets).map((task) => item(task));
                 const notice = calendar.loading ? text.loading : calendar.error;
                 content = {
-                    step, count: items.length, unit: text.tasks,
+                    step, count: items.length, unit: formatListItemCountNoun(items.length, 'task', t),
                     calendar: {
                         label: text.events,
                         count: days[0].count + days[1].count,
@@ -769,12 +772,13 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             } else if (step === 'inbox') {
                 items = buckets.inbox.map((task) => item(task));
                 content = {
-                    step, count: items.length, unit: text.tasks,
+                    step, count: items.length, unit: formatListItemCountNoun(items.length, 'task', t),
                     processLabel: items.length > 0 ? text.processInbox : null, empty: items.length === 0 ? text.inboxEmpty : null,
                 };
             } else if (step === 'waiting') {
                 items = buckets.waiting.map((task) => item(task, { followUp: getDailyReviewFollowUp(task, today, text) }));
-                content = { step, count: items.length, unit: text.tasks, empty: items.length === 0 ? text.waitingEmpty : null };
+                content = { step, count: items.length, unit: formatListItemCountNoun(items.length, 'task', t),
+                    empty: items.length === 0 ? text.waitingEmpty : null };
             } else {
                 content = { step: 'completed' };
             }

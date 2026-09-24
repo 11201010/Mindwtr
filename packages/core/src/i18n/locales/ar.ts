@@ -186,6 +186,8 @@ export const arOverrides: Record<string, string> = {
         'list.done': 'مكتمل',
         'list.tasks': 'قائمة المهام',
         'list.countTaskSingular': 'مهمة',
+        'review.activeTask': 'مهمة نشطة',
+        'process.incubateWhen': 'متى ينبغي أن يعود؟',
         'list.countProjectSingular': 'مشروع',
         'list.confirmBatchDelete': 'هل تريد حذف المهام المحددة؟',
         'list.taskDeleted': 'تم حذف المهمة',

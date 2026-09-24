@@ -222,6 +222,8 @@ export const jaOverrides: Record<string, string> = {
         'list.done': '完了済み',
         'list.tasks': 'タスクリスト',
         'list.countTaskSingular': '件のタスク',
+        'review.activeTask': '件の進行中タスク',
+        'process.incubateWhen': 'いつ再表示しますか？',
         'list.countProjectSingular': '件のプロジェクト',
         'list.confirmBatchDelete': '選択したタスクを削除しますか？',
         'list.taskDeleted': 'タスクを削除しました',

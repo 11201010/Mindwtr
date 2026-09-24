@@ -1,9 +1,10 @@
 import React from 'react';
-import { ScrollView } from 'react-native';
+import { ScrollView, Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DailyReviewScreen } from './daily-review-modal';
+import { fetchExternalCalendarEvents } from '../lib/external-calendar';
 
 const { mockStorageGetItem, mockStorageRemoveItem, mockStorageSetItem } = vi.hoisted(() => ({
     mockStorageGetItem: vi.fn(),
@@ -103,6 +104,7 @@ vi.mock('../contexts/language-context', () => ({
             'common.close': 'Close',
             'common.loading': 'Loading',
             'common.tasks': 'tasks',
+            'list.countTaskSingular': 'task',
             'dailyReview.completeDesc': 'Complete',
             'dailyReview.completeTitle': 'Complete',
             'dailyReview.followUpToday': 'Follow up today',
@@ -207,6 +209,24 @@ vi.mock('lucide-react-native', () => {
 });
 
 describe('DailyReviewScreen', () => {
+    it('holds Today open until the calendar fetch settles', async () => {
+        storeState.tasks = [];
+        let settle!: (value: Awaited<ReturnType<typeof fetchExternalCalendarEvents>>) => void;
+        vi.mocked(fetchExternalCalendarEvents).mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+        let tree!: ReturnType<typeof create>;
+        await act(async () => { tree = create(<DailyReviewScreen onClose={vi.fn()} />); });
+        expect(tree.root.findAllByProps({ testID: 'daily-review-step-scroll-today' }).length).toBeGreaterThan(0);
+        await act(async () => { settle({ events: [], calendars: [] }); });
+        expect(tree.root.findAllByProps({ testID: 'daily-review-completed-scroll' }).length).toBeGreaterThan(0);
+    });
+
+    it('shows the singular noun for one Today task', async () => {
+        let tree!: ReturnType<typeof create>;
+        await act(async () => { tree = create(<DailyReviewScreen onClose={vi.fn()} />); });
+        const scroll = tree.root.findByProps({ testID: 'daily-review-step-scroll-today' });
+        expect(scroll.findAllByType(Text).some((node) => React.Children.toArray(node.props.children).some((child) =>
+            typeof child === 'string' && child.trim() === 'task'))).toBe(true);
+    });
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-07-15T12:00:00.000Z'));

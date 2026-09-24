@@ -16,6 +16,7 @@ type Props = {
   setPendingStartDate: (v: Date | null) => void;
   pendingStartDateOnly: boolean;
   setPendingStartDateOnly: (v: boolean) => void;
+  useDefaultStartTime: () => void;
   setShowStartDatePicker: (v: boolean) => void;
   pendingDueDate: Date | null;
   setPendingDueDate: (v: Date | null) => void;
@@ -42,6 +43,7 @@ export function InboxSchedulingSection({
   setPendingStartDate,
   pendingStartDateOnly,
   setPendingStartDateOnly,
+  useDefaultStartTime,
   setShowStartDatePicker,
   pendingDueDate,
   setPendingDueDate,
@@ -82,7 +84,7 @@ export function InboxSchedulingSection({
           onQuickDateSelect={(date) => { setPendingStartDate(date); setPendingStartDateOnly(false); }}
           dateOnly={pendingStartDateOnly}
           onDateOnly={() => setPendingStartDateOnly(true)}
-          onUseDefaultTime={() => setPendingStartDateOnly(false)}
+          onUseDefaultTime={useDefaultStartTime}
         />
       )}
       {showDueDateField && (

@@ -2,7 +2,72 @@
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_REVIEW_VIEWS=1 bunx vitest run 'app/(drawer)/review.parity.test.tsx' components/review-modal.parity.test.tsx components/daily-review-modal.parity.test.tsx",
   "capturedAt": "5918b6c98f3d5d245c1462ac4117b9c73e4af521",
-  "note": "Every part was captured from the React Native screens at capturedAt, before their logic moved into core: the three harness files and review-modal.parity-support.ts were the only changes in the checkout; no screen, controller or label file had changed. Do not regenerate it from core: it is the reference core and the native host contract must match. Recaptured from RN on branch fix/rn-list-view-bugs (base 1f412786e) with the command above: only the bulk delete Undo label changed (\"Restore to Inbox\" to \"Undo\"), because single and bulk delete now share one Undo label."
+  "note": "Every part was captured from the React Native screens at capturedAt, before their logic moved into core: the three harness files and review-modal.parity-support.ts were the only changes in the checkout; no screen, controller or label file had changed. Do not regenerate it from core: it is the reference core and the native host contract must match. Recaptured from RN on branch fix/rn-list-view-bugs (base 1f412786e) with the command above: only the bulk delete Undo label changed (\"Restore to Inbox\" to \"Undo\"), because single and bulk delete now share one Undo label.",
+  "recapturedAfterFix": {
+   "baseSha": "1efd948b43c7f2d5b47b243dfbf3133f1db5b1ba",
+   "sourceState": "fix commit on branch fix/rn-review-inbox-bugs (uncommitted working tree; no commit created)",
+   "cases": {
+    "review": [
+     "overview: collapsed areas",
+     "overview: expansion cycle",
+     "overview: one area and one project at a time",
+     "overview: the Home area filter",
+     "overview: title sort",
+     "overview: unassigned area colour",
+     "rows: status, delete and edit",
+     "bulk: move to a status, then cancel a selection",
+     "bulk: add and remove tags",
+     "bulk: delete, confirm and restore",
+     "bulk: organize and share",
+     "start a review"
+    ],
+    "weeklyReview": [
+     "weekly: every step, then finish",
+     "weekly: expand and collapse lists",
+     "weekly: add tasks to projects",
+     "weekly: a session from this week resumes",
+     "weekly: rows, the editor and the calendar quick add",
+     "weekly: pause and resume",
+     "weekly: no contexts step",
+     "weekly: Monday week start",
+     "weekly: dates follow the app date format",
+     "weekly: AI suggestions"
+    ],
+    "dailyReview": [
+     "daily: rows, the editor and follow-ups",
+     "daily: an empty system",
+     "daily: a calendar error"
+    ]
+   }
+  },
+  "correctionPass1": {
+   "baseSha": "1efd948b43c7f2d5b47b243dfbf3133f1db5b1ba",
+   "sourceState": "fix commit on branch fix/rn-review-inbox-bugs (uncommitted working tree; no commit created)",
+   "cases": {
+    "review": [
+     "overview: collapsed areas",
+     "overview: expansion cycle",
+     "overview: one area and one project at a time",
+     "overview: title sort",
+     "overview: unassigned area colour",
+     "rows: status, delete and edit",
+     "bulk: move to a status, then cancel a selection",
+     "bulk: add and remove tags",
+     "bulk: delete, confirm and restore",
+     "bulk: organize and share",
+     "start a review"
+    ],
+    "weeklyReview": [
+     "weekly: every step, then finish",
+     "weekly: expand and collapse lists",
+     "weekly: add tasks to projects",
+     "weekly: a session from this week resumes",
+     "weekly: no contexts step",
+     "weekly: Monday week start"
+    ],
+    "dailyReview": ["daily: rows, the editor and follow-ups"]
+   }
+  }
  },
  "review": {
   "timeZone": "America/New_York",
@@ -836,17 +901,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -879,10 +944,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -918,17 +983,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -961,10 +1026,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -998,9 +1063,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -1008,23 +1073,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -1035,7 +1100,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -1077,7 +1142,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -1099,7 +1164,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -1130,10 +1195,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1178,9 +1243,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -1188,23 +1253,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -1215,7 +1280,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -1257,7 +1322,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -1279,7 +1344,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -1310,10 +1375,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1454,17 +1519,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -1497,10 +1562,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1536,17 +1601,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -1579,10 +1644,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1616,23 +1681,23 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -1665,7 +1730,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -1696,10 +1761,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1733,23 +1798,23 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -1782,7 +1847,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -1813,10 +1878,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1861,23 +1926,23 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -1910,7 +1975,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -1941,10 +2006,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -1994,27 +2059,27 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -2047,7 +2112,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -2069,7 +2134,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -2100,10 +2165,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -2153,9 +2218,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -2163,23 +2228,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -2190,7 +2255,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -2232,7 +2297,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -2254,7 +2319,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -2285,10 +2350,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -2333,9 +2398,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -2343,17 +2408,17 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -2364,7 +2429,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -2406,7 +2471,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -2428,10 +2493,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -2476,9 +2541,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -2486,23 +2551,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -2513,7 +2578,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -2555,7 +2620,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -2577,7 +2642,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -2608,10 +2673,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -2658,13 +2723,13 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 tasks without an area",
+      "1 task without an area",
       "Home",
       "2 projects · 5 tasks · 1 needs action"
      ],
      "headers": [
       [
-       "Unassigned, 1 tasks without an area",
+       "Unassigned, 1 task without an area",
        false,
        [
         "#94a3b8"
@@ -2712,13 +2777,13 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 tasks without an area",
+      "1 task without an area",
       "Single actions",
-      "1 tasks · Single actions",
+      "1 task · Single actions",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
@@ -2726,7 +2791,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 tasks without an area",
+       "Unassigned, 1 task without an area",
        true,
        [
         "#94a3b8"
@@ -2737,7 +2802,7 @@
        ]
       ],
       [
-       "Single actions, 1 tasks",
+       "Single actions, 1 task",
        false,
        [],
        [
@@ -2757,7 +2822,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -2814,13 +2879,13 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 tasks without an area",
+      "1 task without an area",
       "Single actions",
-      "1 tasks · Single actions",
+      "1 task · Single actions",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
@@ -2828,7 +2893,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 tasks without an area",
+       "Unassigned, 1 task without an area",
        true,
        [
         "#94a3b8"
@@ -2839,7 +2904,7 @@
        ]
       ],
       [
-       "Single actions, 1 tasks",
+       "Single actions, 1 task",
        true,
        [],
        [
@@ -2859,7 +2924,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -2949,17 +3014,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -2992,10 +3057,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -3029,9 +3094,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -3039,23 +3104,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -3066,7 +3131,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -3108,7 +3173,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -3130,7 +3195,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -3161,10 +3226,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -3209,9 +3274,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -3219,23 +3284,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -3246,7 +3311,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -3288,7 +3353,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -3310,7 +3375,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -3341,10 +3406,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -3487,17 +3552,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#ff00aa"
@@ -3530,10 +3595,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -3567,9 +3632,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -3577,23 +3642,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#ff00aa"
@@ -3604,7 +3669,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -3646,7 +3711,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -3668,7 +3733,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -3699,10 +3764,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -3807,17 +3872,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -3850,10 +3915,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -3887,9 +3952,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -3897,23 +3962,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -3924,7 +3989,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -3966,7 +4031,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -3988,7 +4053,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -4019,10 +4084,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -4067,9 +4132,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -4077,23 +4142,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -4104,7 +4169,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4146,7 +4211,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -4168,7 +4233,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -4199,10 +4264,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -4343,33 +4408,33 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
       "2 projects · 2 tasks",
       "Launch",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -4380,7 +4445,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4411,7 +4476,7 @@
        ]
       ],
       [
-       "Launch, 1 active tasks · Has Next Action",
+       "Launch, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4422,7 +4487,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -4444,7 +4509,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -4475,10 +4540,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -4622,33 +4687,33 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 8 tasks without an area",
+      "1 project · 8 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "7 tasks · Single actions",
       "Work",
       "2 projects · 2 tasks",
       "Launch",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 8 tasks without an area",
+       "Unassigned, 1 project · 8 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -4659,7 +4724,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4690,7 +4755,7 @@
        ]
       ],
       [
-       "Launch, 1 active tasks · Has Next Action",
+       "Launch, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4701,7 +4766,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -4723,7 +4788,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -4754,10 +4819,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -4893,33 +4958,33 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 8 tasks without an area",
+      "1 project · 8 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "7 tasks · Single actions",
       "Work",
       "2 projects · 2 tasks",
       "Launch",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 8 tasks without an area",
+       "Unassigned, 1 project · 8 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -4930,7 +4995,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4961,7 +5026,7 @@
        ]
       ],
       [
-       "Launch, 1 active tasks · Has Next Action",
+       "Launch, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -4972,7 +5037,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -4994,7 +5059,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -5025,10 +5090,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -5164,17 +5229,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -5207,10 +5272,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -5244,9 +5309,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -5254,23 +5319,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -5281,7 +5346,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -5323,7 +5388,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -5345,7 +5410,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -5376,10 +5441,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -5424,9 +5489,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -5434,23 +5499,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -5461,7 +5526,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -5503,7 +5568,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -5525,7 +5590,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -5556,10 +5621,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -5707,9 +5772,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -5717,23 +5782,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -5744,7 +5809,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -5786,7 +5851,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -5808,7 +5873,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -5839,10 +5904,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -6006,9 +6071,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -6016,23 +6081,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -6043,7 +6108,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -6085,7 +6150,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -6107,7 +6172,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -6138,10 +6203,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -6305,9 +6370,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -6315,17 +6380,17 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action",
       "Move to",
@@ -6339,7 +6404,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -6350,7 +6415,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -6392,7 +6457,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -6414,7 +6479,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -6445,10 +6510,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -6629,9 +6694,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -6639,23 +6704,23 @@
       "Launch",
       "2 active tasks · Waiting",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -6666,7 +6731,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -6708,7 +6773,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -6730,7 +6795,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -6761,10 +6826,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -6945,9 +7010,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -6955,23 +7020,23 @@
       "Launch",
       "2 active tasks · Waiting",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -6982,7 +7047,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -7024,7 +7089,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -7046,7 +7111,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -7077,10 +7142,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -7237,9 +7302,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -7247,23 +7312,23 @@
       "Launch",
       "2 active tasks · Waiting",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -7274,7 +7339,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -7316,7 +7381,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -7338,7 +7403,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -7369,10 +7434,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -7520,9 +7585,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -7530,23 +7595,23 @@
       "Launch",
       "2 active tasks · Waiting",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -7557,7 +7622,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -7599,7 +7664,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -7621,7 +7686,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -7652,10 +7717,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -7812,9 +7877,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -7822,23 +7887,23 @@
       "Launch",
       "2 active tasks · Waiting",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -7849,7 +7914,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -7891,7 +7956,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -7913,7 +7978,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -7944,10 +8009,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -8090,17 +8155,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -8133,10 +8198,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -8170,9 +8235,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -8180,23 +8245,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -8207,7 +8272,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -8249,7 +8314,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -8271,7 +8336,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -8302,10 +8367,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -8350,9 +8415,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -8360,23 +8425,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -8387,7 +8452,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -8429,7 +8494,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -8451,7 +8516,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -8482,10 +8547,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -8633,9 +8698,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -8643,23 +8708,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -8670,7 +8735,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -8712,7 +8777,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -8734,7 +8799,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -8765,10 +8830,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -8932,9 +8997,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -8942,23 +9007,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -8969,7 +9034,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -9011,7 +9076,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -9033,7 +9098,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -9064,10 +9129,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -9231,9 +9296,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -9241,17 +9306,17 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action",
       "Add tag",
@@ -9260,7 +9325,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -9271,7 +9336,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -9313,7 +9378,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -9335,7 +9400,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -9366,10 +9431,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -9537,9 +9602,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -9547,17 +9612,17 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action",
       "Add tag",
@@ -9566,7 +9631,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -9577,7 +9642,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -9619,7 +9684,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -9641,7 +9706,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -9672,10 +9737,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -9836,9 +9901,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -9846,23 +9911,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -9873,7 +9938,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -9915,7 +9980,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -9937,7 +10002,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -9968,10 +10033,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -10150,9 +10215,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -10160,23 +10225,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -10187,7 +10252,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -10229,7 +10294,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -10251,7 +10316,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -10282,10 +10347,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -10449,9 +10514,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -10459,23 +10524,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -10486,7 +10551,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -10528,7 +10593,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -10550,7 +10615,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -10581,10 +10646,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -10748,9 +10813,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -10758,23 +10823,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -10785,7 +10850,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -10827,7 +10892,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -10849,7 +10914,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -10880,10 +10945,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -11047,9 +11112,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -11057,23 +11122,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -11084,7 +11149,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -11126,7 +11191,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -11148,7 +11213,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -11179,10 +11244,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -11352,17 +11417,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -11395,10 +11460,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -11432,9 +11497,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -11442,23 +11507,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -11469,7 +11534,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -11511,7 +11576,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -11533,7 +11598,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -11564,10 +11629,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -11612,9 +11677,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -11622,23 +11687,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -11649,7 +11714,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -11691,7 +11756,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -11713,7 +11778,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -11744,10 +11809,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -11895,9 +11960,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -11905,23 +11970,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -11932,7 +11997,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -11974,7 +12039,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -11996,7 +12061,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -12027,10 +12092,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -12194,9 +12259,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -12204,23 +12269,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -12231,7 +12296,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -12273,7 +12338,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -12295,7 +12360,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -12326,10 +12391,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -12493,9 +12558,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -12503,23 +12568,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -12530,7 +12595,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -12572,7 +12637,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -12594,7 +12659,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -12625,10 +12690,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -12807,9 +12872,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -12817,23 +12882,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -12844,7 +12909,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -12886,7 +12951,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -12908,7 +12973,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -12939,10 +13004,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -13106,9 +13171,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -13116,23 +13181,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -13143,7 +13208,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -13185,7 +13250,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -13207,7 +13272,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -13238,10 +13303,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -13413,9 +13478,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 7 tasks without an area",
+      "1 project · 7 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "6 tasks · Single actions",
       "Work",
@@ -13423,23 +13488,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 7 tasks without an area",
+       "Unassigned, 1 project · 7 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -13450,7 +13515,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -13492,7 +13557,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -13514,7 +13579,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -13545,10 +13610,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -13694,9 +13759,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -13704,23 +13769,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -13731,7 +13796,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -13773,7 +13838,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -13795,7 +13860,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -13826,10 +13891,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -13981,17 +14046,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -14024,10 +14089,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -14061,9 +14126,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -14071,23 +14136,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -14098,7 +14163,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        false,
        [
         "#10b981"
@@ -14140,7 +14205,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        false,
        [
         "#f59e0b"
@@ -14162,7 +14227,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        false,
        [
         "#ef4444"
@@ -14193,10 +14258,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -14241,9 +14306,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -14251,23 +14316,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -14278,7 +14343,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -14320,7 +14385,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -14342,7 +14407,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -14373,10 +14438,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -14524,9 +14589,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -14534,23 +14599,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -14561,7 +14626,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -14603,7 +14668,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -14625,7 +14690,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -14656,10 +14721,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -14823,9 +14888,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -14833,23 +14898,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -14860,7 +14925,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -14902,7 +14967,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -14924,7 +14989,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -14955,10 +15020,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -15122,9 +15187,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "8 tasks · Single actions",
       "Work",
@@ -15132,23 +15197,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "2 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -15159,7 +15224,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -15201,7 +15266,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -15223,7 +15288,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -15254,10 +15319,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -15417,9 +15482,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 7 tasks without an area",
+      "1 project · 7 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "6 tasks · Single actions",
       "Work",
@@ -15427,23 +15492,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 7 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "4 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 7 tasks without an area",
+       "Unassigned, 1 project · 7 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -15454,7 +15519,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -15496,7 +15561,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -15518,7 +15583,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -15549,10 +15614,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -15734,9 +15799,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 7 tasks without an area",
+      "1 project · 7 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "6 tasks · Single actions",
       "Work",
@@ -15744,23 +15809,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 7 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "4 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 7 tasks without an area",
+       "Unassigned, 1 project · 7 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -15771,7 +15836,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -15813,7 +15878,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -15835,7 +15900,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -15866,10 +15931,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16033,9 +16098,9 @@
       "Share",
       "Delete",
       "Unassigned",
-      "1 projects · 7 tasks without an area",
+      "1 project · 7 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "6 tasks · Single actions",
       "Work",
@@ -16043,23 +16108,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 7 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "4 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 7 tasks without an area",
+       "Unassigned, 1 project · 7 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -16070,7 +16135,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -16112,7 +16177,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -16134,7 +16199,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -16165,10 +16230,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16325,9 +16390,9 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 7 tasks without an area",
+      "1 project · 7 tasks without an area",
       "Orphan",
-      "1 active tasks · Has Next Action",
+      "1 active task · Has Next Action",
       "Single actions",
       "6 tasks · Single actions",
       "Work",
@@ -16335,23 +16400,23 @@
       "Launch",
       "2 active tasks · Has Next Action",
       "Vendor contract",
-      "1 active tasks · Waiting",
+      "1 active task · Waiting",
       "Home",
       "2 projects · 7 tasks · 1 needs action",
       "Garden",
-      "1 active tasks · Needs Action",
+      "1 active task · Needs Action",
       "Move house",
       "2 active tasks · Has Next Action",
       "Single actions",
       "4 tasks · Single actions",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Side hustle",
       "2 active tasks · Has Next Action"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 7 tasks without an area",
+       "Unassigned, 1 project · 7 tasks without an area",
        true,
        [
         "#94a3b8"
@@ -16362,7 +16427,7 @@
        ]
       ],
       [
-       "Orphan, 1 active tasks · Has Next Action",
+       "Orphan, 1 active task · Has Next Action",
        true,
        [
         "#10b981"
@@ -16404,7 +16469,7 @@
        ]
       ],
       [
-       "Vendor contract, 1 active tasks · Waiting",
+       "Vendor contract, 1 active task · Waiting",
        true,
        [
         "#f59e0b"
@@ -16426,7 +16491,7 @@
        ]
       ],
       [
-       "Garden, 1 active tasks · Needs Action",
+       "Garden, 1 active task · Needs Action",
        true,
        [
         "#ef4444"
@@ -16457,10 +16522,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        true,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16605,17 +16670,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -16648,10 +16713,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16685,13 +16750,13 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Start Review",
       "Daily Review",
       "Weekly Review",
@@ -16699,7 +16764,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -16732,10 +16797,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16769,17 +16834,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -16812,10 +16877,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16849,13 +16914,13 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Start Review",
       "Daily Review",
       "Weekly Review",
@@ -16863,7 +16928,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -16896,10 +16961,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -16933,17 +16998,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -16976,10 +17041,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -17015,13 +17080,13 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks",
+      "1 project · 2 tasks",
       "Start Review",
       "Daily Review",
       "Weekly Review",
@@ -17029,7 +17094,7 @@
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -17062,10 +17127,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -17099,17 +17164,17 @@
      "texts": [
       "Start Review",
       "Unassigned",
-      "1 projects · 9 tasks without an area",
+      "1 project · 9 tasks without an area",
       "Work",
       "2 projects · 3 tasks",
       "Home",
       "2 projects · 5 tasks · 1 needs action",
       "Side",
-      "1 projects · 2 tasks"
+      "1 project · 2 tasks"
      ],
      "headers": [
       [
-       "Unassigned, 1 projects · 9 tasks without an area",
+       "Unassigned, 1 project · 9 tasks without an area",
        false,
        [
         "#94a3b8"
@@ -17142,10 +17207,10 @@
        ]
       ],
       [
-       "Side, 1 projects · 2 tasks",
+       "Side, 1 project · 2 tasks",
        false,
        [
-        "#f59e0b"
+        "#3b82f6"
        ],
        [
         "#0f172a",
@@ -18327,11 +18392,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -18577,7 +18642,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -18587,7 +18652,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -18607,7 +18672,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -19094,11 +19159,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -19197,11 +19262,11 @@
       "Less",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -19292,11 +19357,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -19848,7 +19913,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -19858,7 +19923,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -19878,7 +19943,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -19992,7 +20057,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -20002,7 +20067,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -20022,7 +20087,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -20133,7 +20198,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▾",
       "Launch",
       "Add Task",
@@ -20143,7 +20208,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -20163,7 +20228,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -20273,7 +20338,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -20283,7 +20348,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -20303,7 +20368,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -20991,11 +21056,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -21092,11 +21157,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -21429,7 +21494,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -21439,7 +21504,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -21459,7 +21524,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -21577,7 +21642,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -21587,7 +21652,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -21607,7 +21672,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -21720,7 +21785,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -21730,7 +21795,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -21750,7 +21815,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -21863,7 +21928,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -21873,7 +21938,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -21893,7 +21958,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -22013,7 +22078,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22023,7 +22088,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -22043,7 +22108,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -22156,7 +22221,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22166,7 +22231,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -22186,7 +22251,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -22299,7 +22364,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22329,7 +22394,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -22449,7 +22514,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22479,7 +22544,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -22587,7 +22652,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22617,7 +22682,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -22730,7 +22795,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22760,7 +22825,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -22873,7 +22938,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -22903,7 +22968,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -23011,7 +23076,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -23041,7 +23106,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -23154,7 +23219,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -23184,7 +23249,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →",
@@ -23297,7 +23362,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -23327,7 +23392,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -23633,11 +23698,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -23750,11 +23815,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -23921,7 +23986,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -23931,7 +23996,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -23951,7 +24016,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -24145,7 +24210,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -24155,7 +24220,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -24175,7 +24240,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -24971,11 +25036,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -25122,7 +25187,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -25132,7 +25197,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -25152,7 +25217,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -25451,11 +25516,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Pay rent",
-      "Due Date · 09/23/2026, 11:59 PM",
+      "Due Date · 09/23/2026",
       "Draft launch post",
-      "Due Date · 09/24/2026, 11:59 PM",
+      "Due Date · 09/24/2026",
       "Record demo",
       "Start Date · 09/25/2026, 11:00 AM",
       "← Back",
@@ -25701,7 +25766,7 @@
       "Vendor contract",
       "Add Task",
       "Waiting",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Launch",
       "Add Task",
@@ -25711,7 +25776,7 @@
       "Garden",
       "Add Task",
       "Needs Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "Move house",
       "Add Task",
@@ -25731,7 +25796,7 @@
       "Orphan",
       "Add Task",
       "Has Next Action",
-      "1 active tasks",
+      "1 active task",
       "▸",
       "← Back",
       "Next →"
@@ -26644,11 +26709,11 @@
       "+1 More",
       "Mindwtr tasks (next 7 days)",
       "Parcel delivery",
-      "Due Date · 2026-09-23 23:59",
+      "Due Date · 2026-09-23",
       "Pay rent",
-      "Due Date · 2026-09-23 23:59",
+      "Due Date · 2026-09-23",
       "Draft launch post",
-      "Due Date · 2026-09-24 23:59",
+      "Due Date · 2026-09-24",
       "Record demo",
       "Start Date · 2026-09-25 11:00",
       "← Back",
@@ -27292,7 +27357,7 @@
       "54 days inactive",
       "Highlight stale items and cleanup suggestions.",
       "Run analysis",
-      "n-bike",
+      "Fix bike",
       "Move to Someday · Untouched for weeks",
       "Hear back from vendor",
       "Archive · Vendor went quiet",
@@ -28917,7 +28982,7 @@
       "Daily Review",
       "Process Inbox",
       "Step 2 of 5",
-      "1 tasks",
+      "1 task",
       "Clarify new inputs into the right lists.",
       "Process Inbox",
       "Back",
@@ -29076,7 +29141,7 @@
        "updateTask",
        "w-vendor",
        {
-        "reviewAt": "2026-09-23T04:00:00.000Z"
+        "reviewAt": "2026-09-23"
        }
       ]
      ],
@@ -29142,7 +29207,7 @@
        "updateTask",
        "w-parcel",
        {
-        "reviewAt": "2026-09-23T04:00:00.000Z"
+        "reviewAt": "2026-09-23"
        }
       ]
      ],
@@ -30687,6 +30752,11 @@
       [
        "set",
        "mindwtr:dailyReview:currentStep",
+       "{\"step\":\"today\",\"startedAt\":\"2026-09-23T14:00:00.000Z\"}"
+      ],
+      [
+       "set",
+       "mindwtr:dailyReview:currentStep",
        "{\"step\":\"completed\",\"startedAt\":\"2026-09-23T14:00:00.000Z\"}"
       ]
      ],
@@ -30722,19 +30792,32 @@
     {
      "texts": [
       "Daily Review",
-      "Ready",
-      "Step 2 of 2",
-      "You’re clear and ready to engage.",
-      "Finish"
+      "Today & Calendar",
+      "Step 1 of 2",
+      "0 tasks",
+      "Check what’s due today and your calendar commitments.",
+      "Events",
+      "0",
+      "09/23/2026 · Events",
+      "Calendar feed unreachable",
+      "09/24/2026 · Events",
+      "Calendar feed unreachable",
+      "Nothing to focus on right now. Star a task or give it a due date and it will show up here.",
+      "Back",
+      "Next Step"
      ],
      "rows": [],
      "footer": [
       [
-       "Finish",
+       "Back",
+       true
+      ],
+      [
+       "Next Step",
        false
       ]
      ],
-     "calendarExpanded": null,
+     "calendarExpanded": true,
      "editor": null,
      "inboxProcessing": false,
      "writes": [],
@@ -30746,7 +30829,7 @@
       [
        "set",
        "mindwtr:dailyReview:currentStep",
-       "{\"step\":\"completed\",\"startedAt\":\"2026-09-23T14:00:00.000Z\"}"
+       "{\"step\":\"today\",\"startedAt\":\"2026-09-23T14:00:00.000Z\"}"
       ]
      ],
      "closes": 0,

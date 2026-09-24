@@ -4,6 +4,7 @@ import {
     createDateFormatter,
     getQuickDate,
     hasTimeComponent,
+    isDueForReview,
     isQuickDatePresetSelected,
     normalizeClockTimeInput,
     safeFormatDate,
@@ -325,22 +326,40 @@ export function formatProcessInboxScheduleValue(
     dateOnly: boolean,
     defaultScheduleTime: string,
 ): string {
-    const dateOnlyValue = safeFormatDate(value, 'yyyy-MM-dd');
+    const dateOnlyValue = createDateFormatter({ calendarSystem: 'gregorian' })(value, 'yyyy-MM-dd');
     return defaultScheduleTime && !dateOnly ? `${dateOnlyValue}T${defaultScheduleTime}` : dateOnlyValue;
 }
 
-export type ProcessInboxPendingDate = { value: Date | string | null; dateOnly: boolean };
+const formatProcessInboxStart = (date: ProcessInboxPendingDate, defaultTime: string, stored?: string): string | undefined => {
+    if (!date.value) return undefined;
+    if (!stored || date.dateOnly || date.useDefaultTime || !hasTimeComponent(stored)) {
+        return formatProcessInboxScheduleValue(date.value, date.dateOnly, defaultTime);
+    }
+    const parsed = safeParseDate(stored);
+    if (!parsed) return formatProcessInboxScheduleValue(date.value, date.dateOnly, defaultTime);
+    const formatDate = createDateFormatter({ calendarSystem: 'gregorian' });
+    const day = formatDate(date.value, 'yyyy-MM-dd');
+    return day === formatDate(parsed, 'yyyy-MM-dd') ? stored : `${day}T${formatDate(parsed, 'HH:mm')}`;
+};
+
+export type ProcessInboxPendingDate = { value: Date | string | null; dateOnly: boolean; useDefaultTime?: boolean };
 
 export function buildProcessInboxScheduleUpdates(
     plan: Pick<ProcessInboxPlan, 'visibleFields'>,
     dates: Record<ProcessInboxScheduleField, ProcessInboxPendingDate>,
     defaultScheduleTime: string,
+    task?: Task,
+    dirtyFields: ReadonlySet<ProcessInboxScheduleField> = new Set(),
 ): Partial<Task> {
     const updates: Partial<Task> = {};
     for (const field of ['startTime', 'dueDate', 'reviewAt'] as const) {
         if (!plan.visibleFields[field]) continue;
         const { value, dateOnly } = dates[field];
-        updates[field] = value ? formatProcessInboxScheduleValue(value, dateOnly, defaultScheduleTime) : undefined;
+        updates[field] = field === 'startTime' && task?.startTime
+            ? formatProcessInboxStart(dates.startTime, defaultScheduleTime, task.startTime)
+            : !dirtyFields.has(field) && task?.[field]
+                ? task[field]
+                : value ? formatProcessInboxScheduleValue(value, dateOnly, defaultScheduleTime) : undefined;
     }
     return updates;
 }
@@ -363,6 +382,7 @@ export type ProcessInboxCommitOptions = {
     titleOverride?: string;
     fallbackTitle?: string;
     explicitDateFields?: Partial<Pick<ProcessInboxWorkflowFields, ProcessInboxScheduleField>>;
+    clearStaleReviewAt?: boolean;
 };
 
 export type PreparedProcessInboxCommit =
@@ -418,6 +438,8 @@ export function prepareProcessInboxCommit(input: {
             },
         };
     }
+    const dirty = input.dirtyScheduleFields;
+    const clearStaleReviewAt = options.clearStaleReviewAt && !edits?.explicitDateFields.reviewAt && !dirty.has('reviewAt');
     const fields = mergeParsedProcessInboxFields({
         projectId: selection.projectId ?? undefined,
         areaId: selection.areaId ?? undefined,
@@ -430,12 +452,12 @@ export function prepareProcessInboxCommit(input: {
         ...input.scheduleUpdates,
         ...options.fields,
     }, edits?.parsedFields ?? {});
-    const dirty = input.dirtyScheduleFields;
     const prepared = prepareProcessInboxDecision({
         task,
         draft: {
             fields,
-            explicitDateFields: { ...edits?.explicitDateFields, ...options.explicitDateFields },
+            explicitDateFields: { ...edits?.explicitDateFields, ...options.explicitDateFields,
+                ...(clearStaleReviewAt ? { reviewAt: undefined } : {}) },
             dateControlFields: {
                 ...(dirty.has('startTime') ? { startTime: fields.startTime } : {}),
                 ...(dirty.has('dueDate') ? { dueDate: fields.dueDate } : {}),
@@ -474,19 +496,23 @@ export function buildProcessInboxDecisionRequest(
         delegateWho: string;
         assignedTo: string;
         projectId: string | null;
+        now?: Date;
     },
 ): { ok: true; decision: ProcessInboxDecision; options: ProcessInboxCommitOptions } | { ok: false; reason: 'incubate-date-required' } {
     const format = (date: ProcessInboxPendingDate) => (
         date.value ? formatProcessInboxScheduleValue(date.value, date.dateOnly, input.defaultScheduleTime) : undefined
     );
+    const staleReviewDate = isDueForReview(input.task.reviewAt, input.now ?? new Date());
     const somedayFields = (): ProcessInboxWorkflowFields => ({
         viewSectionIds: setTaskViewSectionId(input.task.viewSectionIds, 'someday', input.somedaySectionId),
     });
     switch (kind) {
         case 'trash':
             return { ok: true, decision: { type: 'discard' }, options: {} };
-        case 'someday':
-            return { ok: true, decision: { type: 'someday' }, options: { fields: somedayFields() } };
+        case 'someday': {
+            const fields = somedayFields();
+            return { ok: true, decision: { type: 'someday' }, options: { fields, clearStaleReviewAt: staleReviewDate } };
+        }
         case 'reference':
             return { ok: true, decision: { type: 'reference' }, options: {} };
         case 'complete':
@@ -494,7 +520,7 @@ export function buildProcessInboxDecisionRequest(
         case 'skip':
             return { ok: true, decision: { type: 'skip' }, options: {} };
         case 'later':
-            return { ok: true, decision: { type: 'later' }, options: { fields: { startTime: format(input.startDate) } } };
+            return { ok: true, decision: { type: 'later' }, options: { fields: { startTime: formatProcessInboxStart(input.startDate, input.defaultScheduleTime, input.task.startTime) } } };
         case 'incubate': {
             const reviewAt = format(input.reviewDate);
             if (!reviewAt) return { ok: false, reason: 'incubate-date-required' };
@@ -972,7 +998,7 @@ export function buildProcessInboxUndoRestoreUpdates(task: Task): Partial<Task> {
 // The draft as plain JSON, and the one commit path both clients run
 
 /** A calendar day, `yyyy-MM-dd` in local time. */
-export type ProcessInboxDateValue = { date: string; dateOnly: boolean } | null;
+export type ProcessInboxDateValue = { date: string; dateOnly: boolean; useDefaultTime?: boolean } | null;
 export type ProcessInboxDateField = ProcessInboxScheduleField | 'followUp';
 
 export type ProcessInboxDraft = {
@@ -1037,7 +1063,8 @@ export function createProcessInboxDraft(task: Task): ProcessInboxDraft {
 }
 
 const pendingDate = (value: ProcessInboxDateValue): ProcessInboxPendingDate => (
-    value ? { value: value.date, dateOnly: value.dateOnly } : { value: null, dateOnly: false }
+    value ? { value: value.date, dateOnly: value.dateOnly,
+        ...(value.useDefaultTime ? { useDefaultTime: true } : {}) } : { value: null, dateOnly: false }
 );
 
 /** The collapsed capture card's plain-text, 200 UTF-16-code-unit preview. */
@@ -1135,7 +1162,8 @@ export function applyProcessInboxDraftEdit(
             const current = draft[edit.field];
             return {
                 ...draft,
-                [edit.field]: current ? { ...current, dateOnly: edit.value } : current,
+                [edit.field]: current ? { date: current.date, dateOnly: edit.value,
+                    ...(edit.field === 'startTime' && !edit.value ? { useDefaultTime: true } : {}) } : current,
                 dirtyScheduleFields: markDirty(draft, edit.field),
             };
         }
@@ -1212,7 +1240,7 @@ async function writeProcessInboxDecision<Candidate extends ProcessInboxCandidate
             startTime: pendingDate(draft.startTime),
             dueDate: pendingDate(draft.dueDate),
             reviewAt: pendingDate(draft.reviewAt),
-        }, getProcessInboxDefaultScheduleTime(ctx.settings)),
+        }, getProcessInboxDefaultScheduleTime(ctx.settings), ctx.task, new Set(draft.dirtyScheduleFields)),
         dirtyScheduleFields: new Set(draft.dirtyScheduleFields),
         options,
     });
@@ -1263,6 +1291,7 @@ export async function commitProcessInboxDecision<Candidate extends ProcessInboxC
             delegateWho: draft.delegateWho,
             assignedTo: draft.assignedTo,
             projectId: draft.projectId,
+            now: new Date(),
         });
         if (!request.ok) return { ok: false, reason: request.reason, notice: getProcessInboxNotice(ctx.t, request.reason), draft };
         const written = await writeProcessInboxDecision(ctx, request.decision, request.options, true);
@@ -1542,7 +1571,7 @@ export function getProcessInboxStepPrompt(
             };
         case 'incubate':
             return {
-                question: tf('inbox.deferWhen', 'When should it come back?'),
+                question: tf('process.incubateWhen', 'When should it come back?'),
                 hint: tf('process.incubateHint', 'Park this without deciding. It comes back to clarify on the date you choose.'),
                 choices: [],
             };
@@ -1770,8 +1799,7 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
             timeEstimates: fields.timeEstimate ? [
                 { label: t('common.none'), selected: !draft.timeEstimate, edit: { type: 'setTimeEstimate', value: null } },
                 ...resolveTimeEstimateOptions(draft.timeEstimate ?? undefined).map((estimate) => ({
-                    // Mobile formats these without its translator.
-                    label: formatTimeEstimateLabel(estimate),
+                    label: formatTimeEstimateLabel(estimate, { t }),
                     selected: draft.timeEstimate === estimate,
                     edit: { type: 'setTimeEstimate' as const, value: draft.timeEstimate === estimate ? null : estimate },
                 })),

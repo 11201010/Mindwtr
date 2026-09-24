@@ -199,6 +199,8 @@ export const huOverrides: Record<string, string> = {
     'list.done': 'Befejezve',
     'list.tasks': 'Feladatlista',
     'list.countTaskSingular': 'feladat',
+    'review.activeTask': 'aktív feladat',
+    'process.incubateWhen': 'Mikor kerüljön vissza?',
     'list.countProjectSingular': 'projekt',
     'list.confirmBatchDelete': 'Törli a kijelölt feladatokat?',
     'list.taskDeleted': 'Feladat törölve',

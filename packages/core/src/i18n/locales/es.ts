@@ -199,6 +199,8 @@ export const esOverrides: Record<string, string> = {
 'list.done': "Completadas",
 'list.tasks': "Lista de tareas",
 'list.countTaskSingular': 'tarea',
+'review.activeTask': 'tarea activa',
+'process.incubateWhen': '¿Cuándo debería volver?',
 'list.countProjectSingular': 'proyecto',
 'list.confirmBatchDelete': "¿Eliminar las tareas seleccionadas?",
 'list.taskDeleted': "Tarea eliminada",

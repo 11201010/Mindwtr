@@ -264,6 +264,8 @@ export const zhHant: Record<string, string> = {
         'list.done': '已完成',
         'list.tasks': '任務列表',
         'list.countTaskSingular': '個任務',
+        'review.activeTask': '個啟用中的任務',
+        'process.incubateWhen': '何時再處理？',
         'list.countProjectSingular': '個專案',
         'list.confirmBatchDelete': '刪除選中的任務？',
         'list.taskDeleted': '任務已刪除',

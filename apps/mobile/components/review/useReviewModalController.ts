@@ -25,7 +25,7 @@ import {
     titleWeeklyReviewSteps,
     type AIProviderId,
     type ExternalCalendarEvent,
-    type ReviewSuggestion,
+    type TitledReviewSuggestion,
     type StoredReviewStepSession,
     type Task,
     type TaskStatus,
@@ -112,13 +112,13 @@ export function useReviewModalController({
     const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [showEditModal, setShowEditModal] = useState(false);
     const [expandedProject, setExpandedProject] = useState<string | null>(null);
-    const [aiSuggestions, setAiSuggestions] = useState<ReviewSuggestion[]>([]);
+    const [aiSuggestions, setAiSuggestions] = useState<TitledReviewSuggestion[]>([]);
     const [aiSelectedIds, setAiSelectedIds] = useState<Set<string>>(new Set());
     const [aiLoading, setAiLoading] = useState(false);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiRan, setAiRan] = useState(false);
     const [externalCalendarEvents, setExternalCalendarEvents] = useState<ExternalCalendarEvent[]>([]);
-    const [externalCalendarLoading, setExternalCalendarLoading] = useState(false);
+    const [externalCalendarLoading, setExternalCalendarLoading] = useState(true);
     const [externalCalendarError, setExternalCalendarError] = useState<string | null>(null);
     const [expandedExternalDays, setExpandedExternalDays] = useState<Set<string>>(new Set());
     const [expandedContextGroups, setExpandedContextGroups] = useState<Set<string>>(new Set());
@@ -268,7 +268,10 @@ export function useReviewModalController({
     }, []);
 
     useEffect(() => {
-        if (!visible) return;
+        if (!visible) {
+            setExternalCalendarLoading(true);
+            return;
+        }
         let cancelled = false;
         const loadCalendar = async () => {
             setExternalCalendarLoading(true);
@@ -322,7 +325,6 @@ export function useReviewModalController({
     const stale = useMemo(() => getWeeklyReviewStale(staleItems, tasks, labels), [labels, staleItems, tasks]);
     const staleTasks = stale.tasks;
     const staleProjectItems = stale.projects;
-    const staleItemTitleMap = stale.titleById;
 
     const toggleSuggestion = useCallback((id: string) => {
         setAiSelectedIds((prev) => {
@@ -400,7 +402,8 @@ export function useReviewModalController({
         includeContextStep,
         externalCalendarDayCount: externalCalendarReviewItems.length,
         externalCalendarHasError: Boolean(externalCalendarError),
-    }), [externalCalendarError, externalCalendarReviewItems.length, includeContextStep, weeklyBuckets]);
+        externalCalendarLoading,
+    }), [externalCalendarError, externalCalendarLoading, externalCalendarReviewItems.length, includeContextStep, weeklyBuckets]);
     const steps = useMemo<ReviewStepDefinition[]>(
         () => titleWeeklyReviewSteps(stepFlags, labels).map((step) => ({ ...step, Icon: STEP_ICONS[step.id] })),
         [labels, stepFlags],
@@ -492,7 +495,6 @@ export function useReviewModalController({
         setProjectTaskTitle,
         showEditModal,
         somedayList,
-        staleItemTitleMap,
         staleProjectItems,
         staleTasks,
         stepRail,

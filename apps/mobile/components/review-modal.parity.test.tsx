@@ -375,6 +375,14 @@ describe('React Native Weekly Review parity fixture', () => {
     else process.env.TZ = originalTz;
   });
 
+  it('keeps an applied AI suggestion titled with the task name', async () => {
+    const scenario = scenarios.find(({ name }) => name === 'weekly: AI suggestions')!;
+    const observations = await runScenario(scenario);
+    const titles = observations.at(-1)?.texts as string[];
+    expect(titles).toContain('Fix bike');
+    expect(titles).not.toContain('n-bike');
+  });
+
   it('replays every scenario exactly as frozen', async () => {
     const captured: Record<string, unknown> = {};
     for (const scenario of scenarios) captured[scenario.name] = await runScenario(scenario);

@@ -129,15 +129,15 @@ export function WaitingView() {
             onPress={() => setSelectedWaitingPerson('')}
             style={[
               styles.filterChip,
-              { borderColor: tc.border, backgroundColor: !selectedWaitingPerson ? tc.tint : tc.filterBg },
+              { borderColor: tc.border, backgroundColor: !model.person ? tc.tint : tc.filterBg },
             ]}
           >
-            <Text style={[styles.filterChipText, { color: !selectedWaitingPerson ? tc.onTint : tc.text }]}>
+            <Text style={[styles.filterChipText, { color: !model.person ? tc.onTint : tc.text }]}>
               {labels.all}
             </Text>
           </TouchableOpacity>
           {waitingPeople.map((person) => {
-            const isActive = selectedWaitingPerson.toLowerCase() === person.toLowerCase();
+            const isActive = model.person.toLowerCase() === person.toLowerCase();
             return (
               <TouchableOpacity
                 key={person}
@@ -154,7 +154,7 @@ export function WaitingView() {
             );
           })}
         </ScrollView>
-        {selectedWaitingPerson && (
+        {model.person && (
           <TouchableOpacity
             onPress={() => setSelectedWaitingPerson('')}
             style={[styles.clearFilterButton, { borderColor: tc.border, backgroundColor: tc.filterBg }]}

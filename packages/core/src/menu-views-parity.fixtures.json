@@ -22,6 +22,15 @@
    "changedScenarios": [
     "someday: filters"
    ]
+  },
+  "addedAfterFix": {
+   "baseSha": "1efd948b43c7f2d5b47b243dfbf3133f1db5b1ba",
+   "sourceState": "fix commit on branch fix/rn-review-inbox-bugs (uncommitted working tree; no commit created)",
+   "cases": {
+   "waiting": [
+     "waiting: selected person disappears"
+    ]
+   }
   }
  },
  "timeZone": "America/New_York",
@@ -630,6 +639,22 @@
     [
      "activateProject",
      "p-vendor"
+    ]
+   ]
+  },
+  {
+   "name": "waiting: selected person disappears",
+   "screen": "waiting",
+   "settings": "base",
+   "actions": [
+    [
+     "person",
+     "bob"
+    ],
+    [
+     "status",
+     "w-bob",
+     "done"
     ]
    ]
   },
@@ -2283,6 +2308,190 @@
       "p-vendor",
       {
        "status": "active"
+      }
+     ]
+    ],
+    "toasts": []
+   }
+  ],
+  "waiting: selected person disappears": [
+   {
+    "stats": [
+     [
+      "5",
+      "Waiting"
+     ],
+     [
+      "2",
+      "With Deadline"
+     ]
+    ],
+    "filterLabel": "Who? (optional)",
+    "people": [
+     {
+      "label": "All",
+      "active": true
+     },
+     {
+      "label": "alice",
+      "active": false
+     },
+     {
+      "label": "bob",
+      "active": false
+     },
+     {
+      "label": "Carol",
+      "active": false
+     }
+    ],
+    "clear": null,
+    "rows": [
+     "w-alice2",
+     "w-alice",
+     "w-desc",
+     "w-plain",
+     "w-bob"
+    ],
+    "groups": null,
+    "deferred": {
+     "header": "Projects (2)",
+     "headerLabel": "Projects (2)",
+     "rows": [
+      {
+       "action": "Reactivate",
+       "title": "Vendor contract",
+       "area": "Work",
+       "color": "#f59e0b"
+      },
+      {
+       "action": "Reactivate",
+       "title": "Tax paperwork",
+       "area": null,
+       "color": "#94a3b8"
+      }
+     ]
+    },
+    "empty": null,
+    "writes": [],
+    "toasts": []
+   },
+   {
+    "stats": [
+     [
+      "1",
+      "Waiting"
+     ],
+     [
+      "0",
+      "With Deadline"
+     ]
+    ],
+    "filterLabel": "Who? (optional)",
+    "people": [
+     {
+      "label": "All",
+      "active": false
+     },
+     {
+      "label": "alice",
+      "active": false
+     },
+     {
+      "label": "bob",
+      "active": true
+     },
+     {
+      "label": "Carol",
+      "active": false
+     }
+    ],
+    "clear": "Clear",
+    "rows": [
+     "w-bob"
+    ],
+    "groups": null,
+    "deferred": {
+     "header": "Projects (2)",
+     "headerLabel": "Projects (2)",
+     "rows": [
+      {
+       "action": "Reactivate",
+       "title": "Vendor contract",
+       "area": "Work",
+       "color": "#f59e0b"
+      },
+      {
+       "action": "Reactivate",
+       "title": "Tax paperwork",
+       "area": null,
+       "color": "#94a3b8"
+      }
+     ]
+    },
+    "empty": null,
+    "writes": [],
+    "toasts": []
+   },
+   {
+    "stats": [
+     [
+      "4",
+      "Waiting"
+     ],
+     [
+      "2",
+      "With Deadline"
+     ]
+    ],
+    "filterLabel": "Who? (optional)",
+    "people": [
+     {
+      "label": "All",
+      "active": true
+     },
+     {
+      "label": "alice",
+      "active": false
+     },
+     {
+      "label": "Carol",
+      "active": false
+     }
+    ],
+    "clear": null,
+    "rows": [
+     "w-alice2",
+     "w-alice",
+     "w-desc",
+     "w-plain"
+    ],
+    "groups": null,
+    "deferred": {
+     "header": "Projects (2)",
+     "headerLabel": "Projects (2)",
+     "rows": [
+      {
+       "action": "Reactivate",
+       "title": "Vendor contract",
+       "area": "Work",
+       "color": "#f59e0b"
+      },
+      {
+       "action": "Reactivate",
+       "title": "Tax paperwork",
+       "area": null,
+       "color": "#94a3b8"
+      }
+     ]
+    },
+    "empty": null,
+    "writes": [
+     [
+      "updateTask",
+      "w-bob",
+      {
+       "status": "done"
       }
      ]
     ],

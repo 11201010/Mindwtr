@@ -11,10 +11,11 @@
  */
 import type { ReviewSnapshotItem, ReviewSuggestion } from './ai/types';
 import { filterReviewSuggestionsToKnownIds } from './ai/utils';
-import { DEFAULT_AREA_COLOR } from './color-constants';
-import { isDueForReview, safeParseDate, type DateFormatter } from './date';
+import { DEFAULT_AREA_COLOR, DEFAULT_PROJECT_COLOR } from './color-constants';
+import { createDateFormatter, hasTimeComponent, isDueForReview, safeParseDate, type DateFormatter } from './date';
 import { formatFocusTaskLimitText, normalizeFocusTaskLimit } from './focus-utils';
 import { formatI18nTemplate, tFallback } from './i18n';
+import { formatListItemCount } from './list-count';
 import type { ExternalCalendarEvent } from './ics';
 import { buildQuickAddParseOptions, parseProjectNextActionInput } from './quick-add';
 import { resolveFeatureFlags } from './resolve-feature-flags';
@@ -50,7 +51,9 @@ export function getReviewOverviewText(t: Translate) {
         noArea: t('review.noArea'),
         singleActions: t('review.singleActions'),
         unassigned: tFallback(t, 'review.unassigned', 'Unassigned'),
-        projects: tFallback(t, 'review.projectsLabel', 'projects'),
+        countProject: (count: number) => formatListItemCount(count, 'project', t),
+        countTask: (count: number) => formatListItemCount(count, 'task', t),
+        activeTask: tFallback(t, 'review.activeTask', 'active task'),
         needsActionSummary: tFallback(t, 'review.needsActionSummary', 'needs action'),
         withoutArea: tFallback(t, 'review.withoutArea', 'without an area'),
         activeTasks: tFallback(t, 'review.activeTasks', 'active tasks'),
@@ -58,7 +61,6 @@ export function getReviewOverviewText(t: Translate) {
         expandAreas: tFallback(t, 'review.expandAreas', 'Expand areas'),
         expandEverything: tFallback(t, 'review.expandEverything', 'Expand projects'),
         collapseEverything: tFallback(t, 'review.collapseEverything', 'Collapse all'),
-        tasks: t('common.tasks'),
         hasNextAction: t('review.hasNextAction'),
         waiting: t('status.waiting'),
         needsAction: t('review.needsAction'),
@@ -140,10 +142,10 @@ export function decorateReviewOverviewGroups(
         const isUnassigned = !group.areaId;
         const title = area?.name || representativeProject?.areaTitle || text.unassigned || text.noArea;
         const taskSummary = isUnassigned
-            ? `${group.taskCount} ${text.tasks} ${text.withoutArea}`
-            : `${group.taskCount} ${text.tasks}`;
+            ? `${text.countTask(group.taskCount)} ${text.withoutArea}`
+            : text.countTask(group.taskCount);
         const summary = [
-            group.projectCount > 0 ? `${group.projectCount} ${text.projects}` : null,
+            group.projectCount > 0 ? text.countProject(group.projectCount) : null,
             taskSummary,
             group.needsActionCount > 0 ? `${group.needsActionCount} ${text.needsActionSummary}` : null,
         ].filter(Boolean).join(' · ');
@@ -152,7 +154,7 @@ export function decorateReviewOverviewGroups(
             areaId: group.areaId ?? null,
             isUnassigned,
             title,
-            color: group.areaId ? (area?.color || representativeProject?.color || null) : unassignedAreaColor,
+            color: group.areaId ? (area?.color && area.color !== DEFAULT_PROJECT_COLOR ? area.color : null) : unassignedAreaColor,
             taskCount: group.taskCount,
             projectCount: group.projectCount,
             needsActionCount: group.needsActionCount,
@@ -164,8 +166,8 @@ export function decorateReviewOverviewGroups(
                 const state = projectGroup.nextActionState;
                 const stateLabel = state === 'next' ? text.hasNextAction : state === 'waiting' ? text.waiting : text.needsAction;
                 const projectSummary = isSingleActions
-                    ? `${projectGroup.tasks.length} ${text.tasks}`
-                    : `${projectGroup.tasks.length} ${text.activeTasks} · ${stateLabel}`;
+                    ? text.countTask(projectGroup.tasks.length)
+                    : `${projectGroup.tasks.length} ${projectGroup.tasks.length === 1 ? text.activeTask : text.activeTasks} · ${stateLabel}`;
                 return {
                     id: projectGroup.project ? `project:${projectGroup.project.id}` : `single:${id}`,
                     projectId: projectGroup.project?.id ?? null,
@@ -385,6 +387,7 @@ const defaultWeeklyReviewLabels = {
     hasNext: '✓ Has Next',
     waitingStatus: 'Waiting',
     needsAction: '! Needs Action',
+    activeTask: 'active task',
     activeTasks: 'active tasks',
     moreItems: 'more items',
 };
@@ -467,6 +470,7 @@ const weeklyReviewLabelKeys: WeeklyReviewLabels = {
     hasNext: 'review.hasNextAction',
     waitingStatus: 'status.waiting',
     needsAction: 'review.needsAction',
+    activeTask: 'review.activeTask',
     activeTasks: 'review.activeTasks',
     moreItems: 'review.moreItems',
 };
@@ -521,7 +525,6 @@ export function getWeeklyReviewStale(staleItems: readonly ReviewSnapshotItem[], 
             title: item.title,
             daysLabel: formatI18nTemplate(labels.staleDaysInactive, { days: item.daysStale }),
         })),
-        titleById: Object.fromEntries(staleItems.map((item) => [item.id, item.title])) as Record<string, string>,
     };
 }
 
@@ -567,7 +570,7 @@ export function getWeeklyReviewCalendar(
             key: `${entry.kind}-${entry.task.id}-${entry.date.toISOString()}`,
             task: entry.task,
             title: entry.task.title,
-            meta: `${entry.kind === 'due' ? labels.dueLabel : labels.startLabel} · ${formatDate(entry.date, 'Pp')}`,
+            meta: `${entry.kind === 'due' ? labels.dueLabel : labels.startLabel} · ${formatDate(entry.date, hasTimeComponent(entry.kind === 'due' ? entry.task.dueDate : entry.task.startTime) ? 'Pp' : 'P')}`,
         })),
     };
 }
@@ -624,7 +627,7 @@ export function getWeeklyReviewProjects(
             ...entry,
             areaColor: (entry.project.areaId ? areaById.get(entry.project.areaId)?.color : undefined) || null,
             badge: { label: labels[badge.label], color: badge.color, background: badge.background },
-            countLabel: `${entry.tasks.length} ${labels.activeTasks}`,
+            countLabel: `${entry.tasks.length} ${entry.tasks.length === 1 ? labels.activeTask : labels.activeTasks}`,
         };
     });
 }
@@ -685,9 +688,12 @@ export function getReviewSuggestionActionLabel(action: ReviewSuggestion['action'
 }
 
 /** Suggestions for items the review offered, as shown (and so as applied). */
-export const filterReviewSuggestions = (suggestions: readonly ReviewSuggestion[], staleItems: readonly ReviewSnapshotItem[]) => (
-    filterReviewSuggestionsToKnownIds([...suggestions], staleItems.map((item) => item.id))
-);
+export type TitledReviewSuggestion = ReviewSuggestion & { title: string };
+export const filterReviewSuggestions = (suggestions: readonly ReviewSuggestion[], staleItems: readonly ReviewSnapshotItem[]): TitledReviewSuggestion[] => {
+    const titleById = new Map(staleItems.map((item) => [item.id, item.title]));
+    return filterReviewSuggestionsToKnownIds([...suggestions], staleItems.map((item) => item.id))
+        .map((suggestion) => ({ ...suggestion, title: titleById.get(suggestion.id) ?? suggestion.id }));
+};
 
 /** Apply selected: someday, or archived and completed now. */
 export function buildReviewSuggestionUpdates(
@@ -833,5 +839,5 @@ export function getDailyReviewFollowUp(task: Task, today: Date, text: Pick<Daily
 /** Follow up today sets the review date to the start of today; nothing once it is due. */
 export function planDailyReviewFollowUp(task: Task, today: Date): { reviewAt: string } | null {
     if (isDueForReview(task.reviewAt, today)) return null;
-    return { reviewAt: getReviewDay(today).toISOString() };
+    return { reviewAt: createDateFormatter({ calendarSystem: 'gregorian' })(getReviewDay(today), 'yyyy-MM-dd') };
 }

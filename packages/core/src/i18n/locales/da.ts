@@ -201,6 +201,8 @@ export const daOverrides: Record<string, string> = {
     'list.done': 'Afsluttet',
     'list.tasks': 'Opgaveliste',
     'list.countTaskSingular': 'opgave',
+    'review.activeTask': 'aktiv opgave',
+    'process.incubateWhen': 'Hvornår skal den komme tilbage?',
     'list.countProjectSingular': 'projekt',
     'list.confirmBatchDelete': 'Vil du slette valgte opgaver?',
     'list.taskDeleted': 'Opgave slettet',

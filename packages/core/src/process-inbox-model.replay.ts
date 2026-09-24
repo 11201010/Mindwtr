@@ -468,6 +468,7 @@ export function observeProcessInbox(
     const toastEntries = recorder.normalize(toasts.splice(0)) as unknown[];
     if (!view) return { closed: true, step: 'none', writes, toasts: toastEntries };
     const { dirtyScheduleFields: _dirty, ...draft } = view.draft;
+    if (draft.startTime) draft.startTime = { date: draft.startTime.date, dateOnly: draft.startTime.dateOnly };
     return recorder.normalize({
         closed: false,
         taskId: view.taskId,

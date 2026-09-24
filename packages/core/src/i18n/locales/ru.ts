@@ -209,6 +209,8 @@ export const ruOverrides: Record<string, string> = {
         'list.done': 'Завершенный',
         'list.tasks': 'Список задач',
         'list.countTaskSingular': 'задача',
+        'review.activeTask': 'активная задача',
+        'process.incubateWhen': 'Когда вернуться к ней?',
         'list.countProjectSingular': 'проект',
         'list.confirmBatchDelete': 'Удалить выбранные задачи?',
         'list.taskDeleted': 'Задача удалена',

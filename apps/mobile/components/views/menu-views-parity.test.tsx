@@ -352,6 +352,10 @@ export const scenarios: MenuViewScenario[] = [
       ['activateProject', 'p-vendor'],
     ],
   },
+  {
+    name: 'waiting: selected person disappears', screen: 'waiting', settings: 'base',
+    actions: [['person', 'bob'], ['status', 'w-bob', 'done']],
+  },
   { name: 'waiting: the Work area', screen: 'waiting', settings: 'areaWork', actions: [] },
   {
     name: 'waiting: empty',

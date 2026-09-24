@@ -26,7 +26,7 @@ import type {
     NativeWeeklyReviewItem,
     NativeWeeklyReviewList,
 } from './native-host-contract-review-views';
-import { DAILY_REVIEW_SESSION_STORAGE_KEY, WEEKLY_REVIEW_SESSION_STORAGE_KEY, filterReviewSuggestions, getReviewCalendarRange, getReviewDay, isActionableReviewSuggestion } from './review-views-model';
+import { DAILY_REVIEW_SESSION_STORAGE_KEY, WEEKLY_REVIEW_SESSION_STORAGE_KEY, filterReviewSuggestions, getReviewCalendarRange, getReviewDay, isActionableReviewSuggestion, type TitledReviewSuggestion } from './review-views-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppSettings, Area, ExternalCalendarEvent, Project, Task } from './index';
 
@@ -414,7 +414,7 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
     let prompt: { projectId: string; projectTitle: string } | null = null;
     let promptTitle = '';
     let editor: [string, 'view' | 'task'] | null = null;
-    const ai = { ran: false, suggestions: [] as ReviewSuggestion[], selected: new Set<string>() };
+    const ai = { ran: false, suggestions: [] as TitledReviewSuggestion[], selected: new Set<string>() };
     const captures: unknown[] = [];
     const aiRequests: unknown[] = [];
     let closes = 0;
@@ -485,14 +485,13 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
             rows.push(...tasks.map((item) => item.row.id));
             whole(view, content.projects, 'staleProjects').forEach((item) => texts.push(item.title, item.daysLabel));
             if (content.ai.enabled) {
-                const titleById = Object.fromEntries(whole(view, content.ai.items, 'aiItems').map((item) => [item.id, item.title]));
                 texts.push(labels.aiDesc, labels.aiRun);
                 if (ai.ran && ai.suggestions.length === 0) texts.push(labels.aiEmpty);
                 ai.suggestions.forEach((suggestion) => {
                     const label = suggestion.action === 'someday' ? labels.aiActionSomeday
                         : suggestion.action === 'archive' ? labels.aiActionArchive
                             : suggestion.action === 'breakdown' ? labels.aiActionBreakdown : labels.aiActionKeep;
-                    texts.push(titleById[suggestion.id] || suggestion.id, `${label} · ${suggestion.reason}`);
+                    texts.push(suggestion.title, `${label} · ${suggestion.reason}`);
                     suggestionChecks.push(ai.selected.has(suggestion.id));
                 });
                 if (ai.suggestions.length > 0) texts.push(`${labels.aiApply} (${ai.selected.size})`);
@@ -638,10 +637,7 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
                 return;
             }
             case 'suggestion': {
-                const titleById = view.content.step === 'stale'
-                    ? Object.fromEntries(whole(view, view.content.ai.items, 'aiItems').map((item) => [item.id, item.title]))
-                    : {};
-                const suggestion = ai.suggestions.find((entry) => (titleById[entry.id] || entry.id) === target)!;
+                const suggestion = ai.suggestions.find((entry) => entry.title === target)!;
                 if (!isActionableReviewSuggestion(suggestion)) return;
                 if (ai.selected.has(suggestion.id)) ai.selected.delete(suggestion.id);
                 else ai.selected.add(suggestion.id);

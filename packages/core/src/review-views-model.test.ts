@@ -11,9 +11,13 @@ import {
 } from './review-views-model.replay';
 import {
     buildReviewSuggestionUpdates,
+    decorateReviewOverviewGroups,
+    filterReviewSuggestions,
+    getWeeklyReviewCalendar,
     getReviewExpansionControl,
     getReviewOverviewText,
     getWeeklyReviewLabels,
+    getWeeklyReviewProjects,
     planDailyReviewFollowUp,
     restoreReviewSession,
 } from './review-views-model';
@@ -99,8 +103,43 @@ describe('review view models', () => {
     it('follows up a waiting item once, at the start of the review day', () => {
         const today = new Date(2026, 8, 23);
         const task = { id: 't', title: 'T', status: 'waiting', reviewAt: '2026-10-05' } as Task;
-        expect(planDailyReviewFollowUp(task, today)).toEqual({ reviewAt: today.toISOString() });
+        expect(planDailyReviewFollowUp(task, today)).toEqual({ reviewAt: '2026-09-23' });
         expect(planDailyReviewFollowUp({ ...task, reviewAt: today.toISOString() }, today)).toBeNull();
+    });
+
+    it('keeps a date-only due date free of clock time', () => {
+        const task = { id: 'due', title: 'Due', dueDate: '2026-09-23' } as Task;
+        const labels = getWeeklyReviewLabels();
+        const format = (_date: Date, pattern: string) => pattern;
+        expect(getWeeklyReviewCalendar([], [{ task, date: new Date(2026, 8, 23), kind: 'due' }], labels, format).tasks[0].meta).toBe('Due · P');
+    });
+
+    it('uses theme tint for an area whose first project has only the placeholder color', () => {
+        const text = getReviewOverviewText((key) => ({ 'list.countTaskSingular': 'task', 'list.countProjectSingular': 'project' }[key] ?? key));
+        const groups = [{ areaId: 'area', taskCount: 1, projectCount: 1, needsActionCount: 0,
+            projectGroups: [{ project: { id: 'project', title: 'Project', color: '#94a3b8' }, tasks: [{ id: 'task' }], nextActionState: 'next' }] }] as never;
+        const [area] = decorateReviewOverviewGroups(groups, { areaById: new Map([['area', { id: 'area', name: 'Area' } as never]]), text, unassignedAreaColor: undefined });
+        expect(area.color).toBeNull();
+        expect(area.summary).toContain('1 project');
+        expect(area.summary).toContain('1 task');
+        expect(area.projectGroups[0].summary).toContain('1 active task');
+    });
+
+    it('does not borrow a chosen project color for an uncolored area', () => {
+        const groups = [{ areaId: 'area', taskCount: 1, projectCount: 1, needsActionCount: 0,
+            projectGroups: [{ project: { id: 'project', title: 'Project', color: '#f59e0b' },
+                tasks: [{ id: 'task' }], nextActionState: 'next' }] }] as never;
+        const [area] = decorateReviewOverviewGroups(groups, { areaById: new Map([['area', { id: 'area', name: 'Area' } as never]]),
+            text: getReviewOverviewText((key) => key), unassignedAreaColor: undefined });
+        expect(area.color).toBeNull();
+    });
+
+    it('uses the singular active-task noun in Weekly Review Projects', () => {
+        const labels = getWeeklyReviewLabels((key) => ({ 'review.activeTask': 'active task',
+            'review.activeTasks': 'active tasks' }[key] ?? key));
+        const [entry] = getWeeklyReviewProjects([{ project: { id: 'project' }, tasks: [{ id: 'task' }],
+            nextActionState: 'next' }] as never, new Map(), labels);
+        expect(entry.countLabel).toBe('1 active task');
     });
 
     it('applies only selected someday and archive suggestions for tasks', () => {
@@ -116,5 +155,11 @@ describe('review view models', () => {
             { id: 'a', updates: { status: 'someday' } },
             { id: 'b', updates: { status: 'archived', completedAt: now.toISOString() } },
         ]);
+    });
+
+    it('keeps a suggestion title after its task leaves the stale bucket', () => {
+        const [suggestion] = filterReviewSuggestions([{ id: 'task', action: 'someday', reason: 'old' }],
+            [{ id: 'task', title: 'Fix bike' } as never]);
+        expect(suggestion.title).toBe('Fix bike');
     });
 });

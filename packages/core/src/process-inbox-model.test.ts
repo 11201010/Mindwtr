@@ -17,13 +17,19 @@ import {
     getProcessInboxNotePreview,
     normalizeProcessInboxPickedDate,
     backProcessInboxStep,
+    buildProcessInboxStepView,
+    buildProcessInboxDecisionRequest,
+    buildProcessInboxScheduleUpdates,
+    prepareProcessInboxCommit,
     formatProcessInboxScheduleValue,
+    getProcessInboxStepPrompt,
     INITIAL_PROCESS_INBOX_ANSWERS,
     resolveProcessInboxStep,
     type ProcessInboxAnswers,
 } from './process-inbox-model';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
 import { resetForTests } from './store';
+import type { Task } from './types';
 
 const fixture = loadProcessInboxFixture();
 
@@ -69,7 +75,7 @@ describe('Process Inbox model parity with the mobile modal', () => {
         expect(dates('dated-3')).toEqual(['2026-10-06', '2026-10-12', '2026-10-07']);
         expect(dates('dated-4')).toEqual(['2026-10-08', '2026-10-13', '2026-10-09']);
         const startLater = fixture.observations['start later needs a date; date-only and default time'];
-        expect((startLater.at(-1)!.writes[0] as unknown[])[2]).toMatchObject({ startTime: '2026-09-25T09:00', dueDate: '2026-09-30' });
+        expect((startLater.at(-1)!.writes[0] as unknown[])[2]).toMatchObject({ startTime: '2026-09-25T14:30', dueDate: '2026-09-30' });
     });
 });
 
@@ -106,6 +112,99 @@ describe('Process Inbox steps', () => {
         expect(formatProcessInboxScheduleValue('2026-10-05', false, '09:00')).toBe('2026-10-05T09:00');
         expect(formatProcessInboxScheduleValue(new Date(2026, 9, 5, 15, 45), true, '09:00')).toBe('2026-10-05');
         expect(formatProcessInboxScheduleValue('2026-10-05', false, '')).toBe('2026-10-05');
+    });
+
+    it('keeps an untouched stored start clock when filing to Next or Start later', () => {
+        const task = { id: 'inbox', status: 'inbox', startTime: '2026-10-05T15:45' } as Task;
+        const dates = { startTime: { value: '2026-10-05', dateOnly: false }, dueDate: { value: null, dateOnly: false }, reviewAt: { value: null, dateOnly: false } };
+        expect(buildProcessInboxScheduleUpdates(plan({ scheduleEnabled: true }), dates, '09:00', task, new Set()).startTime).toBe(task.startTime);
+        const later = buildProcessInboxDecisionRequest('later', { task, defaultScheduleTime: '09:00', somedaySectionId: undefined,
+            startDate: dates.startTime, reviewDate: dates.reviewAt, followUpDate: dates.reviewAt, delegateWho: '', assignedTo: '', projectId: null,
+        });
+        expect(later.ok && later.options.fields?.startTime).toBe(task.startTime);
+        expect(buildProcessInboxScheduleUpdates(plan({ scheduleEnabled: true }),
+            { ...dates, startTime: { value: '2026-10-06', dateOnly: false } }, '', task, new Set(['startTime'])).startTime).toBe('2026-10-06T15:45');
+        expect(buildProcessInboxScheduleUpdates(plan({ scheduleEnabled: true }),
+            { ...dates, startTime: { value: '2026-10-06', dateOnly: true } }, '09:00', task, new Set(['startTime'])).startTime).toBe('2026-10-06');
+    });
+
+    it('uses the default clock after an explicit default-time tap', () => {
+        const task = { id: 'inbox', status: 'inbox', startTime: '2026-10-05T15:45' } as Task;
+        const dates = { startTime: { value: '2026-10-05', dateOnly: false, useDefaultTime: true },
+            dueDate: { value: null, dateOnly: false }, reviewAt: { value: null, dateOnly: false } };
+        expect(buildProcessInboxScheduleUpdates(plan({ scheduleEnabled: true }), dates, '09:00', task,
+            new Set(['startTime'])).startTime).toBe('2026-10-05T09:00');
+        const later = buildProcessInboxDecisionRequest('later', { task, defaultScheduleTime: '09:00', somedaySectionId: undefined,
+            startDate: dates.startTime, reviewDate: dates.reviewAt, followUpDate: dates.reviewAt,
+            delegateWho: '', assignedTo: '', projectId: null });
+        expect(later.ok && later.options.fields?.startTime).toBe('2026-10-05T09:00');
+    });
+
+    it('asks the incubate question with its own translation key', () => {
+        const strings = { 'inbox.deferWhen': 'When should it start?', 'process.incubateWhen': 'When should it come back?' };
+        expect(getProcessInboxStepPrompt('incubate', plan({}), (key) => strings[key as keyof typeof strings] ?? key).question).toBe('When should it come back?');
+    });
+
+    it('localizes the time-estimate chips through the step translator', () => {
+        const task = { id: 'inbox', title: 'Inbox', status: 'inbox', timeEstimate: '5min' } as Task;
+        const view = buildProcessInboxStepView({ task, draft: createProcessInboxDraft(task),
+            answers: { ...INITIAL_PROCESS_INBOX_ANSWERS, actionability: 'actionable', twoMinute: 'no', execution: 'defer', oneActionAnswered: true },
+            mode: 'quick', plan: resolveProcessInboxPlan({ features: { timeEstimates: true }, gtd: { taskEditor: { hidden: [] } } } as never),
+            settings: undefined, tasks: [task], projects: [], areas: [], people: [], similarityIndex: null,
+            t: (key) => ({ 'units.minutesShort': '{{minutes}} min.', 'units.hoursShort': '{{hours}} h' }[key] ?? key),
+            formatDate: () => '', now: new Date(2026, 8, 23),
+        });
+        expect(view.moreOptions.organization?.timeEstimates.map(({ label }) => label)).toContain('5 min.');
+    });
+
+    it('clears an overdue review date when filing to Someday, but keeps a future date', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        try {
+            const request = (reviewAt: string) => buildProcessInboxDecisionRequest('someday', {
+                task: { id: 'inbox', status: 'inbox', reviewAt } as Task, defaultScheduleTime: '', somedaySectionId: undefined,
+                startDate: { value: null, dateOnly: false }, reviewDate: { value: reviewAt, dateOnly: true },
+                followUpDate: { value: null, dateOnly: false }, delegateWho: '', assignedTo: '', projectId: null,
+            });
+            const past = request('2026-09-22');
+            const today = request('2026-09-23');
+            const future = request('2026-09-25');
+            expect(past.ok && past.options.clearStaleReviewAt).toBe(true);
+            expect(today.ok && today.options.clearStaleReviewAt).toBe(true);
+            expect(future.ok && future.options.clearStaleReviewAt).toBe(false);
+        } finally { vi.useRealTimers(); }
+    });
+
+    it.each([
+        ['title token', '2026-10-20', undefined, new Set<'startTime' | 'dueDate' | 'reviewAt'>()],
+        ['review picker', undefined, '2026-10-20', new Set<'startTime' | 'dueDate' | 'reviewAt'>(['reviewAt'])],
+        ['untouched stale date', undefined, undefined, new Set<'startTime' | 'dueDate' | 'reviewAt'>()],
+    ] as const)('keeps a new %s when refiling a stale Someday item', (_case, titleDate, pickerDate, dirty) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        try {
+            const task = { id: 'inbox', title: 'Learn piano', status: 'inbox', reviewAt: '2026-09-20' } as Task;
+            const request = buildProcessInboxDecisionRequest('someday', {
+                task, defaultScheduleTime: '', somedaySectionId: undefined,
+                startDate: { value: null, dateOnly: false }, reviewDate: { value: pickerDate ?? task.reviewAt, dateOnly: true },
+                followUpDate: { value: null, dateOnly: false }, delegateWho: '', assignedTo: '', projectId: null,
+            });
+            if (!request.ok) throw new Error('Expected Someday request');
+            const prepared = prepareProcessInboxCommit({ task, plan: plan({ scheduleEnabled: true }),
+                decision: request.decision, title: titleDate ? `Learn piano /review:${titleDate}` : 'Learn piano',
+                description: '', parseTitle: (title) => ({ title: 'Learn piano', props: titleDate && title.includes('/review:') ? { reviewAt: titleDate } : {} }),
+                selection: { projectId: null, areaId: null, contexts: [], tags: [], priority: undefined,
+                    energyLevel: undefined, assignedTo: '', timeEstimate: undefined },
+                scheduleUpdates: pickerDate ? { reviewAt: pickerDate } : { reviewAt: task.reviewAt },
+                dirtyScheduleFields: dirty, options: request.options,
+            });
+            expect(prepared.ok && prepared.event.type === 'someday' && prepared.event.fields?.reviewAt)
+                .toBe(titleDate ?? pickerDate);
+            if (!titleDate && !pickerDate) {
+                expect(prepared.ok && prepared.event.type === 'someday'
+                    && Object.hasOwn(prepared.event.fields ?? {}, 'reviewAt')).toBe(true);
+            }
+        } finally { vi.useRealTimers(); }
     });
 
     it('files an unprefixed token by the section that asked for it', () => {

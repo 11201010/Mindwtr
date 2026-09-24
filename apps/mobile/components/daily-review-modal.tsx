@@ -9,6 +9,7 @@ import { X, Calendar as CalendarIcon, Clock, Sparkles, Star, CheckCircle2, Play,
 import {
     DAILY_REVIEW_SESSION_STORAGE_KEY,
     buildReviewSteps,
+    formatListItemCountNoun,
     formatDailyReviewStepLabel,
     getDailyReviewBuckets,
     getDailyReviewCalendarDay,
@@ -93,7 +94,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
     const [showInboxProcessing, setShowInboxProcessing] = useState(false);
     const [externalEvents, setExternalEvents] = useState<ExternalCalendarEvent[]>([]);
-    const [externalLoading, setExternalLoading] = useState(false);
+    const [externalLoading, setExternalLoading] = useState(true);
     const [externalError, setExternalError] = useState<string | null>(null);
     const [calendarExpanded, setCalendarExpanded] = useState(true);
 
@@ -187,7 +188,8 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
         todayCalendarEventCount: todayCalendar.count,
         tomorrowCalendarEventCount: tomorrowCalendar.count,
         externalCalendarHasError: Boolean(externalError),
-    }), [dailyBuckets, externalError, includeFocusStep, todayCalendar.count, tomorrowCalendar.count]);
+        externalCalendarLoading: externalLoading,
+    }), [dailyBuckets, externalError, externalLoading, includeFocusStep, todayCalendar.count, tomorrowCalendar.count]);
     const steps = useMemo(() => titleDailyReviewSteps(stepFlags, t), [stepFlags, t]);
     const {
         activeSteps,
@@ -358,7 +360,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                         <>
                             <View style={[styles.infoBox, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                                 <Text style={[styles.infoText, { color: tc.text }]}>
-                                    <Text style={{ fontWeight: '700' }}>{totalToday}</Text> {t('common.tasks')}
+                                    <Text style={{ fontWeight: '700' }}>{totalToday}</Text> {formatListItemCountNoun(totalToday, 'task', t)}
                                 </Text>
                                 <Text style={[styles.guideText, { color: tc.secondaryText }]}>{t('dailyReview.todayDesc')}</Text>
                             </View>
@@ -444,7 +446,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                         <>
                             <View style={[styles.infoBox, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                                 <Text style={[styles.infoText, { color: tc.text }]}>
-                                    <Text style={{ fontWeight: '700' }}>{inboxTasks.length}</Text> {t('common.tasks')}
+                                    <Text style={{ fontWeight: '700' }}>{inboxTasks.length}</Text> {formatListItemCountNoun(inboxTasks.length, 'task', t)}
                                 </Text>
                                 <Text style={[styles.guideText, { color: tc.secondaryText }]}>{t('dailyReview.inboxDesc')}</Text>
                             </View>
@@ -478,7 +480,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                     header: (
                         <View style={[styles.infoBox, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                             <Text style={[styles.infoText, { color: tc.text }]}>
-                                <Text style={{ fontWeight: '700' }}>{waitingTasks.length}</Text> {t('common.tasks')}
+                                <Text style={{ fontWeight: '700' }}>{waitingTasks.length}</Text> {formatListItemCountNoun(waitingTasks.length, 'task', t)}
                             </Text>
                             <Text style={[styles.guideText, { color: tc.secondaryText }]}>{t('dailyReview.waitingDesc')}</Text>
                         </View>

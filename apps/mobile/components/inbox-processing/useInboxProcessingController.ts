@@ -178,6 +178,7 @@ export function useInboxProcessingController({
   const [selectedPriority, setSelectedPriority] = useState<TaskPriority | undefined>(undefined);
   const [selectedSomedaySectionId, setSelectedSomedaySectionId] = useState<string | undefined>(undefined);
   const dirtyScheduleFieldsRef = useRef(new Set<'startTime' | 'dueDate' | 'reviewAt'>());
+  const useDefaultStartTimeRef = useRef(false);
   const activeAppleClarificationRef = useRef<AbortController | null>(null);
   const consumedAppleClarificationRequestsRef = useRef(new Set<string>());
 
@@ -403,6 +404,7 @@ export function useInboxProcessingController({
     const defaults = getProcessInboxTaskDefaults(task);
     const { startTime, dueDate, reviewAt } = defaults.dates;
     dirtyScheduleFieldsRef.current.clear();
+    useDefaultStartTimeRef.current = false;
     setAnswers(INITIAL_PROCESS_INBOX_ANSWERS);
     setShowAdvancedOptions(defaults.showAdvancedOptions);
     setPendingStartDate(startTime.value ? safeParseDate(startTime.value) : null);
@@ -439,11 +441,18 @@ export function useInboxProcessingController({
 
   const setPendingStartDateFromControl = useCallback((value: Date | null) => {
     dirtyScheduleFieldsRef.current.add('startTime');
+    useDefaultStartTimeRef.current = false;
     setPendingStartDate(value);
   }, []);
   const setPendingStartDateOnlyFromControl = useCallback((value: boolean) => {
     dirtyScheduleFieldsRef.current.add('startTime');
+    useDefaultStartTimeRef.current = false;
     setPendingStartDateOnly(value);
+  }, []);
+  const useDefaultStartTimeFromControl = useCallback(() => {
+    dirtyScheduleFieldsRef.current.add('startTime');
+    useDefaultStartTimeRef.current = true;
+    setPendingStartDateOnly(false);
   }, []);
   const setPendingDueDateFromControl = useCallback((value: Date | null) => {
     dirtyScheduleFieldsRef.current.add('dueDate');
@@ -570,8 +579,9 @@ export function useInboxProcessingController({
 
   /** The draft as plain values, the shape core commits. */
   const buildDraft = useCallback((): ProcessInboxDraft => {
-    const dateValue = (date: Date | null, dateOnly: boolean) => (
-      date ? { date: safeFormatDate(date, 'yyyy-MM-dd'), dateOnly } : null
+    const dateValue = (date: Date | null, dateOnly: boolean, useDefaultTime = false) => (
+      date ? { date: safeFormatDate(date, 'yyyy-MM-dd'), dateOnly,
+        ...(useDefaultTime ? { useDefaultTime: true } : {}) } : null
     );
     return {
       title: processingTitle,
@@ -586,7 +596,7 @@ export function useInboxProcessingController({
       energyLevel: selectedEnergyLevel ?? null,
       assignedTo: selectedAssignedTo,
       timeEstimate: selectedTimeEstimate ?? null,
-      startTime: dateValue(pendingStartDate, pendingStartDateOnly),
+      startTime: dateValue(pendingStartDate, pendingStartDateOnly, useDefaultStartTimeRef.current),
       dueDate: dateValue(pendingDueDate, pendingDueDateOnly),
       reviewAt: dateValue(pendingReviewDate, pendingReviewDateOnly),
       delegateWho,
@@ -1226,6 +1236,7 @@ export function useInboxProcessingController({
     setProjectSearch,
     setPendingStartDate: setPendingStartDateFromControl,
     setPendingStartDateOnly: setPendingStartDateOnlyFromControl,
+    useDefaultStartTime: useDefaultStartTimeFromControl,
     setProcessingDescription,
     setProcessingTitle,
     setProcessingTitleFocused,

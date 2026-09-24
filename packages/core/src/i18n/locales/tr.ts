@@ -211,6 +211,8 @@ export const trOverrides: Record<string, string> = {
         'list.done': 'Tamamlanmış',
         'list.tasks': 'Görev listesi',
         'list.countTaskSingular': 'görev',
+        'review.activeTask': 'etkin görev',
+        'process.incubateWhen': 'Ne zaman yeniden gelsin?',
         'list.countProjectSingular': 'proje',
         'list.confirmBatchDelete': 'Seçilen görevler silinsin mi?',
         'list.taskDeleted': 'Görev silindi',

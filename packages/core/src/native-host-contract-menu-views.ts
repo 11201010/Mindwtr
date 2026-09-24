@@ -460,13 +460,10 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
         const base = deps.revision(now);
         const data = cached('waiting', `${base}:${paramsKey(params)}`, () => {
             const { state, areaById, resolvedAreaFilter, visibleTasks } = visibleContext();
-            const build = (person: string) => buildWaitingViewModel({
-                tasks: visibleTasks, projects: state.projects, resolvedAreaFilter, areaById, person, t,
+            const model = buildWaitingViewModel({
+                tasks: visibleTasks, projects: state.projects, resolvedAreaFilter, areaById, person: params.person, t,
             });
-            const first = build(params.person);
-            // Mobile clears a person who is no longer offered.
-            const person = first.personOffered ? params.person : '';
-            const model = first.personOffered ? first : build('');
+            const person = model.person;
             return {
                 model,
                 person,

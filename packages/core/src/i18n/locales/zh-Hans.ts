@@ -264,6 +264,8 @@ export const zhHans: Record<string, string> = {
         'list.done': '已完成',
         'list.tasks': '任务列表',
         'list.countTaskSingular': '个任务',
+        'review.activeTask': '个活动任务',
+        'process.incubateWhen': '什么时候再处理？',
         'list.countProjectSingular': '个项目',
         'list.confirmBatchDelete': '删除选中的任务？',
         'list.taskDeleted': '任务已删除',

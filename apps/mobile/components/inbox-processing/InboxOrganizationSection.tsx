@@ -163,7 +163,7 @@ export function InboxOrganizationSection({
                   onPress={() => setSelectedTimeEstimate(isSelected ? undefined : estimate)}
                 >
                   <Text style={[styles.priorityChipText, { color: isSelected ? tc.onTint : tc.text }]}>
-                    {formatTimeEstimateLabel(estimate)}
+                    {formatTimeEstimateLabel(estimate, { t })}
                   </Text>
                 </TouchableOpacity>
               );

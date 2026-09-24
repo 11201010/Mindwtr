@@ -683,6 +683,13 @@ describe('getExternalCalendarDaySummaries', () => {
 });
 
 describe('buildReviewSteps', () => {
+    it('holds the calendar step while external events are loading in both reviews', () => {
+        const daily = getDailyReviewBuckets([], [], { now: new Date(2026, 8, 23) });
+        const weekly = getWeeklyReviewBuckets([], [], { now: new Date(2026, 8, 23) });
+        expect(buildReviewSteps(daily, { kind: 'daily', externalCalendarLoading: true }).find((step) => step.id === 'today')?.hasWork).toBe(true);
+        expect(buildReviewSteps(weekly, { kind: 'weekly', externalCalendarLoading: true }).find((step) => step.id === 'calendar')?.hasWork).toBe(true);
+        expect(buildReviewSteps(weekly, { kind: 'weekly', externalCalendarLoading: false }).find((step) => step.id === 'calendar')?.hasWork).toBe(false);
+    });
     it('marks the daily today step as having work when a task is due today, and hides focus when disabled', () => {
         const buckets = getDailyReviewBuckets(
             [createTask({ id: 'due-today', status: 'next', dueDate: new Date(2026, 2, 1).toISOString() })],

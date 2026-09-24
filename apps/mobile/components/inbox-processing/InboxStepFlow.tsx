@@ -222,6 +222,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
             setPendingStartDate={setPendingStartDate}
             pendingStartDateOnly={pendingStartDateOnly}
             setPendingStartDateOnly={setPendingStartDateOnly}
+            useDefaultStartTime={controller.useDefaultStartTime}
             setShowStartDatePicker={setShowStartDatePicker}
             pendingDueDate={controller.pendingDueDate}
             setPendingDueDate={controller.setPendingDueDate}
@@ -407,7 +408,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
               }}
               dateOnly={pendingStartDateOnly}
               onDateOnly={() => setPendingStartDateOnly(true)}
-              onUseDefaultTime={() => setPendingStartDateOnly(false)}
+              onUseDefaultTime={controller.useDefaultStartTime}
               defaultScheduleTime={controller.defaultScheduleTime}
               dateOnlyLabel={dateOnlyLabel}
               notSetLabel={t('common.notSet')}

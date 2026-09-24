@@ -204,6 +204,8 @@ export const svOverrides: Record<string, string> = {
         'list.done': 'Slutförda',
         'list.tasks': 'Uppgiftslista',
         'list.countTaskSingular': 'uppgift',
+        'review.activeTask': 'aktiv uppgift',
+        'process.incubateWhen': 'När ska den komma tillbaka?',
         'list.countProjectSingular': 'projekt',
         'list.confirmBatchDelete': 'Ta bort markerade uppgifter?',
         'list.taskDeleted': 'Uppgift borttagen',

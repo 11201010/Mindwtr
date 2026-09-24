@@ -209,6 +209,8 @@ export const hiOverrides: Record<string, string> = {
         'list.done': 'पुरा होना।',
         'list.tasks': 'कार्य सूची',
         'list.countTaskSingular': 'कार्य',
+        'review.activeTask': 'सक्रिय कार्य',
+        'process.incubateWhen': 'इसे कब वापस लाना चाहिए?',
         'list.countProjectSingular': 'परियोजना',
         'list.confirmBatchDelete': 'चयनित कार्य हटाएँ?',
         'list.taskDeleted': 'कार्य हटाया गया',

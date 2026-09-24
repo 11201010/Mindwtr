@@ -225,6 +225,8 @@ export const deOverrides: Record<string, string> = {
         'list.done': 'Abgeschlossen',
         'list.tasks': 'Aufgabenliste',
         'list.countTaskSingular': 'Aufgabe',
+        'review.activeTask': 'aktive Aufgabe',
+        'process.incubateWhen': 'Wann soll es wieder auftauchen?',
         'list.countProjectSingular': 'Projekt',
         'list.confirmBatchDelete': 'Ausgewählte Aufgaben löschen?',
         'list.taskDeleted': 'Aufgabe gelöscht',

@@ -8,7 +8,7 @@ import {
     seedMenuViewsStore,
 } from './menu-views-model.replay';
 import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState } from './list-filter-state';
-import { buildSomedayViewModel } from './menu-views-model';
+import { buildSomedayViewModel, buildWaitingViewModel } from './menu-views-model';
 import { buildMoreMenuModel, resolveMobileQuickAccessView } from './more-menu-model';
 import { createNativeHostContract } from './native-host-contract';
 import { moveSomedaySection, planSomedaySectionCreate, planSomedaySectionMove, renameSomedaySection } from './someday-sections-model';
@@ -70,6 +70,13 @@ describe('list views parity with the frozen React Native fixture', () => {
 
 describe('list view models', () => {
     const t = (key: string) => key;
+
+    it('shows all waiting tasks immediately when the chosen person disappears', () => {
+        const task = { id: 'waiting', title: 'Waiting', status: 'waiting', assignedTo: 'Bob' } as Task;
+        const model = buildWaitingViewModel({ tasks: [task], projects: [], resolvedAreaFilter: { mode: 'all' }, areaById: new Map(), person: 'Alice', t });
+        expect(model.tasks.map(({ id }) => id)).toEqual(['waiting']);
+        expect(model.person).toBe('');
+    });
 
     it('resolves an unknown quick-access view to Review and gives its tile to Projects', () => {
         expect(resolveMobileQuickAccessView('trash')).toBe('review');

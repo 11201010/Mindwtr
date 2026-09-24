@@ -112,7 +112,6 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
         setProjectTaskTitle,
         showEditModal,
         somedayList,
-        staleItemTitleMap,
         stepRail,
         steps,
         submitProjectTask,
@@ -572,7 +571,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                                             </View>
                                             <View style={{ flex: 1 }}>
                                                 <Text style={[styles.aiItemTitle, { color: tc.text }]}>
-                                                    {staleItemTitleMap[suggestion.id] || suggestion.id}
+                                                    {suggestion.title}
                                                 </Text>
                                                 <Text style={[styles.aiItemMeta, { color: tc.secondaryText }]}>
                                                     {label} · {suggestion.reason}

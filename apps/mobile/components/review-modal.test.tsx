@@ -7,6 +7,7 @@ import { ScrollView } from 'react-native';
 import { CompactText } from './compact-text';
 import { ReviewModal } from './review-modal';
 import { styles } from './review-modal.styles';
+import { fetchExternalCalendarEvents } from '../lib/external-calendar';
 
 const { mockStorageGetItem, mockStorageRemoveItem, mockStorageSetItem } = vi.hoisted(() => ({
     mockStorageGetItem: vi.fn(),
@@ -342,6 +343,19 @@ describe('ReviewModal', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it('waits on the calendar before saving an empty review as complete', async () => {
+        storeState.tasks = [];
+        storeState.projects = [];
+        let settle!: (value: Awaited<ReturnType<typeof fetchExternalCalendarEvents>>) => void;
+        vi.mocked(fetchExternalCalendarEvents).mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+        let tree!: ReturnType<typeof create>;
+        await act(async () => { tree = create(<ReviewModal visible onClose={vi.fn()} />); });
+        expect(currentStepOf(tree)).toBe('calendar');
+        expect(mockStorageSetItem).not.toHaveBeenCalledWith('mindwtr:weeklyReview:currentStep', expect.stringContaining('completed'));
+        await act(async () => { settle({ events: [], calendars: [] }); });
+        expect(currentStepOf(tree)).toBe('completed');
     });
 
     it('advances and goes back through weekly review steps', async () => {

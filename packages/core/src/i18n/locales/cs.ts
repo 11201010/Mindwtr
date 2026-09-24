@@ -261,6 +261,8 @@ export const csOverrides: Record<string, string> = {
         'list.done': 'Dokončené',
         'list.tasks': 'Seznam úkolů',
         'list.countTaskSingular': 'úkol',
+        'review.activeTask': 'aktivní úkol',
+        'process.incubateWhen': 'Kdy se má vrátit?',
         'list.countProjectSingular': 'projekt',
         'list.confirmBatchDelete': 'Smazat vybrané úkoly?',
         'list.taskDeleted': 'Úkol smazán',
