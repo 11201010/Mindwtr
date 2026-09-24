@@ -423,22 +423,11 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     pickDate?.let { target ->
         // The picker starts where core says: the field's date (else today), or the recurrence end.
         val start = if (target == "until") editor.view.fields.recurrence.getString("until") else editor.view.fields.dates.getValue(target).pickerDate
-        val state = rememberDatePickerState(initialSelectedDateMillis = pickerStart(start))
-        DatePickerDialog(
-            onDismissRequest = { pickDate = null },
-            confirmButton = {
-                TextButton(onClick = {
-                    state.selectedDateMillis?.let { pickerMillis ->
-                        val day = pickedDay(pickerMillis)
-                        // Core keeps an existing time on a new day, and moves a relative start with a due date.
-                        editDraft(if (target == "until") recurrenceEdit(JSONObject().put("kind", "until").put("date", day))
-                            else JSONObject().put("type", "pickDate").put("field", target).put("date", day))
-                    }
-                    pickDate = null
-                }, enabled = state.selectedDateMillis != null) { Text(t("common.ok")) }
-            },
-            dismissButton = { TextButton(onClick = { pickDate = null }) { Text(t("common.cancel")) } },
-        ) { DatePicker(state) }
+        DayPickerDialog(start, { pickDate = null }) { day ->
+            // Core keeps an existing time on a new day, and moves a relative start with a due date.
+            editDraft(if (target == "until") recurrenceEdit(JSONObject().put("kind", "until").put("date", day))
+                else JSONObject().put("type", "pickDate").put("field", target).put("date", day))
+        }
     }
     pickTime?.let { target ->
         // The time picker starts on core's time for the field: its time, else now.
@@ -480,6 +469,26 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
             },
         )
     }
+}
+
+/**
+ * The system date picker, starting on core's `yyyy-MM-dd` [start] (null: this month, nothing chosen). OK hands
+ * [pick] the chosen day as `yyyy-MM-dd`, read from the picker's own fields; the editor and Process Inbox share it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DayPickerDialog(start: String?, dismiss: () -> Unit, pick: (String) -> Unit) {
+    val state = rememberDatePickerState(initialSelectedDateMillis = start?.let { pickerStart(it) })
+    DatePickerDialog(
+        onDismissRequest = dismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                state.selectedDateMillis?.let { pickerMillis -> pick(pickedDay(pickerMillis)) }
+                dismiss()
+            }, enabled = state.selectedDateMillis != null) { Text(t("common.ok")) }
+        },
+        dismissButton = { TextButton(onClick = dismiss) { Text(t("common.cancel")) } },
+    ) { DatePicker(state) }
 }
 
 /** A recurrence control's edit for core's editTaskDraft. */

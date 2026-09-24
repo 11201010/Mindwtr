@@ -7,8 +7,9 @@
 // sequential, with sections), 20 tasks with contexts, dates, priorities, notes, and one
 // starred task, and RN's quick-access tab set to Projects so both tab bars show the same
 // tabs. The script installs the harness RN build (154), puts the fixture in as its
-// database, and shoots Inbox, Focus, Projects, and the task editor (Form tab) for one
-// task opened from Focus, in light and dark mode. Then it installs
+// database, and shoots Inbox, Focus, Projects, the task editor (Form tab) for one
+// task opened from Focus, global search for "kitchen", and Process Inbox's first step,
+// in light and dark mode. Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
 // /home/dd/.mindwtr-harness/parity/<timestamp>/.
@@ -166,6 +167,27 @@ const shootEditor = async (name, rn) => {
     sh('input keyevent KEYCODE_BACK');
     await waitFor('the editor to close', (current) => !editorOpen(current), 15_000);
 };
+/** Core's en `inbox.processButton` with the fixture's six Inbox tasks: the button's spoken label in both apps. */
+const PROCESS = 'Process Inbox (6)';
+const SEARCH_QUERY = 'kitchen';
+/** Closes the keyboard if it shows, so the shot matches RN's (its search opened by link leaves the keyboard down). */
+const hideKeyboard = async () => {
+    if (!/mInputShown=true/.test(sh('dumpsys input_method'))) return;
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(800);
+};
+/** Opens Process Inbox from the Inbox on show, shoots its first step (the fixture's first Inbox task), and closes it with Back. */
+const shootProcess = async (name) => {
+    const nodes = await waitFor('the Process Inbox button', (current) => current.some((node) => node['content-desc'] === PROCESS), 45_000);
+    await tap(nodes.find((node) => node['content-desc'] === PROCESS));
+    const shown = (current) => current.some((node) => node.class === 'android.widget.EditText' && node.text === T.call);
+    await shoot(name, shown);
+    await hideKeyboard();
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await waitFor('Process Inbox to close', (current) => !shown(current), 15_000);
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -195,6 +217,13 @@ try {
         }
         openLink('focus');
         await shootEditor(`rn-editor-${mode === 'yes' ? 'dark' : 'light'}`, true);
+        openLink(`global-search?q=${SEARCH_QUERY}`);
+        await shoot(`rn-search-${mode === 'yes' ? 'dark' : 'light'}`, (nodes) => hasText(nodes, 'Kitchen renovation'));
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(1000);
+        openLink('inbox');
+        await shootProcess(`rn-process-${mode === 'yes' ? 'dark' : 'light'}`);
     }
     await stopApp();
 
@@ -212,6 +241,20 @@ try {
         const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Focus')), 60_000);
         if (!tabSelected(nodes, 'Focus')) await tap(tab(nodes, 'Focus'));
         await shootEditor(`native-editor-${mode === 'yes' ? 'dark' : 'light'}`, false);
+        // Search from the header's button, the query typed (letters: the parity fixture's titles are words).
+        const search = await waitFor('the header Search button', (current) => current.some((node) => node['content-desc'] === 'Search'), 30_000);
+        await tap(search.find((node) => node['content-desc'] === 'Search'));
+        await waitFor('the search field', (current) => current.some((node) => node.class === 'android.widget.EditText'), 15_000);
+        requireAppFront();
+        sh(`input text ${SEARCH_QUERY}`);
+        await waitFor('the search results', (current) => hasText(current, 'Kitchen renovation'), 30_000);
+        await hideKeyboard();
+        await shoot(`native-search-${mode === 'yes' ? 'dark' : 'light'}`, (current) => hasText(current, 'Kitchen renovation'));
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        const inboxTab = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Inbox')), 30_000);
+        if (!tabSelected(inboxTab, 'Inbox')) await tap(tab(inboxTab, 'Inbox'));
+        await shootProcess(`native-process-${mode === 'yes' ? 'dark' : 'light'}`);
     }
     await stopApp();
 

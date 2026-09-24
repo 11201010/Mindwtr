@@ -113,7 +113,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val open = editor
-                if (open != null && writable) TaskEditorScreen(model, open) else Column(
+                val flow = processing
+                val searching = search
+                // Full-screen flows over the tabs, as RN presents them: the editor, then Process Inbox, then search.
+                if (open != null && writable) TaskEditorScreen(model, open)
+                else if (flow != null && writable) ProcessInboxScreen(model, flow)
+                else if (searching != null && writable) SearchScreen(model, searching)
+                else Column(
                     Modifier.fillMaxSize().background(c.cardBg).systemBarsPadding().semantics { testTagsAsResourceId = true },
                 ) {
                     if (loading) {
@@ -128,7 +134,11 @@ class MainActivity : ComponentActivity() {
                         if ((screen != Screen.Projects || openProjectId == null) && !landscape) TopBar(model, t(screen.label))
                         // A failure stays in view above the list. A failed read offers Try again; a failed command only its exact retry.
                         error?.let { message ->
-                            FailureBanner(message) { if (failedAction == null) TextButton(onClick = { refresh() }, enabled = !busy) { Text(t("common.retry")) } }
+                            FailureBanner(message) {
+                                if (failedAction == null) TextButton(onClick = { refresh() }, enabled = !busy) { Text(t("common.retry")) }
+                                // A Process Inbox answer re-sent after process death: only its exact retry.
+                                if (failedAction?.kind in STEP_KINDS) TextButton(onClick = { retryAnswer() }, enabled = !busy) { Text(t("common.retry")) }
+                            }
                         }
                         Box(Modifier.weight(1f)) {
                             Column(Modifier.fillMaxSize()) {
@@ -161,8 +171,8 @@ fun Modifier.hairline(color: Color, top: Boolean) = drawBehind {
 }
 
 /**
- * RN's tab header: card background, a hairline below, the title centered at 17/700, and RN's
- * area switcher at the left. RN's search button at the right is not built (no search screen yet).
+ * RN's tab header: card background, a hairline below, the title centered at 17/700, RN's
+ * area switcher at the left, and RN's search button (22, in a 44 box) at the right.
  */
 @Composable
 private fun TopBar(model: InboxViewModel, title: String) {
@@ -171,6 +181,12 @@ private fun TopBar(model: InboxViewModel, title: String) {
         Text(title, style = rnText(17, 700), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 72.dp).semantics { heading() })
         AreaTrigger(model, Modifier.align(Alignment.CenterStart).padding(start = 16.dp))
+        val label = t("search.title")
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp).size(44.dp)
+            .clickable(enabled = model.failedAction == null, role = Role.Button) { model.openSearch() }
+            .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+            Icon(Lucide.Search, null, tint = c.text, modifier = Modifier.size(22.dp))
+        }
     }
 }
 
@@ -243,6 +259,29 @@ private fun RowScope.CaptureButton(model: InboxViewModel) {
             contentAlignment = Alignment.Center) {
             Icon(Lucide.Plus, null, tint = theme.colors.onTint, modifier = Modifier.size(28.dp))
         }
+    }
+}
+
+/**
+ * RN's "Process Inbox (N)": a tint wash with a tint border (Material 3: the filled container), the ListChecks
+ * glyph, and core's Inbox count, shown as 99+ above 99; TalkBack hears the exact count, as in RN.
+ */
+@Composable
+private fun ProcessButton(model: InboxViewModel) = with(model) {
+    val theme = LocalTheme.current
+    val c = theme.colors
+    val label = t("inbox.processButton")
+    val shown = if (total > 99) "99+" else "$total"
+    val shape = RoundedCornerShape(12.dp)
+    val material = theme.isMaterial
+    Row(Modifier.padding(bottom = 12.dp).fillMaxWidth().heightIn(min = 44.dp).clip(shape).background(if (material) theme.filledBg else theme.processWash)
+        .then(if (material) Modifier else Modifier.border(1.dp, c.tint, shape))
+        .clickable(enabled = writable && !busy && failedAction == null, role = Role.Button) { openProcessing() }
+        .semantics { contentDescription = "$label ($total)" }.padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        Icon(Lucide.ListChecks, null, tint = if (material) theme.filledText else c.tint, modifier = Modifier.size(18.dp))
+        Text("$label ($shown)", style = rnText(15, 600), color = if (material) theme.filledText else c.text, textAlign = TextAlign.Center,
+            maxLines = 2, modifier = Modifier.padding(start = 8.dp))
     }
 }
 
@@ -360,14 +399,17 @@ fun SectionTitle(title: String, count: Int?, modifier: Modifier = Modifier, trai
     }
 }
 
-/** The Inbox as one list: its count line and rows scroll together, so landscape shows rows, not chrome. */
+/**
+ * The Inbox as one list: RN's Process Inbox button and scope line scroll with the rows, so landscape
+ * shows rows, not chrome.
+ */
 @Composable
 private fun InboxList(model: InboxViewModel, modifier: Modifier) = with(model) {
     val c = LocalTheme.current.colors
     LazyColumn(modifier, contentPadding = PaddingValues(12.dp)) {
         item(key = "header") {
-            val inbox = t("tab.inbox")
-            Text("$inbox · $total", style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+            if (total > 0) ProcessButton(model)
+            Text(t("projects.allAreas"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
         }
         if (total == 0) item(key = "empty") {
             EmptyState(t("inbox.empty"), t("inbox.emptyAddHint"), t("nav.addTask")) { showCapture(true) }

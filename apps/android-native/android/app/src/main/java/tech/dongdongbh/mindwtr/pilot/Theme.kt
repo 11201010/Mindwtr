@@ -148,6 +148,14 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val pickerScrim = rgba(0, 0, 0, 0.45f)
     /** RN's token suggestion divider, rgba(148,163,184,0.2). */
     val divider = rgba(148, 163, 184, 0.2f)
+    /**
+     * RN's filled call-to-action (useFilledButtonColors): Material 3's primaryContainer and onPrimaryContainer
+     * (m3-color.ts), else the tint with onTint. Process Inbox's File it and Create project use it.
+     */
+    val filledBg = if (!isMaterial) colors.tint else if (isDark) rgb("#00458B") else rgb("#D7E2FF")
+    val filledText = if (!isMaterial) colors.onTint else if (isDark) rgb("#D7E2FF") else rgb("#001B3E")
+    /** RN's Process Inbox button wash, `${tc.tint}29`: the tint at 0x29 alpha. */
+    val processWash = colors.tint.copy(alpha = 0x29 / 255f)
     /** RN's highlight of a project's available next action. */
     val availableBg = if (isDark) rgba(59, 130, 246, 0.08f) else rgba(59, 130, 246, 0.05f)
     val availableBorder = if (isDark) rgba(59, 130, 246, 0.34f) else rgba(59, 130, 246, 0.24f)

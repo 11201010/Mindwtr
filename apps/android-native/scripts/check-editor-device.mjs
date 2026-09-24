@@ -24,7 +24,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, described, draftText, evidenced, fail, field, inEditor, inList, isOn, Stopped, tagged, taskRows, withDescription, chipOn } from './device.mjs';
+import { bootFailure, button, check, connect, described, draftText, evidenced, fail, field, inEditor, inList, isOn, Stopped, tagged, taskRows, withDescription, chipOn, inboxCount } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -86,7 +86,8 @@ const goHome = async () => {
 
 // ---- UI ----
 // The labels are core's English (en.ts): taskEdit.*Label, task.destination, status.*, common.notSet, common.clear, calendar.changeTime.
-const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
+// The Inbox count: the Process Inbox button's spoken count, or 0 for RN's empty Inbox (device.mjs inboxCount).
+const header = inboxCount;
 const inbox = () => waitFor('the Inbox', (nodes) => !inEditor(nodes) && Number.isFinite(header(nodes)), 60_000);
 /** The editor's draft as its controls announce it ("Due Date: <core's label>"); the first text field is the title. */
 const editorShows = (nodes, title, values = {}) => inEditor(nodes) && field(nodes)?.text === title

@@ -109,6 +109,25 @@ object Lucide {
     val CirclePause = lucide("CirclePause", circle(12, 12, 10), "M10 15V9", "M14 15V9")
     val CircleArrowUp = lucide("CircleArrowUp", circle(12, 12, 10), "m16 12-4-4-4 4", "M12 16V8")
     val Book = lucide("Book", "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20")
+    // Global search (app/global-search.tsx) and Process Inbox (inbox-processing/ and inbox.tsx).
+    val Search = lucide("Search", "m21 21-4.34-4.34", circle(11, 11, 8))
+    val SlidersHorizontal = lucide("SlidersHorizontal", "M10 5H3", "M12 19H3", "M14 3v4", "M16 17v4", "M21 12h-9", "M21 19h-5",
+        "M21 5h-7", "M8 10v4", "M8 12H3")
+    /** RN's CheckCircle (lucide CircleCheckBig). */
+    val CheckCircle = lucide("CheckCircle", "M21.801 10A10 10 0 1 1 17 3.335", "m9 11 3 3L22 4")
+    /** RN's CheckCircle2 (lucide CircleCheck). */
+    val CheckCircle2 = lucide("CheckCircle2", circle(12, 12, 10), "m9 12 2 2 4-4")
+    /** RN's XCircle (lucide CircleX). */
+    val XCircle = lucide("XCircle", circle(12, 12, 10), "m15 9-6 6", "m9 9 6 6")
+    val Trash2 = lucide("Trash2", "M10 11v6", "M14 11v6", "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", "M3 6h18", "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2")
+    val LayoutList = lucide("LayoutList", "M4 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z",
+        "M4 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M14 4h7", "M14 9h7", "M14 15h7", "M14 20h7")
+    val ChevronUp = lucide("ChevronUp", "m18 15-6-6-6 6")
+    /** RN's START_LATER_ICON. */
+    val Clock3 = lucide("Clock3", "M12 6v6h4", circle(12, 12, 10))
+    /** RN's INCUBATE_ICON. */
+    val Sprout = lucide("Sprout", "M14 9.536V7a4 4 0 0 1 4-4h1.5a.5.5 0 0 1 .5.5V5a4 4 0 0 1-4 4 4 4 0 0 0-4 4c0 2 1 3 1 5a5 5 0 0 1-1 3",
+        "M4 9a5 5 0 0 1 8 4 5 5 0 0 1-8-4", "M5 21h14")
     /** RN's add-project button draws Plus at stroke 2.4. */
     val PlusMedium = lucide("PlusMedium", "M5 12h14", "M12 5v14", stroke = 2.4f)
 }

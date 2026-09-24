@@ -3,10 +3,25 @@
 // happens only from the launcher or `pkg` itself.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 export class Stopped extends Error {}
+
+// Core's English (en.ts): the checks expect the phone's language to resolve to English.
+const { en } = await import(resolve(import.meta.dirname, '../../../packages/core/src/i18n/locales/en.ts'));
+/**
+ * The Inbox count as the screen gives it. RN's "Process Inbox (N)" button speaks the exact count (it shows 99+ above
+ * 99); an empty Inbox has no button and shows RN's empty message (0). NaN while neither is on screen (a scrolled list).
+ */
+export const inboxCount = (nodes) => {
+    const pattern = new RegExp(`^${en['inbox.processButton']} \\((\\d+)\\)$`);
+    const count = nodes.map((node) => pattern.exec(node['content-desc'] ?? '')?.[1]).find(Boolean);
+    if (count !== undefined) return Number(count);
+    return nodes.some((node) => node.text === en['inbox.empty']) ? 0 : NaN;
+};
+/** The Inbox list's first item is on screen: RN's scope line ("All areas") sits under the Process Inbox button. */
+export const atInboxTop = (nodes) => nodes.some((node) => node.text === en['projects.allAreas']);
 
 // The last connected device, for failure evidence.
 let evidenceDevice;
@@ -246,7 +261,7 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         return screen();
     };
     const signature = (nodes) => nodes.map((node) => `${node.text}|${node['content-desc']}|${node.bounds}`).join('\n');
-    /** Scrolls the list to its first item (the Inbox count line is a list item). */
+    /** Scrolls the list to its first item (the Inbox's Process button is a list item). */
     const toTop = async () => {
         let nodes = await screen();
         for (let step = 0; step < 60; step += 1) {
@@ -260,9 +275,9 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     const openCapture = async () => {
         let nodes = await screen();
         if (field(nodes)) return nodes;
-        // The count line ("Inbox · N") is the list's first item: start from the top so the
+        // The Process Inbox button (the count) is the list's first item: start from the top so the
         // capture's new count is on screen when it lands. At the top already, this is one drag.
-        if (!nodes.some((node) => /^.+ · \d+$/.test(node.text ?? ''))) nodes = await toTop();
+        if (!atInboxTop(nodes)) nodes = await toTop();
         await tap(button(nodes, 'Add Task') ?? fail('no Add Task button on screen'));
         return waitFor('the capture sheet', (current) => Boolean(field(current)), 10_000);
     };
@@ -298,13 +313,25 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         }
         return nodes;
     };
-    /** Swipes the row titled [title] to the right: RN's swipe action, Done in this app. */
-    const swipeDone = async (nodes, title) => {
+    /**
+     * RN's swipe: dragging the row titled [title] right reveals its labelled action button (test tag `swipe-action`),
+     * which is returned. Nothing runs until the button is tapped (RN's swipeable-task-item).
+     */
+    const revealAction = async (nodes, title) => {
         const row = taskRow(nodes, title) ?? fail(`no row ${title} on screen`);
         requireAppFront();
         const [x1, y1, , y2] = box(row);
         const y = Math.round((y1 + y2) / 2);
-        sh(`input swipe ${x1 + 10} ${y} ${x1 + 650} ${y} 300`);
+        sh(`input swipe ${x1 + 10} ${y} ${x1 + 450} ${y} 400`);
+        const beside = (current) => current.find((node) => (node['resource-id'] ?? '').endsWith('swipe-action') && box(node)[1] <= y && box(node)[3] >= y);
+        return beside(await waitFor(`the action button beside ${title}`, (current) => Boolean(beside(current)), 8_000));
+    };
+    /** Reveals the row's action button and taps it: RN's swipe action, Done in this app. */
+    const swipeDone = async (nodes, title) => {
+        const action = await revealAction(nodes, title);
+        requireAppFront();
+        const [l, t, r, b] = box(action);
+        sh(`input tap ${Math.round((l + r) / 2)} ${Math.round((t + b) / 2)}`);
         await sleep(600);
     };
     /** Swipes [title] to Done until [done] holds; a swipe can land while the list still moves, so swipe again. */

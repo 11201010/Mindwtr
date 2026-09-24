@@ -136,6 +136,27 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's setAreaFilter with one of getAreaFilter's `next` selections, unchanged. */
     fun setAreaFilter(selectionJson: String): JSONObject = callAsync("setAreaFilter", selectionJson)
 
+    /** Core's searchTasks with [json] (`{ query, filters, limit }`) unchanged. */
+    fun searchTasks(json: String): JSONObject = callAsync("search", json)
+
+    /** Core's saveSearch with [json] (`{ query, name, requestId }`) unchanged. */
+    fun saveSearch(json: String): JSONObject = callAsync("saveSearch", json)
+
+    /** Core's startInboxProcessing in [mode] ('guided' or 'quick'). */
+    fun startInboxProcessing(mode: String): JSONObject = callAsync("inboxStart", mode)
+
+    /** Core's getInboxProcessingStep with [json] unchanged: one edit or a mode, for the step on screen. */
+    fun inboxProcessingStep(json: String): JSONObject = callAsync("inboxStep", json)
+
+    /** Core's commitInboxProcessingStep with [json] unchanged; its requestId makes a retry exact. */
+    fun commitInboxProcessingStep(json: String): JSONObject = callAsync("inboxCommit", json)
+
+    /** Core's skipInboxProcessingTask with [json] unchanged. */
+    fun skipInboxProcessingTask(json: String): JSONObject = callAsync("inboxSkip", json)
+
+    /** Core's endInboxProcessing; it writes nothing. */
+    fun endInboxProcessing(sessionId: String): JSONObject = callAsync("inboxEnd", sessionId)
+
     /** Core's getTaskEditorModel for one task: its draft, the fields to show by section, and each field's choices. */
     fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 
@@ -201,7 +222,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     }
 
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
-        val command = method in setOf("create", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter")
+        val command = method in setOf("create", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter",
+            "saveSearch", "inboxCommit", "inboxSkip")
         if (command) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")

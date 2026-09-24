@@ -41,6 +41,8 @@ const labelsKt = source('Labels.kt');
 const rowUi = source('TaskRowView.kt');
 const areaUi = source('AreaSwitcher.kt');
 const viewStateKt = source('ViewState.kt');
+const searchUi = source('SearchScreen.kt');
+const processUi = source('ProcessInbox.kt');
 // Comments may name the rules below; only code is checked against them.
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 assert.match(activity, /enabled = !busy && failedAction == null,[\s\S]*?modifier = Modifier\.weight\(1f\)/);
@@ -48,6 +50,7 @@ assert.match(model, /submittedTitle != null && value != submittedTitle\) setCapt
 assert.match(model, /val id = captureId\s+setCapture\(title, id, submitted = title\)/);
 // A failed read offers Try again; while a failed command's retry is owed, nothing else is offered.
 assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ refresh\(\) \}, enabled = !busy\)/);
+assert.match(activity, /if \(failedAction\?\.kind in STEP_KINDS\) TextButton\(onClick = \{ retryAnswer\(\) \}, enabled = !busy\)/);
 assert.match(activity, /failedAction == null \|\| failedAction == FailedAction\("create", captureId, draft\)/);
 assert.match(rowUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/);
 // The swipe is core's meta.swipe (RN's getLeftAction moved to core); it and TalkBack's custom action are one command with one enabled rule.
@@ -64,13 +67,16 @@ assert.match(rowUi, /when \(swipe\.icon\) \{ "restore" -> Lucide\.RotateCcw; "do
 assert.match(rowUi, /val swipeOn = completable && \(if \(target == "done"\) canComplete else canMove\)/);
 assert.match(rowUi, /val canMove = writable && !busy && \(failedAction == null \|\| failedAction == statusAction\(task, target\)\)/);
 assert.match(rowUi, /val onSwipe = \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
-assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe\)/);
-assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \}\)/);
+assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe, onMenu = \{ showStatusMenu\(task\) \}\)/);
+assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \},\s*CustomAccessibilityAction\(t\("taskStatus\.changeStatus"\)\) \{ showStatusMenu\(task\); true \}\)/);
 assert.doesNotMatch(code(rowUi + activity), /IconButton\(onClick = \{ complete\(/, 'no visible Done button: RN has none');
-assert.match(rowUi, /if \(value == SwipeToDismissBoxValue\.StartToEnd\) onSwipe\(\)\s+false/, 'the row springs back; the list refresh removes it');
+// RN's reveal-then-tap (#1275): the swipe only reveals the button; its tap runs the action, its long-press opens the status menu.
+assert.match(rowUi, /\.combinedClickable\(enabled = enabled, role = Role\.Button, onLongClick = \{ settle\(0f\); onMenu\(\) \}\) \{ settle\(0f\); onSwipe\(\) \}/);
+assert.match(rowUi, /onDragStopped = \{ settle\(if \(offset\.value > open \/ 2\) open else 0f\) \}/, 'a drag only opens or closes the row');
+assert.doesNotMatch(code(rowUi), /SwipeToDismissBox|combinedClickable\([^)]*\)[^\n]*openEditor/, 'no one-gesture swipe; the row\'s own long-press stays free');
 // Every failed command holds its exact retry, except an update or editor save core refused before writing.
 assert.match(model, /private val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
-assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft"\)/);
+assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip"\)/);
 assert.match(model, /val refused = action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
@@ -82,8 +88,8 @@ assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s 
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
-assert.equal(code(model).match(/\bperform\(action\)/g).length, 8, 'create, complete, editor save, task star, project star, status, project create, area filter');
-assert.equal(code(model).match(/\bperform\s*\{/g).length, 7, 'editor, reload, Try again, three More, open project');
+assert.equal(code(model).match(/\bperform\(action\)/g).length, 10, 'create, complete, editor save, task star, project star, status, project create, area filter, saved search, Process Inbox answer');
+assert.equal(code(model).match(/\bperform\s*\{/g).length, 8, 'editor, reload, Try again, three More, open project, open Process Inbox');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
 const backgroundFn = code(model.slice(model.indexOf('private fun <T> background('), model.indexOf('private fun perform(')));
@@ -102,7 +108,7 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /private fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /private enum class Part \{ Inbox, Focus, Projects, Project, Areas, Editor \}/);
+assert.match(model, /private enum class Part \{ Inbox, Focus, Projects, Project, Areas, Editor, Search \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('private fun applyPage(')));
     for (const part of ['Inbox', 'Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -146,13 +152,13 @@ assert.equal(code(editorUi).match(/toggle = true/g).length, 2, 'only the quick t
 assert.match(editorUi, /if \(status == "waiting" && !active\) openWaitingPrompt\(\) else editFields\(mapOf\("status" to status\)\)/);
 assert.match(model, /keepEditor\(current\.assignWaiting\(person\)\)\s+editFields\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
-for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt]) {
+for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt, searchUi, processUi]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
 }
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const themeKt = source('Theme.kt');
 const iconsKt = source('Icons.kt');
-const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, coreHost, sqliteBridge, guard];
+const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, coreHost, sqliteBridge, guard];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
@@ -221,7 +227,7 @@ assert.match(model, /PendingFailure\(failed, message, rows, total, editor, scree
 assert.match(model, /pending\.editor\?\.let\(::keepEditor\)/);
 // ...and a failure on Focus reopens Focus with its rows, since reads wait for the retry.
 assert.match(model, /focus = pending\.focus\s+projects = pending\.projects\s+keepProject\(pending\.project\?\.projectId\)\s+project = pending\.project\s+show\(pending\.screen\)/);
-assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ host = runtime; restore\(pending\) \}/g).length, 2);
+assert.equal(model.match(/ProcessCoreHost\.failure\?\.let \{ pending -> ui \{ host = runtime; restore\(pending, storedProcessing\) \}/g).length, 2);
 assert.match(model, /runtime\.createInboxTask\(title, id\)\s+acknowledged\(action\)/);
 assert.match(model, /runtime\.completeTask\(id\)\s+acknowledged\(action\)/);
 assert.match(model, /runtime\.saveTaskDraft\(action\.id, draftJson\(action\.base\), draftJson\(action\.patch\)\)\s+\} catch \(failure: Exception\) \{[\s\S]{0,300}?throw failure\s+\}\s+acknowledged\(action\)\s+ui \{ closeEditor\(\) \}/);
@@ -268,7 +274,7 @@ assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt].j
 assert.match(coreHost, /fun language\(stored: String, system: String\): JSONObject =\s*callAsync\("language", debugFault\("language"\)\.ifEmpty \{ stored \}, system\)/);
 assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
 // update and the editor's saveDraft are task commands: the fault hooks and the diagnostic line cover them.
-assert.match(coreHost, /val command = method in setOf\("create", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter"\)/);
+assert.match(coreHost, /val command = method in setOf\("create", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter",\s*"saveSearch", "inboxCommit", "inboxSkip"\)/);
 
 // The editor reads core's model (getTaskEditorModel, plus getTask's checklist and attachments) and saves only
 // through core's saveTaskDraft, via perform with an exact FailedAction. The status menu keeps updateTask.
@@ -290,7 +296,7 @@ assert.equal(model.match(/runtime\.saveTaskDraft\(/g).length, 1, 'the editor sav
 assert.equal(model.match(/runtime\.updateTask\(/g).length, 1, 'the status menu and the Restore and Next swipes');
 assert.equal(model.match(/runtime\.editorSuggestions\(/g).length, 1);
 assert.equal([activity, owner, editorUi].join('\n').match(/taskEditorModel\(|editorContent\(|editorSuggestions\(|saveTaskDraft\(|updateTask\(/g), null);
-assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
+assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt, searchUi, processUi].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
 // The save: exactly the changed draft fields, base = their loaded values, as a perform with its exact FailedAction; no change means no call.
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
@@ -348,10 +354,10 @@ assert.doesNotMatch(code(editorUi), /\.(sort\w*|sorted\w*|groupBy|reversed|shuff
 const PICKER_START = /private fun pickerStart\(coreDate: String\): Long\? =\s*runCatching \{ SimpleDateFormat\("yyyy-MM-dd", Locale\.US\)\.apply \{ timeZone = TimeZone\.getTimeZone\("UTC"\) \}\.parse\(coreDate\)\?\.time \}\.getOrNull\(\)/;
 assert.match(editorUi, PICKER_START);
 assert.equal(editorUi.match(/pickerStart\(/g).length, 2, 'defined once, used once: the date picker\'s start');
-assert.match(editorUi, /val state = rememberDatePickerState\(initialSelectedDateMillis = pickerStart\(start\)\)/);
+assert.match(editorUi, /val state = rememberDatePickerState\(initialSelectedDateMillis = start\?\.let \{ pickerStart\(it\) \}\)/);
 assert.match(editorUi, /val \(hour, minute\) = pickerClock\(editor\.view\.fields\.dates\.getValue\(target\)\.pickerTime\)/);
 assert.doesNotMatch([editorUi.replace(PICKER_START, ''), model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n'),
-    /java\.time|LocalDate|Instant|DateTimeFormatter|java\.util\.Calendar|GregorianCalendar|Calendar\.getInstance|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter|EditorSuggestions)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
+    /java\.time|LocalDate|Instant|DateTimeFormatter|java\.util\.Calendar|GregorianCalendar|Calendar\.getInstance|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter|EditorSuggestions|SearchView)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
 assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
 // No Kotlin date formatting or date coloring anywhere in the UI package: dates and their tones are core's (row meta, the Focus date line).
 {
@@ -456,11 +462,12 @@ assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.view\.prioritie
     for (const id of ['scheduling', 'organization', 'details']) assert(labelKeys.includes(`taskEdit.${id}`), `LABEL_KEYS lacks taskEdit.${id}`);
 }
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi })) {
     const body = code(text);
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
     for (const [, rest] of body.matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
-        for (const [, literal] of rest.replace(/\b(t|testTag)\("[^"]*"\)/g, '').matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+        // Core's JSON is read by key (getString("label")); a key names a field of core's text, it is not text.
+        for (const [, literal] of rest.replace(/\b(t|testTag|getString|optString|text)\("[^"]*"\)/g, '').matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
             if (labelKeys.includes(literal)) continue;
             assert.doesNotMatch(literal.replace(/\$\{[^}]*\}|\$\w+/g, ''), /\p{L}/u, `${name}: hard-coded UI text "${literal}"`);
         }
@@ -536,11 +543,11 @@ for (const scheme of ['light', 'dark']) {
     assert.deepEqual(kotlinPalette(`${scheme.toUpperCase()} =`), FIELDS.map((field) => genericValue(scheme, field)), `RN default ${scheme} matches`);
 }
 // No color is written anywhere else: every other file draws with LocalTheme.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt, searchUi, processUi })) {
     assert.doesNotMatch(code(text), /\bColor\(|Color\.(Black|White|Red|Green|Blue|Gray|Yellow|Cyan|Magenta|DarkGray|LightGray|Transparent)\b|parseColor|"#[0-9A-Fa-f]{3,8}"|0x[0-9A-Fa-f]{8}/,
         `${name} writes a color; colors live only in Theme.kt`);
 }
-assert.equal([activity, focusUi, projectsUi, rowUi, areaUi].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
+assert.equal([activity, focusUi, projectsUi, rowUi, areaUi, searchUi, processUi].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
 assert.equal(code(activity).match(/MindwtrTheme\(/g).length, 1, 'one theme wraps the whole app');
 // Core classifies the theme and owns its hues; Kotlin never names a theme mode.
 assert.doesNotMatch(code(themeKt + owner), /"(system|material3-light|material3-dark)"/);
@@ -609,6 +616,62 @@ assert.match(model, /ProjectsView\.parse\(runtime\.projects\(\)\),\s*at\.project
 assert.match(model, /var openProjectId by mutableStateOf\(saved\.get<String>\("project"\)\)/);
 assert.match(model, /openProjectId = id\s+saved\["project"\] = id/);
 assert.match(projectsUi, /BackHandler\(enabled = failedAction == null\) \{ closeProject\(\) \}/);
+
+// Global search: core's searchTasks is a background read (per-view freshness, and an answer for another query is dropped
+// by core's echoed query); saving a search is a perform(action) with its request UUID kept with the dialog.
+assert.match(coreHost, /fun searchTasks\(json: String\): JSONObject = callAsync\("search", json\)/);
+assert.match(coreHost, /fun saveSearch\(json: String\): JSONObject = callAsync\("saveSearch", json\)/);
+assert.match(hostEntry, /search\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(await contract\.searchTasks\(JSON\.parse\(json\)\)\);/);
+assert.match(hostEntry, /saveSearch\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('saveSearch', await contract\.saveSearch\(JSON\.parse\(json\)\)\)\);/);
+assert.match(model, /background\(listOf\(Part\.Search\), \{ runtime -> SearchView\.parse\(runtime\.searchTasks\(request\)\) \}\) \{ view, mine ->\s+if \(fresh\(mine, Part\.Search\) && view\.query == search\?\.query\?\.trim\(\)\) searchView = view/);
+assert.equal(model.match(/runtime\.searchTasks\(/g).length, 1);
+assert.match(model, /FailedAction\("saveSearch", current\.saveRequestId, current\.query\.trim\(\), patch = mapOf\("name" to name\.trim\(\)\)\)/);
+assert.match(model, /perform\(action\) \{ runtime ->\s+runtime\.saveSearch\([^\n]*\.put\("requestId", action\.id\)\.toString\(\)\)\s+acknowledged\(action\)/);
+assert.match(model, /if \(action\.kind == "saveSearch"\) keepSearch\(SearchState\(action\.title, saveName = action\.patch\["name"\], saveRequestId = action\.id\)\)/,
+    'a new screen reopens the save dialog on an owed save, never re-sends it');
+assert.match(searchUi, /failedAction == null \|\| failedAction == saveSearchAction\(state, name\)/);
+assert.match(searchUi, /failedAction == null \|\| failedAction == FailedAction\("complete", task\.id\)/, 'Mark Done from search is the lists\' Done with its exact retry');
+assert.match(model, /private fun refreshAll\(\) \{[\s\S]*?if \(search != null\) readSearch\(\)\s+\}/, 'search is read again after every command');
+// Search results are core's: core's highlight segments, date line and tone, and tap target; Kotlin never sorts or filters them.
+assert.doesNotMatch(code(searchUi), /\.(sort\w*|sorted\w*|groupBy|reversed|shuffled|distinct\w*)\b/);
+assert.match(searchUi, /row\.getJSONArray\("titleSegments"\)\.segments\(\)/);
+assert.match(searchUi, /private val SEARCH_ROUTES = mapOf\("\/inbox" to Screen\.Inbox, "\/focus" to Screen\.Focus, "\/projects-screen" to Screen\.Projects\)/);
+
+// Process Inbox: every read and edit goes to core's session; each answer is a perform(action) with its exact request,
+// written to the no-backup file before the call, re-sent after process death, and refused requests unlock.
+for (const [fn, js] of [['startInboxProcessing', 'inboxStart'], ['inboxProcessingStep', 'inboxStep'], ['commitInboxProcessingStep', 'inboxCommit'],
+    ['skipInboxProcessingTask', 'inboxSkip'], ['endInboxProcessing', 'inboxEnd']]) {
+    assert.match(coreHost, new RegExp(`fun ${fn}\\([^)]*\\): JSONObject = callAsync\\("${js}"`), `CoreHost.${fn} reaches host method ${js}`);
+}
+assert.match(hostEntry, /inboxStart\(mode: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);/);
+assert.match(hostEntry, /inboxStep\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getInboxProcessingStep\(JSON\.parse\(json\)\)\);/);
+assert.match(hostEntry, /inboxCommit\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('inboxCommit', await contract\.commitInboxProcessingStep\(JSON\.parse\(json\)\)\)\);/);
+assert.match(hostEntry, /inboxSkip\(json: string\): string \{\s*return submit\(async \(\) => taskResult\('inboxSkip', await contract\.skipInboxProcessingTask\(JSON\.parse\(json\)\)\)\);/);
+assert.match(model, /private fun sendAnswer\(action: FailedAction, reopen: Boolean = true\) = perform\(action\) \{ runtime ->/);
+assert.match(model, /val action = stepAction\(current, kind, choice\)\s+if \(busy \|\| \(failedAction != null && failedAction != action\)\) return\s+keepProcessing\(current\.copy\(pending = action, queued = null\)\)\s+sendAnswer\(action\)/,
+    'the exact request is on disk before the call');
+assert.match(model, /current\.pending\?\.takeIf \{ it\.kind == kind && it\.title == choice \}\s+\?: FailedAction\(kind, UUID\.randomUUID\(\)\.toString\(\), choice,/, 'a retry keeps its requestId');
+assert.match(model, /keepProcessing\(null\)\s+val action = restored\.pending \?: return\s+if \(failedAction != null\) return\s+failedAction = action\s+sendAnswer\(action, reopen = false\)/,
+    'after process death the app lands on the Inbox and the uncertain answer is sent again first, in the background');
+assert.match(model, /acknowledged\(action\)\s+ui \{ finishAnswer\(reply\) \}/);
+assert.equal(code(model).match(/runtime\.(commitInboxProcessingStep|skipInboxProcessingTask)\(/g).length, 2);
+assert.match(model, /if \(UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\) ui \{ failedAction = null; processing\?\.let \{ keepProcessing\(it\.copy\(pending = null\)\) \} \}/,
+    'a refused answer wrote nothing, so no request is owed');
+assert.match(model, /saved\["processing"\] = value != null/);
+assert.doesNotMatch(code(model), /saved\["processing"\] = (?!value != null)/, 'the Bundle holds only whether Process Inbox is open');
+assert.match(model, /ProcessingStore\(File\(app\.noBackupFilesDir, "process-inbox"\)\)/);
+assert.match(processUi, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+// Edits: one at a time, answered for their own session and still first in the queue; an older reply never resets newer typing.
+assert.match(model, /val now = processing\?\.takeIf \{ it\.sessionId == current\.sessionId && it\.edits\.firstOrNull\(\) === next \}/);
+assert.match(processUi, /LaunchedEffect\(key, coreValue\) \{ if \(!pending && field\.text != coreValue\)/);
+// No Kotlin policy: every chip sends core's own edit; Kotlin builds only the picker's setDate, the typed text, and the disclosure.
+assert.equal(code(processUi).match(/"setDate"/g).length, 1, 'the date picker\'s day is the only date Kotlin writes');
+assert.doesNotMatch(code(processUi), /"(inbox|next|waiting|someday|reference|done)"\s*->/, 'no status decides a Process Inbox control');
+assert.match(processUi, /const val PROCESSING_MODE_KEY = "mindwtr:view:inboxProcessingMode:v1"/);
+// The Inbox's Process button: core's Inbox count, and TalkBack hears the exact count as RN does.
+assert.match(activity, /if \(total > 0\) ProcessButton\(model\)/);
+assert.match(activity, /semantics \{ contentDescription = "\$label \(\$total\)" \}/);
+assert.doesNotMatch(code(activity), /"\$inbox · \$total"/, 'the "Inbox · N" count line is gone, as in RN');
 
 const fakeCore = `
 export class SqliteAdapter {
@@ -702,6 +765,13 @@ export function createNativeHostContract() {
     getAreaFilter() { globalThis.newInputs.push('areaFilter'); return { ok: true, value: { revision: 'a', label: 'All', summary: 'All areas', options: [] } }; },
     async setAreaFilter(input) { globalThis.newInputs.push(JSON.stringify(['setAreaFilter', input])); return { ok: true, value: input }; },
     async completeTask() { globalThis.completeCount++; return { ok: true, value: { id: 'id' } }; },
+    async searchTasks(input) { globalThis.newInputs.push(JSON.stringify(['search', input])); return { ok: true, value: { version: 1, query: input.query.trim() } }; },
+    async saveSearch(input) { globalThis.newInputs.push(JSON.stringify(['saveSearch', input])); return { ok: true, value: { id: 's', existing: false } }; },
+    startInboxProcessing(input) { globalThis.newInputs.push(JSON.stringify(['inboxStart', input])); return { ok: true, value: { sessionId: 'x', view: { step: 'actionable' } } }; },
+    getInboxProcessingStep(input) { globalThis.newInputs.push(JSON.stringify(['inboxStep', input])); return { ok: true, value: { step: 'actionable' } }; },
+    async commitInboxProcessingStep(input) { globalThis.newInputs.push(JSON.stringify(['inboxCommit', input])); return globalThis.inboxCommitResult; },
+    async skipInboxProcessingTask(input) { globalThis.newInputs.push(JSON.stringify(['inboxSkip', input])); return { ok: true, value: { view: null, notice: null, toast: null } }; },
+    endInboxProcessing(input) { globalThis.newInputs.push(JSON.stringify(['inboxEnd', input])); return { ok: true, value: null }; },
   };
 }
 export const STATUS_COLORS_BY_THEME = {
@@ -740,6 +810,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         focusWindowResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Focus changed; restart paging' } },
         updateResult: { ok: true, value: { id: 't', changed: true } },
         saveDraftResult: { ok: true, value: { id: 't', draft: { title: 'b' } } },
+        inboxCommitResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         __mindwtrNative: {
             sqlAll(sql) {
                 // 'auto': the tasks count matches the load, as a real database would.
@@ -860,6 +931,23 @@ assert.deepEqual(ready.newInputs, ['["taskFocus",{"id":"t","focused":true}]', '[
 ready.taskFocusResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } };
 assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: false, error: 'SAVE_FAILED: disk full' });
 ready.newInputs.length = 0;
+// Search and Process Inbox pass Kotlin's JSON to core unchanged; a failed answer keeps its code prefix; end answers an object.
+{
+    const searchInput = { query: ' milk ', filters: { scope: 'all' }, limit: 50 };
+    const stepInput = { sessionId: 'x', taskId: 't', step: 'actionable', edit: { type: 'set', field: 'title', value: 'a' } };
+    const commitInput = { sessionId: 'x', taskId: 't', step: 'actionable', decision: { choice: 'trash' }, requestId: 'r' };
+    assert.equal((await poll(ready, ready.MindwtrHost.search(JSON.stringify(searchInput)))).value.query, 'milk');
+    assert.equal((await poll(ready, ready.MindwtrHost.saveSearch('{"query":"milk","name":"Milk","requestId":"r"}'))).ok, true);
+    assert.equal((await poll(ready, ready.MindwtrHost.inboxStart('quick'))).value.sessionId, 'x');
+    assert.equal((await poll(ready, ready.MindwtrHost.inboxStep(JSON.stringify(stepInput)))).ok, true);
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.inboxCommit(JSON.stringify(commitInput))), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.equal((await poll(ready, ready.MindwtrHost.inboxSkip('{"sessionId":"x","taskId":"t","requestId":"s"}'))).value.view, null);
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.inboxEnd('x')), { ok: true, value: {} });
+    assert.deepEqual(ready.newInputs, [JSON.stringify(['search', searchInput]), '["saveSearch",{"query":"milk","name":"Milk","requestId":"r"}]',
+        '["inboxStart",{"mode":"quick"}]', JSON.stringify(['inboxStep', stepInput]), JSON.stringify(['inboxCommit', commitInput]),
+        '["inboxSkip",{"sessionId":"x","taskId":"t","requestId":"s"}]', '["inboxEnd",{"sessionId":"x"}]']);
+    ready.newInputs.length = 0;
+}
 ready.persistenceFailure = { message: 'disk full' };
 const queriesBeforeFailure = ready.queryCount;
 const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
@@ -898,6 +986,19 @@ for (const command of [ready.MindwtrHost.taskFocus('t', true), ready.MindwtrHost
     assert.equal((await poll(ready, command)).ok, true);
 }
 assert.equal(ready.newInputs.length, 4);
+// Search and Process Inbox reads wait for the retry; their commands reach core so the retry can save.
+for (const blocked of [ready.MindwtrHost.search('{"query":"a","filters":{},"limit":50}'), ready.MindwtrHost.inboxStart('guided'),
+    ready.MindwtrHost.inboxStep('{"sessionId":"x","taskId":"t","step":"actionable"}')]) {
+    assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
+}
+assert.equal(ready.newInputs.length, 4);
+ready.inboxCommitResult = { ok: true, value: { view: null, notice: null, toast: null } };
+for (const command of [ready.MindwtrHost.saveSearch('{"query":"a","requestId":"r"}'),
+    ready.MindwtrHost.inboxCommit('{"sessionId":"x","taskId":"t","step":"actionable","decision":{"choice":"trash"},"requestId":"r"}'),
+    ready.MindwtrHost.inboxSkip('{"sessionId":"x","taskId":"t","requestId":"s"}')]) {
+    assert.equal((await poll(ready, command)).ok, true);
+}
+assert.equal(ready.newInputs.length, 7);
 assert.equal((await poll(ready, ready.MindwtrHost.language('', 'zh-CN'))).ok, true);
 assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok, true);
 // The RN legacy import runs after the validated load and before activation. RN state changes only
@@ -1010,5 +1111,6 @@ console.log('Theme: one Kotlin theme object equal to RN\'s palettes, no color el
 console.log('Accessibility: the failure banner sits above the list (zIndex, live region, first in traversal); sections expose core\'s text');
 console.log('Projects: reads only through CoreHost, core order and groups only, stale windows restart, blocked after a failed save');
 console.log('RN legacy import: after the validated load, confirmed by a re-read before RN state changes; RKStorage checkpointed first');
+console.log('Search and Process Inbox: core reads in the background with freshness, answers and saves through perform with exact, persisted requests');
 console.log('RN look: rows read core meta (no Kotlin date formatting or coloring); stars, status, new project, and area filter run through perform with exact retries');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

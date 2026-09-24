@@ -16,7 +16,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, box, button, check, connect, draftText, evidenced, field, hasText, Stopped, taskRows } from './device.mjs';
+import { bootFailure, box, button, check, connect, draftText, evidenced, field, hasText, Stopped, taskRows, inboxCount } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -64,7 +64,8 @@ const rotate = (rotation) => {
 };
 
 // ---- UI ----
-const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
+// The Inbox count: the Process Inbox button's spoken count, or 0 for RN's empty Inbox (device.mjs inboxCount).
+const header = inboxCount;
 const hasError = (nodes) => nodes.some((node) => node.text?.includes('Injected commit failure'));
 const loaded = () => waitFor('the Inbox to load', (nodes) => Number.isFinite(header(nodes)), 60_000);
 // The capture sheet's Save (core's common.save), as in RN's quick capture.
@@ -138,8 +139,8 @@ try {
     check(rowsTitled(titles.b) === 1, '(b) exactly one stored row for the capture');
     check(pid() === processId && boots(processId) === 1, '(b) same process, no second host boot');
     setProp('delay_before_ms', '');
-    // Landscape: the count line is a list item, so one drag scrolls it away and rows fill the screen.
-    console.log(`info - (b) landscape shows ${taskRows(nodes).length} full task rows below the count line`);
+    // Landscape: the Process Inbox button and scope line are list items, so one drag scrolls them away and rows fill the screen.
+    console.log(`info - (b) landscape shows ${taskRows(nodes).length} full task rows below the Process Inbox button`);
     const scrolled = await swipe(nodes, 'down');
     // How many rows the list holds: its height over the row pitch. Counting fully visible rows
     // instead depends on where the drag happens to stop.

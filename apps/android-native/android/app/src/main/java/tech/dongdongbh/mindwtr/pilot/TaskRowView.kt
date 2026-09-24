@@ -1,6 +1,22 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,12 +36,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,7 +114,7 @@ fun TaskRowItem(
     val showStatus = status != RowStatus.Hidden && meta.statusLabel != null
     val highlighted = focusHighlight && showStar && task.isFocusedToday
     Box(Modifier.padding(bottom = 6.dp)) {
-        SwipeAction(enabled = swipeOn, swipe = meta.swipe, shape = shape, onSwipe = onSwipe) {
+        SwipeAction(enabled = swipeOn, swipe = meta.swipe, shape = shape, onSwipe = onSwipe, onMenu = { showStatusMenu(task) }) {
             Row(
                 Modifier.fillMaxWidth().clip(shape).background(c.bg).background(if (available) theme.availableBg else c.taskItemBg)
                     .border(if (highlighted) 2.dp else 1.dp, if (highlighted) c.tint else if (available) theme.availableBorder else c.border, shape)
@@ -125,7 +137,9 @@ fun TaskRowItem(
                                 .clickable(enabled = canEdit, onClickLabel = t("common.edit")) { openEditor(task.id) }
                                 .semantics {
                                     contentDescription = meta.accessibilityLabel
-                                    if (swipeOn) customActions = listOf(CustomAccessibilityAction(swipeLabel) { onSwipe(); true })
+                                    // RN's accessibility actions: the swipe's action, and the status menu its long-press opens.
+                                    if (swipeOn) customActions = listOf(CustomAccessibilityAction(swipeLabel) { onSwipe(); true },
+                                        CustomAccessibilityAction(t("taskStatus.changeStatus")) { showStatusMenu(task); true })
                                 })
                         if (showStar) StarButton(model, task, starBlocked?.takeIf { !task.isFocusedToday })
                     }
@@ -279,10 +293,13 @@ fun StatusMenu(model: InboxViewModel) = with(model) {
     }
 }
 
+/** RN's toast: an optional title, the message, and its tone (warning, error, success, or info). */
+data class Toast(val title: String?, val message: String, val tone: String)
+
 /** RN's toast, above the tab bar: a card with the tone's accent bar, core's title, and core's message. */
 @Composable
 fun ToastCard(model: InboxViewModel, modifier: Modifier) {
-    val (title, message) = model.toast ?: return
+    val (title, message, tone) = model.toast ?: return
     val theme = LocalTheme.current
     val c = theme.colors
     val shape = RoundedCornerShape(18.dp)
@@ -293,11 +310,12 @@ fun ToastCard(model: InboxViewModel, modifier: Modifier) {
             .padding(start = 16.dp, end = 14.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Every toast this app shows is RN's warning tone (a refused star).
-        Box(Modifier.size(width = 4.dp, height = 36.dp).clip(CircleShape).background(c.warning))
+        // RN's accent: warning (a refused star, a Process Inbox notice), error, success, else the tint (info).
+        val accent = when (tone) { "warning" -> c.warning; "error" -> c.danger; "success" -> c.success; else -> c.tint }
+        Box(Modifier.size(width = 4.dp, height = 36.dp).clip(CircleShape).background(accent))
         Spacer(Modifier.size(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = rnText(15, 700), color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            title?.let { Text(it, style = rnText(15, 700), color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             Text(message, style = rnText(13, 400, 18), color = c.secondaryText, maxLines = 5, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 3.dp))
         }
@@ -305,30 +323,40 @@ fun ToastCard(model: InboxViewModel, modifier: Modifier) {
 }
 
 /**
- * RN's swipe right: the row slides over the target status's color with core's icon and label
- * (restore: RotateCcw, done: Check, next: ArrowRight). RN reveals a button to tap; here the
- * swipe itself runs the action (one gesture), and the row springs back while core's reply
- * and the list refresh arrive.
+ * RN's swipe right (swipeable-task-item.tsx): the row slides open over RN's labelled action button, 90 wide,
+ * in the target status's color with core's icon and label (restore: RotateCcw, done: Check, next: ArrowRight).
+ * A tap on the button runs the action; a long-press opens the status menu (#1275). Both close the row.
+ * A drag past half the button's width opens it; less springs back. The row's own long-press stays free.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SwipeAction(enabled: Boolean, swipe: RowSwipe, shape: RoundedCornerShape, onSwipe: () -> Unit, content: @Composable () -> Unit) {
+private fun SwipeAction(enabled: Boolean, swipe: RowSwipe, shape: RoundedCornerShape, onSwipe: () -> Unit, onMenu: () -> Unit,
+                        content: @Composable () -> Unit) {
     val theme = LocalTheme.current
-    val state = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
-        if (value == SwipeToDismissBoxValue.StartToEnd) onSwipe()
-        false
-    })
-    SwipeToDismissBox(
-        state,
-        backgroundContent = {
-            Row(Modifier.fillMaxSize().clip(shape).background(theme.status(swipe.target).text).padding(start = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+    val density = LocalDensity.current
+    val open = with(density) { 98.dp.toPx() } // the 90 button and RN's 8 gap
+    val offset = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val settle = { to: Float -> scope.launch { offset.animateTo(to) }; Unit }
+    // A row that can no longer act (a retry owed elsewhere, a read-only project) closes.
+    LaunchedEffect(enabled) { if (!enabled) offset.snapTo(0f) }
+    Box {
+        if (offset.value > 0f) {
+            val spoken = t("task.aria.action").replace("{{action}}", swipe.label)
+            Column(Modifier.matchParentSize().padding(end = 8.dp).wrapContentWidth(Alignment.Start).width(90.dp).clip(shape)
+                .background(theme.status(swipe.target).text).testTag("swipe-action")
+                .combinedClickable(enabled = enabled, role = Role.Button, onLongClick = { settle(0f); onMenu() }) { settle(0f); onSwipe() }
+                .semantics { contentDescription = spoken },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(when (swipe.icon) { "restore" -> Lucide.RotateCcw; "done" -> Lucide.Check; else -> Lucide.ArrowRight }, null,
                     tint = theme.onAction, modifier = Modifier.size(20.dp))
-                Text(swipe.label, style = rnText(12, 600), color = theme.onAction, maxLines = 1, modifier = Modifier.padding(start = 4.dp))
+                Text(swipe.label, style = rnText(12, 600), color = theme.onAction, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
             }
-        },
-        enableDismissFromStartToEnd = enabled,
-        enableDismissFromEndToStart = false,
-        content = { content() },
-    )
+        }
+        Box(Modifier.offset { IntOffset(offset.value.roundToInt(), 0) }.draggable(
+            state = rememberDraggableState { delta -> scope.launch { offset.snapTo((offset.value + delta).coerceIn(0f, open)) } },
+            orientation = Orientation.Horizontal, enabled = enabled,
+            onDragStopped = { settle(if (offset.value > open / 2) open else 0f) },
+        )) { content() }
+    }
 }

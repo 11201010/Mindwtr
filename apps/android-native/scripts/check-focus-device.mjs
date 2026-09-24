@@ -7,7 +7,7 @@
 // editor, and checks Focus: (a) they appear under "Next actions"; (b) a due
 // date of today, picked where the date picker marks today, moves one under
 // "Today", and Save and Close return to Focus; (c) Complete from Focus (RN's
-// swipe right) removes it and stores `done` once; (d) rotation keeps the Focus tab and its
+// swipe right, then its revealed button) removes it and stores `done` once; (d) rotation keeps the Focus tab and its
 // rows; (e) process death restores the Focus tab; (h) the star moves a row under
 // "Today's Focus" and stores it once, and a second tap takes it back (skipped
 // when core refuses the star: its toast shows); (f) a failed Complete keeps
@@ -25,7 +25,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { besideRow, bootFailure, box, button, check, connect, described, draftText, evidenced, fail, field, inEditor, inList, isOn, Stopped, tab, tabSelected, taskRow, taskRows, withDescription, chipOn } from './device.mjs';
+import { besideRow, bootFailure, box, button, check, connect, described, draftText, evidenced, fail, field, inEditor, inList, isOn, Stopped, tab, tabSelected, taskRow, taskRows, withDescription, chipOn, inboxCount } from './device.mjs';
 // Focus section titles as core renders them in English (core's dictionary, not literals).
 const { en } = await import(resolve(import.meta.dirname, '../../../packages/core/src/i18n/locales/en.ts'));
 const NEXT_ACTIONS = en['focus.nextActions'];
@@ -33,6 +33,7 @@ const TODAY = en['focus.schedule'];
 const TODAYS_FOCUS = en['agenda.todaysFocus'];
 const STAR = en['agenda.addToFocus'];
 const UNSTAR = en['agenda.removeFromFocus'];
+const CHANGE_STATUS = en['taskStatus.changeStatus'];
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -94,7 +95,6 @@ const goHome = async () => {
 };
 
 // ---- UI ----
-const inboxCount = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
 const inboxTab = (nodes) => tab(nodes, 'Inbox');
 /** Focus section titles as "<core title> · <core total>"; each title stays pinned above its rows. */
 const headers = (nodes) => nodes.flatMap((node) => {
@@ -310,6 +310,18 @@ try {
     check(true, '(b) Save returned to Focus');
     const due = expectStored(first, { status: 'next', dueDate: today, rev: beforeDue.rev + 1 }, `(b) due date ${today} stored in one write`);
     nodes = await expectSection(first, TODAY, '(b)');
+
+    // (#1275) A long-press on the revealed action button opens RN's status menu; Back closes it and nothing is stored.
+    {
+        const action = await device.revealAction(await screen(), first);
+        requireAppFront();
+        const [l, t, r, b] = box(action);
+        sh(`input swipe ${Math.round((l + r) / 2)} ${Math.round((t + b) / 2)} ${Math.round((l + r) / 2)} ${Math.round((t + b) / 2)} 900`);
+        await waitFor('the status menu', (current) => current.some((node) => node.text === CHANGE_STATUS), 10_000);
+        sh('input keyevent KEYCODE_BACK');
+        await waitFor('the status menu to close', (current) => !current.some((node) => node.text === CHANGE_STATUS), 10_000);
+        expectStored(first, { status: 'next', rev: due.rev }, '(#1275) long-press on the revealed action opens the status menu and stores nothing');
+    }
 
     // (c) Complete from Focus: the row leaves, core's Today total drops by one, and done is stored once.
     const todayTotal = sectionTotal(nodes, TODAY);

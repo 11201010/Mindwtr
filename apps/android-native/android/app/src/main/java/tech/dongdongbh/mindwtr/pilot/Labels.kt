@@ -44,6 +44,12 @@ val LABEL_KEYS = listOf(
     "taskStatus.changeStatus", "task.aria.changeStatus", "task.aria.changeStatusHint",
     "projects.addPlaceholder", "projects.add", "projects.areaFilter", "agenda.reviewDueProjects", "common.open",
     "agenda.collapseOtherSections", "agenda.expandOtherSections", "status.active", "status.archived",
+    // Global search (RN's global-search.tsx); the filter sheet's words are core's filterOptions.
+    "search.title", "search.placeholder", "filters.label", "search.saveSearch", "search.saveSearchPrompt", "search.helpOperators",
+    "search.showingFirst", "search.hiddenCompletedMatches", "search.noResults", "search.resultTask", "search.resultProject",
+    "search.inProjectSuffix", "review.markDone",
+    // Process Inbox: the Inbox button and scope line; the steps' words are core's view.
+    "inbox.processButton", "projects.allAreas", "common.loading", "taskEdit.projectLabel", "task.aria.action",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

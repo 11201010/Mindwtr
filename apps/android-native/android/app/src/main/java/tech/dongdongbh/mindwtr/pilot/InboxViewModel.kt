@@ -57,7 +57,8 @@ data class FailedAction(
 
 /** Core refused the update or the editor save before writing anything, so there is no retry to hold. */
 private val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
-private val REFUSABLE = setOf("update", "saveDraft")
+/** Commands core can refuse before writing: an update, an editor save, a saved search, and a Process Inbox answer. */
+private val REFUSABLE = setOf("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip")
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -163,8 +164,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var areaSheet by mutableStateOf(false); private set
     /** The row whose status menu is open (RN's SwipeableTaskItemStatusMenu). */
     var statusMenu by mutableStateOf<TaskRow?>(null); private set
-    /** RN's toast: a title and a message, shown for RN's 3.2 s. */
-    var toast by mutableStateOf<Pair<String, String>?>(null); private set
+    /** RN's toast: an optional title, a message, and its tone, shown for RN's 3.2 s. */
+    var toast by mutableStateOf<Toast?>(null); private set
     /** The "Add new project…" draft, its area ("" = no area), and its request UUID; all survive process death. */
     var projectDraft by mutableStateOf(saved.get<String>("projectDraft") ?: ""); private set
     var projectAreaId by mutableStateOf(saved.get<String>("projectAreaId")); private set
@@ -185,6 +186,15 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var suggestions by mutableStateOf<Map<String, EditorSuggestions>>(emptyMap()); private set
     /** The last save was refused as stale; the screen offers Reload. */
     var conflict by mutableStateOf(false); private set
+    /** The open global search (RN's global-search route): its query, filters, and save dialog; small, so it rides the Bundle. */
+    var search by mutableStateOf(saved.get<String>("search")?.let(SearchState::restore)); private set
+    /** Core's searchTasks reply for the query on screen. */
+    var searchView by mutableStateOf<SearchView?>(null); private set
+    /** Process Inbox on screen: core's session and step view, and an answer's exact request (see [ProcessingStore]). */
+    var processing by mutableStateOf<InboxProcessing?>(null); private set
+    private val processingStore = ProcessingStore(File(app.noBackupFilesDir, "process-inbox"))
+    /** RN's per-device Process Inbox mode (guided or quick), under RN's key. */
+    var processingMode by mutableStateOf(readProcessingMode(prefs)); private set
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
@@ -196,15 +206,18 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val savedDraft = editorKey?.let(drafts::read)
         drafts.deleteExcept(if (savedDraft != null) editorKey else null)
         if (savedDraft == null) keepKey(null)
+        // Process Inbox left open at process death (the Bundle says so), or owed by a failure in this process.
+        val storedProcessing = processingStore.read()
+        val reopenProcessing = storedProcessing?.takeIf { saved.get<Boolean>("processing") == true }
         Thread({
             try {
                 val runtime = ProcessCoreHost.get(getApplication())
-                ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending) }; return@Thread }
+                ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing) }; return@Thread }
                 val lists = try {
                     read(runtime, at)
                 } catch (failure: Throwable) {
                     // A save that failed while this screen opened blocks reads; show its retry.
-                    ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending) }; return@Thread }
+                    ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing) }; return@Thread }
                     throw failure
                 }
                 // The editor open at process death: core's model read again, the saved draft on top.
@@ -217,6 +230,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     restored?.let { resumeEditor(it, savedDraft.optJSONObject("pending")) }
                     // Control edits core had not answered before the process died are sent again, in order.
                     pumpEdits()
+                    if (reopenProcessing != null) resumeProcessing(reopenProcessing) else processingStore.delete()
+                    search?.let { readSearch() }
                 }
             } catch (failure: Throwable) {
                 Log.e(CoreHost.TAG, "Core boot failed", failure)
@@ -291,9 +306,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         sendDraft(action)
     }
 
-    private fun restore(pending: ProcessCoreHost.PendingFailure) {
+    private fun restore(pending: ProcessCoreHost.PendingFailure, storedProcessing: InboxProcessing?) {
         val action = pending.action
         if (action.kind == "create") { setCapture(action.title, action.id, action.title); showCapture(true) }
+        // An owed saved search or Process Inbox answer reopens its screen on the same request.
+        if (action.kind == "saveSearch") keepSearch(SearchState(action.title, saveName = action.patch["name"], saveRequestId = action.id))
+        if (action.kind in STEP_KINDS) storedProcessing?.let { keepProcessing(it.copy(pending = action)) }
         if (action.kind == "createProject") setProjectDraft(action.title, action.base["areaId"], action.id)
         areaFilter = pending.areas
         if (action.kind == "saveDraft") pendingSave = action
@@ -618,8 +636,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun showStatusMenu(task: TaskRow?) { statusMenu = task }
 
     private var toastShown = 0
-    private fun showToast(title: String, message: String) {
-        toast = title to message
+    private fun showToast(title: String?, message: String, tone: String = "warning") {
+        toast = Toast(title, message, tone)
         val mine = ++toastShown
         main.postDelayed({ if (mine == toastShown) toast = null }, 3_200)
     }
@@ -663,6 +681,215 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             runtime.updateTask(task.id, json(action.base), json(action.patch))
             acknowledged(action)
         }
+    }
+
+    // ---- Global search (RN's app/global-search.tsx) ----
+
+    private fun keepSearch(value: SearchState?) {
+        search = value
+        saved["search"] = value?.state()?.toString()
+    }
+
+    /** RN's header search button: an empty query and RN's default filters. */
+    fun openSearch() {
+        keepSearch(SearchState())
+        searchView = null
+        readSearch()
+    }
+
+    fun closeSearch() {
+        keepSearch(null)
+        searchView = null
+    }
+
+    private var searchTyped = 0
+
+    /** The query as typed; core is asked once typing pauses (RN debounces its full-text read by 200 ms). */
+    fun editSearch(query: String) {
+        val current = search ?: return
+        keepSearch(current.copy(query = query))
+        val mine = ++searchTyped
+        main.postDelayed({ if (mine == searchTyped) readSearch() }, 200)
+    }
+
+    /** A filter chip, the Include chips, the location, or an active chip's clear: RN's filter state, read again at once. */
+    fun setSearchFilters(filters: JSONObject) {
+        val current = search ?: return
+        keepSearch(current.copy(filters = filters))
+        readSearch()
+    }
+
+    fun showSearchFilters(open: Boolean) { search?.let { keepSearch(it.copy(filtersOpen = open)) } }
+
+    /** RN's save dialog: open with the query as the name, or closed (null). */
+    fun showSaveSearch(name: String?) { search?.let { keepSearch(it.copy(saveName = name)) } }
+
+    /**
+     * Core's searchTasks for the query and filters on screen, in the background. An answer for another
+     * query (core echoes the trimmed query) or an older read is dropped.
+     */
+    private fun readSearch() {
+        val request = search?.request() ?: return
+        background(listOf(Part.Search), { runtime -> SearchView.parse(runtime.searchTasks(request)) }) { view, mine ->
+            if (fresh(mine, Part.Search) && view.query == search?.query?.trim()) searchView = view
+        }
+    }
+
+    fun saveSearchAction(current: SearchState, name: String) =
+        FailedAction("saveSearch", current.saveRequestId, current.query.trim(), patch = mapOf("name" to name.trim()))
+
+    /** RN's handleSaveSearch through core's saveSearch; the request UUID stays with the dialog, so a retry is exact. */
+    fun saveSearch(name: String) {
+        val current = search ?: return
+        val action = saveSearchAction(current, name)
+        perform(action) { runtime ->
+            runtime.saveSearch(JSONObject().put("query", action.title).put("name", action.patch["name"]).put("requestId", action.id).toString())
+            acknowledged(action)
+            ui { search?.let { keepSearch(it.copy(saveName = null, saveRequestId = UUID.randomUUID().toString())) } }
+        }
+    }
+
+    /** A project hit, or a task core cannot open in the editor: the list RN routes to, when this app has it. */
+    fun openFromSearch(target: Screen, projectId: String?) {
+        closeSearch()
+        show(target)
+        if (projectId != null) openProject(projectId)
+    }
+
+    // ---- Process Inbox (RN's inbox-processing-modal.tsx and inbox-processing/) ----
+
+    /** The screen state; it is on disk before an answer's call (synced), and the Bundle holds only whether it is open. */
+    private fun keepProcessing(value: InboxProcessing?, persist: Boolean = true) {
+        processing = value
+        saved["processing"] = value != null
+        if (value == null) processingStore.delete() else if (persist) processingStore.write(value.state())
+    }
+
+    /** RN's "Process Inbox (N)": core's queue in RN's per-device mode. Core refuses while earlier writes are unsaved; its message shows. */
+    fun openProcessing() = perform { runtime ->
+        val started = InboxProcessing.started(runtime.startInboxProcessing(processingMode))
+        ui { keepProcessing(started) }
+    }
+
+    /**
+     * After process death the app lands on the Inbox, as RN does (its modal does not survive). An answer whose
+     * outcome was unknown is first sent again exactly, in the background; core's session died with the process,
+     * so a refusal wrote nothing and only core's message shows. Another failure keeps the retry on the Inbox.
+     */
+    private fun resumeProcessing(restored: InboxProcessing) {
+        keepProcessing(null)
+        val action = restored.pending ?: return
+        if (failedAction != null) return
+        failedAction = action
+        sendAnswer(action, reopen = false)
+    }
+
+    /** The Inbox banner's Try again for an owed Process Inbox answer: the same request again. */
+    fun retryAnswer() { failedAction?.takeIf { it.kind in STEP_KINDS }?.let { sendAnswer(it, reopen = processing != null) } }
+
+    /** RN's mode switch: kept on the device, and the same item's step in the other mode. */
+    fun switchProcessingMode(mode: String) {
+        processingMode = mode
+        prefs.edit().putString(PROCESSING_MODE_KEY, mode).apply()
+        editStep(JSONObject().put("mode", mode))
+    }
+
+    /** A control's edit (as core's view carries it), or a mode: queued, then sent to core one at a time. */
+    fun editStep(input: JSONObject) {
+        val current = processing ?: return
+        keepProcessing(current.copy(edits = current.edits + input), persist = false)
+        pumpStep()
+    }
+
+    /** The edit core is answering now. */
+    private var stepInFlight: JSONObject? = null
+
+    /** Sends the next queued edit, then a queued answer. The screen calls it again whenever no action runs. */
+    fun pumpStep() {
+        val current = processing ?: return
+        val runtime = host
+        if (stepInFlight != null || runtime == null || busy || failedAction != null) return
+        val next = current.edits.firstOrNull()
+        if (next == null) {
+            current.queued?.let { (kind, choice) -> answer(kind, choice) }
+            return
+        }
+        stepInFlight = next
+        val request = JSONObject(next.toString()).put("sessionId", current.sessionId).put("taskId", current.taskId).put("step", current.step)
+        background(emptyList(), { engine -> runCatching { engine.inboxProcessingStep(request.toString()) } }) { reply, _ ->
+            if (stepInFlight === next) stepInFlight = null
+            // A reply counts only for its session and the edit it answers, still first in the queue.
+            val now = processing?.takeIf { it.sessionId == current.sessionId && it.edits.firstOrNull() === next } ?: return@background pumpStep()
+            reply.onSuccess { view -> keepProcessing(now.copy(view = view, edits = now.edits.drop(1)), persist = false) }
+                .onFailure { failure ->
+                    // Core refused the edit: core's message shows, and queued edits and a queued answer are dropped.
+                    // A changed item or an ended session opens a new session on core's current queue.
+                    Log.w(CoreHost.TAG, "Process Inbox edit refused", failure)
+                    val message = failure.message ?: failure.javaClass.simpleName
+                    showToast(null, message.substringAfter(": "), "warning")
+                    keepProcessing(now.copy(edits = emptyList(), queued = null), persist = false)
+                    if (message.startsWith("STALE_REVISION")) openProcessing()
+                }
+            pumpStep()
+        }
+    }
+
+    /** An answer's exact request: the step's choice ([kind] inboxCommit) or Skip (inboxSkip), for the task and step on screen. */
+    fun stepAction(current: InboxProcessing, kind: String, choice: String) = current.pending?.takeIf { it.kind == kind && it.title == choice }
+        ?: FailedAction(kind, UUID.randomUUID().toString(), choice,
+            patch = mapOf("sessionId" to current.sessionId, "taskId" to current.taskId, "step" to current.step))
+
+    /** A choice, File it, Back, Create project, or Skip. Edits still with core go first; the request is on disk before the call. */
+    fun answer(kind: String, choice: String) {
+        val current = processing ?: return
+        if (current.edits.isNotEmpty() || stepInFlight != null) { keepProcessing(current.copy(queued = kind to choice), persist = false); return }
+        val action = stepAction(current, kind, choice)
+        if (busy || (failedAction != null && failedAction != action)) return
+        keepProcessing(current.copy(pending = action, queued = null))
+        sendAnswer(action)
+    }
+
+    /**
+     * Core's commitInboxProcessingStep or skipInboxProcessingTask with [action]'s exact request. A stale session or
+     * item wrote nothing: core's message shows and a new session opens on core's current queue.
+     */
+    private fun sendAnswer(action: FailedAction, reopen: Boolean = true) = perform(action) { runtime ->
+        val request = JSONObject(action.patch).put("requestId", action.id)
+        val reply = try {
+            if (action.kind == "inboxSkip") runtime.skipInboxProcessingTask(request.apply { remove("step") }.toString())
+            else runtime.commitInboxProcessingStep(request.put("decision", JSONObject().put("choice", action.title)).toString())
+        } catch (failure: Exception) {
+            val message = failure.message.orEmpty()
+            if (!message.startsWith("STALE_REVISION")) {
+                // A refusal (INVALID_INPUT) wrote nothing either: no request is owed.
+                if (UPDATE_REFUSALS.any { message.startsWith(it) }) ui { failedAction = null; processing?.let { keepProcessing(it.copy(pending = null)) } }
+                throw failure
+            }
+            val started = if (reopen) InboxProcessing.started(runtime.startInboxProcessing(processingMode)) else null
+            acknowledged(action)
+            ui { keepProcessing(started); showToast(null, message.substringAfter(": "), "warning") }
+            return@perform
+        }
+        acknowledged(action)
+        ui { finishAnswer(reply) }
+    }
+
+    /** Core's result: the next step (or the end of the queue), a notice instead of moving on, and the filed item's toast. */
+    private fun finishAnswer(reply: JSONObject) {
+        reply.optJSONObject("notice")?.let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+        reply.optJSONObject("toast")?.let { showToast(null, it.getString("message"), "info") }
+        // A background re-send after process death has no screen to move on.
+        val current = processing ?: return
+        val view = reply.optJSONObject("view")
+        if (view == null) closeProcessing() else keepProcessing(current.copy(view = view, pending = null))
+    }
+
+    /** RN's close: the session ends in core (nothing is written), and the Inbox shows again. */
+    fun closeProcessing() {
+        val current = processing ?: return
+        keepProcessing(null)
+        stepInFlight = null
+        background(emptyList(), { runtime -> runCatching { runtime.endInboxProcessing(current.sessionId) } }) { _, _ -> }
     }
 
     private fun setProjectDraft(text: String, areaId: String?, requestId: String) {
@@ -748,6 +975,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private fun refreshAll() {
         val at = depth()
         background(Part.entries, { runtime -> read(runtime, at) }, ::showLists)
+        if (search != null) readSearch()
     }
 
     /** The open project from offset 0 as deep as it is shown. A project core no longer has reads as null. */
@@ -850,7 +1078,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private val shownAt = HashMap<Part, Long>()
 
     /** One list a read can show. */
-    private enum class Part { Inbox, Focus, Projects, Project, Areas, Editor }
+    private enum class Part { Inbox, Focus, Projects, Project, Areas, Editor, Search }
 
     /** A read's result for [part] is shown only if no command, and no newer read of that list, came first. */
     private fun fresh(mine: Long, part: Part) = (mine > commandAt && mine > (shownAt[part] ?: 0L)).also { if (it) shownAt[part] = mine }

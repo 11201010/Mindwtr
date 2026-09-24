@@ -105,7 +105,8 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
-type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter';
+type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
+    | 'saveSearch' | 'inboxCommit' | 'inboxSkip';
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const meta = {
         scope: 'native-android',
@@ -346,5 +347,45 @@ globalThis.MindwtrHost = {
     /** `json` is one of getAreaFilter's `next` selections, passed to core unchanged. */
     setAreaFilter(json: string): string {
         return submit(async () => taskResult('areaFilter', await contract.setAreaFilter(JSON.parse(json))));
+    },
+    /** `json` is `{ query, filters, limit }`, passed to core's searchTasks unchanged; the reply echoes the trimmed query. */
+    search(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(await contract.searchTasks(JSON.parse(json)));
+        });
+    },
+    /** `json` is `{ query, name, requestId }`. Core saves one search per query, so a retry never adds a second. */
+    saveSearch(json: string): string {
+        return submit(async () => taskResult('saveSearch', await contract.saveSearch(JSON.parse(json))));
+    },
+    /** Core's startInboxProcessing in RN's per-device mode ('guided' or 'quick'). */
+    inboxStart(mode: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.startInboxProcessing({ mode: mode as 'guided' | 'quick' }));
+        });
+    },
+    /** `json` is `{ sessionId, taskId, step, edit?, mode? }`: one control's edit, passed to core unchanged. */
+    inboxStep(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getInboxProcessingStep(JSON.parse(json)));
+        });
+    },
+    /** `json` is `{ sessionId, taskId, step, decision, requestId }`. Core answers a repeated request without writing again. */
+    inboxCommit(json: string): string {
+        return submit(async () => taskResult('inboxCommit', await contract.commitInboxProcessingStep(JSON.parse(json))));
+    },
+    /** `json` is `{ sessionId, taskId, requestId }`, the header's Skip. */
+    inboxSkip(json: string): string {
+        return submit(async () => taskResult('inboxSkip', await contract.skipInboxProcessingTask(JSON.parse(json))));
+    },
+    /** Closes the session; it writes nothing. Core answers null; Kotlin reads an object. */
+    inboxEnd(sessionId: string): string {
+        return submit(async () => {
+            unwrap(contract.endInboxProcessing({ sessionId }));
+            return {};
+        });
     },
 };

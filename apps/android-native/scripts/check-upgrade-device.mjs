@@ -40,7 +40,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bootFailure, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped } from './device.mjs';
+import { bootFailure, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount } from './device.mjs';
 
 const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
@@ -306,7 +306,8 @@ const importMismatch = (db, state, backupFile) => execFileSync('bun', ['-e', `
 const liveInbox = (tasks) => tasks.filter((task) => task.status === 'inbox' && !task.deletedAt).map((task) => task.title).sort();
 
 // ---- UI ----
-const header = (nodes) => Number(nodes.map((node) => /^Inbox · (\d+)$/.exec(node.text ?? '')?.[1]).find(Boolean) ?? NaN);
+// The Inbox count: the Process Inbox button's spoken count, or 0 for RN's empty Inbox (device.mjs inboxCount).
+const header = inboxCount;
 // A failed boot shows only its message (tagged `boot-failure`) and no command control.
 const unavailable = bootFailure;
 const nativeScreen = () => waitFor('the native screen', (nodes) => Number.isFinite(header(nodes)) || unavailable(nodes) !== undefined, 60_000);

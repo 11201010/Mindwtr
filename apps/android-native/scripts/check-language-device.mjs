@@ -5,7 +5,7 @@
 // Installs the debug APK with `install -r` (existing development data stays)
 // and compares the labels with core's own dictionaries (en.ts and zh-Hans.ts,
 // read from source): (a) with no override the tabs, the capture button, and
-// the Inbox count line show core's English, so the
+// the Inbox scope line (RN's "All areas" under Process Inbox) show core's English, so the
 // phone's language must resolve to English; (b) with the debug-only property
 // `debug.mindwtr.native.language=zh` and a fresh process, the same labels show
 // core's Chinese and the app logs `language=zh missing=0`; (c) with the
@@ -57,16 +57,16 @@ const expectLanguage = async (language, step) => {
     await waitFor('the app process to end', () => pid() === '', 10_000);
     await waitFor('home screen', () => front().includes(`${home}/`), 10_000);
     device.launch(ACTIVITY);
-    const [inbox, focus, projects, capture] = ['tab.inbox', 'tab.next', 'nav.projects', 'nav.addTask']
+    const [inbox, focus, projects, capture, scope] = ['tab.inbox', 'tab.next', 'nav.projects', 'nav.addTask', 'projects.allAreas']
         .map((key) => label(language, key));
     const nodes = await waitFor(`the ${language} Inbox`, (current) => tab(current, inbox)
-        && current.some((node) => node.text?.startsWith(`${inbox} · `)), 60_000);
+        && current.some((node) => node.text === scope), 60_000);
     for (const [name, text] of [['tab.inbox', inbox], ['tab.next', focus], ['nav.projects', projects]]) {
         check(Boolean(tab(nodes, text)), `(${step}) the ${name} tab reads core's ${language} "${text}"`);
     }
     // RN's center capture button is labelled with core's nav.addTask.
     check(Boolean(button(nodes, capture)), `(${step}) the capture button reads core's ${language} "${capture}"`);
-    check(nodes.some((node) => /^.+ · \d+$/.test(node.text ?? '') && node.text.startsWith(`${inbox} · `)), `(${step}) the Inbox header reads core's ${language} "${inbox} · N"`);
+    check(nodes.some((node) => node.text === scope), `(${step}) the Inbox scope line reads core's ${language} "${scope}"`);
     const line = logs(pid(), TAG).split('\n').find((entry) => entry.includes('Native Android labels')) ?? '';
     check(line.includes(`language=${language} missing=0`), `(${step}) the app logged ${line.slice(line.indexOf('Native Android labels')) || 'no labels line'}`);
 };
