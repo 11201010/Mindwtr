@@ -2,6 +2,7 @@ import { projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection, type
 import type { DateFormatter } from './date';
 import { tFallback } from './i18n';
 import { resolveFeatureFlags } from './resolve-feature-flags';
+import type { TaskStore } from './store-types';
 import { buildTaskGroupSections, getTaskGroupByLabel, type TaskGroupItem } from './task-group-sections';
 import { DONE_TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
 import { isTaskCancelled } from './task-status';
@@ -230,3 +231,23 @@ export function getArchiveConfirmation(
             confirmLabel,
         };
 }
+
+/** Archive's Restore: the task goes back to Inbox. */
+export const moveArchivedTaskToInbox = (store: Pick<TaskStore, 'updateTask'>, taskId: string) => (
+    store.updateTask(taskId, { status: 'inbox' })
+);
+
+/** Archive's bulk Restore to Inbox. */
+export const moveArchivedTasksToInbox = (store: Pick<TaskStore, 'batchMoveTasks'>, taskIds: string[]) => (
+    store.batchMoveTasks(taskIds, 'inbox')
+);
+
+/** The completion time picker's choice for a completed archived task. */
+export const setArchivedTaskCompletedAt = (store: Pick<TaskStore, 'updateTask'>, taskId: string, completedAt: string) => (
+    store.updateTask(taskId, { completedAt })
+);
+
+/** An archived project's Restore: it becomes active again. */
+export const reactivateArchivedProject = (store: Pick<TaskStore, 'updateProject'>, projectId: string) => (
+    store.updateProject(projectId, { status: 'active' })
+);

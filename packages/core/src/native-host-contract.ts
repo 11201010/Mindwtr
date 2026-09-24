@@ -125,10 +125,14 @@ import {
     getArchiveTokenFilterOptions,
     getHistoryTabs,
     getTaskGroupItemIds,
+    moveArchivedTasksToInbox,
+    moveArchivedTaskToInbox,
+    reactivateArchivedProject,
     resolveArchiveSortBy,
     resolveHistoryTab,
     selectArchivedProjects,
     selectArchivedTasks,
+    setArchivedTaskCompletedAt,
     showArchiveSearch,
     sortArchivedTasks,
     type ArchiveMenu,
@@ -136,10 +140,13 @@ import {
     type ArchiveTaskGroupBy,
     type HistoryTab,
 } from './archive-view-model';
-import { buildBulkTaskTokenUpdates, type BulkTaskTokenField, type BulkTaskTokenMode } from './bulk-task-tokens';
+import type { BulkTaskTokenField, BulkTaskTokenMode } from './bulk-task-tokens';
+import { createNativeRequestReceipts } from './native-request-receipts';
 import {
+    buildContextsTokenIndex,
     buildContextsViewModel,
     CONTEXTS_BULK_STATUSES,
+    editContextsTaskTokens,
     getContextsEmptyState,
     getContextsMatchModeLabels,
     getContextsTokenPicker,
@@ -160,11 +167,14 @@ import { getTaskMetadataFilterVisibility, type TaskMetadataFilterVisibility } fr
 import { buildTrashTimeline, resolveTrashClearScope } from './task-utils';
 import {
     formatTrashCounts,
+    formatTrashDeletedDate,
     getBulkTrashConfirmation,
     getTrashEmptyState,
     getTrashPurgeConfirmation,
     getTrashRetentionHint,
     getTrashRowLabels,
+    purgeTrashItems,
+    restoreTrashItems,
     selectTrashedProjects,
     selectTrashedTasks,
     type ListConfirmation,
@@ -2520,9 +2530,19 @@ function resolveListFilters(filters: NativeListFilters | undefined, visibility: 
 }
 
 function createListViewMethods(deps: ListViewDeps) {
-    // ponytail: keeps the 50 latest requests; an older retry runs again, which the store
-    // refuses for purged or missing items and repeats harmlessly for moves and restores.
-    const receipts = new Map<string, { key: string; result: NativeListActionResult<unknown> }>();
+    // Exact retries, shared with other contract writes through one helper.
+    const receipts = createNativeRequestReceipts({
+        save: async () => {
+            if (useTaskStore.getState().persistenceFailure) {
+                try {
+                    await useTaskStore.getState().retryPersistence();
+                } catch (error) {
+                    return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+                }
+            }
+            return deps.save();
+        },
+    });
     // One cached view per screen, so paging does not rebuild the list.
     const cache = new Map<string, { key: string; value: unknown }>();
     const cached = <T,>(screen: string, key: string, build: () => T): T => {
@@ -2549,43 +2569,17 @@ function createListViewMethods(deps: ListViewDeps) {
         const failure = useTaskStore.getState().persistenceFailure;
         return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? message ?? 'The list action failed');
     };
-    /** Run the store writes together, as the screen does; any refusal fails the action. */
-    const write = async (...writes: (() => Promise<StoreActionResult | void>)[]): Promise<NativeHostResult<null>> => {
+    /** Run the screen's store write (one call, or several together); any refusal fails the action. */
+    const write = async (run: () => Promise<StoreActionResult | void | (StoreActionResult | void | undefined)[]>): Promise<NativeHostResult<null>> => {
         try {
-            const results = await Promise.all(writes.map((run) => run()));
+            const outcome = await run();
+            const results = Array.isArray(outcome) ? outcome : [outcome];
             const refused = results.find((result) => result && result.success === false);
             return refused ? writeFailure(refused.error) : { ok: true, value: null };
         } catch (error) {
             return writeFailure(error instanceof Error ? error.message : String(error));
         }
     };
-    /** Run a request once; a retry of a completed request only finishes its save. */
-    const once = async <Action,>(
-        requestId: unknown,
-        key: string,
-        perform: () => Promise<NativeHostResult<NativeListActionResult<Action>>>,
-    ): Promise<NativeHostResult<NativeListActionResult<Action>>> => {
-        if (typeof requestId !== 'string' || !CAPTURE_ID_PATTERN.test(requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
-        let done = receipts.get(requestId);
-        if (done && done.key !== key) return fail('INVALID_INPUT', 'Request ID already belongs to another action');
-        if (!done) {
-            const outcome = await perform();
-            if (!outcome.ok) return outcome;
-            done = { key, result: outcome.value };
-            receipts.set(requestId, done);
-            if (receipts.size > 50) receipts.delete(receipts.keys().next().value as string);
-        } else if (useTaskStore.getState().persistenceFailure) {
-            try {
-                await useTaskStore.getState().retryPersistence();
-            } catch (error) {
-                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
-            }
-        }
-        const saved = await deps.save();
-        if (!saved.ok) return saved;
-        return { ok: true, value: done.result as NativeListActionResult<Action> };
-    };
-
     const liveTask = (id: unknown): Task | undefined => {
         const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
         return task && !task.deletedAt ? task : undefined;
@@ -2641,7 +2635,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 if (!isIdList(action.taskIds) || action.taskIds.some((id) => !trashedTask(id))) {
                     return fail('INVALID_INPUT', 'Every task must be in Trash');
                 }
-                const written = await write(...action.taskIds.map((id) => () => store().restoreTask(id)));
+                const written = await write(() => Promise.all(action.taskIds.map((id) => store().restoreTask(id))));
                 return written.ok ? { ok: true, value: { changed: true, toast: null } } : written;
             }
             default:
@@ -2672,9 +2666,12 @@ function createListViewMethods(deps: ListViewDeps) {
             const selectedIds = input.selectedIds ?? [];
             const view = cached('contexts', JSON.stringify([revision, tokens, matchMode, input.searchQuery ?? '', selectedIds]), () => {
                 const { state, areaById, projectById, selection } = areaScope();
-                // Mobile's visible tasks: the store's tasks in the selected area, outside parked projects.
-                const visibleTasks = state.tasks.filter((task) => isTaskVisibleInArea(task, { areaById, projectById, resolvedAreaFilter: selection }));
-                const model = buildContextsViewModel({ visibleTasks, settings: state.settings, selectedTokens: tokens, matchMode, searchQuery: input.searchQuery ?? '' });
+                // Counted once per data change, whatever the selection.
+                const index = cached('contexts-index', deps.dataRevision(), () => buildContextsTokenIndex(
+                    // Mobile's visible tasks: the store's tasks in the selected area, outside parked projects.
+                    state.tasks.filter((task) => isTaskVisibleInArea(task, { areaById, projectById, resolvedAreaFilter: selection })),
+                ));
+                const model = buildContextsViewModel({ index, settings: state.settings, selectedTokens: tokens, matchMode, searchQuery: input.searchQuery ?? '' });
                 const next = (nextTokens: string[], nextMode: ContextOrTagMatchMode) => ({ tokens: nextTokens, matchMode: resolveContextsMatchMode(nextTokens, nextMode) });
                 const labels = getContextsMatchModeLabels(t);
                 const onScreen = new Set(model.tasks.map((task) => task.id));
@@ -2734,7 +2731,7 @@ function createListViewMethods(deps: ListViewDeps) {
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
             const action = input.action as NativeContextsAction;
-            return once(input.requestId, JSON.stringify(['contexts', action]), async () => {
+            return receipts.run(input.requestId, JSON.stringify(['contexts', action]), async () => {
                 const shared = await performTaskAction('contexts', action);
                 if (shared) return shared as NativeHostResult<NativeListActionResult<NativeContextsAction>>;
                 const t = deps.t();
@@ -2760,12 +2757,19 @@ function createListViewMethods(deps: ListViewDeps) {
                             || !isStringList(action.values, 100)) {
                             return fail('INVALID_INPUT', 'Tasks that exist, a tags or contexts field, add or remove, and values are required');
                         }
-                        const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
-                        const updates = buildBulkTaskTokenUpdates(action.taskIds, tasksById, action.field, action.values, action.mode);
-                        if (updates.length === 0) return { ok: true, value: { changed: false, toast: null } };
-                        const written = await write(() => store.batchUpdateTasks(updates));
+                        let changed = false;
+                        const written = await write(async () => {
+                            const outcome = await editContextsTaskTokens(store, {
+                                taskIds: action.taskIds,
+                                tasksById: Object.fromEntries(store.tasks.map((task) => [task.id, task])),
+                                field: action.field, mode: action.mode, values: action.values,
+                            });
+                            changed = outcome.changed;
+                            return outcome.changed ? outcome.result : undefined;
+                        });
+                        if (!written.ok) return written;
                         // Mobile counts the selection, not the tasks that changed.
-                        return written.ok ? { ok: true, value: { changed: true, toast: doneToast(action.taskIds.length, t) } } : written;
+                        return { ok: true, value: { changed, toast: changed ? doneToast(action.taskIds.length, t) : null } };
                     }
                     default:
                         return fail('INVALID_INPUT', 'Contexts does not offer that action');
@@ -2899,7 +2903,7 @@ function createListViewMethods(deps: ListViewDeps) {
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
             const action = input.action as NativeArchiveAction;
-            return once(input.requestId, JSON.stringify(['archive', action]), async () => {
+            return receipts.run(input.requestId, JSON.stringify(['archive', action]), async () => {
                 const shared = await performTaskAction('archive', action);
                 if (shared) return shared as NativeHostResult<NativeListActionResult<NativeArchiveAction>>;
                 const store = useTaskStore.getState();
@@ -2909,10 +2913,10 @@ function createListViewMethods(deps: ListViewDeps) {
                 switch (action.type) {
                     case 'moveToInbox':
                         if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
-                        return done(await write(() => store.updateTask(action.taskId, { status: 'inbox' })));
+                        return done(await write(() => moveArchivedTaskToInbox(store, action.taskId)));
                     case 'moveTasksToInbox':
                         if (!isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))) return fail('INVALID_INPUT', 'Tasks that exist are required');
-                        return done(await write(() => store.batchMoveTasks(action.taskIds, 'inbox')));
+                        return done(await write(() => moveArchivedTasksToInbox(store, action.taskIds)));
                     case 'setCompletedAt': {
                         const task = liveTask(action.taskId);
                         if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
@@ -2920,11 +2924,11 @@ function createListViewMethods(deps: ListViewDeps) {
                             || isTaskCancelled(task)) {
                             return fail('INVALID_INPUT', 'A completion timestamp for a completed task is required');
                         }
-                        return done(await write(() => store.updateTask(action.taskId, { completedAt: action.completedAt })));
+                        return done(await write(() => setArchivedTaskCompletedAt(store, action.taskId, action.completedAt)));
                     }
                     case 'reactivateProject':
                         if (!liveProject(action.projectId)) return fail('INVALID_INPUT', 'Project is not available');
-                        return done(await write(() => store.updateProject(action.projectId, { status: 'active' })));
+                        return done(await write(() => reactivateArchivedProject(store, action.projectId)));
                     case 'trashProject':
                         if (!liveProject(action.projectId)) return fail('INVALID_INPUT', 'Project is not available');
                         return done(await write(() => store.deleteProject(action.projectId)));
@@ -2967,8 +2971,7 @@ function createListViewMethods(deps: ListViewDeps) {
             });
             const formatDate = deps.formatDate();
             const labels = getTrashRowLabels(t);
-            // Mobile shows the device's short date here; the host formats it with the user's date settings.
-            const deletedLabel = (deletedAt: string | undefined) => `${labels.deleted}: ${formatDate(deletedAt, 'P', 'Unknown')}`;
+            const deletedLabel = (deletedAt: string | undefined) => `${labels.deleted}: ${formatTrashDeletedDate(deletedAt, formatDate)}`;
             const count = view.items.length;
             return { ok: true, value: {
                 version: NATIVE_HOST_CONTRACT_VERSION,
@@ -3027,7 +3030,7 @@ function createListViewMethods(deps: ListViewDeps) {
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
             const action = input.action as NativeTrashAction;
-            return once(input.requestId, JSON.stringify(['trash', action]), async () => {
+            return receipts.run(input.requestId, JSON.stringify(['trash', action]), async () => {
                 const store = useTaskStore.getState();
                 const done = (written: NativeHostResult<null>): NativeHostResult<NativeListActionResult<NativeTrashAction>> => (
                     written.ok ? { ok: true, value: { changed: true, toast: null } } : written
@@ -3053,13 +3056,8 @@ function createListViewMethods(deps: ListViewDeps) {
                     case 'restoreItems':
                     case 'purgeItems': {
                         if (!itemsInTrash(action.taskIds, action.projectIds)) return fail('INVALID_INPUT', 'Every item must be in Trash');
-                        const taskIds = inStoreOrder(action.taskIds, store._allTasks);
-                        const projectIds = inStoreOrder(action.projectIds, store._allProjects);
-                        const restoring = action.type === 'restoreItems';
-                        return done(await write(
-                            ...(taskIds.length > 0 ? [() => (restoring ? store.restoreTasks(taskIds) : store.purgeTasks(taskIds))] : []),
-                            ...projectIds.map((id) => () => (restoring ? store.restoreProject(id) : store.purgeProject(id))),
-                        ));
+                        const ids = { taskIds: inStoreOrder(action.taskIds, store._allTasks), projectIds: inStoreOrder(action.projectIds, store._allProjects) };
+                        return done(await write(() => (action.type === 'restoreItems' ? restoreTrashItems(store, ids) : purgeTrashItems(store, ids))));
                     }
                     case 'emptyTrash': {
                         if (typeof action.revision !== 'string') return fail('INVALID_INPUT', 'The Clear Trash revision is required');
@@ -3072,10 +3070,7 @@ function createListViewMethods(deps: ListViewDeps) {
                             state._allProjects,
                         );
                         if (scope.taskIds.length + scope.projectIds.length === 0) return fail('INVALID_INPUT', 'Trash is empty');
-                        return done(await write(
-                            ...(scope.taskIds.length > 0 ? [() => store.purgeTasks(scope.taskIds)] : []),
-                            ...scope.projectIds.map((id) => () => store.purgeProject(id)),
-                        ));
+                        return done(await write(() => purgeTrashItems(store, scope)));
                     }
                     default:
                         return fail('INVALID_INPUT', 'Trash does not offer that action');

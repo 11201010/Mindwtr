@@ -12,10 +12,11 @@ import {
 import {
   useTaskStore,
   shallow,
-  buildBulkTaskTokenUpdates,
+  buildContextsTokenIndex,
   buildContextsViewModel,
   collectBulkTaskTokens,
   CONTEXTS_BULK_STATUSES,
+  editContextsTaskTokens,
   getContextsEmptyState,
   getContextsMatchModeLabels,
   getContextsRouteTokens,
@@ -92,8 +93,10 @@ export function ContextsView() {
     setMatchMode('all');
   }, [requestedTokens]);
 
+  // The counts depend only on the tasks: count once per store change, not per selection.
+  const contextsIndex = useMemo(() => buildContextsTokenIndex(visibleTasks), [visibleTasks]);
   const model = buildContextsViewModel({
-    visibleTasks,
+    index: contextsIndex,
     settings,
     selectedTokens: selectedContexts,
     matchMode,
@@ -209,16 +212,16 @@ export function ContextsView() {
   const handleBulkTokenConfirm = async (values: string[]) => {
     if (!bulkTokenPicker || !hasSelection) return;
     await runBulkAction(tokenPickerTitle, async () => {
-      const updates = buildBulkTaskTokenUpdates(
-        selectedIdsArray,
-        tasksById,
-        bulkTokenPicker.field,
-        values,
-        bulkTokenPicker.action
-      );
       setBulkTokenPicker(null);
-      if (updates.length === 0) return;
-      assertBulkActionSucceeded(await batchUpdateTasks(updates));
+      const outcome = await editContextsTaskTokens({ batchUpdateTasks }, {
+        taskIds: selectedIdsArray,
+        tasksById,
+        field: bulkTokenPicker.field,
+        mode: bulkTokenPicker.action,
+        values,
+      });
+      if (!outcome.changed) return;
+      assertBulkActionSucceeded(outcome.result);
       exitSelectionMode();
       showToast({
         title: t('common.done'),

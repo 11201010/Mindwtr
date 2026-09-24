@@ -15,7 +15,7 @@ import { mergeAppData } from './sync';
 import { shouldShowTaskForStart } from './task-utils';
 import type { StorageAdapter } from './storage';
 import type { AppData, Area, Project, Task } from './types';
-import { runDataTransferTransaction } from './data-transfer-transaction';
+import { runDataTransferTransaction, runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
 import { collectProjectTaskLinks, undoProjectDelete } from './undo-project-delete';
 
 const waitForExpectation = async (assertion: () => void, maxAttempts = 200): Promise<void> => {
@@ -3811,6 +3811,31 @@ describe('TaskStore', () => {
         expect(after.deletedAt).toBeUndefined();
         expect(after.purgedAt).toBeUndefined();
         expect(after.rev).toBe(live.rev);
+    });
+
+    it('refuses a purge that waited behind a document restore which made the task live', async () => {
+        const { addTask, deleteTask } = useTaskStore.getState();
+        await addTask('Restored by a document restore', { status: 'next' });
+        const task = useTaskStore.getState()._allTasks.find((item) => item.title === 'Restored by a document restore')!;
+        await deleteTask(task.id);
+        let release: (() => void) | undefined;
+        // A document restore holds the store write lock and makes the task live again.
+        const restore = runSerializedSyncDocumentWriteOperation(async () => {
+            await new Promise<void>((resolve) => { release = resolve; });
+            useTaskStore.setState((state) => ({
+                _allTasks: state._allTasks.map((item) => (item.id === task.id ? { ...item, deletedAt: undefined } : item)),
+            }));
+        });
+        await vi.waitFor(() => expect(release).toBeDefined());
+        // Trash showed the task, so the purge was requested; it waits for the lock.
+        const purging = useTaskStore.getState().purgeTask(task.id);
+        release!();
+        await restore;
+
+        expect(await purging).toEqual({ success: false, error: 'Task is not in Trash' });
+        const after = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+        expect(after.deletedAt).toBeUndefined();
+        expect(after.purgedAt).toBeUndefined();
     });
 
     it('purges deleted tasks while deriving the visible task slice from all tasks', async () => {

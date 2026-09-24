@@ -1,5 +1,7 @@
 import { projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
+import type { DateFormatter } from './date';
 import { formatI18nTemplate, tFallback } from './i18n';
+import type { StoreActionResult, TaskStore } from './store-types';
 import { DEFAULT_TOMBSTONE_RETENTION_DAYS } from './sync-tombstones';
 import type { Area, Project, Task } from './types';
 
@@ -46,6 +48,11 @@ export function getTrashRetentionHint(t: (key: string) => string): string {
         tFallback(t, 'trash.retentionHint', 'Items in Trash are removed for good after {{days}} days'),
         { days: DEFAULT_TOMBSTONE_RETENTION_DAYS },
     );
+}
+
+/** A Trash row's deleted date: the short date in the app's date format. */
+export function formatTrashDeletedDate(deletedAt: string | undefined, formatDate: DateFormatter): string {
+    return formatDate(deletedAt, 'P', 'Unknown');
 }
 
 export function getTrashRowLabels(t: (key: string) => string) {
@@ -109,4 +116,32 @@ export function getBulkTrashConfirmation(t: (key: string) => string): ListConfir
         cancelLabel: t('common.cancel'),
         confirmLabel: t('common.delete'),
     };
+}
+
+type TrashItemIds = { taskIds: string[]; projectIds: string[] };
+
+/** Trash's Restore for several items: the tasks in one store write, then each project. */
+export function restoreTrashItems(
+    store: Pick<TaskStore, 'restoreTasks' | 'restoreProject'>,
+    { taskIds, projectIds }: TrashItemIds,
+): Promise<(StoreActionResult | undefined)[]> {
+    return Promise.all([
+        taskIds.length > 0 ? store.restoreTasks(taskIds) : Promise.resolve(undefined),
+        ...projectIds.map((projectId) => store.restoreProject(projectId)),
+    ]);
+}
+
+/**
+ * Delete forever, for a selection or Clear Trash: the tasks in one store write, then
+ * each project. The store purges only items still in Trash and keeps each one as a
+ * tombstone for sync. Clear Trash passes the ids its confirmation showed.
+ */
+export function purgeTrashItems(
+    store: Pick<TaskStore, 'purgeTasks' | 'purgeProject'>,
+    { taskIds, projectIds }: TrashItemIds,
+): Promise<(StoreActionResult | undefined)[]> {
+    return Promise.all([
+        taskIds.length > 0 ? store.purgeTasks(taskIds) : Promise.resolve(undefined),
+        ...projectIds.map((projectId) => store.purgeProject(projectId)),
+    ]);
 }

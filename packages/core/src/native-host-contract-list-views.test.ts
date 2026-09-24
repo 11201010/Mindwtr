@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildArchiveTaskItems, getArchivedTaskRow, selectArchivedTasks, sortArchivedTasks } from './archive-view-model';
-import { buildContextsViewModel } from './contexts-view-model';
+import { buildContextsTokenIndex, buildContextsViewModel } from './contexts-view-model';
 import { createDateFormatter } from './date';
 import { getTranslator } from './i18n';
 import { loadTranslations } from './i18n/i18n-loader';
@@ -77,8 +77,9 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
 
     it.each(fixture.trash.scenarios.map((entry) => [entry.name, entry] as const))('Trash: "%s" like mobile', async (name, entry) => {
         const { host, recorder } = await openHost(fixture.trash, entry);
-        const formatDeleted = (deletedAt: string) => english()(deletedAt, 'P', 'Unknown');
-        expect(await replayTrash(createTrashContractBackend(host, generateUUID, formatDeleted), entry, recorder))
+        // The mobile capture pinned the device locale.
+        expect(await host.setLanguage({ storedLanguage: null, systemLocale: 'en-US' })).toMatchObject({ ok: true, value: { language: 'en' } });
+        expect(await replayTrash(createTrashContractBackend(host, generateUUID), entry, recorder))
             .toEqual(frozen(fixture.trash.observations[name]));
     });
 
@@ -99,7 +100,7 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         if (!first.ok) throw new Error(first.error.message);
         const state = useTaskStore.getState();
         const model = buildContextsViewModel({
-            visibleTasks: state.tasks, settings: state.settings, selectedTokens: ['#work', '@phone'], matchMode: 'any', searchQuery: '',
+            index: buildContextsTokenIndex(state.tasks), settings: state.settings, selectedTokens: ['#work', '@phone'], matchMode: 'any', searchQuery: '',
         });
         const now = new Date();
         const meta = (id: string) => {
@@ -241,6 +242,23 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(state._allProjects.find((project) => project.id === 'tp-home')).toMatchObject({ purgedAt: expect.any(String) });
         // Items outside the filtered view are untouched.
         expect(state._tasksById.get('tt-report')?.purgedAt).toBeUndefined();
+    });
+
+    it('writes once for concurrent exact retries, and refuses a request ID reused on another screen', async () => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'c-call', status: 'done' as const } };
+        const rev = useTaskStore.getState()._tasksById.get('c-call')!.rev ?? 0;
+        const [first, second] = await Promise.all([host.runContextsAction(input), host.runContextsAction(input)]);
+        expect(first).toEqual({ ok: true, value: { changed: true, toast: null } });
+        expect(second).toEqual(first);
+        expect(recorder.log).toEqual([['updateTask', 'c-call', { status: 'done' }]]);
+        expect(useTaskStore.getState()._tasksById.get('c-call')!.rev).toBe(rev + 1);
+        const reused = await Promise.all([
+            host.runArchiveAction({ requestId: input.requestId, action: { type: 'trashTask', taskId: 'c-sink' } }),
+            host.runTrashAction({ requestId: input.requestId, action: { type: 'purgeItem', kind: 'task', id: 'c-trashed' } }),
+        ]);
+        reused.forEach((result) => expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } }));
+        expect(recorder.log).toHaveLength(1);
     });
 
     it('refuses Clear Trash once Trash changed after its confirmation, and deletes nothing', async () => {

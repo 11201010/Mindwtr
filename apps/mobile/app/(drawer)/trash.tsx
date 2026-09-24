@@ -3,12 +3,16 @@ import { Check, Trash2 } from 'lucide-react-native';
 import {
   buildTrashTimeline,
   formatTrashCounts,
+  formatTrashDeletedDate,
   getInlineMarkdownPreview,
   getTrashEmptyState,
   getTrashPurgeConfirmation,
   getTrashRetentionHint,
   getTrashRowLabels,
+  purgeTrashItems,
   resolveTrashClearScope,
+  restoreTrashItems,
+  safeFormatDate,
   selectTrashedProjects,
   selectTrashedTasks,
   shallow,
@@ -158,7 +162,7 @@ function TrashTaskItem({
             />
           )}
           <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{typeLabel}</Text>
-          <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{deletedLabel}: {task.deletedAt ? new Date(task.deletedAt).toLocaleDateString() : 'Unknown'}</Text>
+          <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{deletedLabel}: {formatTrashDeletedDate(task.deletedAt, safeFormatDate)}</Text>
         </View>
         <View style={[styles.statusIndicator, { backgroundColor: '#6B7280' }]} />
       </Pressable>
@@ -213,7 +217,7 @@ function TrashProjectItem({
             {project.title}
           </Text>
           <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{typeLabel}</Text>
-          <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{deletedLabel}: {project.deletedAt ? new Date(project.deletedAt).toLocaleDateString() : 'Unknown'}</Text>
+          <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{deletedLabel}: {formatTrashDeletedDate(project.deletedAt, safeFormatDate)}</Text>
         </View>
         <View style={[styles.statusIndicator, { backgroundColor: project.color || '#6B7280' }]} />
       </Pressable>
@@ -343,10 +347,7 @@ export default function TrashScreen() {
     if (selectionCount === 0) return;
     const taskIds = Array.from(selectedTaskIds);
     const projectIds = Array.from(selectedProjectIds);
-    await runTrashBulkAction(t('trash.restore'), () => Promise.all([
-      taskIds.length > 0 ? restoreTasks(taskIds) : Promise.resolve(undefined),
-      ...projectIds.map((projectId) => restoreProject(projectId)),
-    ]));
+    await runTrashBulkAction(t('trash.restore'), () => restoreTrashItems({ restoreTasks, restoreProject }, { taskIds, projectIds }));
   }, [restoreProject, restoreTasks, runTrashBulkAction, selectedProjectIds, selectedTaskIds, selectionCount, t]);
 
   const handleBulkPurge = useCallback(() => {
@@ -363,10 +364,7 @@ export default function TrashScreen() {
           onPress: async () => {
             const taskIds = Array.from(selectedTaskIds);
             const projectIds = Array.from(selectedProjectIds);
-            await runTrashBulkAction(t('trash.deletePermanently'), () => Promise.all([
-              taskIds.length > 0 ? purgeTasks(taskIds) : Promise.resolve(undefined),
-              ...projectIds.map((projectId) => purgeProject(projectId)),
-            ]));
+            await runTrashBulkAction(t('trash.deletePermanently'), () => purgeTrashItems({ purgeTasks, purgeProject }, { taskIds, projectIds }));
           },
         },
       ],
@@ -437,10 +435,7 @@ export default function TrashScreen() {
           onPress: async () => {
             // Always the ids the alert was opened for, never a fresh whole-store
             // sweep: an item that arrived meanwhile was never shown to the user.
-            await runTrashBulkAction(confirmation.confirmLabel, () => Promise.all([
-              scope.taskIds.length > 0 ? purgeTasks(scope.taskIds) : Promise.resolve(undefined),
-              ...scope.projectIds.map((projectId) => purgeProject(projectId)),
-            ]));
+            await runTrashBulkAction(confirmation.confirmLabel, () => purgeTrashItems({ purgeTasks, purgeProject }, scope));
           },
         },
       ]

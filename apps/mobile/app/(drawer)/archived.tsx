@@ -18,11 +18,15 @@ import {
     getInlineMarkdownPreview,
     getTaskGroupItemIds,
     getTaskMetadataFilterVisibility,
+    moveArchivedTasksToInbox,
+    moveArchivedTaskToInbox,
+    reactivateArchivedProject,
     resolveArchiveSortBy,
     resolveFeatureFlags,
     safeFormatDate,
     selectArchivedProjects,
     selectArchivedTasks,
+    setArchivedTaskCompletedAt,
     shallow,
     showArchiveSearch,
     sortArchivedTasks,
@@ -514,7 +518,7 @@ export default function ArchivedScreen() {
     }, [showToast, t]);
 
     const handleRestore = useCallback((taskId: string) => {
-        void settleStoreAction(() => updateTask(taskId, { status: 'inbox' }))
+        void settleStoreAction(() => moveArchivedTaskToInbox({ updateTask }, taskId))
             .then((outcome) => {
                 if (!outcome.ok) showTaskUpdateError(outcome.message);
             });
@@ -527,7 +531,7 @@ export default function ArchivedScreen() {
     const handleBulkRestore = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
         await runBulkAction(restoreActionLabel, async () => {
-            assertBulkActionSucceeded(await batchMoveTasks(selectedIdsArray, 'inbox'));
+            assertBulkActionSucceeded(await moveArchivedTasksToInbox({ batchMoveTasks }, selectedIdsArray));
             exitSelectionMode();
         });
     }, [batchMoveTasks, exitSelectionMode, restoreActionLabel, runBulkAction, selectedIdsArray]);
@@ -541,7 +545,7 @@ export default function ArchivedScreen() {
         const taskId = completedAtTaskId;
         setCompletedAtTaskId(null);
         if (!taskId) return;
-        void settleStoreAction(() => updateTask(taskId, { completedAt: iso }))
+        void settleStoreAction(() => setArchivedTaskCompletedAt({ updateTask }, taskId, iso))
             .then((outcome) => {
                 if (!outcome.ok) showTaskUpdateError(outcome.message);
             });
@@ -566,7 +570,7 @@ export default function ArchivedScreen() {
     }, [deleteTask, t]);
 
     const handleRestoreProject = useCallback((projectId: string) => {
-        void updateProject(projectId, { status: 'active' });
+        void reactivateArchivedProject({ updateProject }, projectId);
     }, [updateProject]);
 
     const handleDeleteProject = useCallback((projectId: string) => {

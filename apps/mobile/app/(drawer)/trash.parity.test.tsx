@@ -5,14 +5,15 @@
  *
  * Each scenario renders the real screen with the real core store, swipes, selects,
  * confirms and cancels, and records what a user sees and what the store is asked
- * to write. Deleted dates render with the device locale, so the fixture stores
- * `<localeDate:ISO>` where the row shows `new Date(ISO).toLocaleDateString()`.
+ * to write. Dates render through the app's date formatter, configured per
+ * scenario as the root layout does, with the device locale pinned to en-US.
  */
 import React from 'react';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  configureDateFormatting,
   flushPendingSave,
   loadTranslations,
   resetForTests,
@@ -126,7 +127,9 @@ const allTasks: Task[] = [
 const settingsVariants: Record<string, AppSettings> = {
   base: {},
   homeArea: { filters: { areaIds: ['a-home'] } },
+  ymdDates: { dateFormat: 'ymd' },
 };
+const DEVICE_LOCALE = 'en-US';
 
 type Action =
   | ['swipe', string, 'restore' | 'delete']
@@ -201,6 +204,7 @@ export const scenarios: Scenario[] = [
     actions: [['press', 'Clear Trash'], ['alert', 'Clear Trash']],
   },
   { name: 'an empty trash', settings: 'base', taskIds: ['tt-live', 'tt-purged'], projectIds: ['tp-live', 'tp-purged'], actions: [] },
+  { name: 'deleted dates follow the app date format', settings: 'ymdDates', actions: [] },
 ];
 
 const writeLog: unknown[][] = [];
@@ -247,27 +251,13 @@ const flatten = (style: unknown): Record<string, unknown> => (
 );
 const titleOf = (id: string) => [...allTasks, ...projects].find((entry) => entry.id === id)!.title;
 
-/** The row's text with its device-locale date replaced by a token that names the ISO date. */
-function localeFree(texts: string[]): string[] {
-  const state = useTaskStore.getState();
-  const dates = [...state._allTasks, ...state._allProjects]
-    .flatMap((entry) => (entry.deletedAt ? [entry.deletedAt] : []));
-  return texts.map((text) => {
-    for (const iso of dates) {
-      const local = new Date(iso).toLocaleDateString();
-      if (text.endsWith(`: ${local}`)) return `${text.slice(0, -local.length)}<localeDate:${iso.slice(0, 10)}>`;
-    }
-    return text;
-  });
-}
-
 function describeRows(root: ReactTestInstance) {
   return hostsOf(root, 'Swipeable').map((row) => {
     const pressables = row.findAll((child) => String(child.type) === 'Pressable');
     const body = pressables[pressables.length - 1];
     const indicator = body.findAll((child) => String(child.type) === 'View').at(-1);
     return [
-      localeFree(textsIn(body)),
+      textsIn(body),
       body.props.accessibilityLabel ?? null,
       body.props.accessibilityState ?? null,
       body.props.disabled === true,
@@ -292,7 +282,7 @@ function observe(root: ReactTestInstance, seen: { alerts: number; toasts: number
     alerts: harness.alerts.slice(seen.alerts).map((alert) => [alert.title, alert.message, alert.buttons.map((button) => [button.text, button.style ?? null])]),
     toasts: harness.toasts.slice(seen.toasts).map((toast) => [toast.tone ?? null, toast.title ?? null, toast.message ?? null, toast.actionLabel ?? null]),
     writes: writeLog.slice(seen.writes),
-    text: localeFree(root.findAll((node) => String(node.type) === 'Text').map((node) => textOf(node).join(''))),
+    text: root.findAll((node) => String(node.type) === 'Text').map((node) => textOf(node).join('')),
   };
   seen.alerts = harness.alerts.length;
   seen.toasts = harness.toasts.length;
@@ -341,7 +331,16 @@ async function runScenario(scenario: Scenario) {
   harness.storage.clear();
   const tasks = scenario.taskIds ? allTasks.filter((entry) => scenario.taskIds!.includes(entry.id)) : allTasks;
   const seededProjects = scenario.projectIds ? projects.filter((entry) => scenario.projectIds!.includes(entry.id)) : projects;
-  await seedStore(settingsVariants[scenario.settings], tasks, seededProjects);
+  const settings = settingsVariants[scenario.settings];
+  // What the root layout applies before any screen renders.
+  configureDateFormatting({
+    language: settings.language || 'en',
+    dateFormat: settings.dateFormat,
+    calendarSystem: settings.calendarSystem,
+    timeFormat: settings.timeFormat,
+    systemLocale: DEVICE_LOCALE,
+  });
+  await seedStore(settings, tasks, seededProjects);
   let renderer!: ReactTestRenderer;
   await act(async () => { renderer = create(<TrashScreen />); });
   const seen = { alerts: 0, toasts: 0, writes: 0 };
@@ -366,6 +365,7 @@ describe('React Native Trash parity fixture', () => {
   });
   afterAll(() => {
     vi.useRealTimers();
+    configureDateFormatting();
     resetForTests();
     if (originalTz === undefined) delete process.env.TZ;
     else process.env.TZ = originalTz;

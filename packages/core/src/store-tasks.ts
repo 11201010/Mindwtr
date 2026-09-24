@@ -1046,9 +1046,16 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             });
             return actionFail('Task is not in Trash');
         }
-        return mutateTasks({ set, debouncedSave }, {
+        // The mutation checks again on the state it writes, as purgeTasks does, so a
+        // purge that waited behind a document restore never compacts a live task.
+        const refusal = { purged: null as boolean | null };
+        const result = await mutateTasks({ set, debouncedSave }, {
             selectTasks: (state) => {
                 const task = state._tasksById.get(id);
+                if (task && (!task.deletedAt || task.purgedAt)) {
+                    refusal.purged = Boolean(task.purgedAt);
+                    return [];
+                }
                 return task ? [task] : [];
             },
             buildUpdates: (task, { now }) => ({
@@ -1065,6 +1072,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             },
             missingMessage: 'Task not found',
         });
+        if (refusal.purged === null) return result;
+        logWarn('Purge refused for a task not in Trash', {
+            scope: 'store',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.3/purge-refused-outside-trash', purged: refusal.purged },
+        });
+        return actionFail('Task is not in Trash');
     },
 
     /**

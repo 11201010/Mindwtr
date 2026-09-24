@@ -1,12 +1,16 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+    buildContextsTokenIndex,
     buildContextsViewFilterSections,
+    buildContextsViewModel,
+    getContextsTokenCount,
     getContextsRouteTokens,
     selectContextsRouteTokens,
     taskHasContextOrTag,
     toggleContextsNoContext,
     toggleContextsToken,
 } from './contexts-view-model';
+import { configureDateFormatting } from './date';
 import { taskMatchesContextOrTagSelection } from './hierarchy-utils';
 import { loadTranslations } from './i18n/i18n-loader';
 import {
@@ -43,6 +47,7 @@ describe('list views: core reproduces the React Native screens', () => {
     });
     afterEach(async () => {
         vi.useRealTimers();
+        configureDateFormatting();
         await flushPendingSave();
         resetForTests();
     });
@@ -71,6 +76,9 @@ describe('list views: core reproduces the React Native screens', () => {
         freezeClock(fixture.trash.now);
         const recorder = createWriteRecorder();
         await seedListViewsStore(fixture.trash, scenario, recorder);
+        // What mobile's root layout applies; the capture pinned the device locale.
+        const settings = fixture.trash.settings[scenario.settings];
+        configureDateFormatting({ language: 'en', dateFormat: settings.dateFormat, calendarSystem: settings.calendarSystem, timeFormat: settings.timeFormat, systemLocale: 'en-US' });
         const observed = await replayTrash(createTrashCoreBackend(t), scenario, recorder);
         expect(observed).toEqual(frozen(fixture.trash.observations[name]));
     });
@@ -108,6 +116,43 @@ describe('contexts view filters', () => {
         expect(taskMatchesContextOrTagSelection(item, ['@work'])).toBe(true);
         expect(taskMatchesContextOrTagSelection(item, ['#client'])).toBe(true);
         expect(taskMatchesContextOrTagSelection(item, ['@phone'])).toBe(false);
+    });
+
+    it('counts each chip like the chip filter, once per task', () => {
+        const tasks = [
+            task({ id: 'a', contexts: ['@work/deep', '@work'], tags: ['#a//b', '#x/'] }),
+            task({ id: 'b', contexts: ['@work/deeper'], tags: ['#a'] }),
+            task({ id: 'c', contexts: [], tags: ['#x'] }),
+            task({ id: 'd', status: 'done', contexts: ['@work'] }),
+        ];
+        const index = buildContextsTokenIndex(tasks);
+        const active = tasks.filter((entry) => entry.status !== 'done');
+        for (const token of ['@work', '@work/', '@work/deep', '@work/dee', '#a', '#a/', '#a//b', '#x', '#x/', '@none']) {
+            expect([token, getContextsTokenCount(index, token)])
+                .toEqual([token, active.filter((entry) => taskMatchesContextOrTagSelection(entry, [token])).length]);
+        }
+    });
+
+    // ponytail: one wall-clock bound on a busy machine; the growth it guards against was 17 s at 5,000 tasks.
+    it('derives Contexts for 5,000 tasks with distinct tokens within the search/filter/sort budget', () => {
+        const tasks = Array.from({ length: 5000 }, (_, index) => task({
+            id: `perf-${index}`,
+            title: `Task ${index}`,
+            contexts: [`@place-${index}/room-${index % 7}`],
+            tags: [`#tag-${index}`, `#area-${index % 50}/topic-${index}`],
+        }));
+        let best = Number.POSITIVE_INFINITY;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const started = performance.now();
+            const index = buildContextsTokenIndex(tasks);
+            for (const selectedTokens of [[], ['#tag-42'], ['#area-3', '@place-7']]) {
+                const model = buildContextsViewModel({ index, settings: {}, selectedTokens, matchMode: 'any', searchQuery: '' });
+                expect(model.tokenChips.length).toBe(15000);
+            }
+            best = Math.min(best, performance.now() - started);
+        }
+        // docs/performance/budgets.md: search/filter/sort derivation, 130 ms at 10k tasks.
+        expect(best).toBeLessThan(130);
     });
 
     it('keeps No context exclusive and reads route tokens', () => {

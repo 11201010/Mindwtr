@@ -24,21 +24,27 @@ import {
     getArchiveTokenFilterOptions,
     getHistoryTabs,
     getTaskGroupItemIds,
+    moveArchivedTasksToInbox,
+    moveArchivedTaskToInbox,
+    reactivateArchivedProject,
     resolveArchiveSortBy,
     resolveHistoryTab,
     selectArchivedProjects,
     selectArchivedTasks,
+    setArchivedTaskCompletedAt,
     showArchiveSearch,
     sortArchivedTasks,
     type ArchiveMenu,
     type ArchiveSegment,
     type ArchiveTaskGroupBy,
 } from './archive-view-model';
-import { buildBulkTaskTokenUpdates, collectBulkTaskTokens, type BulkTaskTokenField, type BulkTaskTokenMode } from './bulk-task-tokens';
+import { collectBulkTaskTokens, type BulkTaskTokenField, type BulkTaskTokenMode } from './bulk-task-tokens';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import {
+    buildContextsTokenIndex,
     buildContextsViewModel,
     CONTEXTS_BULK_STATUSES,
+    editContextsTaskTokens,
     getContextsEmptyState,
     getContextsMatchModeLabels,
     getContextsTokenPicker,
@@ -65,11 +71,14 @@ import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import { buildTrashTimeline, resolveTrashClearScope } from './task-utils';
 import {
     formatTrashCounts,
+    formatTrashDeletedDate,
     getBulkTrashConfirmation,
     getTrashEmptyState,
     getTrashPurgeConfirmation,
     getTrashRetentionHint,
     getTrashRowLabels,
+    purgeTrashItems,
+    restoreTrashItems,
     selectTrashedProjects,
     selectTrashedTasks,
     type ListConfirmation,
@@ -260,7 +269,7 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
         model(state) {
             const { state: store, areaById, projectById, selection } = areaScope();
             const visibleTasks = store.tasks.filter((task) => isTaskVisibleInArea(task, { areaById, projectById, resolvedAreaFilter: selection }));
-            const model = buildContextsViewModel({ visibleTasks, settings: store.settings, selectedTokens: state.tokens, matchMode: state.matchMode, searchQuery: state.searchQuery });
+            const model = buildContextsViewModel({ index: buildContextsTokenIndex(visibleTasks), settings: store.settings, selectedTokens: state.tokens, matchMode: state.matchMode, searchQuery: state.searchQuery });
             const labels = getContextsMatchModeLabels(t);
             const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
             const empty = getContextsEmptyState({ hasTokens: model.hasTokens, selectedTokens: state.tokens }, t);
@@ -297,10 +306,8 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
                 case 'moveTasks': await store.batchMoveTasks(write.taskIds, write.status); return done(write.taskIds.length);
                 case 'editTaskTokens': {
                     const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
-                    const updates = buildBulkTaskTokenUpdates(write.taskIds, tasksById, write.field, write.values, write.mode);
-                    if (updates.length === 0) return null;
-                    await store.batchUpdateTasks(updates);
-                    return done(write.taskIds.length);
+                    const outcome = await editContextsTaskTokens(store, { ...write, tasksById });
+                    return outcome.changed ? done(write.taskIds.length) : null;
                 }
                 case 'trashTasks': {
                     await store.batchDeleteTasks(write.taskIds);
@@ -592,11 +599,11 @@ export function createArchiveCoreBackend(t: Translate): ArchiveBackend {
         async run(write) {
             const store = useTaskStore.getState();
             switch (write.type) {
-                case 'moveToInbox': await store.updateTask(write.taskId, { status: 'inbox' }); return null;
-                case 'moveTasksToInbox': await store.batchMoveTasks(write.taskIds, 'inbox'); return null;
-                case 'setCompletedAt': await store.updateTask(write.taskId, { completedAt: write.completedAt }); return null;
+                case 'moveToInbox': await moveArchivedTaskToInbox(store, write.taskId); return null;
+                case 'moveTasksToInbox': await moveArchivedTasksToInbox(store, write.taskIds); return null;
+                case 'setCompletedAt': await setArchivedTaskCompletedAt(store, write.taskId, write.completedAt); return null;
                 case 'trashTask': await store.deleteTask(write.taskId); return null;
-                case 'reactivateProject': await store.updateProject(write.projectId, { status: 'active' }); return null;
+                case 'reactivateProject': await reactivateArchivedProject(store, write.projectId); return null;
                 case 'trashProject': await store.deleteProject(write.projectId); return null;
                 case 'restoreTasks': await Promise.all(write.taskIds.map((id) => useTaskStore.getState().restoreTask(id))); return null;
                 case 'trashTasks': {
@@ -838,7 +845,6 @@ type TrashModel = {
     empty: { title: string; message: string } | null;
 };
 type TrashBackend = { model: () => TrashModel; run: (write: NativeTrashAction) => Promise<void> };
-const localeToken = (deletedAt: string) => `<localeDate:${deletedAt.slice(0, 10)}>`;
 
 /** Trash through core's functions, as the React Native screen calls them. */
 export function createTrashCoreBackend(t: Translate): TrashBackend {
@@ -847,18 +853,8 @@ export function createTrashCoreBackend(t: Translate): TrashBackend {
         switch (write.type) {
             case 'restoreItem': await (write.kind === 'task' ? store.restoreTask(write.id) : store.restoreProject(write.id)); return;
             case 'purgeItem': await (write.kind === 'task' ? store.purgeTask(write.id) : store.purgeProject(write.id)); return;
-            case 'restoreItems':
-                await Promise.all([
-                    write.taskIds.length > 0 ? store.restoreTasks(write.taskIds) : Promise.resolve(undefined),
-                    ...write.projectIds.map((id) => store.restoreProject(id)),
-                ]);
-                return;
-            case 'purgeItems':
-                await Promise.all([
-                    write.taskIds.length > 0 ? store.purgeTasks(write.taskIds) : Promise.resolve(undefined),
-                    ...write.projectIds.map((id) => store.purgeProject(id)),
-                ]);
-                return;
+            case 'restoreItems': await restoreTrashItems(store, write); return;
+            case 'purgeItems': await purgeTrashItems(store, write); return;
             case 'emptyTrash': throw new Error('Clear Trash runs from its dialog');
         }
     };
@@ -879,7 +875,7 @@ export function createTrashCoreBackend(t: Translate): TrashBackend {
                     return {
                         type: item.type, id: entity.id, title: entity.title, deletedAt: entity.deletedAt!,
                         typeLabel: item.type === 'task' ? labels.taskType : labels.projectType,
-                        deletedLabel: `${labels.deleted}: ${localeToken(entity.deletedAt!)}`,
+                        deletedLabel: `${labels.deleted}: ${formatTrashDeletedDate(entity.deletedAt, safeFormatDate)}`,
                         markdown: item.type === 'task' && item.task.description ? getInlineMarkdownPreview(item.task.description) : null,
                         indicatorColor: item.type === 'project' ? item.project.color || '#6B7280' : '#6B7280',
                     };
@@ -907,7 +903,7 @@ export function createTrashCoreBackend(t: Translate): TrashBackend {
 }
 
 /** Trash through the native host contract. */
-export function createTrashContractBackend(host: Host, requestId: () => string, formatDeleted: (deletedAt: string) => string): TrashBackend {
+export function createTrashContractBackend(host: Host, requestId: () => string): TrashBackend {
     const run = async (write: NativeTrashAction) => { expectOk(await host.runTrashAction({ requestId: requestId(), action: write })); };
     return {
         run,
@@ -921,11 +917,9 @@ export function createTrashContractBackend(host: Host, requestId: () => string, 
                     const entity = item.type === 'task'
                         ? useTaskStore.getState()._tasksById.get(item.row.id)!
                         : useTaskStore.getState()._allProjects.find((project) => project.id === item.id)!;
-                    // The host formats the date with the user's settings; mobile shows the device's short date.
-                    if (item.deletedLabel !== `${labels.deleted}: ${formatDeleted(entity.deletedAt!)}`) throw new Error(`Unexpected date label ${item.deletedLabel}`);
                     return {
                         type: item.type, id: entity.id, title: entity.title, deletedAt: entity.deletedAt!, typeLabel: item.typeLabel,
-                        deletedLabel: `${labels.deleted}: ${localeToken(entity.deletedAt!)}`,
+                        deletedLabel: item.deletedLabel,
                         markdown: item.type === 'task' ? item.descriptionMarkdown : null,
                         indicatorColor: item.type === 'project' ? item.indicatorColor : '#6B7280',
                     };

@@ -2,7 +2,28 @@
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_LIST_VIEWS=1 bunx vitest run components/views/contexts-view.parity.test.tsx 'app/(drawer)/archived.parity.test.tsx' 'app/(drawer)/trash.parity.test.tsx' 'app/(drawer)/history.test.tsx'",
   "capturedAt": "4946dca7ab5e9e4375d80e7faaede50c75c76aee",
-  "note": "Every part was captured from the React Native screens at capturedAt, before their logic moved into core. The capture harnesses were added to a clean checkout of that commit; no screen code had changed. Do not regenerate it from core: it is the reference core and the native host contract must match."
+  "note": "Every part was captured from the React Native screens at capturedAt, before their logic moved into core. The capture harnesses were added to a clean checkout of that commit; no screen code had changed. Do not regenerate it from core: it is the reference core and the native host contract must match.",
+  "recapturedAfterTrashDateFormatter": {
+   "base": "c7a1d30c167a342519b65b1acc25dd1d3b68bf1e",
+   "change": "Correction pass 1, ruling 5: RN Trash rows format the deleted date with the app date formatter (formatTrashDeletedDate with safeFormatDate), not toLocaleDateString(). The Trash harness now configures date formatting as the root layout does, with the device locale pinned to en-US, and records the rendered dates.",
+   "part": "trash",
+   "scenarios": [
+    "timeline, summary and retention hint",
+    "restore rows",
+    "delete rows forever",
+    "bulk restore",
+    "bulk delete forever",
+    "selection mode can be left",
+    "clear the whole trash",
+    "clear a trash the area filter narrows",
+    "only tasks in the trash"
+   ],
+   "added": [
+    "deleted dates follow the app date format"
+   ],
+   "unchanged": "Every other value in these scenarios (rows, counts, dialogs, writes) is identical to the capture at capturedAt; only the date text changed."
+  },
+  "verify": "To check the capture order: in this tree, write the four screen files (and contexts-view-filter-utils.ts) from capturedAt with `git show`, run the command without MINDWTR_CAPTURE_LIST_VIEWS, then restore them. The contexts, archive and history parts replay against capturedAt's screens; checked in correction pass 1. The trash part differs from capturedAt only in its dates (see recapturedAfterTrashDateFormatter)."
  },
  "contexts": {
   "timeZone": "America/New_York",
@@ -30298,6 +30319,9 @@
       "a-home"
      ]
     }
+   },
+   "ymdDates": {
+    "dateFormat": "ymd"
    }
   },
   "scenarios": [
@@ -30511,6 +30535,11 @@
      "tp-purged"
     ],
     "actions": []
+   },
+   {
+    "name": "deleted dates follow the app date format",
+    "settings": "ymdDates",
+    "actions": []
    }
   ],
   "observations": {
@@ -30537,7 +30566,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -30553,7 +30582,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -30569,7 +30598,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -30585,7 +30614,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -30601,7 +30630,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -30617,7 +30646,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -30643,32 +30672,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     }
    ],
@@ -30695,7 +30724,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -30711,7 +30740,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -30727,7 +30756,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -30743,7 +30772,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -30759,7 +30788,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -30775,7 +30804,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -30801,32 +30830,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -30851,7 +30880,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -30867,7 +30896,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -30883,7 +30912,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -30899,7 +30928,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -30915,7 +30944,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -30946,27 +30975,27 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -30991,7 +31020,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -31007,7 +31036,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31023,7 +31052,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -31054,17 +31083,17 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -31089,7 +31118,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -31105,7 +31134,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31136,12 +31165,12 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>"
+      "Deleted: 09/19/2026"
      ]
     }
    ],
@@ -31168,7 +31197,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -31184,7 +31213,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31200,7 +31229,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31216,7 +31245,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -31232,7 +31261,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31248,7 +31277,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -31274,32 +31303,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -31324,7 +31353,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -31340,7 +31369,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31356,7 +31385,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31372,7 +31401,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -31388,7 +31417,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31404,7 +31433,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -31445,32 +31474,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -31495,7 +31524,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -31511,7 +31540,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31527,7 +31556,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31543,7 +31572,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -31559,7 +31588,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31575,7 +31604,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -31601,32 +31630,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -31651,7 +31680,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -31667,7 +31696,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31683,7 +31712,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31699,7 +31728,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -31715,7 +31744,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31731,7 +31760,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -31772,32 +31801,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -31822,7 +31851,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31838,7 +31867,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31854,7 +31883,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -31870,7 +31899,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -31886,7 +31915,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -31917,27 +31946,27 @@
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -31962,7 +31991,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31978,7 +32007,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -31994,7 +32023,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -32010,7 +32039,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -32026,7 +32055,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -32067,27 +32096,27 @@
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -32112,7 +32141,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -32128,7 +32157,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -32144,7 +32173,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -32160,7 +32189,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -32191,22 +32220,22 @@
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     }
    ],
@@ -32233,7 +32262,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -32249,7 +32278,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -32265,7 +32294,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -32281,7 +32310,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -32297,7 +32326,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -32313,7 +32342,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -32339,32 +32368,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -32405,7 +32434,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -32420,7 +32449,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -32435,7 +32464,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -32450,7 +32479,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -32465,7 +32494,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -32480,7 +32509,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -32507,22 +32536,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -32563,7 +32592,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -32578,7 +32607,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -32593,7 +32622,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -32608,7 +32637,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -32623,7 +32652,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -32638,7 +32667,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -32665,22 +32694,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -32721,7 +32750,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -32736,7 +32765,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -32751,7 +32780,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -32766,7 +32795,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -32781,7 +32810,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -32796,7 +32825,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -32823,22 +32852,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -32879,7 +32908,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -32894,7 +32923,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -32909,7 +32938,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -32924,7 +32953,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -32939,7 +32968,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -32954,7 +32983,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -32981,22 +33010,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -33037,7 +33066,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -33052,7 +33081,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -33067,7 +33096,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -33082,7 +33111,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -33097,7 +33126,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -33112,7 +33141,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -33139,22 +33168,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -33179,7 +33208,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -33195,7 +33224,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -33211,7 +33240,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -33248,17 +33277,17 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     }
    ],
@@ -33285,7 +33314,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -33301,7 +33330,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -33317,7 +33346,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -33333,7 +33362,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -33349,7 +33378,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -33365,7 +33394,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -33391,32 +33420,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -33457,7 +33486,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -33472,7 +33501,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -33487,7 +33516,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -33502,7 +33531,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -33517,7 +33546,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -33532,7 +33561,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -33559,22 +33588,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -33615,7 +33644,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -33630,7 +33659,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -33645,7 +33674,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -33660,7 +33689,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -33675,7 +33704,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -33690,7 +33719,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -33717,22 +33746,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -33773,7 +33802,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -33788,7 +33817,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -33803,7 +33832,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -33818,7 +33847,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -33833,7 +33862,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -33848,7 +33877,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -33875,22 +33904,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -33931,7 +33960,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -33946,7 +33975,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -33961,7 +33990,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -33976,7 +34005,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -33991,7 +34020,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -34006,7 +34035,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -34048,22 +34077,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -34104,7 +34133,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -34119,7 +34148,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -34134,7 +34163,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -34149,7 +34178,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -34164,7 +34193,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -34179,7 +34208,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -34206,22 +34235,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -34262,7 +34291,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -34277,7 +34306,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -34292,7 +34321,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -34307,7 +34336,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -34322,7 +34351,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -34337,7 +34366,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -34379,22 +34408,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -34456,7 +34485,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -34472,7 +34501,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -34488,7 +34517,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -34504,7 +34533,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -34520,7 +34549,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -34536,7 +34565,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -34562,32 +34591,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -34628,7 +34657,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -34643,7 +34672,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -34658,7 +34687,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -34673,7 +34702,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -34688,7 +34717,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -34703,7 +34732,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -34730,22 +34759,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -34786,7 +34815,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -34801,7 +34830,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -34816,7 +34845,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -34831,7 +34860,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -34846,7 +34875,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -34861,7 +34890,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -34888,22 +34917,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -34928,7 +34957,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -34944,7 +34973,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -34960,7 +34989,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -34976,7 +35005,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -34992,7 +35021,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -35008,7 +35037,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -35034,32 +35063,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -35100,7 +35129,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        "Select Draft report",
        {
@@ -35115,7 +35144,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Old launch",
        {
@@ -35130,7 +35159,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        "Select Launch checklist",
        {
@@ -35145,7 +35174,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        "Select Call plumber",
        {
@@ -35160,7 +35189,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        "Select Finished and trashed",
        {
@@ -35175,7 +35204,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        "Select Garage",
        {
@@ -35202,22 +35231,22 @@
       "Delete Permanently",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     }
    ],
@@ -35244,7 +35273,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -35260,7 +35289,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35276,7 +35305,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35292,7 +35321,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -35308,7 +35337,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -35324,7 +35353,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -35350,32 +35379,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -35400,7 +35429,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -35416,7 +35445,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35432,7 +35461,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35448,7 +35477,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -35464,7 +35493,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -35480,7 +35509,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -35521,32 +35550,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -35571,7 +35600,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -35587,7 +35616,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35603,7 +35632,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35619,7 +35648,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -35635,7 +35664,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -35651,7 +35680,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -35677,32 +35706,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -35727,7 +35756,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -35743,7 +35772,7 @@
        [
         "Old launch",
         "Project",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35759,7 +35788,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -35775,7 +35804,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -35791,7 +35820,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -35807,7 +35836,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -35848,32 +35877,32 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Old launch",
       "Project",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>",
+      "Deleted: 09/19/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -35935,7 +35964,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -35951,7 +35980,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -35977,12 +36006,12 @@
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -36007,7 +36036,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -36023,7 +36052,7 @@
        [
         "Garage",
         "Project",
-        "Deleted: <localeDate:2026-09-18>"
+        "Deleted: 09/18/2026"
        ],
        null,
        null,
@@ -36064,12 +36093,12 @@
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Garage",
       "Project",
-      "Deleted: <localeDate:2026-09-18>"
+      "Deleted: 09/18/2026"
      ]
     },
     {
@@ -36124,7 +36153,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -36140,7 +36169,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -36156,7 +36185,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -36172,7 +36201,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -36198,22 +36227,22 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>"
+      "Deleted: 09/19/2026"
      ]
     },
     {
@@ -36238,7 +36267,7 @@
        [
         "Draft report",
         "Task",
-        "Deleted: <localeDate:2026-09-22>"
+        "Deleted: 09/22/2026"
        ],
        null,
        null,
@@ -36254,7 +36283,7 @@
        [
         "Launch checklist",
         "Task",
-        "Deleted: <localeDate:2026-09-21>"
+        "Deleted: 09/21/2026"
        ],
        null,
        null,
@@ -36270,7 +36299,7 @@
        [
         "Call plumber",
         "Task",
-        "Deleted: <localeDate:2026-09-20>"
+        "Deleted: 09/20/2026"
        ],
        null,
        null,
@@ -36286,7 +36315,7 @@
        [
         "Finished and trashed",
         "Task",
-        "Deleted: <localeDate:2026-09-19>"
+        "Deleted: 09/19/2026"
        ],
        null,
        null,
@@ -36327,22 +36356,22 @@
       "Delete",
       "Draft report",
       "Task",
-      "Deleted: <localeDate:2026-09-22>",
+      "Deleted: 09/22/2026",
       "↩️ Restore",
       "Delete",
       "Launch checklist",
       "Task",
-      "Deleted: <localeDate:2026-09-21>",
+      "Deleted: 09/21/2026",
       "↩️ Restore",
       "Delete",
       "Call plumber",
       "Task",
-      "Deleted: <localeDate:2026-09-20>",
+      "Deleted: 09/20/2026",
       "↩️ Restore",
       "Delete",
       "Finished and trashed",
       "Task",
-      "Deleted: <localeDate:2026-09-19>"
+      "Deleted: 09/19/2026"
      ]
     },
     {
@@ -36389,6 +36418,164 @@
      "text": [
       "Trash is empty",
       "Deleted tasks and projects will appear here"
+     ]
+    }
+   ],
+   "deleted dates follow the app date format": [
+    {
+     "header": [
+      "4 tasks · 2 Projects",
+      "Select",
+      "Clear Trash",
+      "Items in Trash are removed for good after 90 days"
+     ],
+     "buttons": [
+      [
+       "Select",
+       false
+      ],
+      [
+       "Clear Trash",
+       false
+      ]
+     ],
+     "rows": [
+      [
+       [
+        "Draft report",
+        "Task",
+        "Deleted: 2026-09-22"
+       ],
+       null,
+       null,
+       true,
+       "Heading",
+       "#6B7280",
+       [
+        "↩️ Restore",
+        "Delete"
+       ]
+      ],
+      [
+       [
+        "Old launch",
+        "Project",
+        "Deleted: 2026-09-21"
+       ],
+       null,
+       null,
+       true,
+       null,
+       "#2563eb",
+       [
+        "↩️ Restore",
+        "Delete"
+       ]
+      ],
+      [
+       [
+        "Launch checklist",
+        "Task",
+        "Deleted: 2026-09-21"
+       ],
+       null,
+       null,
+       true,
+       null,
+       "#6B7280",
+       [
+        "↩️ Restore",
+        "Delete"
+       ]
+      ],
+      [
+       [
+        "Call plumber",
+        "Task",
+        "Deleted: 2026-09-20"
+       ],
+       null,
+       null,
+       true,
+       null,
+       "#6B7280",
+       [
+        "↩️ Restore",
+        "Delete"
+       ]
+      ],
+      [
+       [
+        "Finished and trashed",
+        "Task",
+        "Deleted: 2026-09-19"
+       ],
+       null,
+       null,
+       true,
+       null,
+       "#6B7280",
+       [
+        "↩️ Restore",
+        "Delete"
+       ]
+      ],
+      [
+       [
+        "Garage",
+        "Project",
+        "Deleted: 2026-09-18"
+       ],
+       null,
+       null,
+       true,
+       null,
+       "#6B7280",
+       [
+        "↩️ Restore",
+        "Delete"
+       ]
+      ]
+     ],
+     "empty": null,
+     "alerts": [],
+     "toasts": [],
+     "writes": [],
+     "text": [
+      "4 tasks · 2 Projects",
+      "Select",
+      "Clear Trash",
+      "Items in Trash are removed for good after 90 days",
+      "↩️ Restore",
+      "Delete",
+      "Draft report",
+      "Task",
+      "Deleted: 2026-09-22",
+      "↩️ Restore",
+      "Delete",
+      "Old launch",
+      "Project",
+      "Deleted: 2026-09-21",
+      "↩️ Restore",
+      "Delete",
+      "Launch checklist",
+      "Task",
+      "Deleted: 2026-09-21",
+      "↩️ Restore",
+      "Delete",
+      "Call plumber",
+      "Task",
+      "Deleted: 2026-09-20",
+      "↩️ Restore",
+      "Delete",
+      "Finished and trashed",
+      "Task",
+      "Deleted: 2026-09-19",
+      "↩️ Restore",
+      "Delete",
+      "Garage",
+      "Project",
+      "Deleted: 2026-09-18"
      ]
     }
    ]

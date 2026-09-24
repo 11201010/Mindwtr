@@ -1,6 +1,7 @@
-import { collectBulkTaskTokens, type BulkTaskTokenField, type BulkTaskTokenMode } from './bulk-task-tokens';
+import { buildBulkTaskTokenUpdates, collectBulkTaskTokens, type BulkTaskTokenField, type BulkTaskTokenMode } from './bulk-task-tokens';
 import { taskMatchesContextOrTagSelection, type ContextOrTagMatchMode } from './hierarchy-utils';
 import { tFallback } from './i18n';
+import type { StoreActionResult, TaskStore } from './store-types';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { isTaskFinished } from './task-status';
 import { getFrequentTaskTokens, getUsedTaskTokens } from './task-token-usage';
@@ -81,11 +82,52 @@ export function resolveContextsMatchMode(selected: string[], matchMode: ContextO
     return selected.length === 0 ? 'all' : matchMode;
 }
 
-export type ContextsViewModel = {
+/**
+ * What Contexts derives from the tasks alone, independent of the selection: build it
+ * once per store change. `tokenCounts` counts each task once under every token it
+ * matches hierarchically (a task tagged `@work/deep` counts under `@work` too).
+ */
+export type ContextsTokenIndex = {
     /** The unfinished tasks the screen counts and lists from. */
     activeTasks: Task[];
     contextTokens: string[];
     tagTokens: string[];
+    /** Active tasks with no context and no tag: the No context chip. */
+    untokenedTasks: Task[];
+    tokenCounts: Map<string, number>;
+};
+
+export function buildContextsTokenIndex(visibleTasks: Task[]): ContextsTokenIndex {
+    const activeTasks = visibleTasks.filter((task) => !isTaskFinished(task));
+    const tokenCounts = new Map<string, number>();
+    const matched = new Set<string>();
+    for (const task of activeTasks) {
+        matched.clear();
+        for (const token of [...(task.contexts ?? []), ...(task.tags ?? [])]) {
+            // Every chip that matches this token: the token, and each part before a "/".
+            for (let index = token.indexOf('/'); index !== -1; index = token.indexOf('/', index + 1)) {
+                matched.add(token.slice(0, index));
+            }
+            matched.add(token);
+        }
+        matched.forEach((token) => tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1));
+    }
+    return {
+        activeTasks,
+        contextTokens: getUsedTaskTokens(activeTasks, (task) => task.contexts, { prefix: '@' }),
+        tagTokens: getUsedTaskTokens(activeTasks, (task) => task.tags, { prefix: '#' }),
+        untokenedTasks: activeTasks.filter((task) => !taskHasContextOrTag(task)),
+        tokenCounts,
+    };
+}
+
+/** How many active tasks a chip matches: taskMatchesContextOrTagSelection(task, [token]), counted once. */
+export const getContextsTokenCount = (index: ContextsTokenIndex, token: string): number => (
+    index.tokenCounts.get(token.replace(/\/+$/, '')) ?? 0
+);
+
+export type ContextsViewModel = {
+    activeTasks: Task[];
     /** Every context and tag in use; none means the "No contexts found" empty state. */
     hasTokens: boolean;
     filterSections: ContextsViewFilterSection[];
@@ -104,43 +146,38 @@ export type ContextsViewModel = {
 };
 
 export function buildContextsViewModel({
-    visibleTasks,
+    index,
     settings,
     selectedTokens,
     matchMode,
     searchQuery,
 }: {
-    /** The area-visible store tasks (mobile's useVisibleTaskContext). */
-    visibleTasks: Task[];
+    index: ContextsTokenIndex;
     settings: AppSettings | undefined;
     selectedTokens: string[];
     matchMode: ContextOrTagMatchMode;
     searchQuery: string;
 }): ContextsViewModel {
-    const activeTasks = visibleTasks.filter((task) => !isTaskFinished(task));
-    const contextTokens = getUsedTaskTokens(activeTasks, (task) => task.contexts, { prefix: '@' });
-    const tagTokens = getUsedTaskTokens(activeTasks, (task) => task.tags, { prefix: '#' });
+    const { activeTasks, contextTokens, tagTokens } = index;
     const filterSections = buildContextsViewFilterSections({ contextTokens, searchQuery, tagTokens });
     const noContextSelected = selectedTokens.includes(CONTEXTS_NO_CONTEXT_TOKEN);
     const filtered = noContextSelected
-        ? activeTasks.filter((task) => !taskHasContextOrTag(task))
+        ? index.untokenedTasks
         : selectedTokens.length > 0
             ? activeTasks.filter((task) => taskMatchesContextOrTagSelection(task, selectedTokens, matchMode))
             : activeTasks;
     const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
     return {
         activeTasks,
-        contextTokens,
-        tagTokens,
         hasTokens: contextTokens.length + tagTokens.length > 0,
         filterSections,
         noContextSelected,
         allCount: activeTasks.length,
-        noContextCount: activeTasks.filter((task) => !taskHasContextOrTag(task)).length,
+        noContextCount: index.untokenedTasks.length,
         tokenChips: filterSections.flatMap((section) => section.tokens.map((token) => ({
             token,
             kind: section.kind,
-            count: activeTasks.filter((task) => taskMatchesContextOrTagSelection(task, [token])).length,
+            count: getContextsTokenCount(index, token),
             selected: selectedTokens.includes(token),
         }))),
         showMatchMode: selectedTokens.length > 1 && !noContextSelected,
@@ -224,4 +261,24 @@ export function getContextsTokenPicker({
         allowCustomValue: action === 'add',
         multiSelect: action === 'remove',
     };
+}
+
+/**
+ * The bulk token edit: add or remove tags or contexts on the selected tasks. Tasks
+ * that already read that way are skipped; when none change, nothing is written
+ * (`changed` is false). Mobile's picker and the native host both write through here.
+ */
+export async function editContextsTaskTokens(
+    store: Pick<TaskStore, 'batchUpdateTasks'>,
+    { taskIds, tasksById, field, mode, values }: {
+        taskIds: string[];
+        tasksById: Record<string, Task>;
+        field: BulkTaskTokenField;
+        mode: BulkTaskTokenMode;
+        values: string[];
+    },
+): Promise<{ changed: false } | { changed: true; result: StoreActionResult }> {
+    const updates = buildBulkTaskTokenUpdates(taskIds, tasksById, field, values, mode);
+    if (updates.length === 0) return { changed: false };
+    return { changed: true, result: await store.batchUpdateTasks(updates) };
 }
