@@ -472,6 +472,7 @@
     "canStarNewCapture",
     "canUseJalaliCalendar",
     "cancelTaskForProjectArchive",
+    "canonicalRecurringFollowUp",
     "checkAttachmentContentChange",
     "chooseProcessInboxActionability",
     "chooseProcessInboxExecution",

@@ -38,7 +38,7 @@ import {
 } from './task-status';
 import { beginNotifyProfile, endNotifyProfile, type NotifyProfile } from './store-notify-profiler';
 import { generateUUID as uuidv4 } from './uuid';
-import { canSkipRecurringTaskOccurrence, createNextRecurringTask, normalizeRecurrenceForLoad } from './recurrence';
+import { canSkipRecurringTaskOccurrence, canonicalRecurringFollowUp, createNextRecurringTask, normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRepeatReminderMinutes } from './schedule-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { isTaskFutureFocusCandidate } from './task-utils';
@@ -163,16 +163,9 @@ const stampNewRecurringFollowUp = (
     if (!task) return null;
     const order = sourceOrder ?? reserveProjectOrder(task.projectId);
     return {
-        ...task,
-        // Persist the shape the sync pass writes (sync-canonical-reads contract),
-        // like the addTask creation literal: the rrule carries the series stamp
-        // and the boolean is explicit. createNextRecurringTask keeps its own
-        // shape because the Rust local API parity fixture pins it.
-        recurrence: normalizeRecurrenceForLoad(task.recurrence),
-        suppressMindwtrReminders: task.suppressMindwtrReminders ?? false,
+        ...canonicalRecurringFollowUp(task),
         rev: nextRevision(undefined),
         revBy: deviceId,
-        pushCount: 0,
         ...(order !== undefined ? { order, orderNum: order } : {}),
     };
 };

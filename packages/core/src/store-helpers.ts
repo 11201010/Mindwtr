@@ -165,6 +165,10 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
         };
     }
 
+    if (hasOwnField(finalUpdates, 'suppressMindwtrReminders') && finalUpdates.suppressMindwtrReminders === undefined) {
+        finalUpdates = { ...finalUpdates, suppressMindwtrReminders: false };
+    }
+
     return {
         updatedTask: normalizeTaskLifecycleFields({ ...oldTask, ...finalUpdates, updatedAt: now }),
         nextRecurringTask,
