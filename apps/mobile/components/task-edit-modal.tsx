@@ -7,12 +7,10 @@ import { Task,
     type Attachment,
     type AttachmentDraftSettlementInput,
     type RecurrenceWeekday,
-    type RecurrenceByDay,
     type TaskStatus,
-    buildRRuleString,
-    isMonthlyWeekdaySet,
-    MONTHLY_WEEKDAYS,
-    parseRRuleString,
+    buildTaskEditorMonthlyCustomRRule,
+    getTaskEditorMonthlyCustom,
+    isTaskEditorTimeSpentEnabled,
     resolveAutoTextDirection,
     DEFAULT_PROJECT_COLOR,
     getLocalizedWeekdayButtons,
@@ -238,7 +236,7 @@ function TaskEditModalInner({
     const resolvedFeatureFlags = resolveFeatureFlags(settings);
     const prioritiesEnabled = resolvedFeatureFlags.priorities;
     const timeEstimatesEnabled = resolvedFeatureFlags.timeEstimates;
-    const timeSpentEnabled = resolvedFeatureFlags.pomodoro && settings.gtd?.pomodoro?.linkTask === true;
+    const timeSpentEnabled = isTaskEditorTimeSpentEnabled(settings);
     const resetCopilotStateRef = useRef<() => void>(() => {});
     const settleAttachmentDraftRef = useRef<(input: AttachmentDraftSettlementInput) => void>(() => {});
     const settleAttachmentDraft = useCallback((input: AttachmentDraftSettlementInput) => {
@@ -625,59 +623,23 @@ function TaskEditModalInner({
     }, []);
 
     const openCustomRecurrence = useCallback(() => {
-        const parsed = parseRRuleString(recurrenceRRuleValue);
-        const interval = parsed.interval && parsed.interval > 0 ? parsed.interval : 1;
-        let mode: 'date' | 'nth' | 'lastDay' = 'date';
-        let ordinal: '1' | '2' | '3' | '4' | '-1' = '1';
-        let weekday: RecurrenceWeekday | 'WEEKDAY' = monthlyWeekdayCode;
-        const monthDays = (parsed.byMonthDay ?? []).filter((day) => day === -1 || (day >= 1 && day <= 31));
-        if (monthDays.length === 1 && monthDays[0] === -1) {
-            mode = 'lastDay';
-        } else if (monthDays.length > 0) {
-            mode = 'date';
-            setCustomMonthDays(monthDays);
-        }
-        const token = parsed.byDay?.find((day) => /^(-1|1|2|3|4)/.test(String(day)));
-        if (isMonthlyWeekdaySet(parsed.byDay) && [-1, 1, 2, 3, 4].includes(parsed.bySetPos ?? 0)) {
-            mode = 'nth';
-            ordinal = String(parsed.bySetPos) as typeof ordinal;
-            weekday = 'WEEKDAY';
-        } else if (token) {
-            const match = String(token).match(/^(-1|1|2|3|4)?(SU|MO|TU|WE|TH|FR|SA)$/);
-            if (match) {
-                mode = 'nth';
-                ordinal = (match[1] ?? '1') as '1' | '2' | '3' | '4' | '-1';
-                weekday = match[2] as RecurrenceWeekday;
-            }
-        }
-        setCustomInterval(interval);
-        setCustomMode(mode);
-        setCustomOrdinal(ordinal);
-        setCustomWeekday(weekday);
-        if (monthDays.length === 0 || (monthDays.length === 1 && monthDays[0] === -1)) {
-            setCustomMonthDays([monthlyAnchorDate.getDate()]);
-        }
+        const custom = getTaskEditorMonthlyCustom(recurrenceRRuleValue, monthlyAnchorDate);
+        setCustomInterval(custom.interval);
+        setCustomMode(custom.mode);
+        setCustomOrdinal(custom.ordinal);
+        setCustomWeekday(custom.weekday);
+        setCustomMonthDays(custom.monthDays);
         setCustomRecurrenceVisible(true);
-    }, [monthlyAnchorDate, monthlyWeekdayCode, recurrenceRRuleValue]);
+    }, [monthlyAnchorDate, recurrenceRRuleValue]);
 
     const applyCustomRecurrence = useCallback(() => {
-        const parsed = parseRRuleString(recurrenceRRuleValue);
-        const intervalValue = Number(customInterval);
-        const safeInterval = Number.isFinite(intervalValue) && intervalValue > 0 ? intervalValue : 1;
-        // buildRRuleString clamps, dedupes and sorts the list.
-        const safeMonthDays = customMonthDays.length > 0 ? customMonthDays : [1];
-        const ends = { count: parsed.count, until: parsed.until };
-        const rrule = customMode === 'nth'
-            ? buildRRuleString('monthly', customWeekday === 'WEEKDAY'
-                ? MONTHLY_WEEKDAYS
-                : [`${customOrdinal}${customWeekday}` as RecurrenceByDay], safeInterval, {
-                ...ends,
-                bySetPos: customWeekday === 'WEEKDAY' ? Number(customOrdinal) : undefined,
-            })
-            : buildRRuleString('monthly', undefined, safeInterval, {
-                ...ends,
-                byMonthDay: customMode === 'lastDay' ? [-1] : safeMonthDays,
-            });
+        const rrule = buildTaskEditorMonthlyCustomRRule(recurrenceRRuleValue, {
+            interval: customInterval,
+            mode: customMode,
+            ordinal: customOrdinal,
+            weekday: customWeekday,
+            monthDays: customMonthDays,
+        });
         setDraftField('recurrence', 'monthly');
         setDraftField('recurrenceStrategy', recurrenceStrategyValue);
         setDraftField('recurrenceRRule', rrule);

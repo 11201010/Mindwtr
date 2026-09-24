@@ -439,9 +439,9 @@ export function buildTaskEditorMonthlyCustomRRule(rrule: string, custom: TaskEdi
 }
 
 /**
- * A recurrence control's edit, as the editor applies it. Every edit but "until" goes
- * through editRRuleString, so a rule change keeps the count, the end date and any
- * token the editor does not own. `weekdays` is the weekly day selection shown.
+ * A recurrence control's edit, as the editor applies it. Rule and ends edits use
+ * editRRuleString to preserve fields they do not override, including opaque
+ * tokens. `weekdays` is the weekly day selection shown.
  */
 export function editTaskDraftRecurrence(
     current: TaskDraftRecurrence,
@@ -465,6 +465,7 @@ export function editTaskDraftRecurrence(
     const weekdays = [...context.weekdays];
     switch (edit.kind) {
         case 'rule':
+            if (edit.rule === rule) return current;
             if (!edit.rule) return { recurrence: '', recurrenceStrategy: 'strict', recurrenceRRule: '' };
             if (edit.rule === 'weekly') return build('weekly', { byDay: undefined, byMonthDay: undefined, interval: undefined });
             return build(edit.rule, { byDay: undefined, byMonthDay: undefined, interval: sameRuleInterval(edit.rule) });
@@ -503,15 +504,11 @@ export function editTaskDraftRecurrence(
             return build(rule, { count, until: undefined });
         }
         case 'until':
-            // The end date picker rebuilds the rule from its parts, as the editor always has.
-            return {
-                ...current,
-                recurrenceRRule: buildRRuleString(rule, parsed.byDay, parsed.interval, { byMonthDay: parsed.byMonthDay, until: edit.date }),
-            };
+            return build(rule, { count: undefined, until: edit.date });
         case 'strategy':
             return build(
                 rule,
-                { byDay: rule === 'weekly' && weekdays.length > 0 ? weekdays : undefined },
+                {},
                 current.recurrenceStrategy === 'fluid' ? 'strict' : 'fluid',
             );
         default:

@@ -22,6 +22,7 @@ import {
     type TaskDraftField,
 } from './task-draft';
 import {
+    DEFAULT_TASK_EDITOR_HIDDEN,
     DEFAULT_TASK_EDITOR_ORDER,
     DEFAULT_TASK_EDITOR_VISIBLE,
     getTaskEditorSectionAssignments,
@@ -186,7 +187,12 @@ export function getTaskEditorFieldLayout(input: TaskEditorFieldLayoutInput): Tas
     // #1021: reveal the person field while editing a task as Waiting For, so an
     // existing task can be assigned a person without first customizing the
     // editor layout. An explicit saved customization that hides the field wins.
-    const isAssignedToExplicitlyHidden = taskEditor?.hidden?.includes('assignedTo') ?? false;
+    // Match the section field's exception for migration-persisted defaults.
+    const hasPersistedDefaults = Boolean(taskEditor?.defaultsVersion)
+        && !taskEditor?.order?.length
+        && savedHidden.length === DEFAULT_TASK_EDITOR_HIDDEN.length
+        && DEFAULT_TASK_EDITOR_HIDDEN.every((field) => savedHidden.includes(field));
+    const isAssignedToExplicitlyHidden = !hasPersistedDefaults && (taskEditor?.hidden?.includes('assignedTo') ?? false);
     const projectId = draft ? draft.projectId : task?.projectId;
     const sectionId = draft ? draft.sectionId : task?.sectionId;
     const areaId = draft ? draft.areaId : task?.areaId;

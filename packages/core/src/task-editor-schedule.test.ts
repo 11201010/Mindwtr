@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { createDateFormatter, hasTimeComponent, normalizeClockTimeInput, safeParseDate, type DateFormatter } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
+import { normalizeRecurrenceForLoad } from './recurrence';
 import { WEEKDAY_ORDER } from './recurrence-constants';
 import { applyTaskUpdates } from './store-helpers';
 import { createTaskDraft, setTaskDraftField, type TaskDraft, type TaskDraftField } from './task-draft';
@@ -405,6 +406,104 @@ describe('task editor schedule rules', () => {
     });
     const formatDate = createDateFormatter({ language: 'en' });
     const base: Task = { id: 't', title: 'T', status: 'next', tags: [], contexts: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' };
+
+    it.each([
+        ['strict', 'BYDAY=2TU'],
+        ['fluid', 'BYDAY=2TU'],
+        ['strict', 'BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1'],
+        ['fluid', 'BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1'],
+    ] as const)('keeps the monthly weekday pattern when toggling %s strategy (%s)', (strategy, pattern) => {
+        const current = {
+            recurrence: 'monthly' as const,
+            recurrenceStrategy: strategy,
+            recurrenceRRule: `FREQ=MONTHLY;INTERVAL=2;${pattern};COUNT=5;X-FOO=bar`,
+        };
+        const context = { weekdays: [], defaultUntil: '2026-09-30' };
+        const next = editTaskDraftRecurrence(current, { kind: 'strategy' }, context);
+        expect(next).toEqual({ ...current, recurrenceStrategy: strategy === 'strict' ? 'fluid' : 'strict' });
+        expect(editTaskDraftRecurrence(next, { kind: 'strategy' }, context)).toEqual(current);
+    });
+
+    it('keeps the active weekly rule and its selected days on repeated taps', () => {
+        const current = {
+            recurrence: 'weekly' as const,
+            recurrenceStrategy: 'fluid' as const,
+            recurrenceRRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;COUNT=5;WKST=SU;X-FOO=bar',
+        };
+        const context = { weekdays: ['MO', 'TH'] as RecurrenceWeekday[], defaultUntil: '2026-09-30' };
+        const next = editTaskDraftRecurrence(current, { kind: 'rule', rule: 'weekly' }, context);
+        expect(next).toEqual(current);
+        expect(editTaskDraftRecurrence(next, { kind: 'rule', rule: 'weekly' }, context)).toEqual(current);
+    });
+
+    it('keeps week start and opaque tokens when picking an end date, replacing count', () => {
+        const current = {
+            recurrence: 'weekly' as const,
+            recurrenceStrategy: 'fluid' as const,
+            recurrenceRRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;COUNT=5;WKST=SU;X-FOO=bar',
+        };
+        const context = { weekdays: [], defaultUntil: '2026-09-30' };
+        const next = editTaskDraftRecurrence(current, { kind: 'until', date: '2026-12-31' }, context);
+        expect(next).toEqual({
+            ...current,
+            recurrenceRRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;WKST=SU;UNTIL=20261231;X-FOO=bar',
+        });
+        expect(editTaskDraftRecurrence(next, { kind: 'until', date: '2026-12-31' }, context)).toEqual(next);
+    });
+
+    it('preserves recurrence patterns and date precision through load, edit, save and re-edit across the schedule matrix', () => {
+        const patterns: Array<[RecurrenceRule, string, string]> = [
+            ['daily', 'FREQ=DAILY;INTERVAL=2', 'INTERVAL=2'],
+            ['weekly', 'FREQ=WEEKLY;BYDAY=MO,TH;WKST=SU', 'BYDAY=MO,TH;WKST=SU'],
+            ['monthly', 'FREQ=MONTHLY;BYMONTHDAY=15', 'BYMONTHDAY=15'],
+            ['monthly', 'FREQ=MONTHLY;BYDAY=2TU', 'BYDAY=2TU'],
+            ['monthly', 'FREQ=MONTHLY;BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1', 'BYDAY=FR,MO,TH,TU,WE;BYSETPOS=-1'],
+            ['yearly', 'FREQ=YEARLY;INTERVAL=2', 'INTERVAL=2'],
+            ['daily', 'FREQ=DAILY;COUNT=5', 'FREQ=DAILY'],
+        ];
+        for (const strategy of ['strict', 'fluid'] as const) {
+            for (const timed of [false, true]) {
+                for (const schedule of ['start', 'due', 'both', 'neither']) {
+                    for (const [rule, rrule, pattern] of patterns) {
+                        const date = timed ? '2026-09-25T14:30' : '2026-09-25';
+                        let stored: Task = {
+                            ...base,
+                            startTime: schedule === 'start' || schedule === 'both' ? date : undefined,
+                            dueDate: schedule === 'due' || schedule === 'both' ? date : undefined,
+                            recurrence: normalizeRecurrenceForLoad({ rule, strategy, rrule: `${rrule};X-FOO=bar` }),
+                        };
+                        const initial = createTaskDraft(stored);
+                        for (const edit of [
+                            { kind: 'strategy' }, { kind: 'rule', rule }, { kind: 'until', date: '2026-12-31' },
+                        ] satisfies TaskDraftRecurrenceEdit[]) {
+                            const draft = createTaskDraft(stored);
+                            const context = {
+                                weekdays: getTaskDraftRecurrenceWeekdays(rule, draft.recurrenceRRule),
+                                defaultUntil: '2026-09-30',
+                            };
+                            const edited = applyFields(draft, editTaskDraftRecurrence(draft, edit, context));
+                            expect(edited.recurrenceRRule).toContain(pattern);
+                            expect(edited.recurrenceRRule).toContain('X-FOO=bar');
+                            expect([edited.startTime, edited.dueDate]).toEqual([initial.startTime, initial.dueDate]);
+                            const patch = buildTaskEditUpdatePatch({ draft: edited, checklist: stored.checklist, attachments: stored.attachments }, stored);
+                            if (patch) stored = applyTaskUpdates(stored, patch, '2026-09-23T14:00:00.000Z').updatedTask;
+                            const reloaded = createTaskDraft(stored);
+                            expect(reloaded.recurrenceRRule).toContain(pattern);
+                            expect(reloaded.recurrenceRRule).toContain('X-FOO=bar');
+                            expect(reloaded.recurrenceStrategy).toBe(strategy === 'strict' ? 'fluid' : 'strict');
+                            expect([reloaded.startTime, reloaded.dueDate]).toEqual([initial.startTime, initial.dueDate]);
+                            expect(normalizeRecurrenceForLoad(stored.recurrence)).toEqual(stored.recurrence);
+                            if (edit.kind === 'until') {
+                                expect(reloaded.recurrenceRRule).toContain('UNTIL=20261231');
+                                expect(reloaded.recurrenceRRule).not.toContain('COUNT=');
+                                expect(editTaskDraftRecurrence(reloaded, edit, context)).toMatchObject({ recurrenceRRule: reloaded.recurrenceRRule });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     it('keeps date-only values date-only and keeps an existing time on a new day', () => {
         const day = new Date(2026, 9, 3, 7, 45);

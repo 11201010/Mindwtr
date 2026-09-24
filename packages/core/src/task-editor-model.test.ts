@@ -6,7 +6,7 @@ import { filterProjectsBySelectedArea } from './project-utils';
 import { WEEKDAY_ORDER } from './recurrence-constants';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { createTaskDraft, setTaskDraftField, type TaskDraft, type TaskDraftField } from './task-draft';
-import { DEFAULT_TASK_EDITOR_HIDDEN, getTaskEditorSectionOpenDefaults, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
+import { DEFAULT_TASK_EDITOR_HIDDEN, DEFAULT_TASK_EDITOR_ORDER, getTaskEditorSectionOpenDefaults, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
 import {
     applyTaskDraftPatch,
     buildTaskEditorModel,
@@ -343,6 +343,21 @@ describe('task editor model rules', () => {
         expect(layoutOf({}).all).not.toContain('assignedTo');
         expect(layoutOf({ taskPatch: { status: 'waiting' } }).all).toContain('assignedTo');
         expect(layoutOf({ taskPatch: { status: 'waiting' }, taskEditor: { hidden: ['assignedTo'] } }).all).not.toContain('assignedTo');
+    });
+
+    it('reveals Waiting person with saved defaults but respects a customized hidden list', () => {
+        const defaults = { defaultsVersion: 5, hidden: [...DEFAULT_TASK_EDITOR_HIDDEN].reverse() };
+        const waiting = setTaskDraftField(createTaskDraft(task), 'status', 'waiting');
+        expect(layoutOf({ draft: waiting, taskEditor: defaults }).all).toContain('assignedTo');
+        expect(layoutOf({ taskPatch: { status: 'waiting' }, draft: null, taskEditor: defaults }).all).toContain('assignedTo');
+        expect(layoutOf({ taskEditor: defaults }).all).not.toContain('assignedTo');
+        for (const taskEditor of [
+            { ...defaults, order: [...DEFAULT_TASK_EDITOR_ORDER] },
+            { ...defaults, hidden: ['assignedTo' as const] },
+            { hidden: [...DEFAULT_TASK_EDITOR_HIDDEN] },
+        ]) {
+            expect(layoutOf({ draft: waiting, taskEditor }).all).not.toContain('assignedTo');
+        }
     });
 
     it('shows a hidden field that holds a value and drops a disabled feature even with one', () => {
