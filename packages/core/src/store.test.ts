@@ -3792,6 +3792,27 @@ describe('TaskStore', () => {
         expect(after.rev).toBe(purged.rev);
     });
 
+    it('refuses to purge a task that is no longer in Trash', async () => {
+        const { addTask, deleteTask, restoreTask, purgeTask } = useTaskStore.getState();
+        await addTask('Restored by sync', { status: 'next' });
+        const task = useTaskStore.getState()._allTasks.find((item) => item.title === 'Restored by sync');
+        expect(task).toBeTruthy();
+        if (!task) return;
+
+        await deleteTask(task.id);
+        // Sync (or another device) restores it after the Trash confirmation was shown.
+        await restoreTask(task.id);
+        const live = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+
+        const result = await purgeTask(task.id);
+
+        expect(result).toEqual({ success: false, error: 'Task is not in Trash' });
+        const after = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+        expect(after.deletedAt).toBeUndefined();
+        expect(after.purgedAt).toBeUndefined();
+        expect(after.rev).toBe(live.rev);
+    });
+
     it('purges deleted tasks while deriving the visible task slice from all tasks', async () => {
         const archivedTask = {
             id: 'archived-visible',

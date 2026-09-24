@@ -1035,6 +1035,17 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
      * Permanently delete a task (removes from storage).
      */
     purgeTask: async (id: string) => {
+        // Only a task still in Trash may be deleted forever: sync can restore it between the
+        // Trash confirmation and the tap, and then this must not purge a live task.
+        const current = get()._tasksById.get(id);
+        if (current && (!current.deletedAt || current.purgedAt)) {
+            logWarn('Purge refused for a task not in Trash', {
+                scope: 'store',
+                category: 'storage',
+                context: { releaseCheck: 'v1.3.3/purge-refused-outside-trash', purged: Boolean(current.purgedAt) },
+            });
+            return actionFail('Task is not in Trash');
+        }
         return mutateTasks({ set, debouncedSave }, {
             selectTasks: (state) => {
                 const task = state._tasksById.get(id);
