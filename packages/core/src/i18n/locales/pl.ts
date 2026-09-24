@@ -209,6 +209,8 @@ export const plOverrides: Record<string, string> = {
         'list.waiting': 'Oczekujące',
         'list.done': 'Ukończone',
         'list.tasks': 'Lista zadań',
+        'list.countTaskSingular': 'zadanie',
+        'list.countProjectSingular': 'projekt',
         'list.confirmBatchDelete': 'Usunąć wybrane zadania?',
         'list.taskDeleted': 'Zadanie usunięte',
         'task.markedDone': '{title} oznaczono jako wykonane',

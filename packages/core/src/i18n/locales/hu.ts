@@ -198,6 +198,8 @@ export const huOverrides: Record<string, string> = {
     'list.waiting': 'Másra vár',
     'list.done': 'Befejezve',
     'list.tasks': 'Feladatlista',
+    'list.countTaskSingular': 'feladat',
+    'list.countProjectSingular': 'projekt',
     'list.confirmBatchDelete': 'Törli a kijelölt feladatokat?',
     'list.taskDeleted': 'Feladat törölve',
     'task.markedDone': '{title} Késznek jelölve',

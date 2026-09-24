@@ -6,6 +6,7 @@ import {
   selectionsFromCriteria,
 } from './filter-criteria';
 import { tFallback } from './i18n';
+import { getListSearchChipLabel } from './list-filter-state';
 import { hasActiveFilterCriteria, taskMatchesFilterCriteria } from './saved-filters';
 import { matchesTask as taskMatchesSearchTerm, parseSearchQuery } from './search';
 import type { TaskMetadataFilterVisibility } from './task-metadata-filter-visibility';
@@ -192,6 +193,14 @@ export function useTaskFilterSelections({
     });
   }, []);
 
+  const removeToken = useCallback((token: string) => {
+    setActiveSavedFilterId(null);
+    setTokenSelection((current) => ({
+      included: current.included.filter((item) => item !== token),
+      excluded: current.excluded.filter((item) => item !== token),
+    }));
+  }, []);
+
   const toggleProject = useCallback((projectId: string) => {
     setActiveSavedFilterId(null);
     setProjects((current) => toggleValue(current, projectId));
@@ -317,19 +326,19 @@ export function useTaskFilterSelections({
     if (normalizedSearch) {
       result.push({
         id: 'search',
-        label: `${t('common.search')}: ${normalizedSearch}`,
+        label: getListSearchChipLabel(normalizedSearch, t),
         onPress: () => setSearchQuery(''),
       });
     }
     tokens.forEach((token) => {
-      result.push({ id: `token:${token}`, label: token, onPress: () => toggleToken(token) });
+      result.push({ id: `token:${token}`, label: token, onPress: () => removeToken(token) });
     });
     excludedTokens.forEach((token) => {
       result.push({
         id: `excluded-token:${token}`,
         label: token,
         excluded: true,
-        onPress: () => toggleToken(token),
+        onPress: () => removeToken(token),
       });
     });
     projects.forEach((projectId) => {
@@ -381,6 +390,7 @@ export function useTaskFilterSelections({
     excludedTokens,
     getProjectLabel,
     locationQuery,
+    removeToken,
     priorities,
     projects,
     searchQuery,
@@ -391,7 +401,6 @@ export function useTaskFilterSelections({
     togglePriority,
     toggleProject,
     toggleTimeEstimate,
-    toggleToken,
     tokens,
     visibility.energyLevel,
     visibility.location,
@@ -430,6 +439,7 @@ export function useTaskFilterSelections({
     setLocation,
     setMatchMode,
     toggleToken,
+    removeToken,
     toggleProject,
     togglePriority,
     toggleEnergyLevel,

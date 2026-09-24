@@ -208,6 +208,8 @@ export const ruOverrides: Record<string, string> = {
         'list.waiting': 'Ожидание',
         'list.done': 'Завершенный',
         'list.tasks': 'Список задач',
+        'list.countTaskSingular': 'задача',
+        'list.countProjectSingular': 'проект',
         'list.confirmBatchDelete': 'Удалить выбранные задачи?',
         'list.taskDeleted': 'Задача удалена',
         'list.tasksDeleted': '{{count}} задач удалено',

@@ -2,7 +2,7 @@
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_REVIEW_VIEWS=1 bunx vitest run 'app/(drawer)/review.parity.test.tsx' components/review-modal.parity.test.tsx components/daily-review-modal.parity.test.tsx",
   "capturedAt": "5918b6c98f3d5d245c1462ac4117b9c73e4af521",
-  "note": "Every part was captured from the React Native screens at capturedAt, before their logic moved into core: the three harness files and review-modal.parity-support.ts were the only changes in the checkout; no screen, controller or label file had changed. Do not regenerate it from core: it is the reference core and the native host contract must match."
+  "note": "Every part was captured from the React Native screens at capturedAt, before their logic moved into core: the three harness files and review-modal.parity-support.ts were the only changes in the checkout; no screen, controller or label file had changed. Do not regenerate it from core: it is the reference core and the native host contract must match. Recaptured from RN on branch fix/rn-list-view-bugs (base 1f412786e) with the command above: only the bulk delete Undo label changed (\"Restore to Inbox\" to \"Undo\"), because single and bulk delete now share one Undo label."
  },
  "review": {
   "timeZone": "America/New_York",
@@ -13683,7 +13683,7 @@
        "success",
        "Done",
        "2 tasks",
-       "Restore to Inbox"
+       "Undo"
       ]
      ],
      "alerts": [],

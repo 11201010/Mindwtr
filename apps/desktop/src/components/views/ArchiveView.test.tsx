@@ -74,6 +74,12 @@ describe('ArchiveView', () => {
         expect(getByText(`Completed: ${completionLabel}`)).toBeInTheDocument();
     });
 
+    it('labels the active search chip with Search instead of the input placeholder', () => {
+        render(<LanguageProvider><ArchiveView /></LanguageProvider>);
+        fireEvent.change(screen.getByPlaceholderText('Search archived tasks...'), { target: { value: 'Archived' } });
+        expect(screen.getAllByText('Search: Archived').length).toBeGreaterThan(0);
+    });
+
     it('shows a cancelled task as Cancelled without completion styling', () => {
         const cancelledAt = '2026-05-12T09:45:00.000Z';
         const cancelledTask = {

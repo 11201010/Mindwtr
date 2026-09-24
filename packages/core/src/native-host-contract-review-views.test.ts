@@ -210,7 +210,7 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         expect(recorder.log).toHaveLength(1);
 
         const trashed = value(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'trashTasks', taskIds: ['i-thought', 'n-bike'] } }));
-        expect(trashed.toast).toMatchObject({ message: '2 tasks', undo: { label: 'Restore to Inbox', action: { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'] } } });
+        expect(trashed.toast).toMatchObject({ message: '2 tasks', undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'] } } });
         value(await host.runReviewAction({ requestId: generateUUID(), action: trashed.toast!.undo!.action }));
         expect(['i-thought', 'n-bike'].map((id) => useTaskStore.getState()._tasksById.get(id)?.deletedAt)).toEqual([undefined, undefined]);
     });

@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { buildWaitingViewModel, shallow, tFallback, useTaskStore } from '@mindwtr/core';
+import { buildWaitingViewModel, shallow, useTaskStore } from '@mindwtr/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Task, TaskStatus } from '@mindwtr/core';
 import { useTheme } from '../../contexts/theme-context';
@@ -36,7 +36,6 @@ export function WaitingView() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [selectedWaitingPerson, setSelectedWaitingPerson] = useState('');
   const router = useRouter();
-  const restoreActionLabel = tFallback(t, 'trash.restoreToInbox', 'Restore');
 
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -72,7 +71,6 @@ export function WaitingView() {
     batchDeleteTasks,
     batchMoveTasks,
     batchUpdateTasks,
-    restoreActionLabel,
     restoreTask,
     t,
     tasksById,

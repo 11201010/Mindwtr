@@ -70,7 +70,6 @@ export default function ReviewScreen() {
   }, [tasks]);
 
   const text = useMemo(() => getReviewOverviewText(t), [t]);
-  const restoreActionLabel = text.restore;
   const {
     bulkActionLoading,
     exitSelectionMode,
@@ -95,7 +94,6 @@ export default function ReviewScreen() {
     batchDeleteTasks,
     batchMoveTasks,
     batchUpdateTasks,
-    restoreActionLabel,
     restoreTask,
     t,
     tasksById,

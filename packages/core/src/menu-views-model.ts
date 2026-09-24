@@ -12,6 +12,7 @@ import {
 import { normalizeBulkTaskTokenInput } from './bulk-task-tokens';
 import { TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { safeParseDueDate, type DateFormatter } from './date';
+import { countActiveFilterCriteria } from './filter-criteria';
 import { tFallback } from './i18n';
 import { isTaskInActiveProject } from './project-utils';
 import { createReferenceSearchPredicate, isReferenceInVisibleProject } from './reference';
@@ -309,6 +310,7 @@ export type SomedayViewModel = {
     /** Headings let a row be added to a section only in section grouping. */
     canAddTaskToGroup: boolean;
     showEmptyState: boolean;
+    empty: { message: string; hint: string; actionLabel: string | null };
     labels: {
         ideas: string;
         inProjects: string;
@@ -348,6 +350,7 @@ export function buildSomedayViewModel(input: {
     showDetails: boolean;
     criteria: FilterCriteria;
     searchQuery: string;
+    filterChips: readonly StatusListChip[];
     t: Translate;
 }): SomedayViewModel {
     const { settings, t } = input;
@@ -359,6 +362,12 @@ export function buildSomedayViewModel(input: {
     const tasks = effectiveSortBy === 'default'
         ? [...filtered].sort(compareSomedayTasks)
         : sortTasksBy([...filtered], effectiveSortBy);
+    const hasActiveFilters = Boolean(input.searchQuery.trim()) || countActiveFilterCriteria(input.criteria) > 0;
+    const filteredEmpty = tasks.length === 0 && hasActiveFilters;
+    const filterSummary = buildStatusListFilterSummary({
+        kind: 'someday', chips: input.filterChips, activeCount: input.filterChips.length,
+        hasActive: hasActiveFilters, includeArchivedProjects: false, t,
+    });
     const sections = sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday ?? []);
     const projectById = new Map(input.projects.map((project) => [project.id, project]));
     let groups: ViewSectionTaskGroup[] | undefined;
@@ -370,7 +379,7 @@ export function buildSomedayViewModel(input: {
             projectById,
             t,
         }));
-    } else if (input.groupBy === 'viewSection' && sections.length > 0) {
+    } else if (input.groupBy === 'viewSection' && sections.length > 0 && !filteredEmpty) {
         const grouped = groupTasksByViewSection(tasks, 'someday', sections, tFallback(t, 'viewSections.noSection', 'No section'));
         const byId = new Map(grouped.map((group) => [group.id, group]));
         // This grouping is actionable: empty definitions still offer Add task.
@@ -394,12 +403,13 @@ export function buildSomedayViewModel(input: {
         deferredProjects,
         deferred: buildDeferredProjectsSection(deferredProjects, input.areaById, t),
         canAddTaskToGroup: input.groupBy === 'viewSection',
-        showEmptyState: rowCount === 0 && deferredProjects.length === 0,
+        showEmptyState: filteredEmpty || (rowCount === 0 && deferredProjects.length === 0),
+        empty: filterSummary.empty,
         labels: {
             ideas: t('someday.ideas'),
             inProjects: t('someday.inProjects'),
-            emptyTitle: t('someday.empty'),
-            emptyHint: t('someday.emptyHint'),
+            emptyTitle: filterSummary.empty.message,
+            emptyHint: filterSummary.empty.hint,
             filters: tFallback(t, 'filters.title', 'Filters'),
             filtersClear: tFallback(t, 'filters.clear', 'Clear'),
             sort: tFallback(t, 'sort.label', 'Sort'),
@@ -610,7 +620,7 @@ export type StatusListChip = { id: string; label: string; excluded: boolean };
  * header but not in the empty state's "no match" test.
  */
 export function buildStatusListFilterSummary(input: {
-    kind: StatusListKind;
+    kind: StatusListKind | 'someday';
     chips: readonly StatusListChip[];
     activeCount: number;
     hasActive: boolean;
@@ -627,7 +637,9 @@ export function buildStatusListFilterSummary(input: {
     const chips = archived
         ? [...input.chips, { id: REFERENCE_ARCHIVED_CHIP_ID, label: t('reference.includeArchivedProjects'), excluded: false }]
         : [...input.chips];
-    const text = getStatusListScreenText(input.kind, t);
+    const text = input.kind === 'someday'
+        ? { emptyText: t('someday.empty'), emptyHint: t('someday.emptyHint') }
+        : getStatusListScreenText(input.kind, t);
     return {
         chips,
         activeCount: input.activeCount + (archived ? 1 : 0),

@@ -190,6 +190,8 @@ export const frOverrides: Record<string, string> = {
         'list.waiting': 'En attente',
         'list.done': 'Terminé',
         'list.tasks': 'Liste des tâches',
+        'list.countTaskSingular': 'tâche',
+        'list.countProjectSingular': 'projet',
         'list.confirmBatchDelete': 'Supprimer les tâches sélectionnées ?',
         'list.taskDeleted': 'Tâche supprimée',
         'task.markedDone': '{title} marquée comme terminée',

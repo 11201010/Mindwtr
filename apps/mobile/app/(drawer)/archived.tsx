@@ -34,6 +34,7 @@ import {
     TIME_ESTIMATE_OPTIONS,
     useTaskStore,
     type ArchiveSegment,
+    type Area,
     type Project,
     type Task,
     type TaskGroupItem,
@@ -208,6 +209,7 @@ function ArchivedProjectItem({
     project,
     tc,
     areaName,
+    areaById,
     onOpen,
     onRestore,
     onDelete,
@@ -219,6 +221,7 @@ function ArchivedProjectItem({
     project: Project;
     tc: ThemeColors;
     areaName?: string;
+    areaById: Map<string, Area>;
     onOpen: () => void;
     onRestore: () => void;
     onDelete: () => void;
@@ -228,7 +231,7 @@ function ArchivedProjectItem({
     deleteLabel: string;
 }) {
     const swipeableRef = useRef<Swipeable>(null);
-    const { cancelled, dateLabel: archivedDateLabel, indicatorColor } = getArchivedProjectRow(project, safeFormatDate);
+    const { cancelled, dateLabel: archivedDateLabel, indicatorColor } = getArchivedProjectRow(project, safeFormatDate, areaById);
 
     const renderLeftActions = () => (
         <Pressable
@@ -287,7 +290,7 @@ function ArchivedProjectItem({
                         <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{areaName}</Text>
                     ) : null}
                 </View>
-                <View style={[styles.statusIndicator, { backgroundColor: indicatorColor }]} />
+                {indicatorColor ? <View style={[styles.statusIndicator, { backgroundColor: indicatorColor }]} /> : null}
             </Pressable>
         </Swipeable>
     );
@@ -463,7 +466,6 @@ export default function ArchivedScreen() {
         batchDeleteTasks,
         batchMoveTasks,
         batchUpdateTasks,
-        restoreActionLabel,
         restoreTask,
         t,
         tasksById,
@@ -605,6 +607,7 @@ export default function ArchivedScreen() {
             project={item}
             tc={tc}
             areaName={item.areaId ? areaById.get(item.areaId)?.name : undefined}
+            areaById={areaById}
             onOpen={() => openProjectScreen(item.id)}
             onRestore={() => handleRestoreProject(item.id)}
             onDelete={() => handleDeleteProject(item.id)}

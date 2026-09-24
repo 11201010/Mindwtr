@@ -2,6 +2,8 @@ import { projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection, type
 import type { DateFormatter } from './date';
 import { tFallback } from './i18n';
 import { resolveFeatureFlags } from './resolve-feature-flags';
+import { getProjectAccentColor } from './task-accent-color';
+import { formatListItemCount } from './list-count';
 import type { TaskStore } from './store-types';
 import { buildTaskGroupSections, getTaskGroupByLabel, type TaskGroupItem } from './task-group-sections';
 import { DONE_TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
@@ -156,12 +158,13 @@ export function getArchivedTaskRow(task: Task, formatDate: DateFormatter): { can
 export function getArchivedProjectRow(
     project: Project,
     formatDate: DateFormatter,
-): { cancelled: boolean; dateLabel: string; indicatorColor: string } {
+    areaById: Map<string, Area>,
+): { cancelled: boolean; dateLabel: string; indicatorColor: string | undefined } {
     const timestamp = project.cancelledAt || project.updatedAt;
     return {
         cancelled: Boolean(project.cancelledAt),
         dateLabel: timestamp ? formatDate(timestamp, 'Pp', timestamp) : 'Unknown',
-        indicatorColor: project.color || '#6B7280',
+        indicatorColor: getProjectAccentColor(project, areaById),
     };
 }
 
@@ -185,9 +188,7 @@ export function showArchiveSearch(segment: ArchiveSegment, archivedTaskCount: nu
 /** The count above the list, or null when the segment is empty. */
 export function getArchiveSummary(segment: ArchiveSegment, count: number, t: (key: string) => string): string | null {
     if (count === 0) return null;
-    return segment === 'tasks'
-        ? `${count} ${tFallback(t, 'common.tasks', 'tasks')}`
-        : `${count} ${tFallback(t, 'projects.title', 'projects')}`;
+    return formatListItemCount(count, segment === 'tasks' ? 'task' : 'project', t);
 }
 
 /** The empty list: filters that match nothing name up to three of their chips. */

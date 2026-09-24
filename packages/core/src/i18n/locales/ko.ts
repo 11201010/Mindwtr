@@ -277,6 +277,8 @@ export const koOverrides: Record<string, string> = {
         'list.waiting': '대기 중',
         'list.done': '완료됨',
         'list.tasks': '할 일 목록',
+        'list.countTaskSingular': '할 일',
+        'list.countProjectSingular': '프로젝트',
         'list.confirmBatchDelete': '선택한 할 일을 삭제하시겠습니까?',
         'list.taskDeleted': '할 일을 삭제했습니다',
         'task.markedDone': '{title} 완료 표시됨',

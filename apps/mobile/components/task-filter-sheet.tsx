@@ -284,16 +284,8 @@ export function TaskFilterSheet({
   ], allLabel);
 
   const removeSelectionChip = useCallback((chip: TaskFilterSelections['chips'][number]) => {
-    if (chip.id.startsWith('token:')) {
-      const token = chip.id.slice('token:'.length);
-      // Picker tokens are tri-state. Active chips are removal controls, so an
-      // included token intentionally advances through excluded to neutral.
-      selections.toggleToken(token);
-      selections.toggleToken(token);
-      return;
-    }
     chip.onPress();
-  }, [selections]);
+  }, []);
 
   const hasActiveChips = selections.chips.length > 0 || additionalActiveChips.length > 0;
 

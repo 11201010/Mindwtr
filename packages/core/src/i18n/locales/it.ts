@@ -231,6 +231,8 @@ export const itOverrides: Record<string, string> = {
         'list.waiting': 'In attesa',
         'list.done': 'Completate',
         'list.tasks': 'Elenco attività',
+        'list.countTaskSingular': 'attività',
+        'list.countProjectSingular': 'progetto',
         'list.confirmBatchDelete': 'Eliminare le attività selezionate?',
         'list.taskDeleted': 'Attività eliminata',
         'task.markedDone': '{title} contrassegnata come completata',

@@ -369,7 +369,6 @@ function TaskListComponent({
   // (when it first appears in the rendered data) rather than re-scrolling on
   // every unrelated list re-render during its ~3.5s highlight window (#916).
   const scrolledHighlightIdRef = useRef<string | null>(null);
-  const restoreActionLabel = tFallback(t, 'trash.restoreToInbox', 'Restore');
   const pullSync = useManualPullSync();
 
   // Dynamic colors based on theme
@@ -429,7 +428,6 @@ function TaskListComponent({
     batchDeleteTasks,
     batchMoveTasks,
     batchUpdateTasks,
-    restoreActionLabel,
     restoreTask,
     t,
     tasksById,

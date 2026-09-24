@@ -4,6 +4,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import {
     createTaskFilterPredicate,
     formatTimeEstimateLabel,
+    getListSearchChipLabel,
     getTaskMetadataFilterVisibility,
     hasActiveFilterCriteria,
     projectMatchesAreaFilterSelection,
@@ -430,7 +431,7 @@ export function ArchiveView() {
     if (searchQuery.trim()) {
         activeFilterChips.push({
             id: 'search',
-            label: `${t('common.search')}: ${searchQuery.trim()}`,
+            label: getListSearchChipLabel(searchQuery.trim(), t),
             onRemove: () => setSearchQuery(''),
         });
     }

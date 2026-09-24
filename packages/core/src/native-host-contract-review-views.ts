@@ -36,6 +36,7 @@ import {
 } from './native-host-contract';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
+import { getTrashUndoLabel } from './trash-view-model';
 import {
     buildReviewSteps,
     getDailyReviewBuckets,
@@ -874,7 +875,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 if (live.length === 0) return unchanged();
                 return written(() => store.batchDeleteTasks(live), {
                     ...doneToast(live.length, t),
-                    undo: { label: getReviewOverviewText(t).restore, action: { type: 'restoreTasks', taskIds: live } },
+                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks', taskIds: live } },
                 });
             }
             case 'addTag':

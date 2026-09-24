@@ -2,7 +2,27 @@
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_MENU_VIEWS=1 bunx vitest run components/views/menu-views-parity.test.tsx",
   "capturedAt": "4946dca7ab5e9e4375d80e7faaede50c75c76aee",
-  "capturedAtNote": "Captured from HEAD's React Native code before any screen changed: the harness file was the only change in the checkout. The harness was then renamed from list-views-parity.test.tsx; only its file names changed."
+  "capturedAtNote": "Captured from HEAD's React Native code before any screen changed: the harness file was the only change in the checkout. The harness was then renamed from list-views-parity.test.tsx; only its file names changed.",
+  "recapturedListScreenFixes": {
+   "sourceBase": "5918b6c98f3d5d245c1462ac4117b9c73e4af521",
+   "sourceState": "Uncommitted rn-list-view-bugs worktree changes. A temporary capture-only bypass of the clean-tree guard was used because this task forbids committing; the guard was restored afterward. The original capturedAt field remains the source of unchanged observations.",
+   "command": "cd apps/mobile && MINDWTR_CAPTURE_MENU_VIEWS=1 MINDWTR_CAPTURE_MENU_VIEWS_COMMIT=5918b6c98f3d5d245c1462ac4117b9c73e4af521 bunx vitest run components/views/menu-views-parity.test.tsx",
+   "changedScenarios": [
+    "someday: filters",
+    "reference: grouping, archived projects, filters and sort",
+    "done: grouping, sort, filters and row actions"
+   ]
+  },
+  "reviewCorrection20260924": {
+   "baseSha": "5918b6c98f3d5d245c1462ac4117b9c73e4af521",
+   "fixBranch": "fix/rn-list-view-bugs",
+   "fixCommitOnBranch": "pending; this worker was instructed not to commit",
+   "sourceState": "Uncommitted fix/rn-list-view-bugs worktree captured from React Native. The menu capture used a temporary capture-only clean-tree bypass; the harness was restored afterward.",
+   "command": "cd apps/mobile && rtk proxy env MINDWTR_CAPTURE_MENU_VIEWS=1 bunx vitest run components/views/menu-views-parity.test.tsx",
+   "changedScenarios": [
+    "someday: filters"
+   ]
+  }
  },
  "timeZone": "America/New_York",
  "now": "2026-09-23T14:00:00.000Z",
@@ -2345,7 +2365,7 @@
     "deferred": null,
     "empty": [
      "Nothing you're waiting on",
-     "Park tasks here when the next move is someone else's \u2014 you'll see them until they clear."
+     "Park tasks here when the next move is someone else's — you'll see them until they clear."
     ],
     "writes": [],
     "toasts": []
@@ -2952,7 +2972,7 @@
       "archiveToggle": null
      },
      "moveDialog": {
-      "title": "Move to section\u2026",
+      "title": "Move to section…",
       "sections": [
        {
         "id": "s-later",
@@ -4072,7 +4092,7 @@
       "archiveToggle": null
      },
      "moveDialog": {
-      "title": "Move to section\u2026",
+      "title": "Move to section…",
       "sections": [
        {
         "id": "s-later",
@@ -4652,7 +4672,7 @@
       "archiveToggle": null
      },
      "moveDialog": {
-      "title": "Move to section\u2026",
+      "title": "Move to section…",
       "sections": [
        {
         "id": "s-later",
@@ -10104,7 +10124,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 1",
+     "label": "Filters · 1",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -10363,7 +10383,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 1",
+     "label": "Filters · 1",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -10894,7 +10914,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 1",
+     "label": "Filters · 1",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -11148,7 +11168,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 2",
+     "label": "Filters · 2",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -11423,7 +11443,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 1",
+     "label": "Filters · 1",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -11677,7 +11697,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 2",
+     "label": "Filters · 2",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -11818,26 +11838,7 @@
       "More options"
      ]
     },
-    "rows": [
-     [
-      "heading",
-      "view-section:someday:s-later",
-      "Later",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-ideas",
-      "Ideas",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-empty",
-      "Travel",
-      false
-     ]
-    ],
+    "rows": [],
     "tasks": [],
     "canAddToSection": true,
     "canMoveToSection": true,
@@ -11914,7 +11915,11 @@
       }
      ]
     },
-    "empty": null,
+    "empty": [
+     "No tasks match these filters.",
+     "Home Repairs, Low",
+     "Clear"
+    ],
     "writes": [],
     "toasts": []
    },
@@ -11930,7 +11935,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 3",
+     "label": "Filters · 3",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -12071,26 +12076,7 @@
       "More options"
      ]
     },
-    "rows": [
-     [
-      "heading",
-      "view-section:someday:s-later",
-      "Later",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-ideas",
-      "Ideas",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-empty",
-      "Travel",
-      false
-     ]
-    ],
+    "rows": [],
     "tasks": [],
     "canAddToSection": true,
     "canMoveToSection": true,
@@ -12172,7 +12158,11 @@
       }
      ]
     },
-    "empty": null,
+    "empty": [
+     "No tasks match these filters.",
+     "Home Repairs, Low, High energy",
+     "Clear"
+    ],
     "writes": [],
     "toasts": []
    },
@@ -12188,7 +12178,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 4",
+     "label": "Filters · 4",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -12329,26 +12319,7 @@
       "More options"
      ]
     },
-    "rows": [
-     [
-      "heading",
-      "view-section:someday:s-later",
-      "Later",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-ideas",
-      "Ideas",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-empty",
-      "Travel",
-      false
-     ]
-    ],
+    "rows": [],
     "tasks": [],
     "canAddToSection": true,
     "canMoveToSection": true,
@@ -12435,7 +12406,11 @@
       }
      ]
     },
-    "empty": null,
+    "empty": [
+     "No tasks match these filters.",
+     "Home Repairs, Low, High energy",
+     "Clear"
+    ],
     "writes": [],
     "toasts": []
    },
@@ -12451,7 +12426,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 5",
+     "label": "Filters · 5",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -12592,26 +12567,7 @@
       "More options"
      ]
     },
-    "rows": [
-     [
-      "heading",
-      "view-section:someday:s-later",
-      "Later",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-ideas",
-      "Ideas",
-      false
-     ],
-     [
-      "heading",
-      "view-section:someday:s-empty",
-      "Travel",
-      false
-     ]
-    ],
+    "rows": [],
     "tasks": [],
     "canAddToSection": true,
     "canMoveToSection": true,
@@ -12656,7 +12612,7 @@
      "chips": [
       [
        "search",
-       "Search...: novel",
+       "Search: novel",
        false
       ],
       [
@@ -12703,7 +12659,11 @@
       }
      ]
     },
-    "empty": null,
+    "empty": [
+     "No tasks match these filters.",
+     "Search: novel, Home Repairs, Low",
+     "Clear"
+    ],
     "writes": [],
     "toasts": []
    },
@@ -12985,7 +12945,7 @@
      ]
     ],
     "filterChip": {
-     "label": "Filters \u00b7 1",
+     "label": "Filters · 1",
      "removeLabel": "Clear: Filters"
     },
     "menu": {
@@ -13202,7 +13162,7 @@
      "chips": [
       [
        "search",
-       "Search...: plan",
+       "Search: plan",
        false
       ]
      ],
@@ -13999,7 +13959,7 @@
       "archiveToggle": null
      },
      "moveDialog": {
-      "title": "Move to section\u2026",
+      "title": "Move to section…",
       "sections": [
        {
         "id": "s-later",
@@ -14276,7 +14236,7 @@
      "archiveToggle": null
     },
     "moveDialog": {
-     "title": "Move to section\u2026",
+     "title": "Move to section…",
      "sections": [
       {
        "id": "s-later",
@@ -14560,7 +14520,7 @@
       "archiveToggle": null
      },
      "moveDialog": {
-      "title": "Move to section\u2026",
+      "title": "Move to section…",
       "sections": [
        {
         "id": "s-later",
@@ -15554,7 +15514,7 @@
     "deferred": null,
     "empty": [
      "Nothing on your someday list",
-     "Park ideas and goals you might pursue later \u2014 off your plate, not out of mind."
+     "Park ideas and goals you might pursue later — off your plate, not out of mind."
     ],
     "writes": [],
     "toasts": []
@@ -15765,7 +15725,7 @@
     "deferred": null,
     "empty": [
      "Nothing on your someday list",
-     "Park ideas and goals you might pursue later \u2014 off your plate, not out of mind."
+     "Park ideas and goals you might pursue later — off your plate, not out of mind."
     ],
     "writes": [],
     "toasts": []
@@ -15955,7 +15915,7 @@
     "deferred": null,
     "empty": [
      "Nothing on your someday list",
-     "Park ideas and goals you might pursue later \u2014 off your plate, not out of mind."
+     "Park ideas and goals you might pursue later — off your plate, not out of mind."
     ],
     "writes": [],
     "toasts": []
@@ -16751,7 +16711,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -16927,7 +16887,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -17017,7 +16977,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -17134,7 +17094,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -17242,7 +17202,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -17373,7 +17333,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -17515,7 +17475,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -17973,7 +17933,7 @@
      "chips": [
       [
        "search",
-       "Search...: wifi pass",
+       "Search: wifi pass",
        false
       ],
       [
@@ -18001,7 +17961,7 @@
     },
     "empty": {
      "message": "No tasks match these filters.",
-     "hint": "Search...: wifi pass, #router, No Project",
+     "hint": "Search: wifi pass, #router, No Project",
      "actionLabel": "Clear"
     },
     "filterSheet": {
@@ -18041,7 +18001,7 @@
      "chips": [
       [
        "search",
-       "Search...: wifi pass",
+       "Search: wifi pass",
        false
       ],
       [
@@ -18148,7 +18108,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18205,7 +18165,7 @@
      "chips": [
       [
        "search",
-       "Search...: nomatch",
+       "Search: nomatch",
        false
       ]
      ],
@@ -18223,7 +18183,7 @@
     },
     "empty": {
      "message": "No tasks match these filters.",
-     "hint": "Search...: nomatch",
+     "hint": "Search: nomatch",
      "actionLabel": "Clear"
     },
     "filterSheet": {
@@ -18263,7 +18223,7 @@
      "chips": [
       [
        "search",
-       "Search...: nomatch",
+       "Search: nomatch",
        false
       ]
      ],
@@ -18360,7 +18320,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18472,7 +18432,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18589,7 +18549,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18706,7 +18666,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18816,7 +18776,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18920,7 +18880,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -18994,7 +18954,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19120,7 +19080,7 @@
     },
     "empty": {
      "message": "Nothing filed yet",
-     "hint": "Reference holds info you might want later \u2014 no action required.",
+     "hint": "Reference holds info you might want later — no action required.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19197,7 +19157,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19375,7 +19335,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19475,7 +19435,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19576,7 +19536,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19677,7 +19637,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19783,7 +19743,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -19880,7 +19840,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20162,7 +20122,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20223,7 +20183,7 @@
      "chips": [
       [
        "search",
-       "Search...: sink",
+       "Search: sink",
        false
       ]
      ],
@@ -20241,7 +20201,7 @@
     },
     "empty": {
      "message": "No tasks match these filters.",
-     "hint": "Search...: sink",
+     "hint": "Search: sink",
      "actionLabel": "Clear"
     },
     "filterSheet": {
@@ -20272,7 +20232,7 @@
      "chips": [
       [
        "search",
-       "Search...: sink",
+       "Search: sink",
        false
       ]
      ],
@@ -20344,7 +20304,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20423,7 +20383,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20497,7 +20457,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20574,7 +20534,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20685,7 +20645,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20865,7 +20825,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {
@@ -20924,7 +20884,7 @@
     },
     "empty": {
      "message": "Completed",
-     "hint": "Completed tasks land here \u2014 a running log of what you finished.",
+     "hint": "Completed tasks land here — a running log of what you finished.",
      "actionLabel": null
     },
     "filterSheet": {

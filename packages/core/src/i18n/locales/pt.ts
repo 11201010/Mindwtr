@@ -192,6 +192,8 @@ export const ptOverrides: Record<string, string> = {
         'list.waiting': 'Aguardando',
         'list.done': 'Concluído',
         'list.tasks': 'Lista de tarefas',
+        'list.countTaskSingular': 'tarefa',
+        'list.countProjectSingular': 'projeto',
         'list.confirmBatchDelete': 'Excluir tarefas selecionadas?',
         'list.taskDeleted': 'Tarefa excluída',
         'task.markedDone': '{title} marcada como concluída',

@@ -635,7 +635,7 @@ describe('ArchivedScreen', () => {
 
     expect(hasText(tree, '2 tasks')).toBe(true);
     typeSearch(tree, 'printer');
-    expect(hasText(tree, '1 tasks')).toBe(true);
+    expect(hasText(tree, '1 task')).toBe(true);
   });
 
   it('offers the search box while a filter is active even though nothing matches', () => {

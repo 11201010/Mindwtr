@@ -84,6 +84,14 @@ const renderHeader = (overrides: Partial<React.ComponentProps<typeof TaskListHea
 );
 
 describe('TaskListHeader', () => {
+  it('uses localized singular counts for visible text and accessibility', () => {
+    const html = renderHeader({ showHeader: true, count: 1, t: (key) => ({
+      'list.countTaskSingular': 'tâche', 'common.tasks': 'tâches',
+    }[key] ?? key) });
+    expect(html).toContain('aria-label="1 tâche"');
+    expect(html).toContain('1 tâche');
+    expect(html).not.toContain('1 tasks');
+  });
   it('restores direct Inbox Sort, Group, and Filters controls before Mind Sweep', () => {
     const html = renderHeader({
       directControls: true,

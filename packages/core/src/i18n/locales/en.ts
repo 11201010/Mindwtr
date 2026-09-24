@@ -211,6 +211,8 @@ export const en: Record<string, string> = {
         'list.waiting': 'Waiting For',
         'list.done': 'Completed',
         'list.tasks': 'Task list',
+        'list.countTaskSingular': 'task',
+        'list.countProjectSingular': 'project',
         'list.confirmBatchDelete': 'Delete selected tasks?',
         'list.taskDeleted': 'Task deleted',
         'task.markedDone': '{title} marked Done',

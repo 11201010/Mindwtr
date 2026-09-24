@@ -87,7 +87,7 @@ describe('native host contract: More sheet and list views', () => {
         const resolved = resolveListFilterState(filters, { ...options, t });
         const someday = buildSomedayViewModel({
             tasks, projects: state.projects, areaById, resolvedAreaFilter, settings: state.settings,
-            sortBy: 'title', groupBy: 'project', showDetails: true, criteria: resolved.criteria, searchQuery: resolved.searchQuery, t,
+            sortBy: 'title', groupBy: 'project', showDetails: true, criteria: resolved.criteria, searchQuery: resolved.searchQuery, filterChips: resolved.chips, t,
         });
         const somedayView = value(host.getSomedayView({ sortBy: 'title', groupBy: 'project', showDetails: true, filters, offset: 0, limit: 100 }));
         expect(somedayView.items.map((item) => (item.type === 'heading' ? item.id : item.row.id)))
@@ -113,6 +113,23 @@ describe('native host contract: More sheet and list views', () => {
         // A reference filed in an archived project opens read-only, as on mobile.
         const archived = referenceView.items.find((item) => item.type === 'task' && item.row.id === 'r-c');
         expect(archived?.type === 'task' && archived.row.readOnly).toBe(true);
+    });
+
+    it('accepts each list header token chip edit for Someday, Reference, and Done', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('someday', 'sections'));
+        const cases = [
+            { token: '#music', get: (filters: typeof EMPTY_LIST_FILTER_STATE, filterEdit?: { type: 'removeToken'; value: string }) => host.getSomedayView({ filters, filterEdit, offset: 0, limit: 100 }) },
+            { token: '#home', get: (filters: typeof EMPTY_LIST_FILTER_STATE, filterEdit?: { type: 'removeToken'; value: string }) => host.getReferenceView({ filters, filterEdit, offset: 0, limit: 100 }) },
+            { token: '#home', get: (filters: typeof EMPTY_LIST_FILTER_STATE, filterEdit?: { type: 'removeToken'; value: string }) => host.getDoneView({ filters, filterEdit, offset: 0, limit: 100 }) },
+        ];
+        for (const { token, get } of cases) {
+            const filters = { ...EMPTY_LIST_FILTER_STATE, tokens: [token] };
+            const before = value(get(filters));
+            const edit = before.chips.find((chip) => chip.id === `token:${token}`)?.action.filterEdit;
+            expect(edit).toEqual({ type: 'removeToken', value: token });
+            expect(value(get(before.filters.state, edit as { type: 'removeToken'; value: string })).filters.state.tokens).toEqual([]);
+        }
     });
 
     it('pages within one revision and refuses a stale page after an edit', async () => {

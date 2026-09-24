@@ -416,7 +416,7 @@ export async function replayMenuViewsScenario(options: {
             const model = buildSomedayViewModel({
                 tasks, projects: state.projects, areaById, resolvedAreaFilter, settings: state.settings,
                 sortBy: session.sortBy, groupBy: session.groupBy, showDetails: session.showDetails,
-                criteria: resolved.criteria, searchQuery: resolved.searchQuery, t,
+                criteria: resolved.criteria, searchQuery: resolved.searchQuery, filterChips: resolved.chips, t,
             });
             return { model, resolved, filterOptions };
         };
@@ -486,7 +486,7 @@ export async function replayMenuViewsScenario(options: {
                         headerLabel: view.deferred.title,
                         rows: view.deferred.rows.items.map((row) => ({ action: view.deferred!.activateLabel, title: row.title, area: row.areaName, color: row.color })),
                     },
-                    empty: view.empty ? [view.empty.title, view.empty.hint] : null,
+                    empty: view.empty ? [view.empty.title, ...(view.empty.hint ? [view.empty.hint] : []), ...(view.empty.clear ? [t('filters.clear')] : [])] : null,
                     ...drain(),
                 };
             }
@@ -538,7 +538,8 @@ export async function replayMenuViewsScenario(options: {
                     headerLabel: model.deferred.title,
                     rows: model.deferred.rows.map((row) => ({ action: model.deferred!.activateLabel, title: row.title, area: row.areaName, color: row.color })),
                 },
-                empty: model.deferred ? null : [labels.emptyTitle, labels.emptyHint],
+                empty: model.deferred && !model.showEmptyState ? null
+                    : [model.empty.message, ...(model.empty.hint ? [model.empty.hint] : []), ...(model.empty.actionLabel ? [model.empty.actionLabel] : [])],
                 ...drain(),
             };
         };

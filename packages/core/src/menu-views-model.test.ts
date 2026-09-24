@@ -8,11 +8,12 @@ import {
     seedMenuViewsStore,
 } from './menu-views-model.replay';
 import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState } from './list-filter-state';
+import { buildSomedayViewModel } from './menu-views-model';
 import { buildMoreMenuModel, resolveMobileQuickAccessView } from './more-menu-model';
 import { createNativeHostContract } from './native-host-contract';
 import { moveSomedaySection, planSomedaySectionCreate, planSomedaySectionMove, renameSomedaySection } from './someday-sections-model';
 import { resetForTests } from './store';
-import type { Task } from './types';
+import type { AppSettings, Task } from './types';
 
 const fixture = loadMenuViewsFixture();
 
@@ -88,6 +89,47 @@ describe('list view models', () => {
         expect(resolved.state.tokens).toEqual([]);
         expect(resolved.state.priorities).toEqual([]);
         expect(resolved.activeCount).toBe(0);
+    });
+
+    it('uses the Search title rather than its input placeholder in the active chip', () => {
+        const resolved = resolveListFilterState(
+            { ...EMPTY_LIST_FILTER_STATE, searchQuery: ' MILK ' },
+            { visibility: { energyLevel: false, location: false, priority: false, timeEstimate: false }, t: (key) => ({ 'common.search': 'Search...', 'search.title': 'Search' }[key] ?? key) },
+        );
+        expect(resolved.chips[0].label).toBe('Search: MILK');
+    });
+
+    it('removes a header token chip without turning it into an exclusion', () => {
+        const included = { ...EMPTY_LIST_FILTER_STATE, tokens: ['#milk'] };
+        const resolved = resolveListFilterState(included, {
+            visibility: { energyLevel: false, location: false, priority: false, timeEstimate: false }, t,
+        });
+        expect(applyListFilterEdit(included, resolved.chips[0].edit)).toEqual(EMPTY_LIST_FILTER_STATE);
+    });
+
+    it('shows the filtered empty state instead of empty Someday section headings', () => {
+        const task = { id: 'task', title: 'Milk', status: 'someday', contexts: [], tags: [], createdAt: '', updatedAt: '' } as Task;
+        const settings = { gtd: { viewSections: { someday: [{ id: 'books', title: 'Books', order: 0 }] } } } as AppSettings;
+        const model = buildSomedayViewModel({
+            tasks: [task], projects: [], areaById: new Map(), resolvedAreaFilter: { mode: 'all' },
+            settings, sortBy: 'default', groupBy: 'viewSection', showDetails: true,
+            criteria: {}, searchQuery: 'unmatched', filterChips: [{ id: 'search', label: 'Search: unmatched', excluded: false }],
+            t: (key) => ({ 'filters.noMatch': 'No tasks match these filters.' }[key] ?? key),
+        });
+        expect(model.groups).toBeUndefined();
+        expect(model.showEmptyState).toBe(true);
+        expect(model.labels.emptyTitle).toBe('No tasks match these filters.');
+    });
+
+    it('gives filtered Someday the standard chip hint and Clear action', () => {
+        const model = buildSomedayViewModel({
+            tasks: [], projects: [], areaById: new Map(), resolvedAreaFilter: { mode: 'all' },
+            settings: undefined, sortBy: 'default', groupBy: 'none', showDetails: false,
+            criteria: {}, searchQuery: 'missing',
+            filterChips: ['Search: missing', '#one', '#two', '#three'].map((label, index) => ({ id: String(index), label, excluded: false })),
+            t: (key) => ({ 'filters.noMatch': 'No tasks match these filters.', 'filters.clear': 'Clear' }[key] ?? key),
+        });
+        expect(model.empty).toEqual({ message: 'No tasks match these filters.', hint: 'Search: missing, #one, #two', actionLabel: 'Clear' });
     });
 
     it('plans Someday section edits without touching other definitions', () => {

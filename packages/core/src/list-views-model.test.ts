@@ -3,6 +3,8 @@ import {
     buildContextsTokenIndex,
     buildContextsViewFilterSections,
     buildContextsViewModel,
+    editContextsTaskTokens,
+    getContextsEmptyState,
     getContextsTokenCount,
     getContextsRouteTokens,
     selectContextsRouteTokens,
@@ -11,6 +13,8 @@ import {
     toggleContextsToken,
 } from './contexts-view-model';
 import { configureDateFormatting } from './date';
+import { getArchivedProjectRow, getArchiveSummary } from './archive-view-model';
+import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import { taskMatchesContextOrTagSelection } from './hierarchy-utils';
 import { loadTranslations } from './i18n/i18n-loader';
 import {
@@ -27,7 +31,8 @@ import {
     seedListViewsStore,
 } from './list-views-model.replay';
 import { flushPendingSave, resetForTests } from './store';
-import type { Task } from './types';
+import { formatTrashCounts } from './trash-view-model';
+import type { Area, Project, Task } from './types';
 
 const fixture = loadListViewsFixture();
 /** The fixture minus the rendered text dump, which only the React Native capture checks. */
@@ -164,5 +169,57 @@ describe('contexts view filters', () => {
         expect(getContextsRouteTokens('  ')).toEqual([]);
         expect(selectContextsRouteTokens(['@a', '@a', '#b'])).toEqual(['@a', '#b']);
         expect(selectContextsRouteTokens(['@a', '__no_context__'])).toEqual(['__no_context__']);
+    });
+
+    it('shows the No context label instead of its internal selection token', () => {
+        const t = (key: string) => ({ 'contexts.noTasks': 'No active tasks for this context', 'contexts.none': 'No context' }[key] ?? key);
+        expect(getContextsEmptyState({ hasTokens: true, selectedTokens: ['__no_context__'] }, t).message)
+            .toBe('No active tasks for this context No context');
+    });
+
+    it('uses singular nouns for one item and lower-case plural nouns in list counts', () => {
+        const t = (key: string) => ({
+            'common.tasks': 'tasks', 'list.countTaskSingular': 'task', 'list.countProjectSingular': 'project',
+            'projects.count': 'projects', 'projects.title': 'Projects',
+        }[key] ?? key);
+        expect(formatTrashCounts(1, 3, t)).toBe('1 task · 3 projects');
+        expect(getArchiveSummary('tasks', 1, t)).toBe('1 task');
+        expect(getArchiveSummary('projects', 3, t)).toBe('3 projects');
+        expect(getArchiveSummary('projects', 1, t)).toBe('1 project');
+        const german = (key: string) => ({
+            'common.tasks': 'Aufgaben', 'list.countTaskSingular': 'Aufgabe',
+            'projects.count': 'Projekte', 'list.countProjectSingular': 'Projekt',
+        }[key] ?? key);
+        expect(formatTrashCounts(1, 3, german)).toBe('1 Aufgabe · 3 Projekte');
+    });
+
+    it('keeps Chinese and Japanese measure words in singular counts', async () => {
+        for (const [language, expected] of [
+            ['zh', '1 个任务 · 1 个项目'],
+            ['zh-Hant', '1 個任務 · 1 個專案'],
+            ['ja', '1 件のタスク · 1 件のプロジェクト'],
+        ] as const) {
+            const translations = await loadTranslations(language);
+            expect(formatTrashCounts(1, 1, (key) => translations[key] ?? key)).toBe(expected);
+        }
+    });
+
+    it('reports how many selected tasks actually lost a tag', async () => {
+        const tagged = task({ id: 'tagged', tags: ['#milk'] });
+        const untagged = task({ id: 'untagged' });
+        const batchUpdateTasks = vi.fn().mockResolvedValue({ success: true });
+        const result = await editContextsTaskTokens({ batchUpdateTasks }, {
+            taskIds: ['tagged', 'untagged'], tasksById: { tagged, untagged },
+            field: 'tags', mode: 'remove', values: ['#milk'],
+        });
+        expect(result).toMatchObject({ changed: true, count: 1 });
+        expect(batchUpdateTasks).toHaveBeenCalledWith([{ id: 'tagged', updates: { tags: [] } }]);
+    });
+
+    it('uses an archived project’s area color when its stored color is the placeholder', () => {
+        const project = { id: 'project', title: 'Project', status: 'archived', areaId: 'area', color: DEFAULT_PROJECT_COLOR } as Project;
+        const area = { id: 'area', name: 'Area', color: '#123456' } as Area;
+        expect(getArchivedProjectRow(project, () => 'date', new Map([['area', area]])).indicatorColor).toBe('#123456');
+        expect(getArchivedProjectRow(project, () => 'date', new Map()).indicatorColor).toBeUndefined();
     });
 });

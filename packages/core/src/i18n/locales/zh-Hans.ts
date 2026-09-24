@@ -263,6 +263,8 @@ export const zhHans: Record<string, string> = {
         'list.waiting': '等待中',
         'list.done': '已完成',
         'list.tasks': '任务列表',
+        'list.countTaskSingular': '个任务',
+        'list.countProjectSingular': '个项目',
         'list.confirmBatchDelete': '删除选中的任务？',
         'list.taskDeleted': '任务已删除',
         'task.markedDone': '{title} 已标记为完成',

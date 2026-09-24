@@ -109,6 +109,8 @@ export const allowedEnglishMirrorKeysByLocale: Record<string, readonly string[]>
     ],
     nl: [
         'sandbox.label',
+        // Dutch and English use the same singular word.
+        'list.countProjectSingular',
     ],
     ko: [
         // Korean UI writes the e-ink theme in Latin.

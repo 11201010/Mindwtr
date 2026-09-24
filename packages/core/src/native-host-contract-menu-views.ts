@@ -205,7 +205,7 @@ export type NativeSomedayView = Paged<{
     chips: NativeListChip[];
     sections: NativeWindow<ViewSectionDefinition>;
     deferred: NativeDeferredProjects | null;
-    empty: { title: string; hint: string } | null;
+    empty: { title: string; hint: string; clear: boolean } | null;
     text: {
         moveToSection: string;
         undoLabel: string;
@@ -296,6 +296,7 @@ const isFilterEdit = (edit: unknown): edit is ListFilterEdit => {
     if (!isObjectRecord(edit)) return false;
     switch (edit.type) {
         case 'toggleToken':
+        case 'removeToken':
         case 'toggleProject':
             return isText(edit.value) && (edit.value as string).length > 0;
         case 'togglePriority':
@@ -517,7 +518,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             const model = buildSomedayViewModel({
                 tasks, projects: state.projects, areaById, resolvedAreaFilter, settings: state.settings,
                 sortBy: params.sortBy, groupBy: params.groupBy, showDetails: params.showDetails,
-                criteria: resolved.criteria, searchQuery: resolved.searchQuery, t,
+                criteria: resolved.criteria, searchQuery: resolved.searchQuery, filterChips: resolved.chips, t,
             });
             const items: ({ type: 'heading'; id: string; title: string; muted: boolean } | { type: 'task'; task: Task; groupId: string | null })[] = model.groups
                 ? model.groups.flatMap((group) => [
@@ -808,7 +809,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     chips: filterChips(resolved),
                     sections: firstWindow(model.sections),
                     deferred: deferredWindow(model.deferred),
-                    empty: model.showEmptyState ? { title: labels.emptyTitle, hint: labels.emptyHint } : null,
+                    empty: model.showEmptyState ? { title: labels.emptyTitle, hint: labels.emptyHint, clear: model.empty.actionLabel !== null } : null,
                     text: {
                         moveToSection: labels.moveToSection,
                         undoLabel: moveText.undoLabel,

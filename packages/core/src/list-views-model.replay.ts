@@ -59,6 +59,9 @@ import { safeFormatDate } from './date';
 import { countActiveFilterCriteria, criteriaFromSelections } from './filter-criteria';
 import type { ContextOrTagMatchMode } from './hierarchy-utils';
 import { tFallback } from './i18n';
+import { getListSearchChipLabel } from './list-filter-state';
+import { getProjectAccentColor } from './task-accent-color';
+import { formatListItemCount } from './list-count';
 import { getInlineMarkdownPreview } from './markdown';
 import type { createNativeHostContract, NativeArchiveAction, NativeContextsAction, NativeListActionResult, NativeTrashAction } from './native-host-contract';
 import { updateRangeSelection } from './range-selection';
@@ -71,6 +74,7 @@ import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import { buildTrashTimeline, resolveTrashClearScope } from './task-utils';
 import {
     formatTrashCounts,
+    getTrashUndoLabel,
     formatTrashDeletedDate,
     getBulkTrashConfirmation,
     getTrashEmptyState,
@@ -299,7 +303,7 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
         },
         async run(write) {
             const store = useTaskStore.getState();
-            const done = (count: number): Toast => ({ tone: 'success', title: t('common.done'), message: `${count} ${t('common.tasks')}`, actionLabel: null });
+            const done = (count: number): Toast => ({ tone: 'success', title: t('common.done'), message: formatListItemCount(count, 'task', t), actionLabel: null });
             switch (write.type) {
                 case 'setTaskStatus': await store.updateTask(write.taskId, { status: write.status }); return null;
                 case 'trashTask': await store.deleteTask(write.taskId); return null;
@@ -307,12 +311,12 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
                 case 'editTaskTokens': {
                     const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
                     const outcome = await editContextsTaskTokens(store, { ...write, tasksById });
-                    return outcome.changed ? done(write.taskIds.length) : null;
+                    return outcome.changed ? done(outcome.count) : null;
                 }
                 case 'trashTasks': {
                     await store.batchDeleteTasks(write.taskIds);
                     const undo = async () => { await Promise.all(write.taskIds.map((id) => useTaskStore.getState().restoreTask(id))); };
-                    return { ...done(write.taskIds.length), actionLabel: tFallback(t, 'trash.restoreToInbox', 'Restore'), undo };
+                    return { ...done(write.taskIds.length), actionLabel: getTrashUndoLabel(t), undo };
                 }
                 case 'restoreTasks': await Promise.all(write.taskIds.map((id) => useTaskStore.getState().restoreTask(id))); return null;
             }
@@ -491,7 +495,7 @@ type ArchiveModel = {
     items: (
         | { type: 'section'; id: string; title: string; count: number; collapsible: boolean; collapsed: boolean }
         | ArchiveTaskItem
-        | { type: 'project'; id: string; title: string; cancelled: boolean; dateLabel: string; areaName: string | null; indicatorColor: string; confirmation: ListConfirmation }
+        | { type: 'project'; id: string; title: string; cancelled: boolean; dateLabel: string; areaName: string | null; indicatorColor: string | null; confirmation: ListConfirmation }
     )[];
     visibleIds: string[];
     empty: { title: string; message: string; clearLabel: string | null } | null;
@@ -518,7 +522,7 @@ function resolveHookFilters(filters: FilterState, visibility: TaskMetadataFilter
         criteria,
         activeCount: (search ? 1 : 0) + countActiveFilterCriteria(criteria),
         chips: [
-            ...(search ? [{ id: 'search', label: `${t('common.search')}: ${search}`, excluded: false }] : []),
+            ...(search ? [{ id: 'search', label: getListSearchChipLabel(search, t), excluded: false }] : []),
             ...filters.tokens.map((token) => ({ id: `token:${token}`, label: token, excluded: false })),
             ...filters.excludedTokens.map((token) => ({ id: `excluded-token:${token}`, label: token, excluded: true })),
             ...priorities.map((value) => ({ id: `priority:${value}`, label: t(`priority.${value}`), excluded: false })),
@@ -561,12 +565,12 @@ export function createArchiveCoreBackend(t: Translate): ArchiveBackend {
                 };
             };
             const items = state.segment === 'tasks' ? taskItems.map(toTask) : projects.map((project) => {
-                const row = getArchivedProjectRow(project, safeFormatDate);
+                const row = getArchivedProjectRow(project, safeFormatDate, areaById);
                 return {
                     type: 'project' as const, id: project.id, title: project.title, cancelled: row.cancelled,
                     dateLabel: `${row.cancelled ? labels.projectCancelled : labels.completed}: ${row.dateLabel}`,
                     areaName: project.areaId ? areaById.get(project.areaId)?.name ?? null : null,
-                    indicatorColor: row.indicatorColor,
+                    indicatorColor: row.indicatorColor ?? null,
                     confirmation: getArchiveConfirmation({ kind: 'project', project }, t),
                 };
             });
@@ -609,8 +613,8 @@ export function createArchiveCoreBackend(t: Translate): ArchiveBackend {
                 case 'trashTasks': {
                     await store.batchDeleteTasks(write.taskIds);
                     return {
-                        tone: 'success', title: t('common.done'), message: `${write.taskIds.length} ${t('common.tasks')}`,
-                        actionLabel: tFallback(t, 'trash.restoreToInbox', 'Restore'),
+                        tone: 'success', title: t('common.done'), message: formatListItemCount(write.taskIds.length, 'task', t),
+                        actionLabel: getTrashUndoLabel(t),
                         undo: async () => { await Promise.all(write.taskIds.map((id) => useTaskStore.getState().restoreTask(id))); },
                     };
                 }
@@ -836,7 +840,7 @@ export async function replayArchive(backend: ArchiveBackend, scenario: ListViews
 type TrashModel = {
     summary: string | null;
     retentionHint: string | null;
-    items: { type: 'task' | 'project'; id: string; title: string; deletedAt: string; typeLabel: string; deletedLabel: string; markdown: string | null; indicatorColor: string }[];
+    items: { type: 'task' | 'project'; id: string; title: string; deletedAt: string; typeLabel: string; deletedLabel: string; markdown: string | null; indicatorColor: string | null }[];
     /** What Select all selects: mobile takes the shown tasks and projects in store order. */
     selectAll: { taskIds: string[]; projectIds: string[] };
     labels: ReturnType<typeof getTrashRowLabels> & { done: string; clearAll: string; selectAll: string; restoreSelected: string; deleteSelected: string; bulkSelected: string };
@@ -877,7 +881,7 @@ export function createTrashCoreBackend(t: Translate): TrashBackend {
                         typeLabel: item.type === 'task' ? labels.taskType : labels.projectType,
                         deletedLabel: `${labels.deleted}: ${formatTrashDeletedDate(entity.deletedAt, safeFormatDate)}`,
                         markdown: item.type === 'task' && item.task.description ? getInlineMarkdownPreview(item.task.description) : null,
-                        indicatorColor: item.type === 'project' ? item.project.color || '#6B7280' : '#6B7280',
+                        indicatorColor: item.type === 'project' ? getProjectAccentColor(item.project, areaById) ?? null : '#6B7280',
                     };
                 }),
                 selectAll: { taskIds: tasks.map((task) => task.id), projectIds: projects.map((project) => project.id) },

@@ -198,6 +198,8 @@ export const esOverrides: Record<string, string> = {
 'list.waiting': "En espera",
 'list.done': "Completadas",
 'list.tasks': "Lista de tareas",
+'list.countTaskSingular': 'tarea',
+'list.countProjectSingular': 'proyecto',
 'list.confirmBatchDelete': "¿Eliminar las tareas seleccionadas?",
 'list.taskDeleted': "Tarea eliminada",
 'task.markedDone': "{title} marcada como hecha",

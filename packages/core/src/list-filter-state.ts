@@ -45,6 +45,7 @@ export const EMPTY_LIST_FILTER_STATE: ListFilterState = {
 /** One picker control's change, exactly as the hook's setter of the same name makes it. */
 export type ListFilterEdit =
     | { type: 'toggleToken'; value: string }
+    | { type: 'removeToken'; value: string }
     | { type: 'toggleProject'; value: string }
     | { type: 'togglePriority'; value: TaskPriority }
     | { type: 'toggleEnergyLevel'; value: TaskEnergyLevel }
@@ -60,6 +61,12 @@ const toggleValue = <T,>(current: readonly T[], value: T): T[] => (
 
 export function applyListFilterEdit(state: ListFilterState, edit: ListFilterEdit): ListFilterState {
     switch (edit.type) {
+        case 'removeToken':
+            return {
+                ...state,
+                tokens: state.tokens.filter((item) => item !== edit.value),
+                excludedTokens: state.excludedTokens.filter((item) => item !== edit.value),
+            };
         case 'toggleToken': {
             // Tri-state cycle: neutral → included → excluded → neutral.
             const token = edit.value;
@@ -93,6 +100,8 @@ export function applyListFilterEdit(state: ListFilterState, edit: ListFilterEdit
             return EMPTY_LIST_FILTER_STATE;
     }
 }
+
+export const getListSearchChipLabel = (search: string, t: (key: string) => string): string => `${t('search.title')}: ${search}`;
 
 export type ListFilterChip = {
     id: string;
@@ -159,12 +168,12 @@ export function resolveListFilterState(
 
     const chips: ListFilterChip[] = [];
     const search = state.searchQuery.trim();
-    if (search) chips.push({ id: 'search', label: `${t('common.search')}: ${search}`, excluded: false, edit: { type: 'setSearch', value: '' } });
+    if (search) chips.push({ id: 'search', label: getListSearchChipLabel(search, t), excluded: false, edit: { type: 'setSearch', value: '' } });
     state.tokens.forEach((token) => {
-        chips.push({ id: `token:${token}`, label: token, excluded: false, edit: { type: 'toggleToken', value: token } });
+        chips.push({ id: `token:${token}`, label: token, excluded: false, edit: { type: 'removeToken', value: token } });
     });
     state.excludedTokens.forEach((token) => {
-        chips.push({ id: `excluded-token:${token}`, label: token, excluded: true, edit: { type: 'toggleToken', value: token } });
+        chips.push({ id: `excluded-token:${token}`, label: token, excluded: true, edit: { type: 'removeToken', value: token } });
     });
     state.projects.forEach((projectId) => {
         const label = getProjectLabel?.(projectId);

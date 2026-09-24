@@ -208,6 +208,8 @@ export const hiOverrides: Record<string, string> = {
         'list.waiting': 'के लिए इंतजार',
         'list.done': 'पुरा होना।',
         'list.tasks': 'कार्य सूची',
+        'list.countTaskSingular': 'कार्य',
+        'list.countProjectSingular': 'परियोजना',
         'list.confirmBatchDelete': 'चयनित कार्य हटाएँ?',
         'list.taskDeleted': 'कार्य हटाया गया',
         'list.tasksDeleted': '{{count}} कार्य हटाए गए',

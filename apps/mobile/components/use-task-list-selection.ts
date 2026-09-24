@@ -4,6 +4,8 @@ import {
   buildBulkOrganizeTaskUpdates,
   buildBulkTaskTokenUpdates,
   collectBulkTaskTokens,
+  formatListItemCount,
+  getTrashUndoLabel,
   tFallback,
   updateRangeSelection,
   type BulkOrganizeTaskUpdateInput,
@@ -20,7 +22,6 @@ type UseTaskListSelectionParams = {
   batchMoveTasks: (ids: string[], status: TaskStatus) => Promise<void | StoreActionResult>;
   batchUpdateTasks: (updates: { id: string; updates: Partial<Task> }[]) => Promise<void | StoreActionResult>;
   canSelectTaskId?: (taskId: string) => boolean;
-  restoreActionLabel: string;
   restoreTask: (id: string) => Promise<void | StoreActionResult>;
   t: (key: string) => string;
   tasksById: Record<string, Task>;
@@ -65,7 +66,6 @@ export function useTaskListSelection({
   batchMoveTasks,
   batchUpdateTasks,
   canSelectTaskId,
-  restoreActionLabel,
   restoreTask,
   t,
   tasksById,
@@ -149,7 +149,7 @@ export function useTaskListSelection({
       exitSelectionMode();
       showToast({
         title: t('common.done'),
-        message: `${selectedIdsArray.length} ${t('common.tasks')}`,
+        message: formatListItemCount(selectedIdsArray.length, 'task', t),
         tone: 'success',
       });
     });
@@ -157,6 +157,7 @@ export function useTaskListSelection({
 
   const handleBatchDelete = useCallback(async () => {
     if (!hasSelection || bulkActionLoading) return;
+    const undoLabel = getTrashUndoLabel(t);
     Alert.alert(
       tFallback(t, 'bulk.confirmDeleteTitle', t('common.delete')),
       tFallback(t, 'bulk.confirmDeleteBody', t('list.confirmBatchDelete')),
@@ -172,11 +173,11 @@ export function useTaskListSelection({
               exitSelectionMode();
               showToast({
                 title: t('common.done'),
-                message: `${deletedIds.length} ${t('common.tasks')}`,
+                message: formatListItemCount(deletedIds.length, 'task', t),
                 tone: 'success',
-                actionLabel: restoreActionLabel,
+                actionLabel: undoLabel,
                 onAction: () => {
-                  void runBulkAction(restoreActionLabel, async () => {
+                  void runBulkAction(undoLabel, async () => {
                     const results = await Promise.all(deletedIds.map((id) => restoreTask(id)));
                     results.forEach(assertBulkActionSucceeded);
                   });
@@ -187,7 +188,7 @@ export function useTaskListSelection({
         },
       ]
     );
-  }, [batchDeleteTasks, bulkActionLoading, exitSelectionMode, hasSelection, restoreActionLabel, restoreTask, runBulkAction, selectedIdsArray, showToast, t]);
+  }, [batchDeleteTasks, bulkActionLoading, exitSelectionMode, hasSelection, restoreTask, runBulkAction, selectedIdsArray, showToast, t]);
 
   // Both directions go through the same core builder desktop uses. Hand-rolling
   // the merge here meant a task the lookup missed was written back as
@@ -204,7 +205,7 @@ export function useTaskListSelection({
       exitSelectionMode();
       showToast({
         title: t('common.done'),
-        message: `${updates.length} ${t('common.tasks')}`,
+        message: formatListItemCount(updates.length, 'task', t),
         tone: 'success',
       });
     });
@@ -227,7 +228,7 @@ export function useTaskListSelection({
       exitSelectionMode();
       showToast({
         title: t('common.done'),
-        message: `${updates.length} ${t('common.tasks')}`,
+        message: formatListItemCount(updates.length, 'task', t),
         tone: 'success',
       });
     });
@@ -242,7 +243,7 @@ export function useTaskListSelection({
       exitSelectionMode();
       showToast({
         title: t('common.done'),
-        message: `${updates.length} ${t('common.tasks')}`,
+        message: formatListItemCount(updates.length, 'task', t),
         tone: 'success',
       });
     });

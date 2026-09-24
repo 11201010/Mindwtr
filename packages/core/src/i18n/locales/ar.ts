@@ -185,6 +185,8 @@ export const arOverrides: Record<string, string> = {
         'list.waiting': 'في انتظار',
         'list.done': 'مكتمل',
         'list.tasks': 'قائمة المهام',
+        'list.countTaskSingular': 'مهمة',
+        'list.countProjectSingular': 'مشروع',
         'list.confirmBatchDelete': 'هل تريد حذف المهام المحددة؟',
         'list.taskDeleted': 'تم حذف المهمة',
         'list.tasksDeleted': 'تم حذف {{count}} مهمة',

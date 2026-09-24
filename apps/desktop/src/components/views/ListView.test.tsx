@@ -350,6 +350,13 @@ describe('ListView', () => {
     expect(html).toContain('data-view-filter-input');
   });
 
+  it('labels the Done search chip with Search instead of the input placeholder', () => {
+    useTaskStore.setState({ _allTasks: [makeTask('done', { status: 'done', title: 'Milk' })], lastDataChangeAt: 1 });
+    const view = renderListView('done', 'Done');
+    fireEvent.change(view.container.querySelector('[data-view-filter-input]')!, { target: { value: 'Milk' } });
+    expect(view.getAllByText('Search: Milk').length).toBeGreaterThan(0);
+  });
+
   it('keeps a legacy completed sort in Done without leaking it after navigation', () => {
     useTaskStore.setState({
       settings: { taskSortBy: 'completed' },

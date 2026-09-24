@@ -9,7 +9,6 @@ import {
   planSomedaySectionTaskAdd,
   selectSomedayTasks,
   shallow,
-  tFallback,
   useTaskStore,
 } from '@mindwtr/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -27,6 +26,7 @@ import { TaskEditModal } from '../task-edit-modal';
 import { getBulkMoveStatusOptions } from '../task-list/TaskListBulkBar';
 import { assertBulkActionSucceeded, usePruneSelectionToVisible, useTaskListSelection } from '../use-task-list-selection';
 import { TaskListView } from '../task-list-view';
+import { ListEmptyState } from '../list-empty-state';
 import { FilterChip, TaskFilterSheet } from '../task-filter-sheet';
 import { DeferredProjectsSection } from './deferred-projects-section';
 import { SomedaySectionPicker } from '../someday-section-picker';
@@ -67,7 +67,6 @@ export function SomedayView() {
   const pendingAddedTaskRef = useRef<{ id: string; title: string } | null>(null);
   const router = useRouter();
   const { showToast } = useToast();
-  const restoreActionLabel = tFallback(t, 'trash.restoreToInbox', 'Restore');
 
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -109,8 +108,9 @@ export function SomedayView() {
     showDetails,
     criteria: selections.criteria,
     searchQuery: selections.searchQuery,
+    filterChips: selections.chips.map((chip) => ({ id: chip.id, label: chip.label, excluded: chip.excluded ?? false })),
     t,
-  }), [areaById, baseSomedayTasks, groupBy, projects, resolvedAreaFilter, selections.criteria, selections.searchQuery, settings, showDetails, sortBy, t]);
+  }), [areaById, baseSomedayTasks, groupBy, projects, resolvedAreaFilter, selections.chips, selections.criteria, selections.searchQuery, settings, showDetails, sortBy, t]);
   const {
     deferredProjects,
     groups: somedayTaskGroups,
@@ -122,7 +122,6 @@ export function SomedayView() {
     batchDeleteTasks,
     batchMoveTasks,
     batchUpdateTasks,
-    restoreActionLabel,
     restoreTask,
     t,
     tasksById,
@@ -346,15 +345,24 @@ export function SomedayView() {
             onOpenProject={handleOpenProject}
           />
         )}
-        ListEmptyComponent={deferredProjects.length === 0 ? (
+        ListEmptyComponent={deferredProjects.length === 0 || model.showEmptyState ? (model.empty.actionLabel ? (
+          <ListEmptyState
+            message={model.empty.message}
+            hint={model.empty.hint}
+            actionLabel={model.empty.actionLabel}
+            onAction={selections.clear}
+            backgroundColor={tc.cardBg}
+            borderColor={tc.border}
+            textColor={tc.text}
+            mutedTextColor={tc.secondaryText}
+          />
+        ) : (
           <View style={styles.emptyState}>
             <Lightbulb size={48} color={tc.secondaryText} strokeWidth={1.5} style={styles.emptyIcon} />
             <Text style={[styles.emptyTitle, { color: tc.text }]}>{labels.emptyTitle}</Text>
-            <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-              {labels.emptyHint}
-            </Text>
+            {labels.emptyHint ? <Text style={[styles.emptyText, { color: tc.secondaryText }]}>{labels.emptyHint}</Text> : null}
           </View>
-        ) : null}
+        )) : null}
       />
 
       <TaskFilterSheet

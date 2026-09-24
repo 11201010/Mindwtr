@@ -215,10 +215,12 @@ vi.mock('../contexts/language-context', () => ({
     language: 'en',
     t: (key: string) => ({
       'common.notice': 'Notice',
+      'common.search': 'Search...',
       'filters.clear': 'Clear',
       'filters.noMatch': 'No tasks match these filters.',
       'list.noTasks': 'No tasks',
       'quickAdd.invalidDateCommand': 'Invalid date command',
+      'search.title': 'Search',
     }[key] ?? key),
   }),
 }));
@@ -385,6 +387,31 @@ describe('TaskList', () => {
       callback(0);
       return 1;
     });
+  });
+
+  it('labels the active search chip with Search rather than the input placeholder', async () => {
+    storeState.tasks = [makeTask('done-1', 'Milk', { status: 'done' })];
+    storeState._allTasks = storeState.tasks;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<TaskList statusFilter="done" title="Done" />); });
+    act(() => { taskFilterSheetPropsSpy.mock.calls.at(-1)?.[0].selections.setSearchQuery(' MILK '); });
+    expect(latestHeaderProps().activeFilterChips.find((chip: { id: string }) => chip.id === 'search').label)
+      .toBe('Search: MILK');
+    act(() => tree.unmount());
+  });
+
+  it.each(['reference', 'done'] as const)('removes an included token from the %s header without excluding it', async (status) => {
+    storeState.tasks = [makeTask('task-1', 'Milk', { status, tags: ['#milk'] })];
+    storeState._allTasks = storeState.tasks;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<TaskList statusFilter={status} title={status} />); });
+    act(() => { taskFilterSheetPropsSpy.mock.calls.at(-1)?.[0].selections.toggleToken('#milk'); });
+    const chip = latestHeaderProps().activeFilterChips.find((entry: { id: string }) => entry.id === 'token:#milk');
+    act(() => { chip.onPress(); });
+    const selections = taskFilterSheetPropsSpy.mock.calls.at(-1)?.[0].selections;
+    expect(selections.tokens).toEqual([]);
+    expect(selections.excludedTokens).toEqual([]);
+    act(() => tree.unmount());
   });
 
   it('passes the Inbox edit tab as an Automatic default rather than explicit Edit intent', async () => {

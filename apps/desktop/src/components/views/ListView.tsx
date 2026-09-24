@@ -11,6 +11,7 @@ import { buildProjectOrderMap,
     DEFAULT_AREA_COLOR,
     executeCaptureTransaction,
     formatTimeEstimateLabel,
+    getListSearchChipLabel,
     getQuickAddProjectInitialProps,
     getTaskMetadataFilterVisibility,
     getWaitingPerson,
@@ -1051,9 +1052,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     if (normalizedSearchQuery) {
         activeFilterChips.push({
             id: 'search',
-            // Reference searches more than titles, so its existing generic label
-            // is intentionally preserved.
-            label: `${t('common.search')}: ${searchQuery.trim()}`,
+            label: getListSearchChipLabel(searchQuery.trim(), t),
             onRemove: () => setSearchQuery(''),
         });
     }

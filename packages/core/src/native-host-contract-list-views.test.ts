@@ -164,6 +164,14 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(result.value.items[0]).toMatchObject({ type: 'task', deletedLabel: `Deleted: ${english()(state._tasksById.get('tt-report')!.deletedAt, 'P')}` });
     });
 
+    it('uses the area color for a trashed project with no chosen color', async () => {
+        const { host } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        const result = host.getTrashView({ offset: 0, limit: 100 });
+        if (!result.ok) throw new Error(result.error.message);
+        expect(result.value.items.find((item) => item.type === 'project' && item.id === 'tp-home'))
+            .toMatchObject({ indicatorColor: '#16a34a' });
+    });
+
     it('changes each view\'s revision on an edit and refuses a stale page', async () => {
         const { host } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
         const reads = () => [
@@ -236,6 +244,16 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(saved.projects.find(({ id }) => id === 'p-shelved')?.status).toBe('active');
     });
 
+    it('counts only Contexts tasks actually changed by a bulk tag removal', async () => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const result = await host.runContextsAction({
+            requestId: generateUUID(),
+            action: { type: 'editTaskTokens', taskIds: ['c-call', 'c-email'], field: 'tags', mode: 'remove', values: ['#work'] },
+        });
+        expect(result).toMatchObject({ ok: true, value: { changed: true, toast: { message: '1 task' } } });
+        expect(recorder.log).toEqual([['batchUpdateTasks', [{ id: 'c-email', updates: { tags: [] } }]]]);
+    });
+
     it('retries an Archive bulk move to Trash after a failed save, then undoes it', async () => {
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'), saveData);
@@ -246,7 +264,7 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         const retried = await host.runArchiveAction(input);
         expect(retried).toEqual({ ok: true, value: { changed: true, toast: {
             tone: 'success', title: 'Done', message: '2 tasks',
-            undo: { label: 'Restore to Inbox', action: { type: 'restoreTasks', taskIds: ['ar-milk', 'ar-call'] } },
+            undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['ar-milk', 'ar-call'] } },
         } } });
         expect(recorder.log).toEqual([['batchDeleteTasks', ['ar-milk', 'ar-call']]]);
         if (!retried.ok || !retried.value.toast?.undo) return;
@@ -261,7 +279,7 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'clear a trash the area filter narrows'), saveData);
         const view = host.getTrashView({ offset: 0, limit: 100 });
         if (!view.ok || !view.value.emptyTrash) throw new Error('Expected a Clear Trash scope');
-        expect(view.value.emptyTrash).toMatchObject({ taskCount: 1, projectCount: 1, confirmation: { title: 'Delete permanently?', message: '1 tasks · 1 Projects\nThis action cannot be undone.' } });
+        expect(view.value.emptyTrash).toMatchObject({ taskCount: 1, projectCount: 1, confirmation: { title: 'Delete permanently?', message: '1 task · 1 project\nThis action cannot be undone.' } });
         const input = { requestId: generateUUID(), action: { type: 'emptyTrash' as const, revision: view.value.emptyTrash.revision } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runTrashAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });

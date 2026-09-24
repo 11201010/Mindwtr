@@ -21,6 +21,7 @@ const ALL_VISIBLE: TaskMetadataFilterVisibility = {
 
 const t = (key: string) => ({
   'common.search': 'Search',
+  'search.title': 'Search',
   'taskEdit.locationLabel': 'Location',
   'priority.urgent': 'Urgent',
   'energyLevel.high': 'High energy',
@@ -272,7 +273,19 @@ describe('useTaskFilterSelections', () => {
 
     act(() => handle.current.chips[1].onPress());
     expect(handle.current.tokens).toEqual([]);
-    expect(handle.current.excludedTokens).toEqual(['#waiting', '@work']);
+    expect(handle.current.excludedTokens).toEqual(['#waiting']);
+  });
+
+  it('removes included and excluded token chips without cycling their picker state', () => {
+    const { handle } = renderSelections({ view: 'focus' });
+    act(() => { handle.current.toggleToken('@work'); });
+    act(() => { handle.current.chips.find((chip) => chip.id === 'token:@work')?.onPress(); });
+    expect(handle.current.tokens).toEqual([]);
+    expect(handle.current.excludedTokens).toEqual([]);
+    act(() => { handle.current.toggleToken('@work'); handle.current.toggleToken('@work'); });
+    act(() => { handle.current.chips.find((chip) => chip.id === 'excluded-token:@work')?.onPress(); });
+    expect(handle.current.tokens).toEqual([]);
+    expect(handle.current.excludedTokens).toEqual([]);
   });
 
   it('shows the match-mode control only once several tokens of a kind compete', () => {

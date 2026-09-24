@@ -4,6 +4,7 @@ import {
   buildTrashTimeline,
   formatTrashCounts,
   formatTrashDeletedDate,
+  getProjectAccentColor,
   getInlineMarkdownPreview,
   getTrashEmptyState,
   getTrashPurgeConfirmation,
@@ -19,6 +20,7 @@ import {
   tFallback,
   useTaskStore,
   type ListConfirmation,
+  type Area,
   type Project,
   type StoreActionResult,
   type Task,
@@ -172,6 +174,7 @@ function TrashTaskItem({
 
 function TrashProjectItem({
   project,
+  areaById,
   tc,
   onRestore,
   onDelete,
@@ -185,6 +188,7 @@ function TrashProjectItem({
   deleteLabel,
 }: {
   project: Project;
+  areaById: Map<string, Area>;
   tc: ThemeColors;
   onRestore: () => void;
   onDelete: () => void;
@@ -197,6 +201,7 @@ function TrashProjectItem({
   restoreLabel: string;
   deleteLabel: string;
 }) {
+  const indicatorColor = getProjectAccentColor(project, areaById);
   return (
     <TrashSwipeRow onRestore={onRestore} onDelete={onDelete} restoreLabel={restoreLabel} deleteLabel={deleteLabel} swipeDisabled={selectionMode}>
       <Pressable
@@ -219,7 +224,7 @@ function TrashProjectItem({
           <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{typeLabel}</Text>
           <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{deletedLabel}: {formatTrashDeletedDate(project.deletedAt, safeFormatDate)}</Text>
         </View>
-        <View style={[styles.statusIndicator, { backgroundColor: project.color || '#6B7280' }]} />
+        {indicatorColor ? <View style={[styles.statusIndicator, { backgroundColor: indicatorColor }]} /> : null}
       </Pressable>
     </TrashSwipeRow>
   );
@@ -532,6 +537,7 @@ export default function TrashScreen() {
               ? (
                 <TrashProjectItem
                   project={item.project}
+                  areaById={areaById}
                   tc={tc}
                   onRestore={() => handleRestoreProject(item.project.id)}
                   onDelete={() => handleDeleteProject(item.project.id)}

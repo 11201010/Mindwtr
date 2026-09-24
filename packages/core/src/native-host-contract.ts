@@ -157,6 +157,9 @@ import {
 } from './contexts-view-model';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { countActiveFilterCriteria, criteriaFromSelections } from './filter-criteria';
+import { getListSearchChipLabel } from './list-filter-state';
+import { getProjectAccentColor } from './task-accent-color';
+import { formatListItemCount } from './list-count';
 import type { ContextOrTagMatchMode } from './hierarchy-utils';
 import { getInlineMarkdownPreview } from './markdown';
 import { taskMatchesFilterSelections } from './task-filter-selections';
@@ -168,6 +171,7 @@ import {
     formatTrashCounts,
     formatTrashDeletedDate,
     getBulkTrashConfirmation,
+    getTrashUndoLabel,
     getTrashEmptyState,
     getTrashPurgeConfirmation,
     getTrashRetentionHint,
@@ -2416,7 +2420,7 @@ export type NativeArchiveItem =
         struck: boolean;
         dateLabel: string;
         areaName: string | null;
-        indicatorColor: string;
+        indicatorColor: string | null;
         trashConfirmation: ListConfirmation;
     };
 export type NativeArchiveView = {
@@ -2458,7 +2462,7 @@ export type NativeArchiveAction =
 
 export type NativeTrashItem =
     | { type: 'task'; row: NativeTaskRow; typeLabel: string; deletedLabel: string; descriptionMarkdown: string | null }
-    | { type: 'project'; id: string; title: string; indicatorColor: string; typeLabel: string; deletedLabel: string };
+    | { type: 'project'; id: string; title: string; indicatorColor: string | null; typeLabel: string; deletedLabel: string };
 export type NativeTrashView = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
@@ -2546,7 +2550,7 @@ function resolveListFilters(filters: NativeListFilters | undefined, visibility: 
     });
     const search = searchQuery.trim();
     const chips = [
-        ...(search ? [{ id: 'search', label: `${t('common.search')}: ${search}`, excluded: false }] : []),
+        ...(search ? [{ id: 'search', label: getListSearchChipLabel(search, t), excluded: false }] : []),
         ...tokens.map((token) => ({ id: `token:${token}`, label: token, excluded: false })),
         ...excludedTokens.map((token) => ({ id: `excluded-token:${token}`, label: token, excluded: true })),
         ...priorities.map((priority) => ({ id: `priority:${priority}`, label: t(`priority.${priority}`), excluded: false })),
@@ -2614,7 +2618,7 @@ function createListViewMethods(deps: ListViewDeps) {
         return project && !project.deletedAt ? project : undefined;
     };
 
-    const tasksCountMessage = (count: number, t: (key: string) => string) => `${count} ${t('common.tasks')}`;
+    const tasksCountMessage = (count: number, t: (key: string) => string) => formatListItemCount(count, 'task', t);
     const doneToast = <Action,>(count: number, t: (key: string) => string): NativeListToast<Action> => (
         { tone: 'success', title: t('common.done'), message: tasksCountMessage(count, t), undo: null }
     );
@@ -2634,7 +2638,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 // Contexts rows offer Undo; Archive asked before deleting and offers none.
                 return settleWrite(written, { changed: true, toast: screen === 'contexts' ? {
                     tone: 'info' as const, title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
-                    undo: { label: tFallback(t, 'common.undo', 'Undo'), action: { type: 'restoreTasks' as const, taskIds: [action.taskId] } },
+                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks' as const, taskIds: [action.taskId] } },
                 } : null });
             }
             case 'trashTasks': {
@@ -2642,7 +2646,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 const written = await write(() => store().batchDeleteTasks(action.taskIds));
                 return settleWrite(written, { changed: true, toast: {
                     ...doneToast(action.taskIds.length, t),
-                    undo: { label: tFallback(t, 'trash.restoreToInbox', 'Restore'), action: { type: 'restoreTasks' as const, taskIds: [...action.taskIds] } },
+                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks' as const, taskIds: [...action.taskIds] } },
                 } });
             }
             case 'restoreTasks': {
@@ -2772,6 +2776,7 @@ function createListViewMethods(deps: ListViewDeps) {
                             return fail('INVALID_INPUT', 'Tasks that exist, a tags or contexts field, add or remove, and values are required');
                         }
                         let changed = false;
+                        let count = 0;
                         const written = await write(async () => {
                             const outcome = await editContextsTaskTokens(store, {
                                 taskIds: action.taskIds,
@@ -2779,10 +2784,10 @@ function createListViewMethods(deps: ListViewDeps) {
                                 field: action.field, mode: action.mode, values: action.values,
                             });
                             changed = outcome.changed;
+                            count = outcome.changed ? outcome.count : 0;
                             return outcome.changed ? outcome.result : undefined;
                         });
-                        // Mobile counts the selection, not the tasks that changed.
-                        return settleWrite(written, { changed, toast: changed ? doneToast(action.taskIds.length, t) : null });
+                        return settleWrite(written, { changed, toast: changed ? doneToast(count, t) : null });
                     }
                     default:
                         return fail('INVALID_INPUT', 'Contexts does not offer that action');
@@ -2845,12 +2850,12 @@ function createListViewMethods(deps: ListViewDeps) {
             const hasActive = view.filters.activeCount > 0;
             const toItem = (entry: TaskGroupItem | Project): NativeArchiveItem => {
                 if (!('type' in entry)) {
-                    const row = getArchivedProjectRow(entry, formatDate);
+                    const row = getArchivedProjectRow(entry, formatDate, view.areaById);
                     return {
                         type: 'project', id: entry.id, title: entry.title, cancelled: row.cancelled, struck: !row.cancelled,
                         dateLabel: `${row.cancelled ? view.labels.projectCancelled : view.labels.completed}: ${row.dateLabel}`,
                         areaName: entry.areaId ? view.areaById.get(entry.areaId)?.name ?? null : null,
-                        indicatorColor: row.indicatorColor,
+                        indicatorColor: row.indicatorColor ?? null,
                         trashConfirmation: getArchiveConfirmation({ kind: 'project', project: entry }, t),
                     };
                 }
@@ -2970,7 +2975,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 const taskIds = new Set(tasks.map((task) => task.id));
                 const projectIds = new Set(projects.map((project) => project.id));
                 return {
-                    tasks, projects,
+                    tasks, projects, areaById,
                     items: buildTrashTimeline(tasks, projects),
                     scope: resolveTrashClearScope(tasks, projects, state._allTasks, state._allProjects),
                     selected: {
@@ -2995,7 +3000,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 items: view.items.slice(input.offset, input.offset + input.limit).map((item): NativeTrashItem => (
                     item.type === 'project'
                         ? {
-                            type: 'project', id: item.project.id, title: item.project.title, indicatorColor: item.project.color || '#6B7280',
+                            type: 'project', id: item.project.id, title: item.project.title, indicatorColor: getProjectAccentColor(item.project, view.areaById) ?? null,
                             typeLabel: labels.projectType, deletedLabel: deletedLabel(item.project.deletedAt),
                         }
                         : {

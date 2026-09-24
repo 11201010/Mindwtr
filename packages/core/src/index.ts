@@ -103,6 +103,7 @@ export * from './project-row-meta';
 export * from './project-task-list-model';
 export * from './task-row-meta';
 export * from './list-filter-state';
+export * from './list-count';
 export * from './menu-views-model';
 export * from './someday-sections-model';
 export * from './more-menu-model';

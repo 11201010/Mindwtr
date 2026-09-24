@@ -203,6 +203,8 @@ export const svOverrides: Record<string, string> = {
         'list.waiting': 'Väntar på',
         'list.done': 'Slutförda',
         'list.tasks': 'Uppgiftslista',
+        'list.countTaskSingular': 'uppgift',
+        'list.countProjectSingular': 'projekt',
         'list.confirmBatchDelete': 'Ta bort markerade uppgifter?',
         'list.taskDeleted': 'Uppgift borttagen',
         'task.markedDone': '{title} markerad som klar',

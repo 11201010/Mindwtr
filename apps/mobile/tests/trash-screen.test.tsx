@@ -158,6 +158,18 @@ describe('TrashScreen', () => {
     expect(itemIds).toEqual(['recent-task', 'older-project']);
   });
 
+  it('uses the area accent instead of the placeholder for a trashed project dot', () => {
+    mocks.areaFilter.areaById = new Map([['a-home', { id: 'a-home', color: '#16a34a' }]]);
+    mocks.storeState._allProjects[0] = { ...mocks.storeState._allProjects[0], color: '#94a3b8', areaId: 'a-home' };
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => { tree = renderer.create(<TrashScreen />); });
+    const colors = tree.root.findAllByType('View' as unknown as React.ElementType)
+      .flatMap((node) => Array.isArray(node.props.style) ? node.props.style : [node.props.style])
+      .map((style) => style?.backgroundColor);
+    expect(colors).toContain('#16a34a');
+    expect(colors).not.toContain('#94a3b8');
+  });
+
   const timelineIds = (tree: renderer.ReactTestRenderer) => tree.root
     .findByType('FlatList' as unknown as React.ElementType).props.data
     .map((item: any) => (item.type === 'task' ? item.task.id : item.project.id));
@@ -225,7 +237,7 @@ describe('TrashScreen', () => {
 
     // The counts sentence names the shown set, not "all trashed", and the counts
     // and the translated sentence are two lines — no hard-coded ". " join.
-    expect(alertSpy.mock.calls[0]?.[1]).toBe('1 tasks · 1 Projects\nThis action cannot be undone.');
+    expect(alertSpy.mock.calls[0]?.[1]).toBe('1 task · 1 project\nThis action cannot be undone.');
     const confirmButton = (alertSpy.mock.calls[0]?.[2] ?? []).find((button) => button.style === 'destructive');
     await renderer.act(async () => {
       await confirmButton?.onPress?.();

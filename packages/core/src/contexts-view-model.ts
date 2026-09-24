@@ -194,11 +194,12 @@ export function getContextsEmptyState(
     if (!hasTokens) {
         return { icon: 'tag', title: t('contexts.noContexts').split('.')[0], message: t('contexts.noContexts') };
     }
-    // ponytail: mobile names the No context selection by its internal token here; kept for parity.
     return {
         icon: 'check',
         title: t('contexts.noTasks'),
-        message: selectedTokens.length > 0 ? `${t('contexts.noTasks')} ${selectedTokens.join(', ')}` : t('contexts.noTasks'),
+        message: selectedTokens.length > 0
+            ? `${t('contexts.noTasks')} ${selectedTokens.map((token) => token === CONTEXTS_NO_CONTEXT_TOKEN ? t('contexts.none') : token).join(', ')}`
+            : t('contexts.noTasks'),
     };
 }
 
@@ -277,8 +278,8 @@ export async function editContextsTaskTokens(
         mode: BulkTaskTokenMode;
         values: string[];
     },
-): Promise<{ changed: false } | { changed: true; result: StoreActionResult }> {
+): Promise<{ changed: false } | { changed: true; count: number; result: StoreActionResult }> {
     const updates = buildBulkTaskTokenUpdates(taskIds, tasksById, field, values, mode);
     if (updates.length === 0) return { changed: false };
-    return { changed: true, result: await store.batchUpdateTasks(updates) };
+    return { changed: true, count: updates.length, result: await store.batchUpdateTasks(updates) };
 }

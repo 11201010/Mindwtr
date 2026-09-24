@@ -1,6 +1,7 @@
 import { projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import type { DateFormatter } from './date';
 import { formatI18nTemplate, tFallback } from './i18n';
+import { formatListItemCount } from './list-count';
 import type { StoreActionResult, TaskStore } from './store-types';
 import { DEFAULT_TOMBSTONE_RETENTION_DAYS } from './sync-tombstones';
 import type { Area, Project, Task } from './types';
@@ -40,7 +41,7 @@ export function selectTrashedProjects(
 
 /** "4 tasks · 2 projects". */
 export function formatTrashCounts(taskCount: number, projectCount: number, t: (key: string) => string): string {
-    return `${taskCount} ${tFallback(t, 'common.tasks', 'tasks')} · ${projectCount} ${tFallback(t, 'projects.title', 'projects')}`;
+    return `${formatListItemCount(taskCount, 'task', t)} · ${formatListItemCount(projectCount, 'project', t)}`;
 }
 
 export function getTrashRetentionHint(t: (key: string) => string): string {
@@ -117,6 +118,9 @@ export function getBulkTrashConfirmation(t: (key: string) => string): ListConfir
         confirmLabel: t('common.delete'),
     };
 }
+
+/** Deleting a task can be undone to its previous status. */
+export const getTrashUndoLabel = (t: (key: string) => string): string => tFallback(t, 'common.undo', 'Undo');
 
 type TrashItemIds = { taskIds: string[]; projectIds: string[] };
 

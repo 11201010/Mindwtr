@@ -190,6 +190,8 @@ export const nlOverrides: Record<string, string> = {
         'list.waiting': 'Wachten',
         'list.done': 'Klaar',
         'list.tasks': 'Takenlijst',
+        'list.countTaskSingular': 'taak',
+        'list.countProjectSingular': 'project',
         'list.confirmBatchDelete': 'Geselecteerde taken verwijderen?',
         'list.taskDeleted': 'Taak verwijderd',
         'task.markedDone': '{title} gemarkeerd als klaar',

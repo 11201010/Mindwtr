@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { ArrowUpDown, Folder, SlidersHorizontal, X } from 'lucide-react-native';
 
-import { tFallback } from '@mindwtr/core';
+import { formatListItemCount, tFallback } from '@mindwtr/core';
 
 import { ListOverflowMenu } from '@/components/list-overflow-menu';
 import { styles } from './task-list.styles';
@@ -201,8 +201,8 @@ export function TaskListHeader({
             <Text style={[styles.title, { color: themeColors.text }]} accessibilityRole="header" numberOfLines={1}>
               {title}
             </Text>
-            <Text style={[styles.count, { color: themeColors.secondaryText }]} accessibilityLabel={`${count} tasks`}>
-              {count} {t('common.tasks')}
+            <Text style={[styles.count, { color: themeColors.secondaryText }]} accessibilityLabel={formatListItemCount(count, 'task', t)}>
+              {formatListItemCount(count, 'task', t)}
             </Text>
           </View>
           <View style={styles.headerActions}>

@@ -49,9 +49,8 @@ const baseParams = (overrides: Partial<HookParams> = {}): HookParams => ({
   batchDeleteTasks: vi.fn(async () => ({ success: true } as StoreActionResult)),
   batchMoveTasks: vi.fn(async () => ({ success: true } as StoreActionResult)),
   batchUpdateTasks: vi.fn(async () => ({ success: true } as StoreActionResult)),
-  restoreActionLabel: 'Restore',
   restoreTask: vi.fn(async () => undefined),
-  t: (key: string) => key,
+  t: (key: string) => ({ 'common.undo': 'Undo', 'list.countTaskSingular': 'task', 'common.tasks': 'tasks' }[key] ?? key),
   tasksById: { a: makeTask('a') },
   ...overrides,
 });
@@ -109,7 +108,8 @@ describe('useTaskListSelection handleBatchDelete', () => {
     const toasts = mocks.showToast.mock.calls.map((call) => call[0]);
     const success = toasts.find((toast) => toast.tone === 'success');
     expect(success).toBeTruthy();
-    expect(success?.actionLabel).toBe('Restore');
+    expect(success?.message).toBe('1 task');
+    expect(success?.actionLabel).toBe('Undo');
     expect(hookRef.selectionMode).toBe(false);
     expect(hookRef.hasSelection).toBe(false);
   });

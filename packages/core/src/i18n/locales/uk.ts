@@ -194,6 +194,8 @@ export const ukOverrides: Record<string, string> = {
     "list.waiting": "Очікування",
     "list.done": "Виконано",
     "list.tasks": "Список завдань",
+    "list.countTaskSingular": "завдання",
+    "list.countProjectSingular": "проект",
     "list.confirmBatchDelete": "Видалити вибрані завдання?",
     "list.taskDeleted": "Завдання видалено",
     "task.markedDone": "{title} позначено як виконане",

@@ -17,6 +17,7 @@ import {
   collectBulkTaskTokens,
   CONTEXTS_BULK_STATUSES,
   editContextsTaskTokens,
+  formatListItemCount,
   getContextsEmptyState,
   getContextsMatchModeLabels,
   getContextsRouteTokens,
@@ -24,7 +25,6 @@ import {
   getContextsTokenPickerTitle,
   resolveContextsMatchMode,
   selectContextsRouteTokens,
-  tFallback,
   toggleContextsNoContext,
   toggleContextsToken,
   type ContextOrTagMatchMode,
@@ -116,7 +116,6 @@ export function ContextsView() {
     if (resolved !== matchMode) setMatchMode(resolved);
   }, [selectedContexts, matchMode]);
   const sortedTasks = model.tasks;
-  const restoreActionLabel = tFallback(t, 'trash.restoreToInbox', 'Restore');
   const {
     bulkActionLabel,
     bulkActionLoading,
@@ -134,7 +133,6 @@ export function ContextsView() {
     batchDeleteTasks,
     batchMoveTasks,
     batchUpdateTasks,
-    restoreActionLabel,
     restoreTask,
     t,
     tasksById,
@@ -225,7 +223,7 @@ export function ContextsView() {
       exitSelectionMode();
       showToast({
         title: t('common.done'),
-        message: `${selectedIdsArray.length} ${t('common.tasks')}`,
+        message: formatListItemCount(outcome.count, 'task', t),
         tone: 'success',
       });
     });
