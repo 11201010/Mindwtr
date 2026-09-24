@@ -879,7 +879,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                     )}
 
                     {isViewOpen && (
-                        <div onClick={(e) => e.stopPropagation()}>
+                        <div data-task-row-ignore-double-click onClick={(e) => e.stopPropagation()}>
                             {task.description && (
                                 <div
                                     className={cn(
@@ -1042,6 +1042,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
 
             {!selectionMode && (
                 <div
+                    data-task-row-ignore-double-click
                     className={cn(
                         "task-item-display__actions relative z-20 flex shrink-0 items-center gap-2",
                         actionsOverlay && "absolute top-1 right-1 z-10"
