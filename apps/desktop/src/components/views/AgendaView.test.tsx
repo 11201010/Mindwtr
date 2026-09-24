@@ -2108,14 +2108,14 @@ describe('AgendaView', () => {
         let taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
             .map((element) => element.dataset.taskId);
         expect(taskIds).toEqual(['low-earlier-task', 'high-later-task']);
-        expect(getByRole('combobox', { name: 'Group' })).toHaveTextContent('Project');
+        expect(getByRole('combobox', { name: 'Group next actions by' })).toHaveTextContent('Project');
 
         fireEvent.click(getByRole('button', { name: 'Start first' }));
 
         taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
             .map((element) => element.dataset.taskId);
         expect(taskIds).toEqual(['high-later-task', 'low-earlier-task']);
-        expect(getByRole('combobox', { name: 'Group' })).toHaveTextContent('Context');
+        expect(getByRole('combobox', { name: 'Group next actions by' })).toHaveTextContent('Context');
     });
 
     it('cancels and confirms saved Focus filter deletion from its menu', async () => {
