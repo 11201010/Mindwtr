@@ -101,6 +101,7 @@ import { isTauriRuntime } from './runtime';
 import { getTauriHttpFetch } from './tauri-http';
 import { invokeNative } from './tauri-invoke';
 import { reportError } from './report-error';
+import { showSyncErrorToast } from './sync-error-toast';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { useUiStore } from '../store/ui-store';
 import { markLocalSqliteWrite, markLocalWrite } from './local-data-watcher';
@@ -1154,7 +1155,7 @@ export class SyncService {
                 logSyncWarning('Queued sync failed', queuedResult.error);
                 try {
                     const message = resolveSyncFailureMessage(queuedResult.error);
-                    useUiStore.getState().showToast(message, 'error', 6000);
+                    showSyncErrorToast(message, 6000);
                 } catch {
                     // UI store may be unavailable during shutdown/tests.
                 }

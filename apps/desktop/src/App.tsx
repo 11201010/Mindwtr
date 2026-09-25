@@ -66,6 +66,7 @@ import {
 } from './lib/desktop-calendar-push-sync';
 import { startMacWidgetSync, stopMacWidgetSync } from './lib/macos-widget-sync';
 import { SyncService } from './lib/sync-service';
+import { showSyncErrorToast } from './lib/sync-error-toast';
 import type { ExternalSyncChange, ExternalSyncChangeResolution } from './lib/sync-service';
 import { migratePortableAttachments } from './lib/portable-migration';
 import { logDesktopStartupContext } from './lib/startup-context';
@@ -925,7 +926,7 @@ function App() {
             if (shouldAlert) {
                 lastSyncErrorRef.current = message;
                 lastSyncErrorAtRef.current = nowMs;
-                showToast(`${t('settings.lastSyncError')}: ${message}`, 'error', 6000);
+                showSyncErrorToast(message, 6000);
             }
         };
 
