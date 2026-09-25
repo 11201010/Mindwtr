@@ -244,6 +244,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
             || task.startTime
             || task.dueDate
             || dateIssueLabel
+            || recurrencePreviewLabel
             || (prioritiesEnabled && task.priority)
             || (task.contexts?.length ?? 0) > 0
             || checklistProgress
@@ -565,7 +566,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                     label={task.location}
                 />
             )}
-            {expanded && !isReference && recurrencePreviewLabel && (
+            {(expanded || showCompactMeta) && !isReference && recurrencePreviewLabel && (
                 <MetadataBadge
                     variant="info"
                     icon={Repeat}
@@ -822,6 +823,9 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                         aria-label={[
                             `${tFallback(t, 'task.toggleDetails', 'Toggle task details')}: ${task.title}`,
                             collapsedPriorityAccessibilityLabel,
+                            !isViewOpen && !showCompactMeta && !isReference && recurrenceLabel
+                                ? `${tFallback(t, 'taskEdit.recurrenceLabel', 'Recurrence')}: ${recurrenceLabel}`
+                                : null,
                         ].filter(Boolean).join('. ')}
                         title={!selectionMode && !readOnly && showHoverHint ? hoverHintText : undefined}
                         dir={resolvedDirection}
@@ -836,6 +840,11 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                             )}
                         >
                             {task.title}
+                            {!isViewOpen && !showCompactMeta && !isReference && recurrenceLabel && (
+                                <span title={recurrenceLabel} className="ms-1 inline-block align-[-2px]">
+                                    <Repeat aria-hidden="true" className="h-3.5 w-3.5" />
+                                </span>
+                            )}
                             {showPinnedFocusStar && (
                                 <FocusStarIcon
                                     filled
