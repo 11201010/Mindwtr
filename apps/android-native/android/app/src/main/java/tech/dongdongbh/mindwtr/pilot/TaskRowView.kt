@@ -140,6 +140,10 @@ fun TaskRowItem(
                                     if (swipeOn) customActions = listOf(CustomAccessibilityAction(swipeLabel) { onSwipe(); true },
                                         CustomAccessibilityAction(t("taskStatus.changeStatus")) { showStatusMenu(task); true })
                                 })
+                        if (meta.parts.any { it.kind == "recurrence" }) {
+                            Icon(Lucide.Repeat, null, tint = c.secondaryText,
+                                modifier = Modifier.padding(start = 4.dp).size(12.dp))
+                        }
                         if (showStar) StarButton(model, task, starBlocked?.takeIf { !task.isFocusedToday })
                     }
                     // TalkBack hears the line in core's label above, so it is not read twice.
