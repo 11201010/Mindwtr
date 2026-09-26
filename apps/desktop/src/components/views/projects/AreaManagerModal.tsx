@@ -1,6 +1,6 @@
 import { DndContext, type DragEndEvent, closestCenter } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { translateWithFallback, type Area, type StoreActionResult } from '@mindwtr/core';
+import { isManageAreaNameTaken, translateWithFallback, type Area, type StoreActionResult } from '@mindwtr/core';
 import { useId, type ChangeEventHandler } from 'react';
 import { X } from 'lucide-react';
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../../ui/Dialog';
@@ -50,6 +50,8 @@ export function AreaManagerModal({
     const newAreaLabel = resolveText('areas.new', 'New Area');
     const areaNamePlaceholder = resolveText('areas.namePlaceholder', 'Area name');
     const loadingLabel = resolveText('common.loading', 'Loading...');
+    // A live area has this name: creating it would add nothing, so Create is off and the line says why.
+    const newAreaNameTaken = isManageAreaNameTaken('newArea', newAreaName, sortedAreas);
 
     return (
         <Dialog
@@ -143,12 +145,17 @@ export function AreaManagerModal({
                     <button
                         type="button"
                         onClick={onCreateArea}
-                        disabled={isCreatingArea}
-                        className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90"
+                        disabled={isCreatingArea || newAreaNameTaken}
+                        className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                     >
                         {isCreatingArea ? loadingLabel : t('projects.create')}
                     </button>
                 </div>
+                {newAreaNameTaken && (
+                    <p className="text-xs text-destructive">
+                        {resolveText('areas.nameExists', 'An area with this name already exists.')}
+                    </p>
+                )}
             </DialogFooter>
         </Dialog>
     );

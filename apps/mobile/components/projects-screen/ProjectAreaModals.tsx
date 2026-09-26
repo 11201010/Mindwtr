@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ban } from 'lucide-react-native';
-import { tFallback, type Area, type Project } from '@mindwtr/core';
+import { isManageAreaNameTaken, tFallback, type Area, type Project } from '@mindwtr/core';
 
 import { projectsScreenStyles as styles } from './projects-screen.styles';
 import { applyLiveProjectUpdate, getLiveMutableProject } from './project-meta-pickers';
@@ -82,6 +82,8 @@ export function ProjectAreaModals({
     updateProject,
 }: ProjectAreaModalsProps) {
     const keyboardInset = useAndroidKeyboardInset(showAreaManager);
+    // A live area has this name: adding it would create nothing, so Save is off and the line says why.
+    const newAreaNameTaken = isManageAreaNameTaken('newArea', newAreaName, sortedAreas);
     const dismissProjectPickers = React.useCallback(() => {
         onSetShowAreaPicker(false);
         onSetShowAreaManager(false);
@@ -299,6 +301,11 @@ export function ProjectAreaModals({
                             placeholderTextColor={tc.secondaryText}
                             style={[styles.linkModalInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                         />
+                        {newAreaNameTaken ? (
+                            <Text style={[styles.linkModalHint, { color: '#EF4444' }]}>
+                                {tFallback(t, 'areas.nameExists', 'An area with this name already exists.')}
+                            </Text>
+                        ) : null}
                         <View style={styles.colorPicker}>
                             {colors.map((color) => (
                                 <TouchableOpacity
@@ -321,7 +328,7 @@ export function ProjectAreaModals({
                                 accessibilityLabel={t('common.save')}
                                 onPress={() => {
                                     const name = newAreaName.trim();
-                                    if (!name) return;
+                                    if (!name || newAreaNameTaken) return;
                                     if (selectedProject && !getLiveMutableProject(selectedProject.id)) {
                                         dismissProjectPickers();
                                         return;
@@ -330,8 +337,8 @@ export function ProjectAreaModals({
                                     onCloseAreaManager();
                                     onSetNewAreaName('');
                                 }}
-                                disabled={!newAreaName.trim()}
-                                style={[styles.linkModalButton, !newAreaName.trim() && styles.linkModalButtonDisabled]}
+                                disabled={!newAreaName.trim() || newAreaNameTaken}
+                                style={[styles.linkModalButton, (!newAreaName.trim() || newAreaNameTaken) && styles.linkModalButtonDisabled]}
                             >
                                 <Text style={[styles.linkModalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
                             </TouchableOpacity>

@@ -1689,6 +1689,7 @@ export const deOverrides: Record<string, string> = {
         'settings.syncEncryptionFileCleanupDeferred': 'Die Verschlüsselung wurde aktualisiert, aber Mindwtr konnte die Dateisynchronisierungssperre nicht freigeben. Starte Mindwtr vor der nächsten Synchronisierung neu. Wiederhole die Verschlüsselungsänderung nicht.',
         'areas.manage': 'Bereiche',
         'areas.namePlaceholder': 'Bereichsname',
+        'areas.nameExists': 'Ein Bereich mit diesem Namen existiert bereits.',
         'areas.new': 'Neuer Bereich',
         'areas.search': 'Bereiche durchsuchen',
         'attachments.retryTranscription': 'Neu transkribieren',

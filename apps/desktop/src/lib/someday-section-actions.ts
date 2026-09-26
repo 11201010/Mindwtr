@@ -1,4 +1,10 @@
-import { flushPendingSave, sortViewSectionDefinitions, useTaskStore } from '@mindwtr/core';
+import {
+    buildSomedaySectionsSettingsUpdate,
+    flushPendingSave,
+    planSomedaySectionCreate,
+    sortViewSectionDefinitions,
+    useTaskStore,
+} from '@mindwtr/core';
 
 import { useUiStore } from '../store/ui-store';
 
@@ -39,36 +45,21 @@ async function ensureCatalogueSaved(): Promise<void> {
  * and so a grouping choice made while persistence is pending still wins.
  */
 export async function createSomedaySection(title: string): Promise<string | null> {
-    const trimmed = title.trim();
-    if (!trimmed) return null;
-
     const taskState = useTaskStore.getState();
     const settings = taskState.settings;
-    const currentSections = sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday);
-    const existing = currentSections.find(
-        (section) => section.title.toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (existing) {
+    const stored = settings?.gtd?.viewSections?.someday;
+    // Core's plan keeps every stored entry as it is, in stored order, and appends the new one.
+    const plan = planSomedaySectionCreate(stored, title, makeSomedaySectionId);
+    if (plan.kind === 'blank') return null;
+    if (plan.kind === 'existing') {
         await ensureCatalogueSaved();
         enableGroupingAfterFirstSectionSave(false);
-        return existing.id;
+        return plan.id;
     }
 
-    const id = makeSomedaySectionId();
-    const maxOrder = currentSections.reduce(
-        (maximum, section) => Number.isFinite(section.order) ? Math.max(maximum, section.order) : maximum,
-        -1,
-    );
-    await taskState.updateSettings({
-        gtd: {
-            ...(settings?.gtd ?? {}),
-            viewSections: {
-                ...(settings?.gtd?.viewSections ?? {}),
-                someday: [...currentSections, { id, title: trimmed, order: maxOrder + 1 }],
-            },
-        },
-    });
-    const wasFirstCreation = currentSections.length === 0;
+    const { id } = plan;
+    await taskState.updateSettings(buildSomedaySectionsSettingsUpdate(settings, plan.sections));
+    const wasFirstCreation = sortViewSectionDefinitions(stored).length === 0;
     if (wasFirstCreation) pendingFirstSectionId = id;
     await ensureCatalogueSaved();
     enableGroupingAfterFirstSectionSave(wasFirstCreation);

@@ -8,6 +8,7 @@
  */
 import { DEFAULT_AREA_COLOR } from './color-constants';
 import { formatI18nTemplate, tFallback } from './i18n';
+import { formatListItemCount } from './list-count';
 import { buildPersonSearchQuery, getPersonNameKey } from './people';
 import { baseTextCollator } from './task-utils';
 import type { AppSettings, Area, Person } from './types';
@@ -168,11 +169,12 @@ export const sortManagePeople = (people: readonly Person[]): Person[] => [...peo
 export function buildManagePersonRow(person: Person, taskCountByName: ReadonlyMap<string, number>, t: Translate) {
     const taskCount = taskCountByName.get(getPersonNameKey(person.name)) ?? 0;
     const referenceLink = person.referenceLink?.trim();
-    const countLabel = `${taskCount} ${t('common.tasks')}`;
+    const countLabel = formatListItemCount(taskCount, 'task', t);
     return {
         taskCount,
         initial: person.name.trim().slice(0, 1).toUpperCase() || '?',
-        detail: person.note?.trim() || person.referenceLink?.trim() || countLabel,
+        /** The second line: the note, else the link; null shows none (the count is beside the row). */
+        detail: person.note?.trim() || referenceLink || null,
         countLabel,
         countAccessibilityLabel: `${person.name}: ${countLabel}`,
         /** Global search for the person's tasks, completed ones included. */
@@ -242,14 +244,25 @@ export function getManageEditorText(t: Translate, type: ManageEditorTarget['type
         } : null,
         /** The color swatches' spoken label prefix: `${changeColor}: ${color}`; null: no swatches. */
         changeColor: isArea || type === 'unassignedArea' ? t('projects.changeColor') : null,
+        /** Shown under the name while isManageAreaNameTaken; null: never. */
+        nameTaken: type === 'newArea' ? tf('areas.nameExists', 'An area with this name already exists.') : null,
         cancelLabel: t('common.cancel'),
         saveLabel: t('common.save'),
     };
 }
 
-/** Save is off while the name is blank, except for the unassigned color. */
-export const isManageEditorSaveDisabled = (type: ManageEditorTarget['type'], name: string): boolean => (
-    type !== 'unassignedArea' && !name.trim()
+/**
+ * A new area named like a live area, ignoring case and outer spaces. Save is off
+ * for it: adding the name would only return that area, and nothing is written.
+ */
+export const isManageAreaNameTaken = (type: ManageEditorTarget['type'], name: string, areas: readonly Pick<Area, 'name'>[]): boolean => {
+    const key = name.trim().toLowerCase();
+    return type === 'newArea' && key !== '' && areas.some((area) => area.name?.trim().toLowerCase() === key);
+};
+
+/** Save is off while the name is blank, except for the unassigned color, and for a new area's taken name. */
+export const isManageEditorSaveDisabled = (type: ManageEditorTarget['type'], name: string, areas: readonly Pick<Area, 'name'>[]): boolean => (
+    (type !== 'unassignedArea' && !name.trim()) || isManageAreaNameTaken(type, name, areas)
 );
 
 /** One store call the editor's Save makes. */

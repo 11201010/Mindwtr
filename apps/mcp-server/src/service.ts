@@ -57,7 +57,7 @@ import {
   type UpdateTaskInput,
 } from './queries.js';
 import { applyLinkAttachmentsWithResult, buildLinkAttachments, type LinkAttachmentInput } from './link-attachments.js';
-import { closeCoreAdapter, runCoreService } from './core-adapter.js';
+import { closeCoreAdapter, runCoreService, type AreaWriteResult } from './core-adapter.js';
 import { pickDefinedTaskFields, TASK_CREATE_FIELD_NAMES, TASK_PATCH_FIELD_NAMES } from './task-write-fields.js';
 
 type ServiceDeps = {
@@ -439,7 +439,7 @@ export type MindwtrService = {
   addSection: (input: AddSectionInput) => Promise<Section>;
   updateSection: (input: UpdateSectionInput) => Promise<Section>;
   deleteSection: (id: string) => Promise<Section>;
-  addArea: (input: AddAreaInput) => Promise<Area>;
+  addArea: (input: AddAreaInput) => Promise<AreaWriteResult>;
   updateArea: (input: UpdateAreaInput) => Promise<Area>;
   deleteArea: (id: string) => Promise<Area>;
   addPerson: (input: AddPersonInput) => Promise<Person>;

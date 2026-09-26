@@ -47,16 +47,31 @@ vi.mock('../ErrorBoundary', () => ({
     ErrorBoundary: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
+const quickAreaName = vi.hoisted(() => ({ current: 'Created area' }));
 vi.mock('../PromptModal', () => ({
-    PromptModal: ({ isOpen, onConfirm }: { isOpen: boolean; onConfirm: (value: string) => void }) => (
+    PromptModal: ({ isOpen, onConfirm, validate }: { isOpen: boolean; onConfirm: (value: string) => void; validate?: (value: string) => string | null }) => (
         isOpen
-            ? <button type="button" onClick={() => onConfirm('Created area')}>Confirm quick area</button>
+            ? (
+                <>
+                    {validate?.(quickAreaName.current) && <p>{validate(quickAreaName.current)}</p>}
+                    <button type="button" onClick={() => onConfirm(quickAreaName.current)}>Confirm quick area</button>
+                </>
+            )
             : null
     ),
 }));
 
 vi.mock('./projects/AreaManagerModal', () => ({
-    AreaManagerModal: () => null,
+    AreaManagerModal: ({ newAreaName, onChangeNewAreaName, onCreateArea }: {
+        newAreaName: string;
+        onChangeNewAreaName: (event: { target: { value: string } }) => void;
+        onCreateArea: () => void;
+    }) => (
+        <>
+            <input aria-label="New area name" value={newAreaName} onChange={onChangeNewAreaName} />
+            <button type="button" onClick={onCreateArea}>Create area</button>
+        </>
+    ),
 }));
 
 vi.mock('./projects/ProjectsSidebar', () => ({
@@ -101,13 +116,16 @@ vi.mock('./projects/ProjectWorkspace', () => ({
         projectsSidebarCollapsed,
         onToggleProjectsSidebar,
         onRequestQuickArea,
+        onManageAreas,
     }: {
         projectsSidebarCollapsed?: boolean;
         onToggleProjectsSidebar?: () => void;
         onRequestQuickArea?: (projectId: string) => void;
+        onManageAreas?: () => void;
     }) => (
         <div data-testid="project-workspace">
             Workspace
+            {onManageAreas && <button type="button" onClick={onManageAreas}>Manage areas</button>}
             {onRequestQuickArea && (
                 <button type="button" onClick={() => onRequestQuickArea('project-1')}>Request quick area</button>
             )}
@@ -220,6 +238,7 @@ describe('ProjectsView', () => {
         animationFrameId = 0;
         queuedAnimationFrames.clear();
         projectsViewStoreOverrides.current = {};
+        quickAreaName.current = 'Created area';
         window.localStorage.clear();
         Object.defineProperty(window, 'requestAnimationFrame', {
             configurable: true,
@@ -315,6 +334,30 @@ describe('ProjectsView', () => {
 
         await waitFor(() => expect(updateProject).not.toHaveBeenCalled());
         expect(useTaskStore.getState()._allAreas).toContainEqual(createdArea);
+    });
+
+    it('refuses a new area named like a live area in both create flows and keeps the typed name', async () => {
+        const now = '2026-08-31T12:00:00.000Z';
+        const home: Area = { id: 'area-home', name: 'Home', order: 0, color: '#22c55e', createdAt: now, updatedAt: now };
+        const addArea = vi.fn();
+        projectsViewStoreOverrides.current = { addArea, areas: [home] };
+        render(<ProjectsView />);
+
+        // Manage areas: Create does nothing and the typed name stays.
+        fireEvent.click(screen.getByRole('button', { name: 'Manage areas' }));
+        fireEvent.change(screen.getByLabelText('New area name'), { target: { value: ' home ' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create area' }));
+        expect(addArea).not.toHaveBeenCalled();
+        expect(screen.getByLabelText('New area name')).toHaveValue(' home ');
+
+        // The project's quick "new area" prompt: refused with the line, and it stays open.
+        quickAreaName.current = 'HOME';
+        fireEvent.click(screen.getByRole('button', { name: 'Request quick area' }));
+        expect(screen.getByText('An area with this name already exists.')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm quick area' }));
+        await act(async () => { await Promise.resolve(); });
+        expect(addArea).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: 'Confirm quick area' })).toBeInTheDocument();
     });
 
     it('allows keyboard resizing of the projects sidebar and persists the width', async () => {

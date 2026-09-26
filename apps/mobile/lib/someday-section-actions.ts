@@ -1,44 +1,23 @@
-import { flushPendingSave, sortViewSectionDefinitions, useTaskStore } from '@mindwtr/core';
-
-const makeSomedaySectionId = () => (
-  `someday-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-);
+import { buildSomedaySectionsSettingsUpdate, flushPendingSave, planSomedaySectionCreate, useTaskStore } from '@mindwtr/core';
 
 /** The one mobile write path used by every Someday section creation picker. */
 export async function createSomedaySection(title: string): Promise<string | null> {
-  const trimmed = title.trim();
-  if (!trimmed) return null;
-
   const taskState = useTaskStore.getState();
   const settings = taskState.settings;
-  const currentSections = sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday);
-  const existing = currentSections.find(
-    (section) => section.title.toLowerCase() === trimmed.toLowerCase(),
-  );
-  if (existing) {
+  // Core's plan keeps every stored entry as it is, in stored order, and appends the new one.
+  const plan = planSomedaySectionCreate(settings?.gtd?.viewSections?.someday, title);
+  if (plan.kind === 'blank') return null;
+  if (plan.kind === 'existing') {
     if (useTaskStore.getState().persistenceFailure) {
       await useTaskStore.getState().retryPersistence();
     }
     await flushPendingSave();
     if (useTaskStore.getState().persistenceFailure) throw new Error('Someday section save incomplete');
-    return existing.id;
+    return plan.id;
   }
 
-  const id = makeSomedaySectionId();
-  const maxOrder = currentSections.reduce(
-    (maximum, section) => Number.isFinite(section.order) ? Math.max(maximum, section.order) : maximum,
-    -1,
-  );
-  await taskState.updateSettings({
-    gtd: {
-      ...(settings?.gtd ?? {}),
-      viewSections: {
-        ...(settings?.gtd?.viewSections ?? {}),
-        someday: [...currentSections, { id, title: trimmed, order: maxOrder + 1 }],
-      },
-    },
-  });
+  await taskState.updateSettings(buildSomedaySectionsSettingsUpdate(settings, plan.sections));
   await flushPendingSave();
   if (useTaskStore.getState().persistenceFailure) throw new Error('Someday section save incomplete');
-  return id;
+  return plan.id;
 }

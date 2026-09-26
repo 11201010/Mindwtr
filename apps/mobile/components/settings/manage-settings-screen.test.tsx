@@ -74,12 +74,14 @@ vi.mock('@mindwtr/core', async (importOriginal) => ({
   ...(({
     buildSomedaySectionManagerRows, getSomedaySectionManagerText, moveSomedaySection, renameSomedaySection,
     DEFAULT_MANAGE_OPEN_SECTIONS, MANAGE_OPEN_SECTIONS_STORAGE_KEY, buildManagePersonRow, getManageDeleteConfirm,
-    getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageEditorSaveDisabled,
+    getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageAreaNameTaken, isManageEditorSaveDisabled,
     normalizeManageOpenSections, planManageEditorSave, sortManageAreas, sortManagePeople,
+    buildSomedaySectionsSettingsUpdate, removeSomedaySection, sortViewSectionDefinitions,
   }) => ({
     buildSomedaySectionManagerRows, getSomedaySectionManagerText, moveSomedaySection, renameSomedaySection,
+    buildSomedaySectionsSettingsUpdate, removeSomedaySection, sortViewSectionDefinitions,
     DEFAULT_MANAGE_OPEN_SECTIONS, MANAGE_OPEN_SECTIONS_STORAGE_KEY, buildManagePersonRow, getManageDeleteConfirm,
-    getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageEditorSaveDisabled,
+    getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageAreaNameTaken, isManageEditorSaveDisabled,
     normalizeManageOpenSections, planManageEditorSave, sortManageAreas, sortManagePeople,
   }))(await importOriginal<typeof import('@mindwtr/core')>()),
   AREA_PRESET_COLORS: ['#3b82f6', '#10b981'],
@@ -104,12 +106,14 @@ vi.mock('@mindwtr/core', async (importOriginal) => ({
     return counts;
   },
   buildPersonSearchQuery: (value?: string) => `person:${JSON.stringify(value?.trim().replace(/\s+/g, ' ') ?? '')}`,
-  sortViewSectionDefinitions: (definitions: any[] = []) => [...definitions].sort((a, b) => a.order - b.order),
   tFallback: (translate: (key: string) => string, key: string, fallback: string) => {
     const value = translate(key);
     return value && value !== key ? value : fallback;
   },
-  useTaskStore: (selector?: (state: typeof storeState) => unknown) => (selector ? selector(storeState) : storeState),
+  useTaskStore: Object.assign(
+    (selector?: (state: typeof storeState) => unknown) => (selector ? selector(storeState) : storeState),
+    { getState: () => storeState },
+  ),
 }));
 
 vi.mock('expo-router', () => ({
@@ -275,6 +279,49 @@ describe('ManageSettingsScreen', () => {
     alertSpy.mockRestore();
   });
 
+  it('edits one Someday section and keeps every other stored entry as it is, in stored order', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ somedaySections: true }));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    const settings = storeState.settings;
+    // A newer app's entry this build cannot show.
+    const folder = { kind: 'folder', children: ['books'] };
+    const books = { id: 'books', title: 'Books to read', order: 0 };
+    const films = { id: 'films', title: 'Films', order: 1 };
+    storeState.settings = { ...settings, gtd: { viewSections: { someday: [films, folder, books] as any[] } } };
+
+    let tree!: renderer.ReactTestRenderer;
+    try {
+      await renderer.act(async () => {
+        tree = renderer.create(<ManageSettingsScreen />);
+        await flushEffects();
+      });
+      await renderer.act(async () => {
+        tree.root.findByProps({ accessibilityLabel: 'Move up: Films' }).props.onPress();
+        await flushEffects();
+      });
+      expect(storeState.updateSettings).toHaveBeenLastCalledWith({
+        gtd: { viewSections: { someday: [{ ...films, order: 0 }, folder, { ...books, order: 1 }] } },
+      });
+
+      renderer.act(() => {
+        tree.root.findByProps({ accessibilityLabel: 'Delete: Books to read' }).props.onPress();
+      });
+      // Sync adds Trips while the confirmation is open: the delete keeps it.
+      const trips = { id: 'trips', title: 'Trips', order: 2 };
+      storeState.settings = { ...settings, gtd: { viewSections: { someday: [films, folder, books, trips] as any[] } } };
+      await renderer.act(async () => {
+        alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress?.();
+        await flushEffects();
+      });
+      expect(storeState.updateSettings).toHaveBeenLastCalledWith({
+        gtd: { viewSections: { someday: [films, folder, trips] } },
+      });
+    } finally {
+      storeState.settings = settings;
+      alertSpy.mockRestore();
+    }
+  });
+
   it('creates a managed person from the people section', async () => {
     asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ people: true }));
 
@@ -349,7 +396,24 @@ describe('ManageSettingsScreen', () => {
       await flushEffects();
     });
 
-    expect(tree.root.findByProps({ accessibilityLabel: 'Alex: 1 tasks' })).toBeTruthy();
+    expect(tree.root.findByProps({ accessibilityLabel: 'Alex: 1 task' })).toBeTruthy();
+  });
+
+  it('shows a person\'s task count once when they have no note or link', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ people: true }));
+    const people = storeState.people;
+    storeState.people = [{ ...people[0], note: undefined, referenceLink: undefined }] as unknown as typeof people;
+
+    let tree!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+      tree = renderer.create(<ManageSettingsScreen />);
+      await flushEffects();
+    });
+    storeState.people = people;
+
+    const row = tree.root.findByProps({ testID: 'manage-person-row-person-1' });
+    const texts = row.findAll((node) => (node.type as unknown) === 'Text').map((node) => [node.props.children].flat().join(''));
+    expect(texts).toEqual(['A', 'Alex', '1 task']);
   });
 
   it('creates a managed area from the areas section', async () => {
@@ -378,6 +442,31 @@ describe('ManageSettingsScreen', () => {
     });
 
     expect(storeState.addArea).toHaveBeenCalledWith('Work', { color: '#10b981' });
+  });
+
+  it('refuses a new area named like an existing one: Save is off and the editor says why', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ areas: true }));
+
+    let tree!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+      tree = renderer.create(<ManageSettingsScreen />);
+      await flushEffects();
+    });
+    await renderer.act(async () => {
+      tree.root.findByProps({ testID: 'manage-area-add' }).props.onPress();
+      await flushEffects();
+    });
+    const message = () => tree.root.findAll((node) => (node.type as unknown) === 'Text' && node.props.children === 'An area with this name already exists.');
+    expect(message()).toHaveLength(0);
+
+    await renderer.act(async () => {
+      tree.root.findByProps({ testID: 'manage-area-name-input' }).props.onChangeText(' design ');
+      await flushEffects();
+    });
+
+    expect(tree.root.findByProps({ testID: 'manage-editor-save' }).props.disabled).toBe(true);
+    expect(message()).toHaveLength(1);
+    expect(storeState.addArea).not.toHaveBeenCalled();
   });
 
   it('updates managed person metadata before propagating a rename', async () => {

@@ -620,6 +620,7 @@ export const arOverrides: Record<string, string> = {
         'areas.manage': 'المناطق',
         'areas.new': 'منطقة جديدة',
         'areas.namePlaceholder': 'اسم المنطقة',
+        'areas.nameExists': 'توجد منطقة بهذا الاسم بالفعل.',
         'projects.search': 'البحث في المشاريع',
         'sections.search': 'البحث في الأقسام',
         'projects.deleteConfirm': 'هل تريد حذف هذا المشروع؟ ستبقى المهام في هذا المشروع وسيتم نقلها إلى غير معيّن.',

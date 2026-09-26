@@ -759,6 +759,7 @@ export const ukOverrides: Record<string, string> = {
     "people.title": "Люди",
     "areas.new": "Нова сфера",
     "areas.namePlaceholder": "Назва сфери",
+    "areas.nameExists": "Сфера з такою назвою вже існує.",
     "projects.sortAreas": "Сортувати сфери",
     "projects.sortByName": "Сортування від А до Я",
     "projects.sortByColor": "Сортувати за кольором",

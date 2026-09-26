@@ -12,7 +12,7 @@ const areas: Area[] = ['a', 'b', 'c'].map((id, order) => ({
   id, name: id, order, createdAt: now, updatedAt: now,
 }));
 
-const renderManager = (reorderAreas = vi.fn(), addArea = vi.fn()) => {
+const renderManager = (reorderAreas = vi.fn(), addArea = vi.fn(), newAreaName = 'New area', onSetNewAreaName = vi.fn()) => {
   let tree!: ReturnType<typeof create>;
   act(() => {
     tree = create(<ProjectAreaModals
@@ -23,12 +23,12 @@ const renderManager = (reorderAreas = vi.fn(), addArea = vi.fn()) => {
       colors={['#3b82f6']}
       expandedAreaColorId={null}
       newAreaColor="#3b82f6"
-      newAreaName="New area"
+      newAreaName={newAreaName}
       onCloseAreaManager={vi.fn()}
       onDeleteArea={vi.fn()}
       onSetExpandedAreaColorId={vi.fn()}
       onSetNewAreaColor={vi.fn()}
-      onSetNewAreaName={vi.fn()}
+      onSetNewAreaName={onSetNewAreaName}
       onSetSelectedProject={vi.fn()}
       onSetShowAreaManager={vi.fn()}
       onSetShowAreaPicker={vi.fn()}
@@ -64,4 +64,16 @@ it('allows area creation from the Projects list without an open project', () => 
   const tree = renderManager(vi.fn(), addArea);
   act(() => tree.root.findByProps({ accessibilityLabel: 'common.save' }).props.onPress());
   expect(addArea).toHaveBeenCalledWith('New area', { color: '#3b82f6' });
+});
+
+it('refuses a new area named like an existing one: Save is off, the line says why, the typed name stays', () => {
+  const addArea = vi.fn();
+  const onSetNewAreaName = vi.fn();
+  const tree = renderManager(vi.fn(), addArea, ' B ', onSetNewAreaName);
+  const save = tree.root.findByProps({ accessibilityLabel: 'common.save' });
+  expect(save.props.disabled).toBe(true);
+  expect(tree.root.findAll((node) => (node.type as unknown) === 'Text' && node.props.children === 'An area with this name already exists.')).toHaveLength(1);
+  act(() => save.props.onPress());
+  expect(addArea).not.toHaveBeenCalled();
+  expect(onSetNewAreaName).not.toHaveBeenCalled();
 });

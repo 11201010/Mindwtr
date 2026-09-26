@@ -58,6 +58,20 @@ describe('createSomedaySection', () => {
         expect(flushMock).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps every stored entry as it is, in stored order, including ones this build cannot show', async () => {
+        // A newer app's entry this build cannot show.
+        const folder = { kind: 'folder', children: ['books'] } as unknown as ViewSectionDefinition;
+        const books = { id: 'books', title: 'Books to read', order: 1 };
+        const films = { id: 'films', title: 'Films', order: 0 };
+        const updateSettings = arrange([books, folder, films]);
+
+        const createdId = await createSomedaySection('Career ideas');
+
+        expect(updateSettings).toHaveBeenCalledWith({
+            gtd: { viewSections: { someday: [books, folder, films, { id: createdId, title: 'Career ideas', order: 2 }] } },
+        });
+    });
+
     it('does not change the axis when creating a second section', async () => {
         arrange([{ id: 'books', title: 'Books to read', order: 0 }]);
 

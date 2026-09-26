@@ -67,6 +67,66 @@ describe('SettingsManagePage Someday sections', () => {
         });
     });
 
+    it('edits one Someday section and keeps every other stored entry as it is, in stored order', async () => {
+        // A newer app's entry this build cannot show.
+        const folder = { kind: 'folder', children: ['books'] };
+        const films = { id: 'films', title: 'Films', order: 1 };
+        const books = { id: 'books', title: 'Books to read', order: 0 };
+        const trips = { id: 'trips', title: 'Trips', order: 2 };
+        const updateSettings = vi.fn(async () => undefined);
+        // Sync adds Trips while the delete confirmation is open.
+        const requestConfirmation = vi.fn(async () => {
+            useTaskStore.setState({ settings: { gtd: { viewSections: { someday: [films, folder as never, books, trips] } } } });
+            return true;
+        });
+        useTaskStore.setState({ updateSettings, settings: { gtd: { viewSections: { someday: [films, folder as never, books] } } } });
+
+        const view = render(
+            <SettingsManagePage
+                t={{ manage: 'Manage' }}
+                translate={translate}
+                requestConfirmation={requestConfirmation}
+            />,
+        );
+        fireEvent.click(view.getByRole('button', { name: /Someday sections\s*2/ }));
+
+        const filmsInput = view.getByDisplayValue('Films');
+        fireEvent.change(filmsInput, { target: { value: ' Movies ' } });
+        fireEvent.blur(filmsInput);
+        expect(updateSettings).toHaveBeenLastCalledWith({
+            gtd: { viewSections: { someday: [{ ...films, title: 'Movies' }, folder, books] } },
+        });
+
+        fireEvent.click(view.getAllByRole('button', { name: 'Delete' })[0]);
+        await waitFor(() => {
+            expect(updateSettings).toHaveBeenLastCalledWith({
+                gtd: { viewSections: { someday: [films, folder, trips] } },
+            });
+        });
+    });
+
+    it('refuses a new area named like a live area: Create is off, the line says why, the typed name stays', () => {
+        const addArea = vi.fn(async () => null);
+        const home = { id: 'home', name: 'Home', order: 0, color: '#22c55e', createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' };
+        useTaskStore.setState({ addArea, areas: [home], _allAreas: [home] });
+        const view = render(
+            <SettingsManagePage
+                t={{ manage: 'Manage' }}
+                translate={translate}
+                requestConfirmation={vi.fn(async () => true)}
+            />,
+        );
+        fireEvent.click(view.getByRole('button', { name: /Manage Areas\s*1/ }));
+
+        const input = view.getByPlaceholderText('Area name');
+        fireEvent.change(input, { target: { value: ' home ' } });
+        expect(view.getByText('An area with this name already exists.')).toBeInTheDocument();
+        expect(view.getByRole('button', { name: 'Create' })).toBeDisabled();
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(addArea).not.toHaveBeenCalled();
+        expect(input).toHaveValue(' home ');
+    });
+
     it('counts assignment and exact person contexts once and opens a completed-inclusive person review', () => {
         useTaskStore.setState({
             _allPeople: [{

@@ -249,7 +249,7 @@ function generalDriver(host: Host, scenario: Scenario) {
                 ...drain(),
             });
         },
-        async perform([kind, target, extra]: [string, ...unknown[]]) {
+        async perform([kind, target]: [string, ...unknown[]]) {
             const model = read();
             switch (kind) {
                 case 'regional':
@@ -263,10 +263,10 @@ function generalDriver(host: Host, scenario: Scenario) {
                     return;
                 case 'pick': {
                     const option = pickerOf(model, picker!).groups.flat()[target as number];
+                    const before = writes.length;
                     const result = await send(option.edit);
-                    // A repeat: React Native writes the stored value again; the contract,
-                    // being target-state, does not.
-                    expect(result.changed).toBe(extra !== 'repeat');
+                    // Re-picking the stored value writes nothing, on React Native and here.
+                    expect(result.changed).toBe(writes.length > before);
                     picker = null;
                     return;
                 }
@@ -352,7 +352,7 @@ function manageDriver(host: Host, scenario: Scenario) {
                     const { rows, empty, newPerson, text } = view.people;
                     if (empty) texts.push(empty);
                     for (const row of rows.items) {
-                        texts.push(row.initial, row.name, row.detail, row.countLabel);
+                        texts.push(row.initial, row.name, ...(row.detail ? [row.detail] : []), row.countLabel);
                         labels.push([row.countAccessibilityLabel, false], ...(row.referenceLink ? [[text.openReference, false]] : []), [text.editLabel, false], [text.deleteLabel, false]);
                     }
                     texts.push(newPerson.label, newPerson.hint, newPerson.addLabel);
@@ -377,7 +377,7 @@ function manageDriver(host: Host, scenario: Scenario) {
                         ] : []),
                     ],
                     colors: text.changeColor ? view.editor.colors.map((entry) => [entry.color, entry.color === editor!.draft.color]) : [],
-                    buttons: [[text.cancelLabel, text.saveLabel], isManageEditorSaveDisabled(editor.type as never, editor.draft.name)],
+                    buttons: [[text.cancelLabel, text.saveLabel], isManageEditorSaveDisabled(editor.type as never, editor.draft.name, view.areas.rows.items)],
                 };
             }
             return normalize({
@@ -429,7 +429,7 @@ function manageDriver(host: Host, scenario: Scenario) {
                 case 'color': editor!.draft.color = target as string; return;
                 case 'cancel': editor = null; return;
                 case 'save': {
-                    if (isManageEditorSaveDisabled(editor!.type as never, editor!.draft.name)) return;
+                    if (isManageEditorSaveDisabled(editor!.type as never, editor!.draft.name, view.areas.rows.items)) return;
                     value(await host.saveManageEditor({ requestId: generateUUID(), target: editor!.target, ...editor!.draft }));
                     editor = null;
                     return;
@@ -460,13 +460,6 @@ function manageDriver(host: Host, scenario: Scenario) {
             }
         },
     };
-}
-
-/** React Native writes a repeated General choice again; the contract does not (target state). */
-function withoutRepeatWrites(scenario: Scenario, observations: Record<string, unknown>[]) {
-    return observations.map((entry, index) => (
-        index > 0 && scenario.actions[index - 1][2] === 'repeat' ? { ...entry, writes: [] } : entry
-    ));
 }
 
 describe('native host contract: Settings', () => {
@@ -505,7 +498,7 @@ describe('native host contract: Settings', () => {
             await flushPendingSave();
             observed.push(driver.observe());
         }
-        expect(observed).toEqual(withoutRepeatWrites(scenario, fixture.observations[name]));
+        expect(observed).toEqual(fixture.observations[name]);
     });
 
     it('returns what core\'s settings models return when called directly', async () => {
@@ -579,6 +572,21 @@ describe('native host contract: Settings', () => {
         expect(value(await host.setGeneralSetting({ requestId: generateUUID(), edit: { type: 'theme', value: 'material3-dark' } })).deviceWrites)
             .toEqual([{ key: '@mindwtr_theme', value: 'material3-dark' }, { key: '@mindwtr_theme_style', value: 'material3' }]);
         expect(writes).toHaveLength(2);
+    });
+
+    it('writes nothing for a new area named like a live area, whatever its color', async () => {
+        freezeClock();
+        await seed({ data: 'manage', settings: 'manage' });
+        const host = await openHost();
+        const areas = useTaskStore.getState()._allAreas;
+        const newArea = value(host.getManageSettings()).editor.text.newArea;
+        expect(newArea.nameTaken).toBe('An area with this name already exists.');
+        expect(isManageEditorSaveDisabled('newArea', ' home ', value(host.getManageSettings()).areas.rows.items)).toBe(true);
+        for (const color of ['#94a3b8', '#ef4444']) {
+            expect(value(await host.saveManageEditor({ requestId: generateUUID(), target: { type: 'newArea' }, name: ' home ', color }))).toEqual({ changed: false });
+        }
+        expect(writes).toEqual([]);
+        expect(useTaskStore.getState()._allAreas).toBe(areas);
     });
 
     it('writes nothing again for a target already reached, even after a restart', async () => {

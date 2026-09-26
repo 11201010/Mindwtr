@@ -779,6 +779,7 @@ export const faOverrides: Record<string, string> = {
         'people.title': 'افراد',
         'areas.new': 'حوزه جدید',
         'areas.namePlaceholder': 'نام حوزه',
+        'areas.nameExists': 'حوزه‌ای با این نام از قبل وجود دارد.',
         'projects.sortAreas': 'مرتب‌سازی حوزه‌ها',
         'projects.sortByName': 'مرتب‌سازی الف تا ی',
         'projects.sortByColor': 'مرتب‌سازی بر اساس رنگ',

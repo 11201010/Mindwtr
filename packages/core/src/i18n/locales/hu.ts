@@ -763,6 +763,7 @@ export const huOverrides: Record<string, string> = {
     'people.title': 'Emberek',
     'areas.new': 'Új terület',
     'areas.namePlaceholder': 'Terület neve',
+    'areas.nameExists': 'Már létezik ilyen nevű terület.',
     'projects.sortAreas': 'Területek rendezése',
     'projects.sortByName': 'Rendezés A–Z',
     'projects.sortByColor': 'Rendezés szín szerint',

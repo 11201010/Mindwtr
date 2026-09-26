@@ -11,6 +11,11 @@ const consoleState = {
 };
 vm.runInNewContext(readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8'), consoleState);
 assert.doesNotThrow(() => consoleState.console.info('saved'));
+// The URL polyfill parses a person's mailto: and tel: links as the platform URL does, so their open button shows.
+for (const text of ['mailto:alex@example.com', 'tel:+1-555-0100', 'MAILTO:bea@example.com?subject=Hi', 'javascript:alert(1)', 'obsidian://people/alex', 'https://bea.example/fail']) {
+    const parts = (url) => [url.protocol, url.pathname, url.search, url.hash, url.host, String(url)];
+    assert.deepEqual(parts(new consoleState.URL(text)), parts(new URL(text)), text);
+}
 const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');

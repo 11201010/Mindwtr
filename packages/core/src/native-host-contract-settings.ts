@@ -62,6 +62,7 @@ import {
     getManageEditorDraft,
     getManageEditorText,
     getManageSettingsText,
+    isManageAreaNameTaken,
     MANAGE_OPEN_SECTIONS_STORAGE_KEY,
     MANAGE_SECTION_ORDER,
     parseManageOpenSections,
@@ -281,11 +282,10 @@ export function createSettingsMethods(deps: SettingsDeps) {
                 // The editor's only settings write: the unassigned color.
                 case 'updateSettings':
                     return state.settings.appearance?.unassignedAreaColor !== write.updates.appearance?.unassignedAreaColor;
-                case 'addArea': {
-                    const key = write.name.toLowerCase();
-                    const existing = state.areas.find((area) => area.name?.trim().toLowerCase() === key);
-                    return !existing || existing.color !== write.props.color;
-                }
+                // A live area has the name: the store returns it and writes nothing
+                // (the editor's Save is off for it: isManageEditorSaveDisabled).
+                case 'addArea':
+                    return !isManageAreaNameTaken('newArea', write.name, state.areas);
                 case 'renameContext':
                     return contextCarried(write.from, write.to.trim());
                 case 'renameTag':
@@ -595,7 +595,10 @@ export function createSettingsMethods(deps: SettingsDeps) {
          * The editor's Save for a `target` (a row's `edit.target`) with the dialog's
          * fields. Writes what changed against the values stored now: a new area or
          * person, a rename, a color, a note or link, the unassigned color. A blank
-         * name is refused; nothing to change answers `changed: false`.
+         * name is refused; nothing to change answers `changed: false`. A new area
+         * named like a live area writes nothing: the editor keeps Save off for it
+         * and shows `editor.text.newArea.nameTaken` (isManageEditorSaveDisabled with
+         * the area rows' names).
          */
         async saveManageEditor(input: {
             requestId: string;

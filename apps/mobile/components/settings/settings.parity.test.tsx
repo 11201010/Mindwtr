@@ -315,8 +315,8 @@ const generalScenarios: Scenario[] = [
   {
     name: 'general: theme picker',
     data: 'none', settings: 'base', device: {},
-    // 'repeat' picks the choice already stored.
-    actions: [['open', 'theme'], ['pick', 9], ['open', 'theme'], ['pick', 4], ['open', 'theme'], ['dismiss'], ['open', 'theme'], ['pick', 4, 'repeat']],
+    // The last pick is the choice already stored: nothing is written again.
+    actions: [['open', 'theme'], ['pick', 9], ['open', 'theme'], ['pick', 4], ['open', 'theme'], ['dismiss'], ['open', 'theme'], ['pick', 4]],
   },
   { name: 'general: stored values', data: 'none', settings: 'stored', device: { themeMode: 'nord', systemLocale: 'en-GB' }, actions: [['regional'], ['open', 'quickAccess']] },
   { name: 'general: a theme stored on the device only', data: 'none', settings: 'base', device: { themeMode: 'dark' }, actions: [['open', 'theme']] },

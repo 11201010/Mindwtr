@@ -803,6 +803,7 @@ export const viOverrides: Record<string, string> = {
         'areas.manage': 'Khu vực',
         'areas.new': 'Khu vực mới',
         'areas.namePlaceholder': 'Tên khu vực',
+        'areas.nameExists': 'Đã có khu vực với tên này.',
         'projects.sortAreas': 'Sắp xếp khu vực',
         'projects.sortByName': 'Sắp xếp A–Z',
         'projects.sortByColor': 'Sắp xếp theo màu',

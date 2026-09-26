@@ -31,6 +31,15 @@
      "waiting: selected person disappears"
     ]
    }
+  },
+  "recapturedSomedaySectionsKeepOthers": {
+   "sourceBase": "3788823be",
+   "sourceState": "fix/rn-settings-bugs worktree changes, uncommitted. Observations were read from the harness with the fixes in place; only the observations below were replaced, and the clean-tree capture guard was not bypassed.",
+   "command": "cd apps/mobile && TZ=UTC bunx vitest run components/views/menu-views-parity.test.tsx",
+   "changedScenarios": [
+    "someday sections: rename and reorder"
+   ],
+   "why": "A Someday section edit now keeps the stored list in stored order and changes only the edited entries (someday-sections-model.ts); the written definitions, their titles and order numbers are the same, in stored order."
   }
  },
  "timeZone": "America/New_York",
@@ -16469,14 +16478,14 @@
            "order": 0
           },
           {
-           "id": "s-empty",
-           "title": "Travel",
-           "order": 1
-          },
-          {
            "id": "s-ideas",
            "title": "Big ideas",
            "order": 2
+          },
+          {
+           "id": "s-empty",
+           "title": "Travel",
+           "order": 1
           }
          ]
         },
@@ -16647,11 +16656,6 @@
         "viewSections": {
          "someday": [
           {
-           "id": "s-empty",
-           "title": "Travel",
-           "order": 0
-          },
-          {
            "id": "s-later",
            "title": "Later",
            "order": 1
@@ -16660,6 +16664,11 @@
            "id": "s-ideas",
            "title": "Big ideas",
            "order": 2
+          },
+          {
+           "id": "s-empty",
+           "title": "Travel",
+           "order": 0
           }
          ]
         },
@@ -16823,14 +16832,14 @@
         "viewSections": {
          "someday": [
           {
-           "id": "s-empty",
-           "title": "Travel",
-           "order": 0
-          },
-          {
            "id": "s-ideas",
            "title": "Big ideas",
            "order": 2
+          },
+          {
+           "id": "s-empty",
+           "title": "Travel",
+           "order": 0
           }
          ]
         },

@@ -3,7 +3,18 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_SETTINGS_SCREENS=1 TZ=UTC bunx vitest run components/settings/settings.parity.test.tsx",
   "capturedAt": "f24839ede33e3ad0be6bab6263369bee673497e1",
   "sourceState": "Every file under apps/ was at HEAD except this harness. packages/core held the new settings models and contract block, which no React Native code imported yet.",
-  "device": "The device is stubbed: navigator.language and Intl.DateTimeFormat().resolvedOptions().locale are the scenario systemLocale, and Date.prototype.toLocaleDateString is core's System short date (createDateFormatter with dateFormat system) for that locale and the stored settings."
+  "device": "The device is stubbed: navigator.language and Intl.DateTimeFormat().resolvedOptions().locale are the scenario systemLocale, and Date.prototype.toLocaleDateString is core's System short date (createDateFormatter with dateFormat system) for that locale and the stored settings.",
+  "recaptured": [
+   {
+    "base": "3788823be",
+    "command": "cd apps/mobile && TZ=UTC bunx vitest run components/settings/settings.parity.test.tsx, with the React Native settings fixes in place; only the observations below were replaced",
+    "observations": [
+     "general: theme picker, the last pick (the stored theme again): no settings write. Its 'repeat' marker is gone: React Native and the native host both skip a write that changes nothing.",
+     "manage: every people row: a count of one reads '1 task' ('1 Aufgabe' in German), and a person with no note or link shows the count once, beside the row.",
+     "manage: unassigned color and new areas, the new area 'home' while 'Home' exists: Save is off, so the editor stays open and nothing is written (it used to add nothing and recolor 'Home' grey)."
+    ]
+   }
+  ]
  },
  "now": "2026-09-24T14:00:00.000Z",
  "timeZone": "UTC",
@@ -449,8 +460,7 @@
     ],
     [
      "pick",
-     4,
-     "repeat"
+     4
     ]
    ]
   },
@@ -3306,14 +3316,7 @@
     ],
     "expanded": false,
     "picker": null,
-    "writes": [
-     [
-      "updateSettings",
-      {
-       "theme": "material3-light"
-      }
-     ]
-    ],
+    "writes": [],
     "device": [
      [
       "setThemeMode",
@@ -6614,19 +6617,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -6701,7 +6703,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -6717,7 +6719,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -6745,7 +6747,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -6944,19 +6946,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -6975,7 +6976,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -6991,7 +6992,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -7019,7 +7020,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -7061,19 +7062,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -7088,7 +7088,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -7104,7 +7104,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -7132,7 +7132,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -7187,19 +7187,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -7274,7 +7273,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -7290,7 +7289,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -7318,7 +7317,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -7371,19 +7370,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -7458,7 +7456,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -7474,7 +7472,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -7502,7 +7500,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -7609,19 +7607,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -7696,7 +7693,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -7712,7 +7709,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -7740,7 +7737,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -7847,19 +7844,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -7934,7 +7930,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -7950,7 +7946,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -7978,7 +7974,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -8035,19 +8031,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -8122,7 +8117,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -8138,7 +8133,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -8166,7 +8161,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -8279,19 +8274,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -8366,7 +8360,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -8382,7 +8376,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -8410,7 +8404,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -8523,19 +8517,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -8610,7 +8603,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -8626,7 +8619,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -8654,7 +8647,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -8767,19 +8760,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -8854,7 +8846,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -8870,7 +8862,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -8898,7 +8890,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -9012,19 +9004,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -9099,7 +9090,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -9115,7 +9106,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -9143,7 +9134,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -9199,19 +9190,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -9286,7 +9276,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -9302,7 +9292,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -9330,7 +9320,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -9444,19 +9434,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -9531,7 +9520,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -9547,7 +9536,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -9575,7 +9564,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -9689,19 +9678,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -9776,7 +9764,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -9792,7 +9780,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -9820,7 +9808,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -9868,19 +9856,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -9955,7 +9942,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -9971,7 +9958,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -9999,7 +9986,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -10113,19 +10100,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -10200,7 +10186,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -10216,7 +10202,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -10244,7 +10230,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -10325,7 +10311,7 @@
        "Cancel",
        "Save"
       ],
-      false
+      true
      ]
     },
     "writes": [],
@@ -10358,19 +10344,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -10445,7 +10430,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -10461,7 +10446,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -10489,7 +10474,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -10506,23 +10491,74 @@
      ]
     ],
     "fields": [],
-    "editor": null,
-    "writes": [
-     [
-      "addArea",
-      "home",
-      {
-       "color": "#94a3b8"
-      }
+    "editor": {
+     "title": "New Area",
+     "inputs": [
+      [
+       "manage-area-name-input",
+       "Area",
+       "home"
+      ]
      ],
-     [
-      "updateArea",
-      "a-home",
-      {
-       "color": "#94a3b8"
-      }
+     "colors": [
+      [
+       "#3b82f6",
+       false
+      ],
+      [
+       "#10b981",
+       false
+      ],
+      [
+       "#f59e0b",
+       false
+      ],
+      [
+       "#ef4444",
+       false
+      ],
+      [
+       "#8b5cf6",
+       false
+      ],
+      [
+       "#ec4899",
+       false
+      ],
+      [
+       "#f97316",
+       false
+      ],
+      [
+       "#14b8a6",
+       false
+      ],
+      [
+       "#06b6d4",
+       false
+      ],
+      [
+       "#6366f1",
+       false
+      ],
+      [
+       "#f43f5e",
+       false
+      ],
+      [
+       "#64748b",
+       false
+      ]
+     ],
+     "buttons": [
+      [
+       "Cancel",
+       "Save"
+      ],
+      true
      ]
-    ],
+    },
+    "writes": [],
     "device": [],
     "alerts": [],
     "navigations": [],
@@ -10553,19 +10589,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -10640,7 +10675,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -10656,7 +10691,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -10684,7 +10719,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -10737,19 +10772,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -10824,7 +10858,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -10840,7 +10874,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -10868,7 +10902,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -10981,19 +11015,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -11068,7 +11101,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -11084,7 +11117,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -11112,7 +11145,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -11225,19 +11258,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -11312,7 +11344,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -11328,7 +11360,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -11356,7 +11388,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -11469,19 +11501,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -11556,7 +11587,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -11572,7 +11603,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -11600,7 +11631,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -11656,19 +11687,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -11743,7 +11773,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -11759,7 +11789,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -11787,7 +11817,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -11900,19 +11930,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -11987,7 +12016,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -12003,7 +12032,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -12031,7 +12060,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -12078,19 +12107,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -12165,7 +12193,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -12181,7 +12209,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -12209,7 +12237,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -12322,19 +12350,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -12409,7 +12436,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -12425,7 +12452,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -12453,7 +12480,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -12566,19 +12593,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -12653,7 +12679,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -12669,7 +12695,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -12697,7 +12723,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -12752,19 +12778,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -12839,7 +12864,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -12855,7 +12880,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -12883,7 +12908,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -12996,19 +13021,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -13083,7 +13107,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -13099,7 +13123,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -13127,7 +13151,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -13239,19 +13263,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -13326,7 +13349,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -13342,7 +13365,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -13370,7 +13393,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -13427,19 +13450,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -13514,7 +13536,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -13530,7 +13552,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -13558,7 +13580,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -13611,19 +13633,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -13698,7 +13719,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -13714,7 +13735,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -13742,7 +13763,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -13804,19 +13825,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -13891,7 +13911,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -13907,7 +13927,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -13935,7 +13955,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -13982,19 +14002,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14069,7 +14088,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14085,7 +14104,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14113,7 +14132,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14174,19 +14193,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14261,7 +14279,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14277,7 +14295,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14305,7 +14323,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14348,19 +14366,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14375,7 +14392,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14391,7 +14408,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14419,7 +14436,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14461,19 +14478,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14488,7 +14504,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14504,7 +14520,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14532,7 +14548,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14576,19 +14592,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14603,7 +14618,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14619,7 +14634,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14647,7 +14662,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14685,19 +14700,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14712,7 +14726,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14728,7 +14742,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14756,7 +14770,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14802,19 +14816,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14829,7 +14842,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14845,7 +14858,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14873,7 +14886,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -14915,19 +14928,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -14942,7 +14954,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -14958,7 +14970,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -14986,7 +14998,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15049,19 +15061,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -15076,7 +15087,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -15092,7 +15103,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -15120,7 +15131,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15183,19 +15194,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -15210,7 +15220,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -15226,7 +15236,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -15254,7 +15264,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15317,19 +15327,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -15344,7 +15353,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -15360,7 +15369,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -15388,7 +15397,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15451,19 +15460,18 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -15478,7 +15486,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -15490,7 +15498,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -15518,7 +15526,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15570,19 +15578,18 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -15597,7 +15604,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -15609,7 +15616,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -15637,7 +15644,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15700,19 +15707,18 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -15727,7 +15733,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -15739,7 +15745,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -15767,7 +15773,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -15830,7 +15836,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -15853,7 +15859,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -15926,7 +15932,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -15949,7 +15955,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16040,7 +16046,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16063,7 +16069,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16154,7 +16160,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16177,7 +16183,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16268,7 +16274,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16291,7 +16297,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16382,7 +16388,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16409,7 +16415,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16498,7 +16504,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16525,7 +16531,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16632,7 +16638,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16659,7 +16665,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16766,7 +16772,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16793,7 +16799,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -16879,7 +16885,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -16906,7 +16912,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -17013,7 +17019,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -17040,7 +17046,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -17147,7 +17153,7 @@
      "A",
      "Alexis",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
@@ -17174,7 +17180,7 @@
       false
      ],
      [
-      "Alexis: 1 tasks",
+      "Alexis: 1 task",
       false
      ],
      [
@@ -17264,19 +17270,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -17291,7 +17296,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -17307,7 +17312,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -17335,7 +17340,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -17377,19 +17382,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 tasks",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -17404,7 +17408,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -17420,7 +17424,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -17448,7 +17452,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -17499,15 +17503,14 @@
      "A",
      "Alex",
      "QA lead",
-     "1 tasks",
+     "1 task",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 tasks",
+     "1 task",
      "D",
      "Dee",
-     "1 tasks",
-     "1 tasks",
+     "1 task",
      "New Person",
      "Add someone you delegate or wait on.",
      "Add",
@@ -17522,7 +17525,7 @@
       false
      ],
      [
-      "Alex: 1 tasks",
+      "Alex: 1 task",
       false
      ],
      [
@@ -17538,7 +17541,7 @@
       false
      ],
      [
-      "bea: 1 tasks",
+      "bea: 1 task",
       false
      ],
      [
@@ -17554,7 +17557,7 @@
       false
      ],
      [
-      "Dee: 1 tasks",
+      "Dee: 1 task",
       false
      ],
      [
@@ -19134,19 +19137,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 Aufgaben",
      "D",
      "Dee",
-     "1 Aufgaben",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "Neue Person",
      "Add someone you delegate or wait on.",
      "Hinzufügen",
@@ -19221,7 +19223,7 @@
       false
      ],
      [
-      "Alex: 1 Aufgaben",
+      "Alex: 1 Aufgabe",
       false
      ],
      [
@@ -19237,7 +19239,7 @@
       false
      ],
      [
-      "bea: 1 Aufgaben",
+      "bea: 1 Aufgabe",
       false
      ],
      [
@@ -19265,7 +19267,7 @@
       false
      ],
      [
-      "Dee: 1 Aufgaben",
+      "Dee: 1 Aufgabe",
       false
      ],
      [
@@ -19318,19 +19320,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 Aufgaben",
      "D",
      "Dee",
-     "1 Aufgaben",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "Neue Person",
      "Add someone you delegate or wait on.",
      "Hinzufügen",
@@ -19405,7 +19406,7 @@
       false
      ],
      [
-      "Alex: 1 Aufgaben",
+      "Alex: 1 Aufgabe",
       false
      ],
      [
@@ -19421,7 +19422,7 @@
       false
      ],
      [
-      "bea: 1 Aufgaben",
+      "bea: 1 Aufgabe",
       false
      ],
      [
@@ -19449,7 +19450,7 @@
       false
      ],
      [
-      "Dee: 1 Aufgaben",
+      "Dee: 1 Aufgabe",
       false
      ],
      [
@@ -19511,19 +19512,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 Aufgaben",
      "D",
      "Dee",
-     "1 Aufgaben",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "Neue Person",
      "Add someone you delegate or wait on.",
      "Hinzufügen",
@@ -19598,7 +19598,7 @@
       false
      ],
      [
-      "Alex: 1 Aufgaben",
+      "Alex: 1 Aufgabe",
       false
      ],
      [
@@ -19614,7 +19614,7 @@
       false
      ],
      [
-      "bea: 1 Aufgaben",
+      "bea: 1 Aufgabe",
       false
      ],
      [
@@ -19642,7 +19642,7 @@
       false
      ],
      [
-      "Dee: 1 Aufgaben",
+      "Dee: 1 Aufgabe",
       false
      ],
      [
@@ -19689,19 +19689,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 Aufgaben",
      "D",
      "Dee",
-     "1 Aufgaben",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "Neue Person",
      "Add someone you delegate or wait on.",
      "Hinzufügen",
@@ -19776,7 +19775,7 @@
       false
      ],
      [
-      "Alex: 1 Aufgaben",
+      "Alex: 1 Aufgabe",
       false
      ],
      [
@@ -19792,7 +19791,7 @@
       false
      ],
      [
-      "bea: 1 Aufgaben",
+      "bea: 1 Aufgabe",
       false
      ],
      [
@@ -19820,7 +19819,7 @@
       false
      ],
      [
-      "Dee: 1 Aufgaben",
+      "Dee: 1 Aufgabe",
       false
      ],
      [
@@ -19894,19 +19893,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 Aufgaben",
      "D",
      "Dee",
-     "1 Aufgaben",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "Neue Person",
      "Add someone you delegate or wait on.",
      "Hinzufügen",
@@ -19981,7 +19979,7 @@
       false
      ],
      [
-      "Alex: 1 Aufgaben",
+      "Alex: 1 Aufgabe",
       false
      ],
      [
@@ -19997,7 +19995,7 @@
       false
      ],
      [
-      "bea: 1 Aufgaben",
+      "bea: 1 Aufgabe",
       false
      ],
      [
@@ -20025,7 +20023,7 @@
       false
      ],
      [
-      "Dee: 1 Aufgaben",
+      "Dee: 1 Aufgabe",
       false
      ],
      [
@@ -20072,19 +20070,18 @@
      "A",
      "Alex",
      "QA lead",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "B",
      "bea",
      "https://bea.example/fail",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "C",
      "Cy",
      "javascript:alert(1)",
      "0 Aufgaben",
      "D",
      "Dee",
-     "1 Aufgaben",
-     "1 Aufgaben",
+     "1 Aufgabe",
      "Neue Person",
      "Add someone you delegate or wait on.",
      "Hinzufügen",
@@ -20159,7 +20156,7 @@
       false
      ],
      [
-      "Alex: 1 Aufgaben",
+      "Alex: 1 Aufgabe",
       false
      ],
      [
@@ -20175,7 +20172,7 @@
       false
      ],
      [
-      "bea: 1 Aufgaben",
+      "bea: 1 Aufgabe",
       false
      ],
      [
@@ -20203,7 +20200,7 @@
       false
      ],
      [
-      "Dee: 1 Aufgaben",
+      "Dee: 1 Aufgabe",
       false
      ],
      [

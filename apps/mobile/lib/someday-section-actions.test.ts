@@ -12,10 +12,11 @@ const storeState = vi.hoisted(() => ({
   retryPersistence: vi.fn(async () => { storeState.persistenceFailure = null; }),
 }));
 
-vi.mock('@mindwtr/core', () => ({
-  sortViewSectionDefinitions: (definitions: typeof storeState.settings.gtd.viewSections.someday = []) => (
-    [...definitions].sort((left, right) => left.order - right.order)
-  ),
+vi.mock('@mindwtr/core', async (importOriginal) => ({
+  // The section list edits are core's own logic.
+  ...(({ buildSomedaySectionsSettingsUpdate, planSomedaySectionCreate, sortViewSectionDefinitions }) => ({
+    buildSomedaySectionsSettingsUpdate, planSomedaySectionCreate, sortViewSectionDefinitions,
+  }))(await importOriginal<typeof import('@mindwtr/core')>()),
   flushPendingSave: storeState.flushPendingSave,
   useTaskStore: {
     getState: () => storeState,
@@ -64,6 +65,20 @@ describe('createSomedaySection', () => {
     expect(storeState.updateSettings).toHaveBeenCalledOnce();
     expect(storeState.flushPendingSave).toHaveBeenCalledTimes(2);
     expect(storeState.retryPersistence).toHaveBeenCalledOnce();
+  });
+
+  it('keeps every stored entry as it is, in stored order, including ones this build cannot show', async () => {
+    // A newer app's entry this build cannot show.
+    const folder = { kind: 'folder', children: ['books'] } as unknown as { id: string; title: string; order: number };
+    const books = { id: 'books', title: 'Books to read', order: 1 };
+    const films = { id: 'films', title: 'Films', order: 0 };
+    storeState.settings = { gtd: { viewSections: { someday: [books, folder, films] } } };
+
+    const createdId = await createSomedaySection('Career ideas');
+
+    expect(storeState.updateSettings).toHaveBeenCalledWith({
+      gtd: { viewSections: { someday: [books, folder, films, { id: createdId, title: 'Career ideas', order: 2 }] } },
+    });
   });
 
   it('appends later definitions without rewriting the existing section', async () => {

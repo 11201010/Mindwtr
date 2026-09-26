@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Trash2, ChevronDown, ChevronRight, Pencil, Check, X, ExternalLink } from 'lucide-react';
 import { buildPersonSearchQuery, DEFAULT_AREA_COLOR, formatI18nTemplate, getPersonNameKey, getPersonTaskCounts, sortViewSectionDefinitions, translateWithFallback, useTaskStore, type Area, type Person, type ViewSectionDefinition,
-    baseTextCollator,
+    baseTextCollator, buildSomedaySectionsSettingsUpdate, isManageAreaNameTaken, orderSomedaySections, removeSomedaySection, renameSomedaySection,
 } from '@mindwtr/core';
 import { AreaColorPicker } from '../projects/AreaColorPicker';
 import { reportError } from '../../../lib/report-error';
@@ -472,33 +472,32 @@ export function SettingsManagePage({ t: _t, translate, requestConfirmation }: Se
 
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-    const persistSomedaySections = useCallback((nextSections: ViewSectionDefinition[]) => {
-        void updateSettings({
-            gtd: {
-                ...(settings?.gtd ?? {}),
-                viewSections: {
-                    ...(settings?.gtd?.viewSections ?? {}),
-                    someday: nextSections,
-                },
-            },
-        }).catch((error) => reportError('Failed to update Someday sections from Settings', error));
-    }, [settings?.gtd, updateSettings]);
+    // One edit against the list stored at write time (a delete waits for its confirmation):
+    // core's edits change only the edited sections and keep every other stored entry.
+    const persistSomedaySections = useCallback((edit: (stored: ViewSectionDefinition[] | undefined) => ViewSectionDefinition[] | null) => {
+        const current = useTaskStore.getState().settings;
+        const next = edit(current?.gtd?.viewSections?.someday);
+        if (!next) return;
+        void updateSettings(buildSomedaySectionsSettingsUpdate(current, next))
+            .catch((error) => reportError('Failed to update Someday sections from Settings', error));
+    }, [updateSettings]);
 
     const handleViewSectionDragEnd = useCallback((event: DragEndEvent) => {
         const { active, over } = event;
         if (!over || active.id === over.id) return;
-        const oldIndex = somedaySections.findIndex((section) => section.id === active.id);
-        const newIndex = somedaySections.findIndex((section) => section.id === over.id);
+        const ids = somedaySections.map((section) => section.id);
+        const oldIndex = ids.indexOf(String(active.id));
+        const newIndex = ids.indexOf(String(over.id));
         if (oldIndex === -1 || newIndex === -1) return;
-        const reordered = [...somedaySections];
-        const [moved] = reordered.splice(oldIndex, 1);
-        reordered.splice(newIndex, 0, moved);
-        persistSomedaySections(reordered.map((section, order) => ({ ...section, order })));
+        ids.splice(newIndex, 0, ...ids.splice(oldIndex, 1));
+        persistSomedaySections((stored) => orderSomedaySections(stored, ids));
     }, [persistSomedaySections, somedaySections]);
 
+    // A live area has this name: creating it would add nothing, so Create is off and the line says why.
+    const newAreaNameTaken = isManageAreaNameTaken('newArea', newAreaName, areas);
     const handleCreateArea = useCallback(async () => {
         const name = newAreaName.trim();
-        if (!name) return;
+        if (!name || isManageAreaNameTaken('newArea', name, useTaskStore.getState().areas)) return;
         setIsCreatingArea(true);
         try {
             await addArea(name, { color: newAreaColor });
@@ -626,12 +625,17 @@ export function SettingsManagePage({ t: _t, translate, requestConfirmation }: Se
                         <button
                             type="button"
                             onClick={() => void handleCreateArea()}
-                            disabled={isCreatingArea || !newAreaName.trim()}
+                            disabled={isCreatingArea || !newAreaName.trim() || newAreaNameTaken}
                             className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                         >
                             {isCreatingArea ? resolveText('common.loading', 'Loading...') : resolveText('areas.create', 'Create')}
                         </button>
                     </div>
+                    {newAreaNameTaken && (
+                        <p className="text-xs text-destructive">
+                            {resolveText('areas.nameExists', 'An area with this name already exists.')}
+                        </p>
+                    )}
                 </div>
             </ManageSection>
 
@@ -713,13 +717,11 @@ export function SettingsManagePage({ t: _t, translate, requestConfirmation }: Se
                                         void confirmDelete(
                                             'settings.deleteNamed',
                                             'Delete "{{name}}"?',
-                                            () => persistSomedaySections(somedaySections.filter((candidate) => candidate.id !== id)),
+                                            () => persistSomedaySections((stored) => removeSomedaySection(stored, id)),
                                             { name: section.title },
                                         );
                                     }}
-                                    onUpdateTitle={(id, title) => persistSomedaySections(somedaySections.map((candidate) => (
-                                        candidate.id === id ? { ...candidate, title } : candidate
-                                    )))}
+                                    onUpdateTitle={(id, title) => persistSomedaySections((stored) => renameSomedaySection(stored, id, title))}
                                     translate={translate}
                                 />
                             ))}

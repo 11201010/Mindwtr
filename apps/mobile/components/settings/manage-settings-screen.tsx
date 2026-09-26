@@ -10,14 +10,17 @@ import {
     DEFAULT_MANAGE_OPEN_SECTIONS,
     MANAGE_OPEN_SECTIONS_STORAGE_KEY,
     buildManagePersonRow,
+    buildSomedaySectionsSettingsUpdate,
     getManageDeleteConfirm,
     getManageEditorDraft,
     getManageEditorText,
     getManageSettingsText,
     getPersonTaskCounts,
+    isManageAreaNameTaken,
     isManageEditorSaveDisabled,
     normalizeManageOpenSections,
     planManageEditorSave,
+    removeSomedaySection,
     sortManageAreas,
     sortManagePeople,
     sortViewSectionDefinitions,
@@ -169,7 +172,8 @@ export function ManageSettingsScreen() {
     const unassignedAreaColor = settings.appearance?.unassignedAreaColor || DEFAULT_AREA_COLOR;
     // A closed editor keeps the rename texts, as before a target is chosen.
     const editorText = getManageEditorText(t, editorTarget?.type ?? 'context', untranslated);
-    const saveDisabled = isManageEditorSaveDisabled(editorTarget?.type ?? 'context', editorName);
+    const saveDisabled = isManageEditorSaveDisabled(editorTarget?.type ?? 'context', editorName, areas);
+    const nameTaken = isManageAreaNameTaken(editorTarget?.type ?? 'context', editorName, areas);
     const confirmDelete = (label: string, onConfirm: () => void, messageKey?: Parameters<typeof getManageDeleteConfirm>[2]) => {
         const confirm = getManageDeleteConfirm(t, label, messageKey);
         Alert.alert(
@@ -297,9 +301,11 @@ export function ManageSettingsScreen() {
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={[styles.settingLabel, { color: tc.text }]} numberOfLines={1}>{person.name}</Text>
-                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
-                        {detail}
-                    </Text>
+                    {detail ? (
+                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
+                            {detail}
+                        </Text>
+                    ) : null}
                 </View>
                 <TouchableOpacity
                     accessibilityLabel={row.countAccessibilityLabel}
@@ -465,29 +471,23 @@ export function ManageSettingsScreen() {
                         </View>
                     ) : (
                         <SomedaySectionManager
-                            definitions={somedaySections}
+                            // The stored list: an edit changes only its section and keeps
+                            // every other entry, including ones this build cannot show.
+                            definitions={settings.gtd?.viewSections?.someday ?? []}
                             onDelete={(id) => {
                                 const section = somedaySections.find((candidate) => candidate.id === id);
                                 if (!section) return;
-                                confirmDelete(section.title, () => void updateSettings({
-                                    gtd: {
-                                        ...(settings.gtd ?? {}),
-                                        viewSections: {
-                                            ...(settings.gtd?.viewSections ?? {}),
-                                            someday: somedaySections.filter((candidate) => candidate.id !== id),
-                                        },
-                                    },
-                                }));
+                                // Built from the settings stored at confirm time: a sync change
+                                // made while the dialog was open is kept.
+                                confirmDelete(section.title, () => {
+                                    const current = useTaskStore.getState().settings;
+                                    void updateSettings(buildSomedaySectionsSettingsUpdate(
+                                        current,
+                                        removeSomedaySection(current.gtd?.viewSections?.someday, id),
+                                    ));
+                                });
                             }}
-                            onChange={(definitions) => updateSettings({
-                                gtd: {
-                                    ...(settings.gtd ?? {}),
-                                    viewSections: {
-                                        ...(settings.gtd?.viewSections ?? {}),
-                                        someday: definitions,
-                                    },
-                                },
-                            })}
+                            onChange={(definitions) => updateSettings(buildSomedaySectionsSettingsUpdate(settings, definitions))}
                             t={t}
                             themeColors={tc}
                         />
@@ -625,6 +625,11 @@ export function ManageSettingsScreen() {
                                 ]}
                                 autoFocus
                             />
+                        ) : null}
+                        {nameTaken && editorText.nameTaken ? (
+                            <Text style={[styles.settingDescription, { color: tc.danger, marginTop: 6 }]}>
+                                {editorText.nameTaken}
+                            </Text>
                         ) : null}
                         {editorText.personFields ? (
                             <>

@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     buildGeneralSettingsModel,
     buildGeneralSettingsUpdate,
+    isGeneralSettingStored,
     normalizeWeekStartSetting,
     shallow,
     useTaskStore,
@@ -64,9 +65,11 @@ export function GeneralSettingsScreen() {
         t,
     });
     const { appearance, privacy, regional } = model;
+    // Re-picking the stored value writes nothing, as the native host's contract:
+    // a repeat write would stamp the synced settings as newer than they are.
     const writeSetting = (edit: GeneralSettingsEdit) => {
         const update = buildGeneralSettingsUpdate(settings, edit);
-        if (update) updateSettings(update).catch(console.error);
+        if (update && !isGeneralSettingStored(settings, edit)) updateSettings(update).catch(console.error);
     };
     const { enablePrompt } = privacy.appLock;
     const handleAppLockToggle = useCallback((value: boolean) => {

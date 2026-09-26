@@ -799,6 +799,7 @@ export const en: Record<string, string> = {
         'people.title': 'People',
         'areas.new': 'New Area',
         'areas.namePlaceholder': 'Area name',
+        'areas.nameExists': 'An area with this name already exists.',
         'projects.sortAreas': 'Sort areas',
         'projects.sortByName': 'Sort A–Z',
         'projects.sortByColor': 'Sort by color',

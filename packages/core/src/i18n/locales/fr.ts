@@ -706,6 +706,7 @@ export const frOverrides: Record<string, string> = {
         'areas.manage': 'Domaines',
         'areas.new': 'Nouveau domaine',
         'areas.namePlaceholder': 'Nom du domaine',
+        'areas.nameExists': 'Un domaine portant ce nom existe déjà.',
         'projects.sortAreas': 'Trier les domaines',
         'projects.sortByName': 'Trier de A à Z',
         'projects.sortByColor': 'Trier par couleur',

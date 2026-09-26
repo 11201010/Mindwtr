@@ -65,6 +65,7 @@ import {
     getSomedaySectionMoveText,
     getSomedaySectionTaskText,
     moveSomedaySection,
+    orderSomedaySections,
     planSomedaySectionCreate,
     planSomedaySectionMove,
     planSomedaySectionTaskAdd,
@@ -968,7 +969,10 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Sections changed; read them again');
             const stored = somedaySections();
             const rows = buildSomedaySectionManagerRows(stored, t);
-            const orderAfter = (id: string, offset: -1 | 1) => moveSomedaySection(stored, id, offset)?.map((section) => section.id) ?? null;
+            const orderAfter = (id: string, offset: -1 | 1) => {
+                const moved = moveSomedaySection(stored, id, offset);
+                return moved ? sortViewSectionDefinitions(moved).map((section) => section.id) : null;
+            };
             return {
                 ok: true,
                 value: {
@@ -1189,19 +1193,19 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             return { ok: true, value: { id: input.id, changed: true } };
         },
 
-        /** Put the sections in this order (every section's id once), numbered from 0. Target state. */
+        /** Put the sections in this order (every section's id once), numbered from 0; other stored entries stay as they are. Target state. */
         async reorderSomedaySections(input: { ids: string[] }): Promise<NativeHostResult<{ changed: boolean }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const sorted = sortViewSectionDefinitions(somedaySections());
+            const stored = somedaySections();
+            const sorted = sortViewSectionDefinitions(stored);
             if (!isObjectRecord(input) || !isTextList(input.ids) || input.ids.length !== sorted.length
                 || new Set(input.ids).size !== input.ids.length || !input.ids.every((id) => sorted.some((section) => section.id === id))) {
                 return fail('INVALID_INPUT', 'Every section ID, once, is required');
             }
             if (sorted.every((section, index) => section.id === input.ids[index] && section.order === index)) return settle({ changed: false });
-            const byId = new Map(sorted.map((section) => [section.id, section]));
             try {
-                await updateSomedaySections(input.ids.map((id, order) => ({ ...byId.get(id)!, order })));
+                await updateSomedaySections(orderSomedaySections(stored, input.ids));
             } catch (error) {
                 return caught(error);
             }

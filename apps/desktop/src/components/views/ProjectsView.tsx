@@ -25,6 +25,7 @@ import {
     AREA_FILTER_NONE,
     buildProjectGroups,
     formatI18nTemplate,
+    isManageAreaNameTaken,
     projectMatchesAreaFilterSelection,
     tFallback,
     useTaskStore,
@@ -872,7 +873,8 @@ export function ProjectsView() {
                         onChangeNewAreaName={(event) => setNewAreaName(event.target.value)}
                         onCreateArea={async () => {
                             const name = newAreaName.trim();
-                            if (!name) return;
+                            // A live area has this name: nothing to create, and the typed name stays.
+                            if (!name || isManageAreaNameTaken('newArea', name, areas)) return;
                             setIsAreaCreating(true);
                             try {
                                 await addArea(name, { color: newAreaColor });
@@ -900,13 +902,16 @@ export function ProjectsView() {
                     defaultValue=""
                     confirmLabel={t('projects.create')}
                     cancelLabel={t('common.cancel')}
+                    validate={(value) => (isManageAreaNameTaken('newArea', value, areas)
+                        ? tFallback(t, 'areas.nameExists', 'An area with this name already exists.')
+                        : null)}
                     onCancel={() => {
                         setShowQuickAreaPrompt(false);
                         setPendingAreaAssignProjectId(null);
                     }}
                     onConfirm={async (value) => {
                         const name = value.trim();
-                        if (!name) return;
+                        if (!name || isManageAreaNameTaken('newArea', name, areas)) return;
                         const targetProjectId = pendingAreaAssignProjectId;
                         setIsAreaCreating(true);
                         try {

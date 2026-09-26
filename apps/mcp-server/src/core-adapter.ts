@@ -49,6 +49,7 @@ type CoreModule = {
   runWithImmediateSaveTracking: <T>(operation: () => Promise<T>) => Promise<{ result: T; saveCount: number }>;
   createSerializedAsyncQueue: () => SerializedAsyncQueue;
   useTaskStore: CoreStore;
+  isManageAreaNameTaken: (type: 'newArea', name: string, areas: readonly Area[]) => boolean;
   SqliteAdapter: new (
     client: unknown,
     options?: { rejectConcurrentWrites?: boolean },
@@ -60,6 +61,8 @@ type SerializedAsyncQueue = {
 };
 
 type TaskWriteResult = Task & { storageWarning?: string };
+/** `existing`: a live area already had the name; nothing was created and the props were not applied. */
+export type AreaWriteResult = Area & { existing?: true };
 
 export type CoreEntityPatch<T> = Partial<T> | ((current: T) => Partial<T>);
 
@@ -84,7 +87,7 @@ type CoreService = {
   addSection: (input: { projectId: string; title: string; props?: Partial<Section> }) => Promise<Section>;
   updateSection: (input: { id: string; updates: Partial<Section> }) => Promise<Section>;
   deleteSection: (id: string) => Promise<Section>;
-  addArea: (input: { name: string; props?: Partial<Area> }) => Promise<Area>;
+  addArea: (input: { name: string; props?: Partial<Area> }) => Promise<AreaWriteResult>;
   updateArea: (input: { id: string; updates: Partial<Area> }) => Promise<Area>;
   deleteArea: (id: string) => Promise<Area>;
   addPerson: (input: { name: string; props?: Partial<Person> }) => Promise<Person>;
@@ -447,12 +450,13 @@ const ensureCoreReady = async (options: DbOptions) => {
         addArea: async ({ name, props }) => runWriteTransaction(async () => {
           const state = core.useTaskStore.getState();
           await state.fetchData();
+          const existing = core.isManageAreaNameTaken('newArea', name, core.useTaskStore.getState().areas);
           const created = await state.addArea(name, props);
           if (!created) throwCreateFailed('Failed to create area.');
           await flushCoreSave(core);
           const saved = core.useTaskStore.getState()._allAreas.find((area) => area.id === created.id);
           if (!saved) throw new NotFoundError(`Area not found after create: ${created.id}`);
-          return saved as Area;
+          return existing ? { ...saved, existing: true } : saved;
         }),
         updateArea: async ({ id, updates }) => runWriteTransaction(async () => {
           const state = core.useTaskStore.getState();

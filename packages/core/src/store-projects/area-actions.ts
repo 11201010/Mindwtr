@@ -70,9 +70,11 @@ export const createAreaActions = ({
                 }
             }
             const restoredArea = get()._allAreas.find((area) => area.id === existingAreaId);
-            const shouldUpdateExistingArea = Boolean(
+            // A live area with this name is returned as it is: adding a name never
+            // recolors or rewrites the area that already has it.
+            const shouldUpdateExistingArea = shouldRestoreDeletedArea && Boolean(
                 (initialProps && Object.keys(initialProps).length > 0)
-                || (shouldRestoreDeletedArea && restoredArea?.name !== trimmedName)
+                || restoredArea?.name !== trimmedName
             );
             if (shouldUpdateExistingArea) {
                 const result = await get().updateArea(existingAreaId, {

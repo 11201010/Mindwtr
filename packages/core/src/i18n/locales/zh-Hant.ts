@@ -778,6 +778,7 @@ export const zhHant: Record<string, string> = {
         'people.title': '人員',
         'areas.new': '新建領域',
         'areas.namePlaceholder': '領域名稱',
+        'areas.nameExists': '已存在同名領域。',
         'projects.sortAreas': '排序領域',
         'projects.sortByName': '按名稱排序',
         'projects.sortByColor': '按顏色排序',

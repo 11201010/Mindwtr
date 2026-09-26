@@ -779,6 +779,7 @@ export const svOverrides: Record<string, string> = {
         'people.title': 'Personer',
         'areas.new': 'Nytt område',
         'areas.namePlaceholder': 'Områdesnamn',
+        'areas.nameExists': 'Det finns redan ett område med det här namnet.',
         'projects.sortAreas': 'Sortera områden',
         'projects.sortByName': 'Sortera A–Ö',
         'projects.sortByColor': 'Sortera efter färg',

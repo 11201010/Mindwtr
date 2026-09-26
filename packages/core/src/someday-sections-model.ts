@@ -6,6 +6,7 @@
  */
 import { isTaskVisibleInArea, type AreaFilterSelection } from './area-filter';
 import { formatI18nTemplate, tFallback } from './i18n';
+import { logInfo } from './logger';
 import { getSomedaySectionChoices } from './task-editor-model';
 import type { AppSettings, Area, Project, Task, ViewSectionDefinition } from './types';
 import { buildTaskViewSectionUpdates, sortViewSectionDefinitions } from './view-sections';
@@ -16,11 +17,23 @@ function makeSomedaySectionId(now = Date.now(), random: () => number = Math.rand
     return `someday-${now.toString(36)}-${random().toString(36).slice(2, 8)}`;
 }
 
-/** The settings update that stores Someday's definitions and keeps every other GTD setting. */
+/**
+ * The settings update that stores Someday's definitions and keeps every other GTD setting.
+ * Every section write goes through here; the edits below keep the entries they do not edit.
+ */
 export function buildSomedaySectionsSettingsUpdate(
     settings: AppSettings | undefined,
     someday: ViewSectionDefinition[],
 ): Partial<AppSettings> {
+    logInfo('Someday sections written; other sections kept as stored', {
+        scope: 'someday-sections',
+        category: 'storage',
+        context: {
+            releaseCheck: 'v1.3.3/someday-sections-keep-others',
+            count: someday.length,
+            hiddenCount: someday.length - sortViewSectionDefinitions(someday).length,
+        },
+    });
     return {
         gtd: {
             ...(settings?.gtd ?? {}),
@@ -53,8 +66,12 @@ export function planSomedaySectionCreate(
         (maximum, section) => Number.isFinite(section.order) ? Math.max(maximum, section.order) : maximum,
         -1,
     );
-    return { kind: 'create', id, sections: [...current, { id, title: trimmed, order: maxOrder + 1 }] };
+    return { kind: 'create', id, sections: [...(stored ?? []), { id, title: trimmed, order: maxOrder + 1 }] };
 }
+
+// Each edit below changes only the section it edits. Every other stored entry,
+// including one this build cannot show (a newer app's shape), is kept as it is,
+// in stored order: the list is synced settings.
 
 /** The definitions after a rename, or null for a blank title (the manager keeps editing). */
 export function renameSomedaySection(
@@ -64,7 +81,23 @@ export function renameSomedaySection(
 ): ViewSectionDefinition[] | null {
     const trimmed = title.trim();
     if (!trimmed) return null;
-    return sortViewSectionDefinitions(stored).map((section) => section.id === id ? { ...section, title: trimmed } : section);
+    return (stored ?? []).map((section) => section?.id === id ? { ...section, title: trimmed } : section);
+}
+
+/**
+ * The definitions with the shown sections in this order (each shown id once),
+ * numbered from 0. Only a section whose number changes is rewritten.
+ */
+export function orderSomedaySections(
+    stored: readonly ViewSectionDefinition[] | undefined,
+    ids: readonly string[],
+): ViewSectionDefinition[] {
+    const orderById = new Map(ids.map((id, order) => [id, order]));
+    const shown = new Set(sortViewSectionDefinitions(stored));
+    return (stored ?? []).map((section) => {
+        const order = shown.has(section) ? orderById.get(section.id) : undefined;
+        return order === undefined || section.order === order ? section : { ...section, order };
+    });
 }
 
 /** The definitions after moving one up (-1) or down (1), renumbered; null at either end. */
@@ -73,14 +106,12 @@ export function moveSomedaySection(
     id: string,
     offset: -1 | 1,
 ): ViewSectionDefinition[] | null {
-    const sorted = sortViewSectionDefinitions(stored);
-    const index = sorted.findIndex((section) => section.id === id);
+    const ids = sortViewSectionDefinitions(stored).map((section) => section.id);
+    const index = ids.indexOf(id);
     const targetIndex = index + offset;
-    if (index < 0 || targetIndex < 0 || targetIndex >= sorted.length) return null;
-    const reordered = [...sorted];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-    return reordered.map((section, order) => ({ ...section, order }));
+    if (index < 0 || targetIndex < 0 || targetIndex >= ids.length) return null;
+    ids.splice(targetIndex, 0, ...ids.splice(index, 1));
+    return orderSomedaySections(stored, ids);
 }
 
 /**
@@ -88,7 +119,7 @@ export function moveSomedaySection(
  * show under "No section" until they move; nothing about the task is deleted.
  */
 export function removeSomedaySection(stored: readonly ViewSectionDefinition[] | undefined, id: string): ViewSectionDefinition[] {
-    return sortViewSectionDefinitions(stored).filter((section) => section.id !== id);
+    return (stored ?? []).filter((section) => section?.id !== id);
 }
 
 const resolveText = (t: Translate, key: string, fallback: string) => tFallback(t, key, fallback);

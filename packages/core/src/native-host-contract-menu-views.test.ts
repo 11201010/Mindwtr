@@ -185,6 +185,29 @@ describe('native host contract: More sheet and list views', () => {
         expect(recorder.log).toEqual([]);
     });
 
+    it('changes only the edited section: entries it cannot show stay as stored, in stored order', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('someday', 'sections'));
+        const stored = () => useTaskStore.getState().settings.gtd?.viewSections?.someday as unknown[];
+        const [later, ideas, travel] = stored() as { id: string; title: string; order: number }[];
+        const future = { id: 's-future', title: '', order: 7, color: 'teal' };
+        const folder = { kind: 'folder', children: ['s-ideas'] };
+        await useTaskStore.getState().updateSettings({
+            gtd: { ...useTaskStore.getState().settings.gtd, viewSections: { someday: [later, future, ideas, folder, travel] as never } },
+        });
+
+        const created = value(await host.createSomedaySection({ title: 'Books' }));
+        value(await host.renameSomedaySection({ id: 's-ideas', title: 'Big ideas' }));
+        const moveDown = value(host.getSomedaySections()).rows[0].moveDown.ids!;
+        expect(moveDown).toEqual(['s-ideas', 's-later', 's-empty', created.id]);
+        value(await host.reorderSomedaySections({ ids: moveDown }));
+        value(await host.deleteSomedaySection({ id: 's-empty' }));
+
+        expect(stored()).toEqual([
+            { ...later, order: 1 }, future, { ...ideas, title: 'Big ideas', order: 0 }, folder, { id: created.id, title: 'Books', order: 3 },
+        ]);
+    });
+
     it('deletes a section only from settings: its tasks keep their assignment and show under No section', async () => {
         freezeClock();
         const { host, recorder } = await openHost(scenario('someday', 'sections'));

@@ -216,9 +216,12 @@
 
     // --- URL ----------------------------------------------------------------
     // Enough for the sync ports: scheme, host, port, path, query. Not a full
-    // WHATWG URL parser; the report says so.
+    // WHATWG URL parser; the report says so. A non-special scheme without "//"
+    // (mailto:, tel:) has no host: its path is the rest, as the platform parses it.
     if (typeof global.URL !== 'function') {
         var URL_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^@/]*)@)?([^:/?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/;
+        var OPAQUE_URL_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):([^?#]*)(\?[^#]*)?(#.*)?$/;
+        var SPECIAL_SCHEMES = ['http', 'https', 'ws', 'wss', 'ftp', 'file'];
         global.URL = function URL(input, base) {
             mark('URL');
             var text = String(input);
@@ -229,8 +232,20 @@
                     : baseText.replace(/[^/]*$/, '') + text;
             }
             var parts = URL_RE.exec(text);
+            var opaque = parts ? null : OPAQUE_URL_RE.exec(text);
+            if (opaque && SPECIAL_SCHEMES.indexOf(opaque[1].toLowerCase()) < 0) {
+                this.protocol = opaque[1].toLowerCase() + ':';
+                this.username = this.password = this.hostname = this.port = this.host = '';
+                this.pathname = opaque[2];
+                this.search = opaque[3] || '';
+                this.hash = opaque[4] || '';
+                this.origin = 'null';
+                this.searchParams = new global.URLSearchParams(this.search);
+                this._opaque = true;
+                return;
+            }
             if (!parts) throw new TypeError('Invalid URL: ' + input);
-            this.protocol = parts[1] + ':';
+            this.protocol = parts[1].toLowerCase() + ':';
             var credentials = (parts[2] || '').split(':');
             this.username = credentials[0] || '';
             this.password = credentials[1] || '';
@@ -244,9 +259,10 @@
             this.searchParams = new global.URLSearchParams(this.search);
         };
         global.URL.prototype.toString = function () {
+            var query = this.searchParams ? this.searchParams.toString() : this.search;
+            if (this._opaque) return this.protocol + this.pathname + query + this.hash;
             var credentials = this.username ? this.username + (this.password ? ':' + this.password : '') + '@' : '';
-            return this.protocol + '//' + credentials + this.host + this.pathname
-                + (this.searchParams ? this.searchParams.toString() : this.search) + this.hash;
+            return this.protocol + '//' + credentials + this.host + this.pathname + query + this.hash;
         };
         global.URL.prototype.toJSON = function () { return this.toString(); };
     }

@@ -809,6 +809,7 @@ export const koOverrides: Record<string, string> = {
         'areas.manage': '영역',
         'areas.new': '새 영역',
         'areas.namePlaceholder': '영역 이름',
+        'areas.nameExists': '이 이름의 영역이 이미 있습니다.',
         'projects.sortAreas': '영역 정렬',
         'projects.sortByName': 'A~Z 정렬',
         'projects.sortByColor': '색상별로 정렬',

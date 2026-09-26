@@ -778,6 +778,7 @@ export const zhHans: Record<string, string> = {
         'people.title': '人员',
         'areas.new': '新建领域',
         'areas.namePlaceholder': '领域名称',
+        'areas.nameExists': '已存在同名领域。',
         'projects.sortAreas': '排序领域',
         'projects.sortByName': '按名称排序',
         'projects.sortByColor': '按颜色排序',

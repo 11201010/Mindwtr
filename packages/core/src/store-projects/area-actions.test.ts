@@ -99,6 +99,25 @@ describe('area actions', () => {
         expect(saved.tasks.find((item) => item.title === 'Project task')?.deletedAt).toBeUndefined();
     });
 
+    it('returns an area with the same name unchanged instead of recoloring it', async () => {
+        const { addArea, addProject } = useTaskStore.getState();
+        const home = await addArea('Home', { color: '#22c55e', icon: 'House' });
+        const project = await addProject('Yard', '#22c55e', { areaId: home!.id, areaTitle: 'Home' });
+        await flushPendingSave();
+        saveData.mockClear();
+        const before = useTaskStore.getState()._allAreas;
+
+        // New Area "home" with the editor's default color, while "Home" exists.
+        expect(await addArea(' home ', { color: '#94a3b8' })).toBe(before[0]);
+        await flushPendingSave();
+
+        const state = useTaskStore.getState();
+        expect(state._allAreas).toBe(before);
+        expect(state._allAreas[0]).toMatchObject({ name: 'Home', color: '#22c55e', icon: 'House', rev: 1 });
+        expect(state.projects.find((item) => item.id === project!.id)?.color).toBe('#22c55e');
+        expect(saveData).not.toHaveBeenCalled();
+    });
+
     it('repaints projects back to the default color when the area color is cleared (#974)', async () => {
         const { addArea, addProject, updateArea } = useTaskStore.getState();
         const area = await addArea('Work', { color: '#3b82f6' });

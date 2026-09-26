@@ -777,7 +777,7 @@ export const registerMindwtrTools = (
   server.registerTool(
     'mindwtr_add_area',
     {
-      description: 'Add an area to the configured Mindwtr backend.',
+      description: 'Add an area to the configured Mindwtr backend. On the local backend, a name a live area already has (any case) creates nothing: the result is that area, unchanged, with existing: true.',
       inputSchema: addAreaSchema,
     },
     withReadonlyMcpErrorHandling('mindwtr_add_area', async (input) => {

@@ -778,6 +778,7 @@ export const csOverrides: Record<string, string> = {
         'people.title': 'Lidé',
         'areas.new': 'Nová oblast',
         'areas.namePlaceholder': 'Název oblasti',
+        'areas.nameExists': 'Oblast s tímto názvem už existuje.',
         'projects.sortAreas': 'Seřadit oblasti',
         'projects.sortByName': 'Seřadit A–Z',
         'projects.sortByColor': 'Seřadit podle barvy',

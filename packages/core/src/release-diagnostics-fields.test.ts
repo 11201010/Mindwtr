@@ -85,6 +85,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'batches',
     // attachment-only-task-replace (store-settings.ts) / section-conversion-canonical (store-tasks.ts)
     'count',
+    // someday-sections-keep-others reuses releaseCheck and count: stored entries this build cannot show, kept.
+    'hiddenCount',
     // android-http-connect-timeout (apps/mobile/hooks/root-layout/use-root-layout-startup.ts)
     'connectTimeoutMs',
     // fence-mutation-horizon (packages/core/src/sync-remote-fence.ts)

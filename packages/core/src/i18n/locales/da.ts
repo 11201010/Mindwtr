@@ -784,6 +784,7 @@ export const daOverrides: Record<string, string> = {
     'people.title': 'Mennesker',
     'areas.new': 'Nyt område',
     'areas.namePlaceholder': 'Områdenavn',
+    'areas.nameExists': 'Der findes allerede et område med dette navn.',
     'projects.sortAreas': 'Sorter områder',
     'projects.sortByName': 'Sorter A–Z',
     'projects.sortByColor': 'Sorter efter farve',

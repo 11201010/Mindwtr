@@ -807,6 +807,7 @@ export const jaOverrides: Record<string, string> = {
         'people.title': '担当者',
         'areas.new': '新しいエリア',
         'areas.namePlaceholder': 'エリア名',
+        'areas.nameExists': 'この名前のエリアはすでにあります。',
         'projects.sortAreas': 'エリアを並べ替え',
         'projects.sortByName': '名前順',
         'projects.sortByColor': '色順',

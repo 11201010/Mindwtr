@@ -763,6 +763,7 @@ export const esOverrides: Record<string, string> = {
 'people.title': "Personas",
 'areas.new': "Nueva área",
 'areas.namePlaceholder': "Nombre del área",
+'areas.nameExists': "Ya existe un área con este nombre.",
 'projects.sortAreas': "Ordenar áreas",
 'projects.sortByName': "Orden A–Z",
 'projects.sortByColor': "Orden por color",

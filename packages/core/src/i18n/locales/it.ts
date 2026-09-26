@@ -671,6 +671,7 @@ export const itOverrides: Record<string, string> = {
         'areas.manage': 'Aree',
         'areas.new': 'Nuova area',
         'areas.namePlaceholder': 'Nome area',
+        'areas.nameExists': 'Esiste già un’area con questo nome.',
         'projects.sortAreas': 'Ordina aree',
         'projects.sortByName': 'Ordina A–Z',
         'projects.sortByColor': 'Ordina per colore',

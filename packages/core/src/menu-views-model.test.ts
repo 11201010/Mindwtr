@@ -11,9 +11,18 @@ import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState } 
 import { buildSomedayViewModel, buildWaitingViewModel } from './menu-views-model';
 import { buildMoreMenuModel, resolveMobileQuickAccessView } from './more-menu-model';
 import { createNativeHostContract } from './native-host-contract';
-import { getSomedaySectionTaskText, moveSomedaySection, planSomedaySectionCreate, planSomedaySectionMove, renameSomedaySection } from './someday-sections-model';
+import {
+    buildSomedaySectionsSettingsUpdate,
+    getSomedaySectionTaskText,
+    moveSomedaySection,
+    orderSomedaySections,
+    planSomedaySectionCreate,
+    planSomedaySectionMove,
+    removeSomedaySection,
+    renameSomedaySection,
+} from './someday-sections-model';
 import { resetForTests } from './store';
-import type { AppSettings, Task } from './types';
+import type { AppSettings, Task, ViewSectionDefinition } from './types';
 
 const fixture = loadMenuViewsFixture();
 
@@ -143,11 +152,42 @@ describe('list view models', () => {
         const stored = [{ id: 'b', title: 'B', order: 1 }, { id: 'a', title: 'A', order: 0 }];
         expect(planSomedaySectionCreate(stored, ' a ')).toEqual({ kind: 'existing', id: 'a' });
         expect(planSomedaySectionCreate(stored, 'C', () => 'c')).toEqual({
-            kind: 'create', id: 'c', sections: [...[...stored].reverse(), { id: 'c', title: 'C', order: 2 }],
+            kind: 'create', id: 'c', sections: [...stored, { id: 'c', title: 'C', order: 2 }],
         });
         expect(renameSomedaySection(stored, 'a', '  ')).toBeNull();
         expect(moveSomedaySection(stored, 'a', -1)).toBeNull();
         expect(moveSomedaySection(stored, 'a', 1)?.map(({ id, order }) => [id, order])).toEqual([['b', 0], ['a', 1]]);
+    });
+
+    it('changes only the edited Someday section: every other entry stays as stored, in stored order', () => {
+        // Entries this build cannot show (a newer app's shapes) are kept, not dropped.
+        const future = { id: 'f', title: '', order: 0.5, color: 'teal' } as unknown as ViewSectionDefinition;
+        const folder = { kind: 'folder', children: ['b'] } as unknown as ViewSectionDefinition;
+        const b = { id: 'b', title: 'B', order: 1, icon: 'book' } as ViewSectionDefinition;
+        const a = { id: 'a', title: 'A', order: 0 };
+        const c = { id: 'c', title: 'C', order: 2 };
+        const stored = [b, future, a, folder, c];
+
+        const created = planSomedaySectionCreate(stored, 'D', () => 'd');
+        expect(created).toEqual({ kind: 'create', id: 'd', sections: [...stored, { id: 'd', title: 'D', order: 3 }] });
+
+        const renamed = renameSomedaySection(stored, 'a', ' Z ')!;
+        expect(renamed).toEqual([b, future, { ...a, title: 'Z' }, folder, c]);
+        [0, 1, 3, 4].forEach((index) => expect(renamed[index]).toBe(stored[index]));
+
+        const removed = removeSomedaySection(stored, 'b');
+        expect(removed).toEqual([future, a, folder, c]);
+        removed.forEach((entry, index) => expect(entry).toBe([future, a, folder, c][index]));
+
+        // Moving C up swaps it with B; A, and the entries it cannot show, stay as stored.
+        const moved = moveSomedaySection(stored, 'c', -1)!;
+        expect(moved).toEqual([{ ...b, order: 2 }, future, a, folder, { ...c, order: 1 }]);
+        [1, 2, 3].forEach((index) => expect(moved[index]).toBe(stored[index]));
+        expect(orderSomedaySections(stored, ['a', 'b', 'c'])).toEqual(stored);
+        expect(orderSomedaySections(stored, ['a', 'b', 'c']).every((entry, index) => entry === stored[index])).toBe(true);
+
+        expect(buildSomedaySectionsSettingsUpdate({ gtd: { viewSections: { someday: stored } } }, removed))
+            .toEqual({ gtd: { viewSections: { someday: [future, a, folder, c] } } });
     });
 
     it('names a Someday section literally in its Add task heading, even with $ replacement patterns', () => {

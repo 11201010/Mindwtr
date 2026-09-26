@@ -345,6 +345,14 @@ describe('MindwtrService conformance: local SQLite vs cloud REST', () => {
       expect(task.reviewAt).toBe('2026-04-01');
     });
 
+    test('local: adding a live area\'s name creates nothing and says so with existing: true', async () => {
+      const home = await writeLocal.addArea({ name: 'Home', color: '#22c55e' });
+      expect('existing' in home).toBe(false);
+      const again = await writeLocal.addArea({ name: ' home ', color: '#ef4444', icon: 'House' });
+      expect(again).toMatchObject({ id: home.id, name: 'Home', color: '#22c55e', existing: true });
+      expect(again.icon).toBeUndefined();
+    });
+
     test('cloud: forwards checklist, areaId, and reviewAt in the POST /tasks props bag', async () => {
       let capturedBody: { title?: string; props?: Record<string, unknown> } | undefined;
       const writeCloud = createCloudService({
