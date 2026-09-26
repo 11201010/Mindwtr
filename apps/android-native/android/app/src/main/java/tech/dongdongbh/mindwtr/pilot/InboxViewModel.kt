@@ -228,6 +228,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing, storedCapture) }; return@Thread }
                     throw failure
                 }
+                // RN's More sheet, for the quick-access tab the tab bar draws from its first frame (cosmetic: a failure shows Projects).
+                val sheet = runCatching { menu.readSheet(runtime) }.getOrNull()
                 // The editor open at process death: core's model read again, the saved draft on top.
                 val restored = savedDraft?.let { draft ->
                     runCatching { withView(runtime, TaskEditor.restore(readEditor(runtime, draft.getString("id")), draft)) }
@@ -240,8 +242,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     pumpEdits()
                     if (reopenProcessing != null) resumeProcessing(reopenProcessing) else processingStore.delete()
                     if (reopenCapture != null) resumeCapture(reopenCapture) else captureStore.delete()
-                    // An owed Someday create left on disk goes first; then the open sheet and screen are read.
-                    menu.start()
+                    // An owed create left on disk goes first; then the open sheet and screen are read.
+                    menu.start(sheet)
                     search?.let { current ->
                         readSearch()
                         // A Save Search whose outcome was lost with the process: its exact request first, then the dialog unlocks.
@@ -1077,6 +1079,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** A project hit, or a task core cannot open in the editor: the list RN routes to, when this app has it. */
     fun openFromSearch(target: Screen, projectId: String?) {
         closeSearch()
+        // Projects hold another tab's place when the quick-access tab shows Review or Contexts: RN's Projects screen then.
+        if (target == Screen.Projects) return menu.openProjects(projectId)
         show(target)
         if (projectId != null) openProject(projectId)
     }

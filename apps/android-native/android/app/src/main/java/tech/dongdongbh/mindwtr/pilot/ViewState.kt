@@ -75,6 +75,13 @@ const val DONE_VIEW_KEY = "mindwtr:view:done:v1"
 const val ARCHIVED_VIEW_KEY = "mindwtr:view:archived:v1"
 
 /**
+ * Where a paused Weekly or Daily Review is kept on this device (core's WEEKLY_REVIEW_SESSION_STORAGE_KEY and
+ * DAILY_REVIEW_SESSION_STORAGE_KEY, the keys RN's review modals use): core's checkpoint string, stored as core sends it.
+ */
+const val WEEKLY_REVIEW_KEY = "mindwtr:weeklyReview:currentStep"
+const val DAILY_REVIEW_KEY = "mindwtr:dailyReview:currentStep"
+
+/**
  * RN's Done and Archived list view state, `{ groupBy, sortBy? }`: the device's grouping and sort, kept as core's option
  * values (only this app writes them, from core's options). Absent means core's default.
  */

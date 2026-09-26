@@ -66,6 +66,13 @@ export const field = (nodes) => nodes.find((node) => node.class === 'android.wid
 /** A swipe that starts left of this x can be read as the system Back gesture (gesture navigation). */
 export const EDGE_SAFE_X = 160;
 export const box = (node) => node.bounds.match(/\d+/g).map(Number);
+/**
+ * The screen's main vertical list: the tallest scrollable node that is not horizontal. A screen can have a second
+ * scrollable, as the Weekly Review's row of step chips (a HorizontalScrollView), and the first one found is not always
+ * the list (run 38).
+ */
+export const mainList = (nodes) => nodes.filter((node) => node.scrollable === 'true' && node.class !== 'android.widget.HorizontalScrollView')
+    .sort((a, b) => (box(b)[3] - box(b)[1]) - (box(a)[3] - box(a)[1]))[0];
 // A Compose button's label is a child node; the enabled state is on the clickable node around it.
 export const button = (nodes, label) => {
     const labelNode = nodes.find((node) => node.text === label || node['content-desc'] === label);
@@ -108,7 +115,7 @@ export const bootFailure = (nodes) => nodes.find((node) => /(^|\/)boot-failure$/
  * right and a TalkBack custom action.
  */
 export const taskRows = (nodes) => {
-    const list = nodes.find((node) => node.scrollable === 'true');
+    const list = mainList(nodes);
     const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
     return nodes.filter((node) => /(^|\/)task-row$/.test(node['resource-id'] ?? '')).filter((node) => {
         const [, t, , b] = box(node);
@@ -122,7 +129,7 @@ export const taskRow = (nodes, title) => taskRows(nodes).find((node) => node.tex
  * center capture button (check-focus-device failure 2026-09-23T18-15-24).
  */
 export const inList = (nodes, text) => {
-    const list = nodes.find((node) => node.scrollable === 'true');
+    const list = mainList(nodes);
     const [, top, , bottom] = list ? box(list) : [0, 0, 0, Infinity];
     return nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText' && box(node)[1] >= top && box(node)[3] <= bottom);
 };
@@ -137,7 +144,8 @@ export const readRetry = (nodes) => nodes.find((node) => (node['resource-id'] ??
 /** The node tagged [tag] (a Compose test tag, exposed as the resource id). */
 export const tagged = (nodes, tag) => nodes.find((node) => (node['resource-id'] ?? '').split('/').pop() === tag);
 /** A choice chip is on: selected (one-of-many chips are selectable, as RN's). */
-export const isOn = (node) => node?.selected === 'true';
+// A Compose chip or selectable reports its state as `selected` or, on this phone, as `checked` (Contexts chips, run 36).
+export const isOn = (node) => node?.selected === 'true' || node?.checked === 'true';
 /** The value an editor control announces as "<label>: <value>", as RN's accessibility labels do (Status, Destination, Due Date). */
 export const described = (nodes, label) => nodes.find((node) => node['content-desc']?.startsWith(`${label}: `))?.['content-desc'].slice(label.length + 2);
 /** The node whose TalkBack text is exactly [description]. */
@@ -370,7 +378,7 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     /** Swipes the app's list one step: 'up' scrolls toward the top. A list that fits is not scrollable: same hierarchy. */
     const swipe = async (nodes, direction) => {
-        const list = nodes.find((node) => node.scrollable === 'true');
+        const list = mainList(nodes);
         if (!list) return nodes;
         requireAppFront();
         const [x1, y1, x2, y2] = box(list);

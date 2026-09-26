@@ -145,6 +145,32 @@ object Lucide {
     val PlusPlain = lucide("PlusPlain", "M5 12h14", "M12 5v14")
     /** Lucide's Menu: RN's Menu tab. */
     val Menu = lucide("Menu", "M4 5h16", "M4 12h16", "M4 19h16")
+    // The Review, Contexts and Trash screens and the Weekly and Daily Review (review.tsx, review-modal.tsx, daily-review-modal.tsx).
+    val ClipboardCheck = lucide("ClipboardCheck", "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
+        "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", "m9 14 2 2 4-4")
+    val FolderOpen = lucide("FolderOpen", "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2")
+    private const val LIGHTBULB = "M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"
+    val Lightbulb = lucide("Lightbulb", LIGHTBULB, "M9 18h6", "M10 22h4")
+    val PartyPopper = lucide("PartyPopper", "M5.8 11.3 2 22l10.7-3.79", "M4 3h.01", "M22 8h.01", "M15 2h.01", "M22 20h.01",
+        "m22 2-2.24.75a2.9 2.9 0 0 0-1.96 3.12c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10",
+        "m22 13-.82-.33c-.86-.34-1.82.2-1.98 1.11c-.11.7-.72 1.22-1.43 1.22H17", "m11 2 .33.82c.34.86-.2 1.82-1.11 1.98C9.52 4.9 9 5.52 9 6.23V7",
+        "M11 13c1.93 1.93 2.83 4.17 2 5-.83.83-3.07-.07-5-2-1.93-1.93-2.83-4.17-2-5 .83-.83 3.07.07 5 2Z", stroke = 1.5f)
+    /** RN draws the review's Play filled, at stroke 2.5. */
+    val PlayFilled = lucide("PlayFilled", "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z", stroke = 2.5f, filled = true)
+    val Share2 = lucide("Share2", circle(18, 5, 3), circle(6, 12, 3), circle(18, 19, 3), "M8.59 13.51 15.42 17.49", "M15.41 6.51 8.59 10.49")
+    private const val SPARKLE = "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"
+    val Sparkles = lucide("Sparkles", SPARKLE, "M20 2v4", "M22 4h-4", circle(4, 20, 2))
+    val SparklesThin = lucide("SparklesThin", SPARKLE, "M20 2v4", "M22 4h-4", circle(4, 20, 2), stroke = 1.5f)
+    val Brain = lucide("Brain", "M12 18V5", "M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4", "M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5",
+        "M17.997 5.125a4 4 0 0 1 2.526 5.77", "M18 18a4 4 0 0 0 2-7.464", "M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517",
+        "M6 18a4 4 0 0 1-2-7.464", "M6.003 5.125a4 4 0 0 0-2.526 5.77")
+    /** RN's empty-state glyphs at stroke 1.5: Contexts' Tag and CheckCircle2, the reviews' CheckCircle2 and Star. */
+    val TagThin = lucide("TagThin", "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z",
+        "M7 7.5a.5 .5 0 1 0 1 0a.5 .5 0 1 0-1 0", stroke = 1.5f)
+    val CheckCircle2Thin = lucide("CheckCircle2Thin", circle(12, 12, 10), "m9 12 2 2 4-4", stroke = 1.5f)
+    val StarThin = lucide("StarThin", STAR, stroke = 1.5f)
+    /** RN's selection check (stroke 3). */
+    val CheckBold = lucide("CheckBold", "M20 6 9 17l-5-5", stroke = 3f)
 }
 
 /*

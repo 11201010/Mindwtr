@@ -57,11 +57,13 @@ const expectLanguage = async (language, step) => {
     await waitFor('the app process to end', () => pid() === '', 10_000);
     await waitFor('home screen', () => front().includes(`${home}/`), 10_000);
     device.launch(ACTIVITY);
-    const [inbox, focus, projects, capture, scope] = ['tab.inbox', 'tab.next', 'nav.projects', 'nav.addTask', 'projects.allAreas']
-        .map((key) => label(language, key));
+    const [inbox, focus, capture, scope] = ['tab.inbox', 'tab.next', 'nav.addTask', 'projects.allAreas'].map((key) => label(language, key));
     const nodes = await waitFor(`the ${language} Inbox`, (current) => tab(current, inbox)
         && current.some((node) => node.text === scope), 60_000);
-    for (const [name, text] of [['tab.inbox', inbox], ['tab.next', focus], ['nav.projects', projects]]) {
+    // The quick-access tab holds the view core's quickAccessView names: Projects, Review, or Contexts, each in core's words.
+    const quick = ['nav.projects', 'tab.review', 'nav.contexts'].map((key) => [key, label(language, key)]).find(([, text]) => tab(nodes, text))
+        ?? ['nav.projects', label(language, 'nav.projects')];
+    for (const [name, text] of [['tab.inbox', inbox], ['tab.next', focus], quick]) {
         check(Boolean(tab(nodes, text)), `(${step}) the ${name} tab reads core's ${language} "${text}"`);
     }
     // RN's center capture button is labelled with core's nav.addTask.

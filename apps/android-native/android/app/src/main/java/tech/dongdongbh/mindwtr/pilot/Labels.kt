@@ -54,6 +54,9 @@ val LABEL_KEYS = listOf(
     "tab.menu", "waiting.title", "someday.title", "nav.reference", "nav.history", "taskEdit.moreOptions", "common.search",
     "filters.excluded", "filters.remove", "filters.clear", "filters.active", "filters.contexts", "filters.projects", "filters.timeEstimate",
     "filters.more", "filters.priority", "bulk.selected", "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "common.all",
+    // Contexts, Trash, Review and the reviews, and RN's quick-access tab; the screens' words are core's views.
+    "contexts.title", "trash.title", "nav.review", "projects.title", "tab.review", "nav.contexts", "nav.done", "common.delete", "task.aria.delete",
+    "common.noMatches", "review.markReviewed", "review.markReviewedDone", "review.advanceWeek", "task.select", "task.deselect",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

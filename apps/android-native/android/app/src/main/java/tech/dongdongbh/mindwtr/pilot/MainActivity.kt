@@ -133,7 +133,9 @@ class MainActivity : ComponentActivity() {
                         // An open project draws its own header, as RN's project screen does. In landscape the
                         // selected tab already names the screen, so the title bar gives its height to the rows.
                         val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-                        if ((screen != Screen.Projects || openProjectId == null) && !landscape) TopBar(model, t(screen.label))
+                        // RN's quick-access tab titles its header with the view it holds (Review, Contexts, or Projects).
+                        val quick = screen == Screen.Projects && menu.quickView != "projects"
+                        if ((screen != Screen.Projects || openProjectId == null || quick) && !landscape) TopBar(model, t(if (screen == Screen.Projects) menu.quickLabel else screen.label))
                         // A failure stays in view above the list. A failed read offers Try again; a failed command only its exact retry.
                         error?.let { message ->
                             FailureBanner(message) {
@@ -148,7 +150,7 @@ class MainActivity : ComponentActivity() {
                                     when (screen) {
                                         Screen.Inbox -> InboxList(model, Modifier.fillMaxSize())
                                         Screen.Focus -> FocusList(model, Modifier.fillMaxSize())
-                                        Screen.Projects -> ProjectsTab(model, Modifier.fillMaxSize())
+                                        Screen.Projects -> if (quick) QuickList(model, Modifier.fillMaxSize()) else ProjectsTab(model, Modifier.fillMaxSize())
                                     }
                                     // RN's More sheet sits over the list, above the tab bar, which stays usable.
                                     if (menu.sheet) MoreSheet(model)
@@ -159,6 +161,7 @@ class MainActivity : ComponentActivity() {
                             if (capture == null) ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 78.dp))
                             capture?.let { CapturePopup(model, it) }
                             if (areaSheet) AreaSheet(model)
+                            if (quick) MenuDialogs(model)
                             StatusMenu(model)
                         }
                     }
@@ -226,24 +229,25 @@ fun OwedRetry(model: InboxViewModel) {
 
 /**
  * RN's bottom tab bar: Focus, Inbox, the capture button, the quick-access view
- * (Projects), then Menu, which opens RN's More sheet. Every control keeps the
+ * (core's quickAccessView: Review, Contexts, or Projects), then Menu, which opens RN's More sheet. Every control keeps the
  * place an RN user's thumb expects; a tab or the capture button closes the sheet, as in RN.
  */
 @Composable
 private fun TabBar(model: InboxViewModel) {
     val c = LocalTheme.current.colors
+    val quick = model.menu.quickView
     Row(Modifier.fillMaxWidth().height(66.dp).background(c.cardBg).hairline(c.border, top = true), verticalAlignment = Alignment.CenterVertically) {
         TabItem(model, Screen.Focus, Lucide.Target)
         TabItem(model, Screen.Inbox, Lucide.Inbox)
         CaptureButton(model)
-        TabItem(model, Screen.Projects, Lucide.Folder)
+        TabItem(model, Screen.Projects, when (quick) { "review" -> Lucide.ClipboardCheck; "contexts" -> Lucide.Circle; else -> Lucide.Folder }, model.menu.quickLabel)
         MenuTab(model)
     }
 }
 
 /** RN's tab: icon 26 when active (24 and 80% opacity when not), label 10 below, tint when active. */
 @Composable
-private fun RowScope.TabItem(model: InboxViewModel, tab: Screen, icon: ImageVector) = with(model) {
+private fun RowScope.TabItem(model: InboxViewModel, tab: Screen, icon: ImageVector, label: String = tab.label) = with(model) {
     val c = LocalTheme.current.colors
     val active = screen == tab
     val color = if (active) c.tabIconSelected else c.tabIconDefault
@@ -252,7 +256,7 @@ private fun RowScope.TabItem(model: InboxViewModel, tab: Screen, icon: ImageVect
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
         Icon(icon, null, tint = color, modifier = Modifier.size(if (active) 26.dp else 24.dp).fade(if (active) 1f else 0.8f))
-        Text(t(tab.label), style = rnText(10, if (active) 700 else 600, 12), color = color, maxLines = 1,
+        Text(t(label), style = rnText(10, if (active) 700 else 600, 12), color = color, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
     }
 }

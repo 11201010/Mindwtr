@@ -57,7 +57,15 @@ const waitingUi = source('WaitingScreen.kt');
 const somedayUi = source('SomedayScreen.kt');
 const statusListUi = source('StatusListScreen.kt');
 const archiveUi = source('ArchiveScreen.kt');
-const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi };
+// Pass 7: Contexts, Trash, Review and the Weekly and Daily Review, each in its own file, and core's list actions they send.
+const contextsUi = source('ContextsScreen.kt');
+const trashUi = source('TrashScreen.kt');
+const reviewUi = source('ReviewScreen.kt');
+const weeklyUi = source('WeeklyReviewScreen.kt');
+const dailyUi = source('DailyReviewScreen.kt');
+const listActionsKt = source('ListActions.kt');
+const reviewScreens = { contextsUi, trashUi, reviewUi, weeklyUi, dailyUi, listActionsKt };
+const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi, ...reviewScreens };
 const snapshotsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/RecoverySnapshots.kt'), 'utf8');
 // Comments may name the rules below; only code is checked against them.
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
@@ -68,7 +76,7 @@ assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ ref
 assert.match(activity, /fun OwedRetry\(model: InboxViewModel\) \{\s+if \(model\.failedAction != null\) TextButton\(onClick = model::retryOwed, enabled = !model\.busy, modifier = Modifier\.testTag\("owed-retry"\)\)/);
 // The read refresh and the owed retry are told apart (test tags): the checks assert the owed one only while a retry is owed.
 assert.match(activity, /\} else OwedRetry\(model\)|else OwedRetry\(model\)/);
-for (const [name, text] of Object.entries({ activity, editorUi, searchUi, processUi, menuUi })) {
+for (const [name, text] of Object.entries({ activity, editorUi, searchUi, processUi, menuUi, weeklyUi, dailyUi })) {
     assert.match(text, /FailureBanner\(message\) \{[\s\S]{0,320}?OwedRetry\(model\)/, `${name}: the failure banner offers the owed retry`);
 }
 {
@@ -91,15 +99,19 @@ for (const [name, text] of Object.entries({ rowUi, model, focusUi, projectsUi, a
 }
 assert.doesNotMatch(code(rowUi), /swipeTarget|archived\.restoreToInbox/);
 assert.match(rowUi, /when \(swipe\.icon\) \{ "restore" -> Lucide\.RotateCcw; "done" -> Lucide\.Check; else -> Lucide\.ArrowRight \}/);
-assert.match(rowUi, /val swipeOn = completable && \(if \(target == "done"\) canComplete else canMove\)/);
+// A list whose contract writes its rows (Contexts, the Review screens) sends its own status action, with the same enabled rule for swipe and TalkBack.
+assert.match(rowUi, /val swipeOn = if \(actions != null\) canEdit && !actions\.selecting else completable && \(if \(target == "done"\) canComplete else canMove\)/);
 assert.match(rowUi, /val canMove = writable && !busy && \(failedAction == null \|\| failedAction == statusAction\(task, target\)\)/);
-assert.match(rowUi, /val onSwipe = \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
-assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe, onMenu = \{ showStatusMenu\(task\) \}\)/);
+assert.match(rowUi, /val onSwipe = actions\?\.let \{ listed -> \{ listed\.status\(target\) \} \} \?: \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
+assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe, onMenu = \{ showStatusMenu\(task\) \}, onDelete = onDelete\)/);
 assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \},\s*CustomAccessibilityAction\(t\("taskStatus\.changeStatus"\)\) \{ showStatusMenu\(task\); true \}\)/);
 assert.doesNotMatch(code(rowUi + activity), /IconButton\(onClick = \{ complete\(/, 'no visible Done button: RN has none');
 // RN's reveal-then-tap (#1275): the swipe only reveals the button; its tap runs the action, its long-press opens the status menu.
 assert.match(rowUi, /\.combinedClickable\(enabled = enabled, role = Role\.Button, onLongClick = \{ settle\(0f\); onMenu\(\) \}\) \{ settle\(0f\); onSwipe\(\) \}/);
-assert.match(rowUi, /onDragStopped = \{ settle\(if \(offset\.value > open \/ 2\) open else 0f\) \}/, 'a drag only opens or closes the row');
+assert.match(rowUi, /onDragStopped = \{ settle\(if \(offset\.value > open \/ 2\) open else if \(offset\.value < left \/ 2\) left else 0f\) \}/, 'a drag only opens or closes the row');
+// RN's Delete swipe exists only where a list's contract trashes rows with core's Undo; a selecting list has no swipe.
+assert.match(rowUi, /val left = if \(onDelete != null\) -open else 0f/);
+assert.match(rowUi, /val onDelete = actions\?\.delete\?\.takeIf \{ canEdit && !selecting \}/);
 assert.doesNotMatch(code(rowUi), /SwipeToDismissBox|combinedClickable\([^)]*\)[^\n]*openEditor/, 'no one-gesture swipe; the row\'s own long-press stays free');
 // Every failed command holds its exact retry, except an update or editor save core refused before writing.
 assert.match(model, /internal val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
@@ -517,7 +529,8 @@ for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, 
         }
     }
 }
-assert.match(activity, /Text\(t\(tab\.label\), style = rnText\(10, if \(active\) 700 else 600, 12\)/);
+assert.match(activity, /Text\(t\(label\), style = rnText\(10, if \(active\) 700 else 600, 12\)/);
+assert.match(activity, /private fun RowScope\.TabItem\(model: InboxViewModel, tab: Screen, icon: ImageVector, label: String = tab\.label\)/);
 assert.match(model, /enum class Screen\(val label: String\) \{ Inbox\("tab\.inbox"\), Focus\("tab\.next"\), Projects\("nav\.projects"\) \}/);
 // A failed boot shows only its message, found by a test tag, and no command control.
 assert.match(activity, /\} else if \(!writable\) \{[^}]*Text\(error\.orEmpty\(\), color = MaterialTheme\.colorScheme\.error, modifier = Modifier\.testTag\("boot-failure"\)\.padding\(24\.dp\)\)\s*\} else \{/);
@@ -815,8 +828,12 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
     assert.match(hostEntry, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];[\s\S]{0,120}?return taskResult\(name as MenuCommand, await command\(JSON\.parse\(json\) as never\)\);/);
     assert.match(hostEntry, /menuRead\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{[\s\S]{0,300}?if \(name !== 'more'\) requireSaved\(\);\s*const read = MENU_READS\[name\];[\s\S]{0,100}?return unwrap\(read\(JSON\.parse\(json\) as never\)\);/);
     const input = code(menuModel.slice(menuModel.indexOf('private fun input(action: FailedAction)'), menuModel.indexOf('}.toString()', menuModel.indexOf('private fun input('))));
-    for (const kind of kinds.filter((kind) => kind !== 'archiveAction')) assert.match(input, new RegExp(`"${kind}" ->`), `input() builds the ${kind} request`);
-    assert.match(input, /else -> JSONObject\(\)\.put\("requestId", action\.id\)\.put\("action", JSONObject\(action\.title\)\)/, 'an Archive action is core\'s action with its request UUID');
+    // The list actions (Archive, Contexts, Trash, Review, and the Review's project Add task) are core's action with its request UUID.
+    const LIST_KINDS = ['archiveAction', 'contextsAction', 'trashAction', 'reviewAction', 'reviewTask'];
+    for (const kind of kinds.filter((kind) => !LIST_KINDS.includes(kind))) assert.match(input, new RegExp(`"${kind}" ->`), `input() builds the ${kind} request`);
+    for (const kind of LIST_KINDS) assert(kinds.includes(kind), `MENU_KINDS has ${kind}`);
+    assert.doesNotMatch(input, new RegExp(`"(${LIST_KINDS.join('|')})" ->`), 'no list action has a request of its own shape');
+    assert.match(input, /else -> JSONObject\(\)\.put\("requestId", action\.id\)\.put\("action", JSONObject\(action\.title\)\)/, 'a list action is core\'s action with its request UUID');
 }
 assert.match(menuModel, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->\s+val reply = try \{\s+runtime\.menuCommand\(action\.kind, input\(action\)\)[\s\S]{0,700}?shell\.acknowledged\(action\)/, 'menu writes run through perform with their exact FailedAction');
 assert.equal(code(menuModel).match(/runtime\.menuCommand\(/g).length, 1, 'send is the one menu write');
@@ -832,7 +849,7 @@ assert.match(menuModel, /fun saveCreate\(\) \{\s+val action = createAction\(\) \
 assert.match(menuModel, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
 assert.match(model, /val menu = MenuModel\(this, saved, prefs, File\(app\.noBackupFilesDir, "menu"\)\)/);
 assert.match(menuModel, /store\.read\(\)\?\.let \{ pending ->\s+if \(shell\.failedAction == null\) \{\s+shell\.owe\(pending\)\s+send\(pending\)/);
-assert.match(model, /if \(reopenCapture != null\) resumeCapture\(reopenCapture\) else captureStore\.delete\(\)\s+\/\/[^\n]*\s+menu\.start\(\)/);
+assert.match(model, /if \(reopenCapture != null\) resumeCapture\(reopenCapture\) else captureStore\.delete\(\)\s+\/\/[^\n]*\s+menu\.start\(sheet\)/);
 assert.match(menuModel, /if \(refused && action\.kind in CREATES\) shell\.ui \{ store\.delete\(\) \}/, 'a refused create wrote nothing: its record goes');
 assert.match(menuModel, /shell\.acknowledged\(action\)\s+shell\.ui \{\s+if \(action\.kind in CREATES\) store\.delete\(\)/, 'an acknowledged create\'s record goes');
 assert.equal(code(menuModel).match(/store\.delete\(\)/g).length, 2, 'only an answer from core removes a pending create');
@@ -860,17 +877,18 @@ assert.match(menuUi, /removeChip\(chip\.getJSONObject\("action"\)\)/);
 // No Kotlin policy in the new files: core's items, headings, collections and options are walked as sent.
 for (const [name, text] of Object.entries({ menuModel, ...menuScreens })) {
     assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping (filterEdit sends core's edit)`);
-    assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|Calendar|Instant\b|\.format\(|toLocal/, `${name}: no Kotlin date formatting or parsing`);
+    // The date APIs, not a calendar icon or heading (Lucide.Calendar, the reviews' calendar cards).
+    assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|java\.util\.Calendar|Calendar\.getInstance|GregorianCalendar|Instant\b|\.format\(|toLocal/, `${name}: no Kotlin date formatting or parsing`);
     assert.doesNotMatch(code(text), new RegExp(`${STATUS}(?:\\s*,\\s*${STATUS})*\\s*->\\s*${STATUS}`), `${name}: no status-to-status map`);
 }
 // The More sheet: core's destinations (getMoreMenu); a tile this app builds opens, the others are drawn disabled, never a dead tap.
 // One accessibility node holds the label, the role and the state, so TalkBack hears an unbuilt tile as disabled.
 assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
-assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects"\)/);
+assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash"\)/);
 assert.match(activity, /if \(menu\.sheet\) MoreSheet\(model\)/);
 assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(model, listed\)/);
 // Navigation survives rotation (the model is held by the ViewModel) and process death (the Bundle): the sheet, screen, tab, dialog, session.
-for (const key of ['menuSheet', 'menuScreen', 'historyTab', 'menuState', 'menuDialog']) assert.match(menuModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
+for (const key of ['menuSheet', 'menuScreen', 'historyTab', 'menuState', 'menuDialog', 'quickAccess', 'reviewFrom']) assert.match(menuModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
 assert.match(menuUi, /BackHandler\(enabled = failedAction == null\) \{ if \(menu\.dialog != null\) menu\.backInDialog\(\) else menu\.closeScreen\(\) \}/);
 // Search results for the Menu lists open them (review ruling 5 of pass 4).
 assert.match(searchUi, /listed != null -> \{ closeSearch\(\); menu\.openRoute\(listed\) \}/);
@@ -879,6 +897,67 @@ assert.match(menuModel, /"\/waiting" to \(MenuScreen\.Waiting to null\), "\/some
 assert.match(viewStateKt, /const val DONE_VIEW_KEY = "mindwtr:view:done:v1"/);
 assert.match(viewStateKt, /const val ARCHIVED_VIEW_KEY = "mindwtr:view:archived:v1"/);
 assert.match(viewStateKt, /private fun key\(list: String\) = "mindwtr:view:group-collapse:\$list:v1"/);
+
+// Pass 7: Contexts, Trash, Review, and the Weekly and Daily Review, on core's list views and review views.
+// Reads pass Kotlin's input to core unchanged; every write is core's action through MenuModel.act -> send -> perform(action).
+for (const [name, method] of [['contexts', 'getContextsView'], ['trash', 'getTrashView'], ['review', 'getReviewOverview'], ['weekly', 'getWeeklyReview'],
+    ['weeklyList', 'getWeeklyReviewList'], ['daily', 'getDailyReview']]) {
+    assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
+}
+for (const [name, method] of [['contextsAction', 'runContextsAction'], ['trashAction', 'runTrashAction'], ['reviewAction', 'runReviewAction'], ['reviewTask', 'runReviewAction']]) {
+    assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
+}
+assert.match(menuModel, /internal fun act\(kind: String, action: JSONObject\) = send\(FailedAction\(kind, UUID\.randomUUID\(\)\.toString\(\), action\.toString\(\)\)\)/,
+    'a list action is one command with a new request UUID; the action itself is its exact retry');
+for (const [name, text] of Object.entries(reviewScreens)) {
+    assert.doesNotMatch(code(text), /\bsend\(|shell\.perform|FailedAction\(/, `${name}: writes go through MenuModel.act or saveCreate, never around perform`);
+}
+// Kotlin names only core's action types (NativeContextsAction, NativeTrashAction, NativeReviewAction) and Review's expansion edits.
+{
+    const reviewSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract-review-views.ts'), 'utf8');
+    const union = (text, type) => [...(new RegExp(`export type ${type} =([\\s\\S]*?);\\n`).exec(text)?.[1] ?? '').matchAll(/type: '(\w+)'/g)].map(([, name]) => name);
+    const allowed = new Set([...union(contractSource, 'NativeContextsAction'), ...union(contractSource, 'NativeTrashAction'),
+        ...union(reviewSource, 'NativeReviewAction'), ...union(reviewSource, 'NativeReviewExpansionEdit')]);
+    assert(allowed.has('emptyTrash') && allowed.has('addProjectTask') && allowed.has('toggleArea'), 'core\'s action unions were read');
+    const used = new Set([...code(Object.values(reviewScreens).join('\n')).matchAll(/put\("type", "(\w+)"\)/g)].map(([, type]) => type));
+    assert(used.size > 0);
+    for (const type of used) assert(allowed.has(type), `${type} is one of core's list actions or expansion edits`);
+    assert.doesNotMatch(code(Object.values(reviewScreens).join('\n')), /put\("type", [^"]/, 'no action type is built from a variable');
+}
+// Destructive actions stay as safe as RN: delete forever, the selection's delete forever, and Clear Trash only after core's question;
+// Clear Trash sends the revision its question showed (core refuses a stale one).
+for (const call of ['purgeItem(kind, id)', 'purgeItems(tasks, projects)', 'emptyTrash(clear.getString("revision"))']) {
+    const at = trashUi.indexOf(call);
+    assert(at > 0 && trashUi.slice(Math.max(0, at - 160), at).includes('confirm('), `Trash sends ${call} only from core's confirmation`);
+}
+assert.equal(code(trashUi).match(/\b(purgeItem|purgeItems|emptyTrash)\(/g).length, 3, 'Trash builds each destructive action once, inside its confirmation');
+assert.match(menuUi, /confirmButton = \{ TextButton\(onClick = \{ keepDialog\(null\); act\(open\.optString\("command", "archiveAction"\), open\.getJSONObject\("action"\)\) \}, enabled = idle\)/);
+// Bulk trash (Contexts, Review) asks core's question first too; a row's trash is the recoverable move with core's Undo, as in RN.
+assert.match(contextsUi, /confirm\(bulk\.getJSONObject\("deleteConfirmation"\), trashTasks\(selected\), "contextsAction"\)/);
+assert.match(reviewUi, /"delete" -> confirm\(bulk\.getJSONObject\("deleteConfirmation"\), trashTasks\(selected\), "reviewAction"\)/);
+// The status menu on a list whose contract writes its rows sends that list's setTaskStatus; elsewhere it keeps updateTask.
+assert.match(rowUi, /\.clickable\(enabled = enabled, role = Role\.Button\) \{ if \(!menu\.rowStatus\(task, status\)\) changeStatus\(task, status\) \}/);
+assert.match(menuModel, /private val ROW_KINDS = mapOf\("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction"\)/);
+// The Weekly Review's project Add task creates a task: its exact request (the request UUID core makes the task's id) is on disk first.
+assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask"\)/);
+assert.match(menuModel, /"projectTask" -> FailedAction\("reviewTask", open\.getString\("requestId"\), addProjectTask\(open\.getString\("projectId"\), open\.optString\("text"\)\)\.toString\(\)\)/);
+assert.equal(code(weeklyUi).match(/saveCreate\(\)/g).length, 3, 'Return, Save & edit and Add all send the one persisted request');
+// A review's place is core's checkpoint, stored under core's key (RN's session keys) and sent back; Finish deletes it.
+{
+    const reviewModelSource = readFileSync(resolve(app, '../../packages/core/src/review-views-model.ts'), 'utf8');
+    for (const [kotlin, core] of [['WEEKLY_REVIEW_KEY', 'WEEKLY_REVIEW_SESSION_STORAGE_KEY'], ['DAILY_REVIEW_KEY', 'DAILY_REVIEW_SESSION_STORAGE_KEY']]) {
+        const value = new RegExp(`export const ${core} = '([^']+)'`).exec(reviewModelSource)[1];
+        assert.match(viewStateKt, new RegExp(`const val ${kotlin} = "${value}"`), `${kotlin} is core's ${core}`);
+    }
+}
+assert.match(menuModel, /if \(list == "weekly" \|\| list == "daily"\) prefs\.edit\(\)\.putString\(next\.view\.getString\("storageKey"\), next\.view\.getString\("checkpoint"\)\)\.apply\(\)/);
+assert.match(weeklyUi, /prefs\.edit\(\)\.remove\(view\.getString\("storageKey"\)\)\.apply\(\)/);
+// Paging stays under the view's revision: the Weekly Review's nested lists page through getWeeklyReviewList with the view's own inputs.
+assert.match(menuModel, /runtime\.menuRead\("weeklyList", JSONObject\(page\.params\.toString\(\)\)\.put\("list", name\.substringBefore\(':'\)\)[\s\S]{0,160}?\.put\("revision", page\.revision\)/);
+// RN's quick-access tab: core's quickAccessView; Review and Contexts are built, anything else shows Projects (Calendar: pass 8).
+assert.match(menuModel, /val quickView: String get\(\) = quickAccess\?\.takeIf \{ it == "review" \|\| it == "contexts" \} \?: "projects"/);
+assert.match(activity, /TabItem\(model, Screen\.Projects, when \(quick\) \{ "review" -> Lucide\.ClipboardCheck; "contexts" -> Lucide\.Circle; else -> Lucide\.Folder \}, model\.menu\.quickLabel\)/);
+assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.getOrNull\(\)/, 'the quick-access view is read on the boot thread, before the first frame');
 
 const fakeCore = `
 export class SqliteAdapter {
@@ -994,6 +1073,18 @@ export function createNativeHostContract() {
     async moveSomedayTasksToSection(input) { globalThis.menuInputs.push(JSON.stringify(['somedayMove', input])); return globalThis.menuCommandResult; },
     async addSomedaySectionTask(input) { globalThis.menuInputs.push(JSON.stringify(['somedayTask', input])); return { ok: true, value: { id: input.captureId, toast: 'Task created' } }; },
     async runArchiveAction(input) { globalThis.menuInputs.push(JSON.stringify(['archiveAction', input])); return { ok: true, value: { changed: true, toast: null } }; },
+    getContextsView(input) { globalThis.menuInputs.push(JSON.stringify(['contexts', input])); return { ok: true, value: { version: 1, revision: 'c', total: 0, rows: [] } }; },
+    getTrashView(input) { globalThis.menuInputs.push(JSON.stringify(['trash', input])); return { ok: true, value: { version: 1, revision: 't', total: 0, items: [] } }; },
+    getReviewOverview(input) { globalThis.menuInputs.push(JSON.stringify(['review', input])); return { ok: true, value: { version: 1, revision: 'o', total: 0, items: [] } }; },
+    getWeeklyReview(input) { globalThis.menuInputs.push(JSON.stringify(['weekly', input])); return { ok: true, value: { version: 1, revision: 'w', total: 0, items: [] } }; },
+    getWeeklyReviewList(input) { globalThis.menuInputs.push(JSON.stringify(['weeklyList', input])); return { ok: true, value: { version: 1, revision: 'w', total: 0, items: [] } }; },
+    getDailyReview(input) { globalThis.menuInputs.push(JSON.stringify(['daily', input])); return { ok: true, value: { version: 1, revision: 'd', total: 0, items: [] } }; },
+    async runContextsAction(input) { globalThis.menuInputs.push(JSON.stringify(['contextsAction', input])); return { ok: true, value: { changed: true, toast: null } }; },
+    async runTrashAction(input) { globalThis.menuInputs.push(JSON.stringify(['trashAction', input])); return { ok: true, value: { changed: true, toast: null } }; },
+    async runReviewAction(input) {
+      globalThis.menuInputs.push(JSON.stringify(['reviewAction', input]));
+      return input.action.type === 'markReviewedTasks' ? { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } } : { ok: true, value: { changed: true, toast: null, createdId: null } };
+    },
   };
 }
 export const DEFAULT_GLOBAL_SEARCH_FILTERS = { scope: 'all' };
@@ -1216,6 +1307,25 @@ ready.newInputs.length = 0;
         JSON.stringify(['somedayTask', { title: 't', sectionId: null, captureId: 'c' }])]);
     ready.menuInputs.length = 0;
 }
+// Pass 7: Contexts, Trash, Review and the reviews pass Kotlin's JSON to core unchanged; a failed save keeps its code prefix.
+{
+    const reads = [['contexts', { tokens: ['@home'], matchMode: 'all', searchQuery: '', selectedIds: [], offset: 0, limit: 50 }],
+        ['trash', { selected: { taskIds: [], projectIds: [] }, offset: 0, limit: 50 }],
+        ['review', { scope: 'due', selectedIds: [], expansionEdit: { type: 'cycle' }, offset: 0, limit: 50 }],
+        ['weekly', { checkpoint: null, expandedProjectId: null, offset: 0, limit: 50 }],
+        ['weeklyList', { checkpoint: 'c', expandedProjectId: null, list: 'contextTasks', key: '@home', offset: 100, limit: 100, revision: 'w' }],
+        ['daily', { checkpoint: null, offset: 0, limit: 50 }]];
+    for (const [name, input] of reads) assert.equal((await poll(ready, ready.MindwtrHost.menuRead(name, JSON.stringify(input)))).ok, true, `menuRead ${name}`);
+    const commands = [['contextsAction', { requestId: 'r1', action: { type: 'trashTask', taskId: 't' } }],
+        ['trashAction', { requestId: 'r2', action: { type: 'emptyTrash', revision: 'd' } }],
+        ['reviewTask', { requestId: 'r3', action: { type: 'addProjectTask', projectId: 'p', title: 'x' } }]];
+    for (const [name, input] of commands) assert.equal((await poll(ready, ready.MindwtrHost.menuCommand(name, JSON.stringify(input)))).ok, true, `menuCommand ${name}`);
+    const mark = { requestId: 'r4', action: { type: 'markReviewedTasks', taskIds: ['t'] } };
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.menuCommand('reviewAction', JSON.stringify(mark))), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.deepEqual(ready.menuInputs, [...reads.map(([name, input]) => JSON.stringify([name, input])),
+        ...commands.map(([name, input]) => JSON.stringify([name === 'reviewTask' ? 'reviewAction' : name, input])), JSON.stringify(['reviewAction', mark])]);
+    ready.menuInputs.length = 0;
+}
 ready.persistenceFailure = { message: 'disk full' };
 const queriesBeforeFailure = ready.queryCount;
 const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
@@ -1398,4 +1508,5 @@ console.log('RN legacy import: after the validated load, confirmed by a re-read 
 console.log('Search and Process Inbox: core reads in the background with freshness, answers and saves through perform with exact, persisted requests');
 console.log('RN look: rows read core meta (no Kotlin date formatting or coloring); stars, status, new project, and area filter run through perform with exact retries');
 console.log('Menu tab: core\'s menu views through CoreHost, writes through perform with exact requests, Someday creates on disk first, no Kotlin policy');
+console.log('Contexts, Trash, Review and the reviews: core\'s views, core\'s actions through perform, destructive actions behind core\'s question, checkpoints under core\'s keys');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

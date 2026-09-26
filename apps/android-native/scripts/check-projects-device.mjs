@@ -225,7 +225,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             }
             // The other checks' captures from earlier runs, by each script's exact title shape (a 12-digit run id):
             // lifecycle 81-86, focus 71-72, editor 91 (plus the 7 and 78 its renames append), search 51, Process Inbox 52, capture 53-59 (57 appends a line number),
-            // menu 60 (plus the 1-6 of its five captures and its Someday task).
+            // menu 60 (plus the 1-6 of its five captures and its Someday task), review 67 (plus the 1-4 of its four captures).
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
                 lifecycle: /^8[1-6][0-9]{12}$/,
@@ -235,6 +235,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 processInbox: /^52[0-9]{12}$/,
                 capture: /^5[3-9][0-9]{12}[12]?$/,
                 menu: /^60[0-9]{12}[1-6]$/,
+                review: /^67[0-9]{12}[1-4]$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);
@@ -248,6 +249,11 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
         }
         // Every run starts from RN's defaults for what it changes: all areas, the fixture unstarred, no project it added.
         value(await host.setAreaFilter({ included: [], excluded: [] }));
+        // This check reads the Projects tab: RN's quick-access view set to Projects (RN's default is Review, which takes the slot).
+        if (store().settings.appearance?.mobileQuickAccessView !== 'projects') {
+            await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' } });
+            await flushPendingSave();
+        }
         for (const project of live(store()._allProjects).filter((item) => item.title === names.added)) {
             const result = await store().deleteProject(project.id);
             if (!result.success) throw new Error('removing the added project failed: ' + result.error);

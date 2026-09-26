@@ -173,7 +173,7 @@ const tapSave = async () => tapExpecting(button(await screen(), 'Save') ?? fail(
  * rows (as in RN), so it remembers the last title it scrolled past for `sectionOf`.
  */
 let passedSection;
-const findRow = async (title) => {
+const scanForRow = async (title) => {
     let nodes = await toTop();
     passedSection = undefined;
     // A budget in proportion to what Focus can list: every open task may be a row (about two per swipe in
@@ -189,13 +189,26 @@ const findRow = async (title) => {
         // run 32), so it is found by its label and tapped at its center; a pill that stays put after the tap is
         // treated as disabled (a retry is owed) and the scroll goes on.
         const listBox = box(nodes.find((node) => node.scrollable === 'true') ?? { bounds: '[0,0][0,99999]' });
+        // A tap that slipped onto the tab bar's Menu opens the More sheet over the list: close it and go on (run 37).
+        if (nodes.some((node) => /(^|\/)more-sheet$/.test(node['resource-id'] ?? ''))) {
+            requireAppFront();
+            sh('input keyevent KEYCODE_BACK');
+            await sleep(800);
+            nodes = await screen();
+            continue;
+        }
+        // Only a pill wholly inside the list is tapped, after the list settles (the tab bar sits right under it); one
+        // cut by the edge is scrolled up first by the swipe below.
         const more = nodes.find((node) => node['content-desc']?.startsWith('More ') && node.enabled !== 'false'
-            && box(node)[1] >= listBox[1] && box(node)[3] <= listBox[3]);
+            && box(node)[1] >= listBox[1] && box(node)[3] <= listBox[3] - 20);
         // While a retry is owed the pill is locked by design: never tap it then (a tap that falls through can
         // land on the tab bar and open the Menu sheet, run 33).
         if (more && more['content-desc'] !== triedMore && !hasError(nodes)) {
             triedMore = more['content-desc'];
-            await tap(more);
+            // Tap the pill where it rests: a tap while the list still moves can miss it (run 36).
+            nodes = await device.settle(nodes);
+            const resting = nodes.find((node) => node['content-desc'] === more['content-desc']) ?? more;
+            await tap(resting);
             try {
                 nodes = await waitFor('Load more to finish', (current) => !current.some((node) => node['content-desc'] === more['content-desc']
                     && node.bounds === more.bounds), 15_000);
@@ -207,7 +220,14 @@ const findRow = async (title) => {
         if (signature(next) === signature(nodes)) break;
         nodes = next;
     }
-    return fail(`row ${title} is not in Focus (${open} open tasks, ${budget} steps)`);
+    return { missing: `row ${title} is not in Focus (${open} open tasks, ${budget} steps)` };
+};
+/** Scans Focus for [title]; a scan that missed (a moving list, a missed More tap) is repeated once from the top. */
+const findRow = async (title) => {
+    const first = await scanForRow(title);
+    if (!first.missing) return first;
+    const second = await scanForRow(title);
+    return second.missing ? fail(second.missing) : second;
 };
 const expectSection = async (title, section, label) => {
     const nodes = await findRow(title);

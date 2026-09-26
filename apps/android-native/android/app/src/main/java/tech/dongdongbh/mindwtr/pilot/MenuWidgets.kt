@@ -101,7 +101,9 @@ fun JSONObject.menuText(name: String): String? = if (!has(name) || isNull(name))
 /**
  * RN's stack screen for a Menu destination, full screen over the tabs as RN pushes it: its header with Back, a failure
  * above the list (a read's Try again, or an owed command's exact retry), History's tabs, the list, RN's toast, and the
- * open sheet or dialog. The list is read again on every resume.
+ * open sheet or dialog. The Weekly and Daily Review draw their own header and footer; RN's Projects screen shows the Projects
+ * tab's list (an open project draws its own header, as on the tab). The capture popup opens over it (the Weekly Review's
+ * Add task). The list is read again on every resume.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -111,31 +113,57 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
     LaunchedEffect(owner) { owner.repeatOnLifecycle(Lifecycle.State.RESUMED) { menu.refresh() } }
     BackHandler(enabled = failedAction == null) { if (menu.dialog != null) menu.backInDialog() else menu.closeScreen() }
     Box(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().semantics { testTagsAsResourceId = true }.testTag("menu-screen")) {
-        Column(Modifier.fillMaxSize()) {
-            val list = menu.list
-            MenuHeader(t(screen.title), enabled = failedAction == null, onBack = menu::closeScreen) {
-                // Reference and Done put their list menu in the header (RN's overflowPlacement "navigation").
-                if (list == "reference" || list == "done") OverflowTrigger(plain = true) { menu.openDialog("overflow") }
-            }
-            error?.let { message ->
-                FailureBanner(message) {
-                    if (failedAction == null) TextButton(onClick = { menu.retryRead() }, enabled = !busy, modifier = Modifier.testTag("read-retry")) { Text(t("common.retry")) }
-                    else OwedRetry(model)
+        when (screen) {
+            MenuScreen.Weekly -> WeeklyReview(model)
+            MenuScreen.Daily -> DailyReview(model)
+            else -> Column(Modifier.fillMaxSize()) {
+                val list = menu.list
+                if (screen != MenuScreen.Projects || openProjectId == null) MenuHeader(t(screen.title), enabled = failedAction == null, onBack = menu::closeScreen) {
+                    // Reference and Done put their list menu in the header (RN's overflowPlacement "navigation").
+                    if (list == "reference" || list == "done") OverflowTrigger(plain = true) { menu.openDialog("overflow") }
                 }
-            }
-            if (screen == MenuScreen.History) HistoryTabs(model)
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (list) {
-                    "waiting" -> WaitingList(model)
-                    "someday" -> SomedayList(model)
-                    "reference", "done" -> StatusList(model)
-                    "archive" -> ArchiveList(model)
+                error?.let { message ->
+                    FailureBanner(message) {
+                        if (failedAction == null) TextButton(onClick = { menu.retryRead() }, enabled = !busy, modifier = Modifier.testTag("read-retry")) { Text(t("common.retry")) }
+                        else OwedRetry(model)
+                    }
                 }
-                ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))
+                if (screen == MenuScreen.History) HistoryTabs(model)
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (list) {
+                        "waiting" -> WaitingList(model)
+                        "someday" -> SomedayList(model)
+                        "reference", "done" -> StatusList(model)
+                        "archive" -> ArchiveList(model)
+                        "contexts" -> ContextsList(model)
+                        "trash" -> TrashList(model)
+                        "review" -> ReviewList(model)
+                    }
+                    if (screen == MenuScreen.Projects) ProjectsTab(model, Modifier.fillMaxSize())
+                    ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))
+                }
             }
         }
         MenuDialogs(model)
         StatusMenu(model)
+        capture?.let { CapturePopup(model, it) }
+    }
+}
+
+/**
+ * RN's quick-access tab when it holds Review or Contexts: that screen under the tab header, read on every resume, with its
+ * dialogs (drawn over the tabs by MainActivity) and Back closing an open dialog.
+ */
+@Composable
+fun QuickList(model: InboxViewModel, modifier: Modifier) = with(model) {
+    val owner = LocalLifecycleOwner.current
+    LaunchedEffect(owner) { owner.repeatOnLifecycle(Lifecycle.State.RESUMED) { menu.refresh() } }
+    BackHandler(enabled = failedAction == null && menu.dialog != null) { menu.backInDialog() }
+    Box(modifier) {
+        when (menu.list) {
+            "contexts" -> ContextsList(model)
+            "review" -> ReviewList(model)
+        }
     }
 }
 
@@ -407,7 +435,7 @@ private fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: 
                     scope.launch { offset.animateTo(0f) }
                     if (opened) menu.activate(id)
                 })
-            .clickable(enabled = failedAction == null && !busy, role = Role.Button) { menu.closeScreen(); show(Screen.Projects); openProject(id) }
+            .clickable(enabled = failedAction == null && !busy, role = Role.Button) { menu.openProjects(id) }
             .semantics {
                 contentDescription = title
                 customActions = listOf(CustomAccessibilityAction(activate) { if (enabled) menu.activate(id); enabled })
@@ -422,9 +450,9 @@ private fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: 
     }
 }
 
-/** The open sheet or dialog over the Menu screen, by its kind. */
+/** The open sheet or dialog over the Menu screen (or the quick-access tab), by its kind. */
 @Composable
-private fun MenuDialogs(model: InboxViewModel) = with(model.menu) {
+fun MenuDialogs(model: InboxViewModel) = with(model.menu) {
     val open = dialog ?: return
     val view = page?.view
     when (open.optString("kind")) {
@@ -442,11 +470,14 @@ private fun MenuDialogs(model: InboxViewModel) = with(model.menu) {
         }
         "move" -> MoveDialog(model, open)
         "newSection", "addTask" -> CreateDialog(model, open)
+        "tokens" -> TokenPicker(model, open)
+        "startReview", "reviewMove", "reviewTag" -> ReviewDialog(model, open)
+        "projectTask" -> ProjectTaskPrompt(model, open)
         "confirm" -> AlertDialog(
             onDismissRequest = { keepDialog(null) },
             title = { Text(open.getString("title")) },
             text = { Text(open.getString("message")) },
-            confirmButton = { TextButton(onClick = { keepDialog(null); archive(open.getJSONObject("action")) }, enabled = idle) { Text(open.getString("confirmLabel")) } },
+            confirmButton = { TextButton(onClick = { keepDialog(null); act(open.optString("command", "archiveAction"), open.getJSONObject("action")) }, enabled = idle) { Text(open.getString("confirmLabel")) } },
             dismissButton = { TextButton(onClick = { keepDialog(null) }) { Text(open.getString("cancelLabel")) } },
         )
     }

@@ -18,7 +18,8 @@ import java.util.UUID
 
 /*
  * RN's Menu tab (app/(drawer)/(tabs)/_layout.tsx): the More sheet and the list screens it opens, on core's menu view
- * contract (native-host-contract-menu-views.ts) and History's Archive (the list views block of native-host-contract.ts).
+ * contract (native-host-contract-menu-views.ts), History's Archive, Contexts and Trash (the list views block of
+ * native-host-contract.ts), and Review with the Weekly and Daily Review (native-host-contract-review-views.ts).
  * Kotlin keeps only RN's screen state: which sheet, screen and dialog are open, the session choices RN keeps in React
  * state, and the device choices RN keeps under its keys. Every row, heading, count, label, filter and edit is core's.
  * Reads and commands run on InboxViewModel's paths (perform, background, freshness, the exact-retry lock).
@@ -29,12 +30,26 @@ private const val PAGE = 50
 private const val WINDOW = 100
 
 /** The Menu tab's commands (host-entry.ts MENU_COMMANDS); core can refuse each before writing. */
-val MENU_KINDS = setOf("activateProject", "somedayMove", "somedayUndo", "somedayTask", "somedaySection", "taskListSort", "archiveAction")
-/** The Someday creates whose exact request waits on disk until core answers. */
-private val CREATES = setOf("somedayTask", "somedaySection")
+val MENU_KINDS = setOf("activateProject", "somedayMove", "somedayUndo", "somedayTask", "somedaySection", "taskListSort", "archiveAction",
+    "contextsAction", "trashAction", "reviewAction", "reviewTask")
+/** The creates whose exact request waits on disk until core answers: Someday's, and the Weekly Review's project Add task. */
+private val CREATES = setOf("somedayTask", "somedaySection", "reviewTask")
 
-/** The screens the More sheet opens here, with the title key of RN's stack header. History holds Done and Archived. */
-enum class MenuScreen(val title: String) { Waiting("waiting.title"), Someday("someday.title"), Reference("nav.reference"), History("nav.history") }
+/**
+ * The screens the More sheet opens here, with the title key of RN's stack header. History holds Done and Archived; Projects is
+ * RN's Projects stack screen when the quick-access tab holds another view; Weekly and Daily are RN's review flows, full screen
+ * over Review (or its tab), with core's own header.
+ */
+enum class MenuScreen(val title: String) {
+    Waiting("waiting.title"), Someday("someday.title"), Reference("nav.reference"), History("nav.history"),
+    Contexts("contexts.title"), Trash("trash.title"), Review("nav.review"), Projects("projects.title"), Weekly("nav.review"), Daily("nav.review"),
+}
+
+/** Core's bulk actions (Contexts, Trash, Review): each ends RN's selection mode once core answers. */
+private val BULK = setOf("moveTasks", "editTaskTokens", "trashTasks", "restoreItems", "purgeItems", "emptyTrash", "addTag", "removeTags", "markReviewedTasks")
+
+/** The lists whose contract writes their rows' status (Contexts, and the Review screens): the command kind for each. */
+private val ROW_KINDS = mapOf("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction")
 
 /** RN's routes for the lists this app has (search results and the More sheet's tiles go there). */
 private val ROUTES = mapOf("/waiting" to (MenuScreen.Waiting to null), "/someday" to (MenuScreen.Someday to null),
@@ -45,15 +60,16 @@ fun isMenuRoute(route: String?) = route in ROUTES
 class MenuItem(val json: JSONObject, val row: TaskRow?) {
     /** Waiting's rows are plain task rows; the other lists say what each item is. */
     val type: String get() = json.optString("type", "task")
-    /** A multi-tag task shows under each tag heading, so the heading is part of its key, as RN's keyExtractor does. */
-    val key: String get() = if (row != null) "task:${json.optString("groupId")}:${row.id}" else "$type:${json.getString("id")}"
+    /** A multi-tag task shows under each tag heading, so the heading is part of its key, as RN's keyExtractor does. A Weekly Review context card is keyed by its context. */
+    val key: String get() = if (row != null) "task:${json.optString("groupId")}:${row.id}" else "$type:${json.optString("id").ifEmpty { json.optString("context") }}"
 }
 
 private fun JSONObject.list(name: String): List<JSONObject> = optJSONArray(name)?.let { items -> List(items.length()) { items.getJSONObject(it) } }.orEmpty()
 
 private fun JSONObject.menuItems(): List<MenuItem> {
     optJSONArray("rows")?.let { rows -> return List(rows.length()) { index -> rows.getJSONObject(index).let { MenuItem(it, it.taskRow()) } } }
-    return list("items").map { item -> MenuItem(item, if (item.getString("type") == "task") item.getJSONObject("row").taskRow() else null) }
+    // A Daily Review item has no type: it is a task row with the step's flags.
+    return list("items").map { item -> MenuItem(item, if (item.optString("type", "task") == "task") item.getJSONObject("row").taskRow() else null) }
 }
 
 /** Where each windowed collection sits in its view (native-host-contract-menu-views.ts). */
@@ -64,6 +80,8 @@ private fun window(view: JSONObject, name: String): JSONObject? = when (name) {
     "projects" -> view.optJSONObject("filters")?.optJSONObject("projects")
     "sections" -> view.optJSONObject("sections")
     "savedSearches" -> view.optJSONObject("savedSearches")
+    // The Weekly Review's nested lists (getWeeklyReviewList); a context card's tasks sit on its item (MenuPage.source).
+    "staleProjects" -> view.optJSONObject("content")?.optJSONObject("projects")
     else -> null
 }
 
@@ -75,8 +93,11 @@ class MenuPage(val view: JSONObject, val params: JSONObject, val items: List<Men
     val revision: String get() = view.getString("revision")
     val total: Int get() = view.optInt("total")
     /** A collection's items as shown: its first window, or as many as More loaded. */
-    fun collection(name: String): List<JSONObject> = paged[name] ?: window(view, name)?.list("items").orEmpty()
-    fun collectionTotal(name: String): Int = window(view, name)?.optInt("total") ?: 0
+    fun collection(name: String): List<JSONObject> = paged[name] ?: source(name)?.list("items").orEmpty()
+    fun collectionTotal(name: String): Int = source(name)?.optInt("total") ?: 0
+    /** Where a collection's first window is: in the view, or on a Weekly Review context card ("contextTasks:<context>"). */
+    private fun source(name: String): JSONObject? = window(view, name)
+        ?: items.firstNotNullOfOrNull { item -> item.json.optJSONObject("tasks")?.takeIf { name == "contextTasks:${item.json.optString("context")}" } }
     /** How deep each paged collection is shown, so a refresh reads it as deep. */
     val deep: Map<String, Int> get() = paged.mapValues { it.value.size }
     fun appended(more: List<MenuItem>) = MenuPage(view, params, items + more, paged)
@@ -108,7 +129,7 @@ private fun JSONArray.strings(): List<String> = List(length()) { getString(it) }
  * The Menu tab's state, held by InboxViewModel (so rotation keeps it) and saved in the Bundle (so process death keeps the
  * open sheet, screen, History tab, dialog, and RN's session choices). Rows reload from core.
  */
-class MenuModel(private val shell: InboxViewModel, private val saved: SavedStateHandle, private val prefs: SharedPreferences, dir: File) {
+class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStateHandle, internal val prefs: SharedPreferences, dir: File) {
     private val store = MenuStore(dir)
     private val main = Handler(Looper.getMainLooper())
 
@@ -116,6 +137,12 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     var sheet by mutableStateOf(saved.get<Boolean>("menuSheet") == true); private set
     /** Core's getMoreMenu reply, with its saved searches as paged. */
     var more by mutableStateOf<MenuPage?>(null); private set
+    /** Core's quickAccessView (getMoreMenu): the view on RN's quick-access tab. In the Bundle, so a recreated screen draws it at once. */
+    var quickAccess by mutableStateOf(saved.get<String>("quickAccess")); private set
+    /** What the quick-access tab shows: Review and Contexts are built here; Projects otherwise (Calendar waits for pass 8). */
+    val quickView: String get() = quickAccess?.takeIf { it == "review" || it == "contexts" } ?: "projects"
+    /** The quick-access tab's label key (RN's tab title, also its header's). */
+    val quickLabel: String get() = when (quickView) { "review" -> "tab.review"; "contexts" -> "nav.contexts"; else -> "nav.projects" }
     var screen by mutableStateOf(MenuScreen.entries.firstOrNull { it.name == saved.get<String>("menuScreen") }); private set
     /** History's tab, core's HistoryTab id. */
     var historyTab by mutableStateOf(saved.get<String>("historyTab") ?: "done"); private set
@@ -134,13 +161,19 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     /** Core's getSomedayMoveDialog reply for the open move dialog, with its choices as paged. */
     var moveChoices by mutableStateOf<JSONObject?>(null); private set
 
-    /** The core read behind the open screen: History shows Done or Archive. */
+    /** The core read behind the open screen (History shows Done or Archive), or behind the quick-access tab when it shows. */
     val list: String? get() = when (screen) {
         MenuScreen.Waiting -> "waiting"
         MenuScreen.Someday -> "someday"
         MenuScreen.Reference -> "reference"
         MenuScreen.History -> if (historyTab == "archived") "archive" else "done"
-        null -> null
+        MenuScreen.Contexts -> "contexts"
+        MenuScreen.Trash -> "trash"
+        MenuScreen.Review -> "review"
+        MenuScreen.Weekly -> "weekly"
+        MenuScreen.Daily -> "daily"
+        MenuScreen.Projects -> null
+        null -> if (shell.screen == Screen.Projects && quickView != "projects") quickView else null
     }
 
     /** No command runs and no retry is owed: the lists' controls are enabled. */
@@ -153,7 +186,7 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
         saved["menuState"] = session.toString()
     }
 
-    private fun editOwn(list: String, edit: JSONObject.() -> Unit) = keepOwn(list, JSONObject(own(list).toString()).apply(edit))
+    internal fun editOwn(list: String, edit: JSONObject.() -> Unit) = keepOwn(list, JSONObject(own(list).toString()).apply(edit))
 
     fun keepDialog(value: JSONObject?) {
         dialog = value
@@ -161,7 +194,7 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     }
 
     /** Closes the dialog of [kind] only, so an answer that arrives late never closes another one. */
-    private fun closeDialog(kind: String) { if (dialog?.optString("kind") == kind) keepDialog(null) }
+    internal fun closeDialog(kind: String) { if (dialog?.optString("kind") == kind) keepDialog(null) }
 
     // ---- Navigation ----
 
@@ -189,11 +222,30 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
             "someday" -> open(MenuScreen.Someday)
             "reference" -> open(MenuScreen.Reference)
             "history" -> open(MenuScreen.History, "done")
-            "projects" -> { closeSheet(); shell.show(Screen.Projects) }
+            "review" -> open(MenuScreen.Review)
+            "contexts" -> open(MenuScreen.Contexts)
+            "trash" -> open(MenuScreen.Trash)
+            "projects" -> openProjects(null)
         }
     }
 
-    fun opens(id: String) = id in setOf("waiting", "someday", "reference", "history", "projects")
+    fun opens(id: String) = id in setOf("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash")
+
+    /**
+     * RN's Projects: the quick-access tab while it holds Projects, else RN's Projects stack screen (the tile core shows then);
+     * [projectId] opens there (a parked or archived project, a search result).
+     */
+    fun openProjects(projectId: String?) {
+        if (quickView == "projects") { closeSheet(); leave(null); shell.show(Screen.Projects) } else open(MenuScreen.Projects)
+        projectId?.let(shell::openProject)
+    }
+
+    /** RN's Start Review choice (core's option id): the Daily or the Weekly Review, full screen; Close returns here. */
+    fun openReview(id: String) {
+        saved["reviewFrom"] = screen?.name
+        keepOwn(id, JSONObject())
+        open(if (id == "daily") MenuScreen.Daily else MenuScreen.Weekly)
+    }
 
     /** RN's route for a list (a search result core routes there): true when this app has that list. */
     fun openRoute(route: String): Boolean {
@@ -204,6 +256,8 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
 
     private fun open(target: MenuScreen, tab: String? = null) {
         closeSheet()
+        // RN's Review opens folded (its focus effect clears the expansion) and not selecting.
+        if (target == MenuScreen.Review) editOwn("review") { remove("expandedAreaIds"); remove("expandedProjectIds"); remove("selected") }
         screen = target
         saved["menuScreen"] = target.name
         tab?.let(::keepTab)
@@ -213,10 +267,20 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
         reload()
     }
 
-    /** RN's stack Back (the header's chevron, or the system's): the tabs again. */
+    /**
+     * RN's stack Back (the header's chevron, or the system's): the tabs again, or, from a review flow, the screen it opened
+     * over (Review, or the quick-access tab), read again.
+     */
     fun closeScreen() {
-        screen = null
-        saved["menuScreen"] = null
+        val flow = screen == MenuScreen.Weekly || screen == MenuScreen.Daily
+        leave(if (flow) MenuScreen.entries.firstOrNull { it.name == saved.get<String>("reviewFrom") } else null)
+        if (list != null) refresh()
+    }
+
+    private fun leave(back: MenuScreen?) {
+        if (screen == MenuScreen.Projects) shell.closeProject()
+        screen = back
+        saved["menuScreen"] = back?.name
         page = null
         keepDialog(null)
     }
@@ -250,6 +314,16 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
             "archive" -> ListViewState.read(prefs, ARCHIVED_VIEW_KEY).into(kept(listOf("segment")))
                 .put("filters", JSONObject().put("searchQuery", own.optString("search")))
                 .put("collapsedGroupIds", GroupCollapse.all(prefs, "archived", 1000)).put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+            "contexts" -> kept(listOf("tokens", "matchMode", "searchQuery")).put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+            "trash" -> JSONObject().put("selected", JSONObject().put("taskIds", own.optJSONArray("selectedTasks") ?: JSONArray())
+                .put("projectIds", own.optJSONArray("selectedProjects") ?: JSONArray()))
+            // RN's Review opens on its Due scope.
+            "review" -> kept(listOf("expandedAreaIds", "expandedProjectIds")).put("scope", own.optString("scope", "due"))
+                .put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+            // A review's place is the checkpoint core gave last, kept on the device as RN keeps its session.
+            "weekly" -> JSONObject().put("checkpoint", prefs.getString(WEEKLY_REVIEW_KEY, null) ?: JSONObject.NULL)
+                .put("expandedProjectId", own.opt("expandedProjectId") ?: JSONObject.NULL)
+            "daily" -> JSONObject().put("checkpoint", prefs.getString(DAILY_REVIEW_KEY, null) ?: JSONObject.NULL)
             else -> JSONObject()
         }
     }
@@ -259,15 +333,19 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
         view.optJSONObject("filters")?.optJSONObject("state")?.let { put("filters", it) }
         if (list == "waiting") put("person", view.getString("person"))
         if (list == "reference") put("includeArchivedProjects", view.getBoolean("includeArchivedProjects"))
+        view.optJSONObject("selection")?.let { put("tokens", it.getJSONArray("tokens")).put("matchMode", it.getString("matchMode")) }
+        if (list == "review") put("expandedAreaIds", view.getJSONArray("expandedAreaIds")).put("expandedProjectIds", view.getJSONArray("expandedProjectIds"))
+        if (list == "weekly" || list == "daily") put("checkpoint", view.getString("checkpoint"))
     }
 
     /**
-     * [list] from its first window ([edit], a filter control's exact edit, goes with it once), its items to [depth] at one
-     * revision, then each collection to its depth in [deep]. A list that changed between windows keeps what it has; the next
-     * refresh reads it again, as the Inbox does.
+     * [list] from its first window ([edit], a filter control's exact edit or Review's expansion edit, goes with it once), its
+     * items to [depth] at one revision, then each collection to its depth in [deep]. A list that changed between windows keeps
+     * what it has; the next refresh reads it again, as the Inbox does.
      */
     private fun read(runtime: CoreHost, list: String, params: JSONObject, depth: Int, deep: Map<String, Int>, edit: JSONObject? = null): MenuPage {
-        val first = runtime.menuRead(list, JSONObject(params.toString()).put("offset", 0).put("limit", PAGE).apply { edit?.let { put("filterEdit", it) } }.toString())
+        val first = runtime.menuRead(list, JSONObject(params.toString()).put("offset", 0).put("limit", PAGE)
+            .apply { edit?.let { put(if (list == "review") "expansionEdit" else "filterEdit", it) } }.toString())
         check(first.optInt("version", 1) == 1) { "Unsupported core contract" }
         val sent = accepted(list, params, first)
         var page = MenuPage(first, sent, first.menuItems(), emptyMap())
@@ -288,7 +366,10 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     private fun collectionTo(runtime: CoreHost, list: String, page: MenuPage, name: String, want: Int): MenuPage {
         var loaded = page.collection(name)
         while (loaded.size < minOf(want, page.collectionTotal(name))) {
-            val next = runtime.menuRead("collection", JSONObject().put("view", list).put("collection", name).put("params", page.params)
+            // The Weekly Review pages its nested lists with its own inputs (getWeeklyReviewList); the menu views through getMenuViewCollection.
+            val next = if (list == "weekly") runtime.menuRead("weeklyList", JSONObject(page.params.toString()).put("list", name.substringBefore(':'))
+                .apply { if (':' in name) put("key", name.substringAfter(':')) }.put("offset", loaded.size).put("limit", WINDOW).put("revision", page.revision).toString()).list("items")
+            else runtime.menuRead("collection", JSONObject().put("view", list).put("collection", name).put("params", page.params)
                 .put("offset", loaded.size).put("limit", WINDOW).put("revision", page.revision).toString()).list("items")
             if (next.isEmpty()) break
             loaded = loaded + next
@@ -305,19 +386,26 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
                 "waiting" -> put("person", next.params.getString("person"))
                 "someday", "done" -> put("filters", next.params.getJSONObject("filters"))
                 "reference" -> put("filters", next.params.getJSONObject("filters")).put("includeArchivedProjects", next.params.getBoolean("includeArchivedProjects"))
-                "archive" -> put("selected", next.view.getJSONArray("selectedIds"))
+                "archive", "contexts" -> put("selected", next.view.getJSONArray("selectedIds"))
+                "trash" -> next.view.getJSONObject("selected").let { put("selectedTasks", it.getJSONArray("taskIds")).put("selectedProjects", it.getJSONArray("projectIds")) }
+                "review" -> put("expandedAreaIds", next.params.getJSONArray("expandedAreaIds")).put("expandedProjectIds", next.params.getJSONArray("expandedProjectIds"))
+                    .put("selected", next.view.optJSONObject("bulk")?.getJSONArray("selectedIds") ?: JSONArray())
             }
+            if (list == "contexts") put("tokens", next.params.getJSONArray("tokens")).put("matchMode", next.params.getString("matchMode"))
         }
+        // A review's place: the checkpoint core answered with, kept under core's key until the review is finished.
+        if (list == "weekly" || list == "daily") prefs.edit().putString(next.view.getString("storageKey"), next.view.getString("checkpoint")).apply()
     }
 
     /**
      * A read the user asked for (a screen opening, a filter, sort or group choice): through perform, as the lists' More,
      * once no action runs, so a choice made while a command finishes is still read.
      */
-    private fun reload(edit: JSONObject? = null) = whenIdle {
+    internal fun reload(edit: JSONObject? = null, fresh: Boolean = false) = whenIdle {
         val list = list ?: return@whenIdle
         val params = params(list)
-        val shown = page
+        // A new review step starts from its own first window, not as deep as the last step was shown.
+        val shown = page.takeUnless { fresh }
         val depth = maxOf(PAGE, shown?.items?.size ?: 0)
         val deep = shown?.deep.orEmpty()
         val mine = shell.issue()
@@ -348,9 +436,19 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     private fun readMore() {
         val deep = more?.deep.orEmpty()
         shell.background(listOf(Part.More), { runtime -> read(runtime, "more", JSONObject(), 0, deep) }) { next, mine ->
-            if (shell.fresh(mine, Part.More)) more = next
+            if (shell.fresh(mine, Part.More)) keepMore(next)
         }
     }
+
+    /** The sheet's reply, and with it the quick-access view the tab bar draws. */
+    private fun keepMore(next: MenuPage) {
+        more = next
+        quickAccess = next.view.optString("quickAccessView").ifEmpty { null }
+        saved["quickAccess"] = quickAccess
+    }
+
+    /** Core's More sheet at boot (on the boot thread), so the tab bar draws RN's quick-access tab from the first frame. */
+    fun readSheet(runtime: CoreHost): MenuPage = read(runtime, "more", JSONObject(), 0, emptyMap())
 
     /** History's tab labels (cosmetic: a failed read shows no error; the list's own read reports one). */
     private fun readHistory() {
@@ -396,7 +494,7 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
                 read(runtime, list, if (sheetPage) JSONObject() else params(list), shown.items.size, shown.deep + (name to want))
             }
             shell.ui {
-                if (sheetPage) { if (shell.fresh(mine, Part.More)) more = next } else if (shell.fresh(mine, Part.Menu)) show(list, next)
+                if (sheetPage) { if (shell.fresh(mine, Part.More)) keepMore(next) } else if (shell.fresh(mine, Part.Menu)) show(list, next)
             }
         }
     }
@@ -490,8 +588,11 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     }
 
     /** Archive's search box, read once typing pauses. */
-    fun search(text: String) {
-        editOwn("archive") { put("search", text) }
+    fun search(text: String) = typeSearch("archive", "search", text)
+
+    /** A list's typed search (Archive's box, Contexts' chip search): kept as typed, read once typing pauses. */
+    fun typeSearch(list: String, name: String, text: String) {
+        editOwn(list) { put(name, text) }
         val mine = ++searchTyped
         main.postDelayed({ if (mine == searchTyped) reload() }, 200)
     }
@@ -508,7 +609,10 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
         reload()
     }
 
-    /** RN's Select all: every task row a folded heading has not removed. Core's windows are read to the end to find them. */
+    /**
+     * RN's Select all: every task row a folded heading has not removed (Archive), or every item in Trash, tasks and projects.
+     * Core's windows are read to the end to find them.
+     */
     fun selectAll() {
         val list = list ?: return
         val params = params(list)
@@ -516,10 +620,15 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
         shell.perform { runtime ->
             val all = read(runtime, list, params, Int.MAX_VALUE, emptyMap())
             val ids = LinkedHashSet<String>()
-            for (item in all.items) item.row?.let { ids.add(it.id) }
+            val projects = LinkedHashSet<String>()
+            for (item in all.items) {
+                val row = item.row
+                if (row != null) ids.add(row.id) else if (item.type == "project") projects.add(item.json.getString("id"))
+            }
             shell.ui {
                 if (!shell.fresh(mine, Part.Menu)) return@ui
-                editOwn("archive") { put("selected", JSONArray(ids.toList())) }
+                if (list == "trash") editOwn(list) { put("selectedTasks", JSONArray(ids.toList())).put("selectedProjects", JSONArray(projects.toList())) }
+                else editOwn(list) { put("selected", JSONArray(ids.toList())) }
                 reload()
             }
         }
@@ -551,9 +660,9 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     /** A dialog's typed text (a new section's name, a new task's title), kept with the dialog. */
     fun typeDialog(text: String) { dialog?.let { keepDialog(JSONObject(it.toString()).put("text", text).apply { remove("error") }) } }
 
-    /** RN's delete confirmation for an Archive action ([action], core's), with core's words ([confirmation]). */
-    fun confirm(confirmation: JSONObject, action: JSONObject) =
-        keepDialog(JSONObject(confirmation.toString()).put("kind", "confirm").put("action", action))
+    /** RN's delete confirmation for a list action ([action], core's, sent as [command]), with core's words ([confirmation]). */
+    fun confirm(confirmation: JSONObject, action: JSONObject, command: String = "archiveAction") =
+        keepDialog(JSONObject(confirmation.toString()).put("kind", "confirm").put("action", action).put("command", command))
 
     // ---- Someday ----
 
@@ -624,7 +733,10 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
             .put("sectionId", addTask.opt("sectionId") ?: JSONObject.NULL).put("captureId", UUID.randomUUID().toString()))
     }
 
-    /** The open create dialog's exact request: a section's name, or a task's title with its capture UUID and section. */
+    /**
+     * The open create dialog's exact request: a section's name, a task's title with its capture UUID and section, or the Weekly
+     * Review's project Add task (core's addProjectTask, its request UUID the new task's id).
+     */
     fun createAction(): FailedAction? {
         val open = dialog ?: return null
         val text = open.optString("text").trim()
@@ -633,6 +745,7 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
             "newSection" -> FailedAction("somedaySection", open.getString("requestId"), text)
             "addTask" -> FailedAction("somedayTask", open.getString("captureId"), text,
                 patch = mapOf("sectionId" to if (open.isNull("sectionId")) null else open.getString("sectionId")))
+            "projectTask" -> FailedAction("reviewTask", open.getString("requestId"), addProjectTask(open.getString("projectId"), open.optString("text")).toString())
             else -> null
         }
     }
@@ -651,7 +764,22 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
     // ---- Archive ----
 
     /** One of core's Archive actions, with a new request UUID; the action itself is its exact retry. */
-    fun archive(action: JSONObject) = send(FailedAction("archiveAction", UUID.randomUUID().toString(), action.toString()))
+    fun archive(action: JSONObject) = act("archiveAction", action)
+
+    /** One of core's list actions ([kind]: archiveAction, contextsAction, trashAction, reviewAction), with a new request UUID. */
+    internal fun act(kind: String, action: JSONObject) = send(FailedAction(kind, UUID.randomUUID().toString(), action.toString()))
+
+    /**
+     * RN's status change on a row of a list whose contract writes it (Contexts, the Review screens): that list's setTaskStatus,
+     * from the swipe or the status menu. False for any other row (the status menu then uses updateTask).
+     */
+    fun rowStatus(task: TaskRow, status: String): Boolean {
+        val kind = ROW_KINDS[list ?: return false] ?: return false
+        if (page?.items?.none { it.row?.id == task.id } != false) return false
+        shell.showStatusMenu(null)
+        if (status != task.status) act(kind, setTaskStatus(task.id, status))
+        return true
+    }
 
     // ---- Commands ----
 
@@ -738,14 +866,49 @@ class MenuModel(private val shell: InboxViewModel, private val saved: SavedState
                     }
                 }
             }
+            "contextsAction", "trashAction", "reviewAction", "reviewTask" -> listDone(action, reply)
         }
     }
 
     /**
-     * After boot: a Someday create left on disk by a dead process is sent again first (core writes it once: a capture UUID,
-     * or a section title that already exists), even without saved screen state; then the open sheet and screen are read.
+     * Core's answer to a Contexts, Trash or Review action: a bulk action leaves selection mode (RN's exitSelectionMode), a
+     * project Add task closes its prompt (Save & edit opens the new task), Mark reviewed shows RN's toast, and core's toast
+     * shows with its Undo (the same list's command, a new request UUID).
      */
-    fun start() {
+    private fun listDone(action: FailedAction, reply: JSONObject) {
+        val type = JSONObject(action.title).optString("type")
+        if (action.kind == "reviewTask") {
+            val open = dialog?.takeIf { it.optString("kind") == "projectTask" }
+            closeDialog("projectTask")
+            reply.text("createdId")?.takeIf { open?.optBoolean("edit") == true }?.let { id -> shell.openEditor(id) }
+        }
+        if (type in BULK) endSelection()
+        if (type == "markReviewedTasks" && reply.optBoolean("changed")) shell.showToast(null, t("review.markReviewedDone"), "success")
+        reply.optJSONObject("toast")?.let { toast ->
+            val undo = toast.optJSONObject("undo")
+            val kind = if (action.kind == "reviewTask") "reviewAction" else action.kind
+            shell.showToast(toast.text("title"), toast.getString("message"), toast.getString("tone"), undo?.getString("label")) {
+                undo?.let { whenIdle { act(kind, it.getJSONObject("action")) } }
+            }
+        }
+    }
+
+    /** RN's exitSelectionMode on the open list. */
+    internal fun endSelection() {
+        when (val list = list ?: return) {
+            "trash" -> editOwn(list) { put("selecting", false).put("selectedTasks", JSONArray()).put("selectedProjects", JSONArray()) }
+            "archive" -> selecting(false)
+            else -> editOwn(list) { put("selected", JSONArray()) }
+        }
+    }
+
+    /**
+     * After boot: a create left on disk by a dead process is sent again first (core writes it once: a capture UUID, a section
+     * title that already exists, or a project task under its request UUID), even without saved state; then the open sheet and
+     * screen are read. [sheet] is core's More sheet read at boot (the quick-access tab).
+     */
+    fun start(sheet: MenuPage?) {
+        sheet?.let(::keepMore)
         store.read()?.let { pending ->
             if (shell.failedAction == null) {
                 shell.owe(pending)

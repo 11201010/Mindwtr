@@ -87,13 +87,14 @@ private val MENU_STATUSES = listOf("inbox", "next", "waiting", "someday", "done"
  * outside Today's Focus. [starBlocked] is core's reason the star can only refuse (the section's
  * focusBlockedLabel): an unstarred row's star is then drawn disabled with that label, as RN does.
  * [details] shows core's detail parts too, where RN's list does (Waiting, and Someday's Details toggle).
+ * [actions] is a list whose own contract writes its rows (Contexts, Review, the Weekly and Daily Review): see [RowActions].
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun TaskRowItem(
     model: InboxViewModel, task: TaskRow, status: RowStatus = RowStatus.Hidden, star: RowStar = RowStar.Hidden,
     completable: Boolean = true, note: String? = null, available: Boolean = false, focusHighlight: Boolean = false,
-    starBlocked: String? = null, details: Boolean = false,
+    starBlocked: String? = null, details: Boolean = false, actions: RowActions? = null,
 ) = with(model) {
     val theme = LocalTheme.current
     val c = theme.colors
@@ -103,22 +104,31 @@ fun TaskRowItem(
     val swipeLabel = meta.swipe.label
     val canComplete = writable && !busy &&
         (failedAction == null || failedAction == FailedAction("complete", task.id))
-    // Done keeps its own command (core's completeTask); Restore and Next are RN's status change, with its exact retry.
-    val canMove = writable && !busy && (failedAction == null || failedAction == statusAction(task, target))
-    val swipeOn = completable && (if (target == "done") canComplete else canMove)
-    val onSwipe = { if (target == "done") complete(task.id) else changeStatus(task, target) }
     val canEdit = writable && !busy && failedAction == null
+    // Done keeps its own command (core's completeTask); Restore and Next are RN's status change, with its exact retry.
+    // A list whose contract writes its rows sends that list's own status action instead; a selecting list has no swipe.
+    val canMove = writable && !busy && (failedAction == null || failedAction == statusAction(task, target))
+    val swipeOn = if (actions != null) canEdit && !actions.selecting else completable && (if (target == "done") canComplete else canMove)
+    val onSwipe = actions?.let { listed -> { listed.status(target) } } ?: { if (target == "done") complete(task.id) else changeStatus(task, target) }
+    val selecting = actions?.selecting == true
+    val onDelete = actions?.delete?.takeIf { canEdit && !selecting }
+    val onTap = { if (selecting) actions?.select?.invoke() else openEditor(task.id) }
     val shape = RoundedCornerShape(theme.rowRadius)
     val strip = theme.priority(meta.priority)
     val showStar = star != RowStar.Hidden && meta.canFocus
     val showStatus = status != RowStatus.Hidden && meta.statusLabel != null
-    val highlighted = focusHighlight && showStar && task.isFocusedToday
+    val highlighted = focusHighlight && showStar && task.isFocusedToday && !selecting
+    val picked = selecting && actions?.selected == true
     Box(Modifier.padding(bottom = 6.dp)) {
-        SwipeAction(enabled = swipeOn, swipe = meta.swipe, shape = shape, onSwipe = onSwipe, onMenu = { showStatusMenu(task) }) {
+        SwipeAction(enabled = swipeOn, swipe = meta.swipe, shape = shape, onSwipe = onSwipe, onMenu = { showStatusMenu(task) }, onDelete = onDelete) {
             Row(
-                Modifier.fillMaxWidth().clip(shape).background(c.bg).background(if (available) theme.availableBg else c.taskItemBg)
-                    .border(if (highlighted) 2.dp else 1.dp, if (highlighted) c.tint else if (available) theme.availableBorder else c.border, shape)
-                    .pointerInput(canEdit) { detectTapGestures { if (canEdit) openEditor(task.id) } }
+                Modifier.fillMaxWidth().clip(shape).background(c.bg).background(if (available && !selecting) theme.availableBg else c.taskItemBg)
+                    .border(if (highlighted || selecting) 2.dp else 1.dp,
+                        if (highlighted || picked) c.tint else if (available && !selecting) theme.availableBorder else c.border, shape)
+                    // RN's long-press on a list with selection selects the row (and starts selecting).
+                    .pointerInput(canEdit, selecting) {
+                        detectTapGestures(onLongPress = actions?.select?.let { select -> { _: Offset -> if (canEdit) select() } }) { if (canEdit) onTap() }
+                    }
                     .drawBehind {
                         // RN's priority strip: 3 wide, 6 in from the start, 8 from the top and the bottom.
                         if (strip != null) drawRoundRect(strip, Offset(6.dp.toPx(), 8.dp.toPx()),
@@ -127,6 +137,11 @@ fun TaskRowItem(
                     .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = if (showStatus || showStar) 4.dp else 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // RN's selection circle: tint ring, filled with a check when the row is selected.
+                if (selecting) Box(Modifier.padding(end = 12.dp).size(22.dp).clip(CircleShape).border(1.5.dp, c.tint, CircleShape)
+                    .background(if (picked) c.tint else c.taskItemBg), contentAlignment = Alignment.Center) {
+                    if (picked) Icon(Lucide.CheckBold, null, tint = theme.onAction, modifier = Modifier.size(12.dp))
+                }
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         // The title carries the row for TalkBack: core's label, Edit, and the swipe's action as a custom action.
@@ -134,12 +149,15 @@ fun TaskRowItem(
                             color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             textAlign = if (meta.rtl) TextAlign.Right else TextAlign.Left,
                             modifier = Modifier.weight(1f).testTag("task-row")
-                                .clickable(enabled = canEdit, onClickLabel = t("common.edit")) { openEditor(task.id) }
+                                .combinedClickable(enabled = canEdit, onClickLabel = t(if (!selecting) "common.edit" else if (picked) "task.deselect" else "task.select"),
+                                    onLongClick = actions?.select) { onTap() }
                                 .semantics {
                                     contentDescription = meta.accessibilityLabel
+                                    if (selecting) selected = picked
                                     // RN's accessibility actions: the swipe's action, and the status menu its long-press opens.
                                     if (swipeOn) customActions = listOf(CustomAccessibilityAction(swipeLabel) { onSwipe(); true },
-                                        CustomAccessibilityAction(t("taskStatus.changeStatus")) { showStatusMenu(task); true })
+                                        CustomAccessibilityAction(t("taskStatus.changeStatus")) { showStatusMenu(task); true }) +
+                                        listOfNotNull(onDelete?.let { delete -> CustomAccessibilityAction(t("common.delete")) { delete(); true } })
                                 })
                         if (meta.parts.any { it.kind == "recurrence" }) {
                             Icon(Lucide.Repeat, null, tint = c.secondaryText,
@@ -157,12 +175,24 @@ fun TaskRowItem(
                     }
                     note?.let { MetaText(it, if (available) c.tint else c.secondaryText, 600, Modifier.padding(top = 2.dp)) }
                     task.revealLabel?.let { MetaText(it, c.secondaryText, 600, Modifier.padding(top = 4.dp)) }
+                    actions?.footer?.invoke()
                 }
-                if (showStatus) StatusControl(model, task, status == RowStatus.Icon, completable)
+                if (showStatus) StatusControl(model, task, status == RowStatus.Icon, completable && !selecting)
             }
         }
     }
 }
+
+/**
+ * A list whose contract writes its rows (Contexts, Review, the Weekly and Daily Review), as RN's rowActions there: the swipe and
+ * the status menu send [status] (core's setTaskStatus for that list), RN's swipe left reveals Delete ([delete], core's trashTask
+ * with its Undo), and a long-press selects the row ([select]) where the list offers bulk actions; while [selecting], a tap
+ * toggles the row and the swipes rest. [footer] sits under the meta line (the Daily Review's Follow up today).
+ */
+class RowActions(
+    val status: (String) -> Unit, val delete: (() -> Unit)? = null, val selecting: Boolean = false, val selected: Boolean = false,
+    val select: (() -> Unit)? = null, val footer: (@Composable () -> Unit)? = null,
+)
 
 /** One meta part as RN's renderMetaPart draws it: its icon, color, and weight; core's text as is. */
 @Composable
@@ -283,7 +313,7 @@ fun StatusMenu(model: InboxViewModel) = with(model) {
                     Row(
                         Modifier.fillMaxWidth(0.42f).clip(RoundedCornerShape(20.dp)).then(if (current) Modifier.background(colors.bg) else Modifier)
                             .border(1.dp, colors.text, RoundedCornerShape(20.dp))
-                            .clickable(enabled = enabled, role = Role.Button) { changeStatus(task, status) }
+                            .clickable(enabled = enabled, role = Role.Button) { if (!menu.rowStatus(task, status)) changeStatus(task, status) }
                             .semantics { selected = current }.fade(if (enabled) 1f else 0.5f)
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -347,20 +377,31 @@ fun ToastCard(model: InboxViewModel, modifier: Modifier) {
  * in the target status's color with core's icon and label (restore: RotateCcw, done: Check, next: ArrowRight).
  * A tap on the button runs the action; a long-press opens the status menu (#1275). Both close the row.
  * A drag past half the button's width opens it; less springs back. The row's own long-press stays free.
+ * With [onDelete], a swipe left reveals RN's red Delete (Trash2) the same way.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SwipeAction(enabled: Boolean, swipe: RowSwipe, shape: RoundedCornerShape, onSwipe: () -> Unit, onMenu: () -> Unit,
-                        content: @Composable () -> Unit) {
+                        onDelete: (() -> Unit)? = null, content: @Composable () -> Unit) {
     val theme = LocalTheme.current
     val density = LocalDensity.current
     val open = with(density) { 98.dp.toPx() } // the 90 button and RN's 8 gap
+    val left = if (onDelete != null) -open else 0f
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val settle = { to: Float -> scope.launch { offset.animateTo(to) }; Unit }
     // A row that can no longer act (a retry owed elsewhere, a read-only project) closes.
     LaunchedEffect(enabled) { if (!enabled) offset.snapTo(0f) }
     Box {
+        if (offset.value < 0f && onDelete != null) {
+            val delete = t("task.aria.delete")
+            Column(Modifier.matchParentSize().padding(start = 8.dp).wrapContentWidth(Alignment.End).width(90.dp).clip(shape)
+                .background(theme.deleteAction).clickable(role = Role.Button) { settle(0f); onDelete() }.semantics { contentDescription = delete },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Lucide.Trash2, null, tint = theme.onAction, modifier = Modifier.size(20.dp))
+                Text(t("common.delete"), style = rnText(12, 600), color = theme.onAction, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
         if (offset.value > 0f) {
             val spoken = t("task.aria.action").replace("{{action}}", swipe.label)
             Column(Modifier.matchParentSize().padding(end = 8.dp).wrapContentWidth(Alignment.Start).width(90.dp).clip(shape)
@@ -374,9 +415,9 @@ private fun SwipeAction(enabled: Boolean, swipe: RowSwipe, shape: RoundedCornerS
             }
         }
         Box(Modifier.offset { IntOffset(offset.value.roundToInt(), 0) }.draggable(
-            state = rememberDraggableState { delta -> scope.launch { offset.snapTo((offset.value + delta).coerceIn(0f, open)) } },
+            state = rememberDraggableState { delta -> scope.launch { offset.snapTo((offset.value + delta).coerceIn(left, open)) } },
             orientation = Orientation.Horizontal, enabled = enabled,
-            onDragStopped = { settle(if (offset.value > open / 2) open else 0f) },
+            onDragStopped = { settle(if (offset.value > open / 2) open else if (offset.value < left / 2) left else 0f) },
         )) { content() }
     }
 }

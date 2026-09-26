@@ -9,8 +9,9 @@
 // tabs. The script installs the harness RN build (154), puts the fixture in as its
 // database, and shoots Inbox, Focus, Projects, the task editor (Form tab) for one
 // task opened from Focus, global search for "kitchen", Process Inbox's first step, the
-// capture popup (empty, with text and core's preview, and with the contexts picker open), and
-// the Menu tab (the More sheet, Waiting, Someday, and History's Done), in light and dark mode.
+// capture popup (empty, with text and core's preview, and with the contexts picker open),
+// the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
+// task, and Review), and the Weekly Review's first step, in light and dark mode.
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
@@ -37,6 +38,7 @@ const NATIVE_ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
 const harness = process.env.MINDWTR_HARNESS_DIR ?? '/home/dd/.mindwtr-harness';
 const aapt2 = process.env.AAPT2 ?? '/home/dd/Android/Sdk/build-tools/36.1.0/aapt2';
 const coreSrc = resolve(import.meta.dirname, '../../../packages/core/src');
+const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 const out = resolve(harness, 'parity', new Date().toISOString().replace(/[:.]/g, '-'));
 let apks;
 try {
@@ -64,6 +66,8 @@ const T = {
     mom: 'Call Mom back', taxes: 'Gather tax documents',
     deck: 'Hear back from Sam about the deck', insurance: 'Renew car insurance',
 };
+/** One task in Trash (not among T's live tasks), for the Trash screen. */
+const TRASHED = 'Old grocery list';
 const fixture = resolve(out, 'fixture/mindwtr.db');
 const buildFixture = () => execFileSync('bun', ['-e', `
     import { Database } from 'bun:sqlite';
@@ -112,6 +116,11 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     await add(T.taxes, { status: 'someday', areaId: work.id, description: 'W-2, bank statements, receipts folder.' });
     await add(T.deck, { status: 'waiting', assignedTo: 'Sam', contexts: ['@office'], dueDate: day(4) });
     await add(T.insurance, { status: 'done', areaId: home.id });
+    const trashed = await store().addTask(process.env.FIXTURE_TRASHED, { status: 'inbox' });
+    if (!trashed.success) throw new Error('addTask failed: ' + trashed.error);
+    await flushPendingSave();
+    if (!(await store().deleteTask(trashed.id)).success) throw new Error('deleteTask failed');
+    await flushPendingSave();
     // RN's quick-access tab set to Projects (both tab bars show the same tabs), and one Someday section for the headings.
     await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' },
         gtd: { ...(store().settings.gtd ?? {}), viewSections: { someday: [{ id: 'someday-travel', title: 'Travel', order: 0 }] } } });
@@ -121,7 +130,7 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     db.close();
     console.log(store()._allTasks.filter((task) => !task.deletedAt).length);
     process.exit(0);
-`], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T) } }).trim().split('\n').pop();
+`], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T), FIXTURE_TRASHED: TRASHED } }).trim().split('\n').pop();
 
 // ---- the device ----
 const device = connect({ serial, pkg: PKG, uiFile: '/data/local/tmp/mindwtr-parity-ui.xml' });
@@ -225,6 +234,10 @@ const MENU_SCREENS = [
     { name: 'waiting', link: 'waiting', tile: 'Waiting For', text: T.deck },
     { name: 'someday', link: 'someday', tile: 'Someday/Maybe', text: T.passport },
     { name: 'done', link: 'history?tab=done', tile: 'History', text: T.insurance },
+    { name: 'contexts', link: 'contexts', tile: en['nav.contexts'], text: '@phone' },
+    { name: 'trash', link: 'trash', tile: en['nav.trash'], text: TRASHED },
+    // RN's Review opens on its Due scope: the fixture has nothing due for review, so both show core's empty line.
+    { name: 'review', link: 'review', tile: en['nav.review'], text: en['review.dueEmpty'] },
 ];
 const shootMenu = async (prefix, suffix, rn) => {
     const openSheet = async () => {
@@ -243,7 +256,19 @@ const shootMenu = async (prefix, suffix, rn) => {
             const nodes = await waitFor(`the ${screen.tile} tile`, (current) => current.some((node) => node['content-desc'] === screen.tile), 15_000);
             await tap(nodes.find((node) => node['content-desc'] === screen.tile));
         }
-        await shoot(`${prefix}-${screen.name}-${suffix}`, (current) => hasText(current, screen.text));
+        // A Trash row speaks its title (the row is one TalkBack node), so its title may be the node's description.
+        await shoot(`${prefix}-${screen.name}-${suffix}`, (current) => hasText(current, screen.text) || current.some((node) => node['content-desc'] === screen.text));
+        // From Review: Start Review, then the Weekly Review's first step (the Inbox), closed with its X.
+        if (screen.name === 'review') {
+            const start = await waitFor('Start Review', (current) => Boolean(button(current, en['review.startReview'])), 15_000);
+            await tap(button(start, en['review.startReview']));
+            const choices = await waitFor('the Weekly Review choice', (current) => Boolean(button(current, en['review.openGuide'])), 15_000);
+            await tap(button(choices, en['review.openGuide']));
+            await shoot(`${prefix}-weekly-${suffix}`, (current) => hasText(current, T.call));
+            const close = await waitFor('the review\'s Close', (current) => Boolean(button(current, en['common.close'])), 15_000);
+            await tap(button(close, en['common.close']));
+            await sleep(1000);
+        }
         requireAppFront();
         sh('input keyevent KEYCODE_BACK');
         await sleep(1000);

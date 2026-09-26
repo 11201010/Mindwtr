@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -183,7 +184,7 @@ private fun ArchivedProject(model: InboxViewModel, json: JSONObject) = with(mode
         val title = json.getString("title")
         val struck = if (json.getBoolean("struck")) TextDecoration.LineThrough else null
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clip(shape).background(c.taskItemBg).border(1.dp, c.border, shape)
-            .clickable(enabled = model.failedAction == null && !model.busy) { closeScreen(); model.show(Screen.Projects); model.openProject(id) }
+            .clickable(enabled = model.failedAction == null && !model.busy) { openProjects(id) }
             .semantics { contentDescription = title; customActions = actions }.padding(16.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(title, style = rnText(16, 600).copy(textDecoration = struck),
@@ -200,14 +201,15 @@ private fun ArchivedProject(model: InboxViewModel, json: JSONObject) = with(mode
 
 /**
  * RN's Swipeable on Archive rows: a drag right reveals Restore (blue, 100 wide), a drag left Delete (red, with Trash2);
- * a tap on the revealed button runs it and closes the row. [content] gets both as TalkBack actions.
+ * a tap on the revealed button runs it and closes the row. [content] gets both as TalkBack actions. Trash's rows draw
+ * RN's 120-wide buttons, Restore in green ([width], [restoreColor]).
  */
 @Composable
-private fun ArchiveSwipe(model: InboxViewModel, enabled: Boolean, restore: String, delete: String, onRestore: () -> Unit, onDelete: () -> Unit,
-                         content: @Composable (List<CustomAccessibilityAction>) -> Unit) {
+fun ArchiveSwipe(model: InboxViewModel, enabled: Boolean, restore: String, delete: String, onRestore: () -> Unit, onDelete: () -> Unit,
+                 width: Dp = 100.dp, restoreColor: Color = LocalTheme.current.restoreAction, content: @Composable (List<CustomAccessibilityAction>) -> Unit) {
     val theme = LocalTheme.current
     val density = LocalDensity.current
-    val open = with(density) { 108.dp.toPx() } // the 100 button and RN's 8 gap
+    val open = with(density) { (width + 8.dp).toPx() } // the button and RN's 8 gap
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val settle = { to: Float -> scope.launch { offset.animateTo(to) }; Unit }
@@ -217,8 +219,8 @@ private fun ArchiveSwipe(model: InboxViewModel, enabled: Boolean, restore: Strin
         if (offset.value != 0f) {
             val right = offset.value > 0f
             val shape = RoundedCornerShape(12.dp)
-            Column(Modifier.matchParentSize().wrapContentWidth(if (right) Alignment.Start else Alignment.End).width(100.dp).clip(shape)
-                .background(if (right) theme.restoreAction else theme.deleteAction)
+            Column(Modifier.matchParentSize().wrapContentWidth(if (right) Alignment.Start else Alignment.End).width(width).clip(shape)
+                .background(if (right) restoreColor else theme.deleteAction)
                 .clickable(enabled = enabled, role = Role.Button) { settle(0f); if (right) onRestore() else onDelete() }
                 .semantics { contentDescription = if (right) restore else delete },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -258,15 +260,15 @@ private fun BulkBar(model: InboxViewModel, view: JSONObject, selected: List<Stri
 }
 
 @Composable
-private fun BulkButton(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
+fun BulkButton(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
     Text(label, style = rnText(12, 600), color = color, modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.taskItemBg)
         .clickable(enabled = enabled, role = Role.Button, onClick = onClick).fade(if (enabled) 1f else 0.5f).padding(horizontal = 10.dp, vertical = 7.dp))
 }
 
-/** RN's small bordered button (Select, Done). */
+/** RN's small bordered button (Select, Done, Clear Trash). */
 @Composable
-private fun SmallButton(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
+fun SmallButton(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(8.dp)
     Text(label, style = rnText(12, 600), color = color, modifier = Modifier.clip(shape).background(c.cardBg).border(1.dp, c.border, shape)

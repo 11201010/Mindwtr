@@ -177,6 +177,19 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     /** RN's Archive swipe actions (Restore, Delete) and the Someday section dialog's Save button. */
     val restoreAction = rgb("#3B82F6")
     val deleteAction = rgb("#EF4444")
+    /** RN's Trash swipe Restore (#22c55e). */
+    val trashRestore = rgb("#22C55E")
+    /** RN's Contexts chip count badge on an unselected chip. */
+    val chipBadge = if (isDark) rgba(255, 255, 255, 0.12f) else rgba(0, 0, 0, 0.08f)
+    /** The Weekly Review's progress bar and an expanded project's rule (#3B82F6), and its step rail washes (`${tint}1A`, `${success}1A`, `${success}66`). */
+    val reviewProgress = rgb("#3B82F6")
+    val railCurrent = colors.tint.copy(alpha = 0x1A / 255f)
+    val railDone = colors.success.copy(alpha = 0x1A / 255f)
+    val railDoneBorder = colors.success.copy(alpha = 0x66 / 255f)
+    /** The Weekly Review's Add task prompt backdrop, rgba(0,0,0,0.5). */
+    val promptScrim = rgba(0, 0, 0, 0.5f)
+    /** RN's review status dot and summary tones (core's ReviewTone). */
+    fun tone(value: String?): Color? = when (value) { "success" -> colors.success; "warning" -> colors.warning; "danger" -> colors.danger; else -> null }
 }
 
 /**
