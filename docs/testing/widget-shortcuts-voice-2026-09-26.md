@@ -37,12 +37,19 @@ swiftc apps/mobile/ios-app-intents/MindwtrSavedListCatalog.swift \
 
 All checks above passed on September 26. Xcode 27 also typechecked the maintained widget and App Intents sources against the iOS SDK with an iOS 16 deployment target. Its metadata processor successfully exported the App Intents metadata, including the saved-list action and entity. This was isolated source/metadata validation, not a signed full-app archive.
 
-## Device acceptance still required
+## Physical device validation
 
-The wired iPhone 12 (iOS 17.5.1) was detected. This change has not been installed over its existing app or confirmed end to end on hardware.
+Revision `fd90e68f3` built successfully as a signed Release app with Xcode 27 and was installed on the wired iPhone 12 (iOS 17.5.1), preserving existing data. The SQLite directory was backed up privately before installation. Appium/XCUITest with a separately signed WebDriverAgent drove the following checks:
 
-1. Resize a populated Tasks widget large → medium → large; confirm rows remain visible at ordinary text sizes and check larger accessibility sizes for clipping.
-2. Run Open Mindwtr Saved List from Shortcuts, cold and warm. Confirm the selected context filter, rename it, then remove it and verify it never opens another filter. Diagnostics should contain `v1.3.3/saved-list-shortcut` and `available: true` for a live filter.
-3. On Mac, open Audio capture with a configured speech provider and press Enter. Confirm microphone recording and subsequent capture/transcription. Automated desktop coverage checks keyboard activation with the native recording command mocked; it does not establish microphone delivery.
+- Medium and large Tasks widgets both displayed the existing starred Focus task, title and project. Screenshots and accessibility trees confirmed visible rows. Both test widgets were removed afterward.
+- **Open Mindwtr Saved List** was discoverable in Shortcuts and offered the temporary saved `@computer` filter. Warm and cold runs opened its exact list with the two matching existing tasks.
+- After removing the temporary saved filter, rerunning its Shortcut showed **No options available** without opening another list. The temporary Shortcut was then deleted, and Mindwtr returned to Focus without the test filter. No existing task was edited or completed.
+- Evidence remains private under `~/Library/Logs/MindwtrApple` on the Mac (`widget-medium.png`, `widget-large.png`, `saved-list-cold.png`, `saved-list-deleted.png`). The build log is in the isolated `widget-shortcuts-device/.apple-test` directory.
 
-No physical-device data, signing settings, account state, or simulator sessions were changed for these checks.
+## Remaining acceptance limits
+
+1. In-place large → medium → large resizing requires a newer iOS device; this phone validated separate sizes only. Larger accessibility text sizes remain untested.
+2. Filter rename has automated coverage but was not exercised on hardware. The copied device log did not contain `v1.3.3/saved-list-shortcut`; persistent info logging is gated by diagnostic logging, so the log evidence remains unconfirmed despite successful UI navigation.
+3. The Mac debug build and launch succeeded, and the Parakeet model finished downloading. After the user enabled SSH UI access, System Events could inspect the app window but not its web content, screen capture failed, and `/dev/console` reported `root`. The Mac also had no microphone connected. Native Enter-to-record and transcription therefore remain unverified; automated keyboard coverage uses a mocked native recording command.
+
+No device reset, production signing change, account change, or simulator session was required. Test-only filters, Shortcuts and widgets were created and removed; the app installation and separate WDA runner remain available for continued testing.
