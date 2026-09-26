@@ -1,0 +1,564 @@
+/**
+ * The native host contract for selection mode on the Inbox, Waiting, Someday,
+ * Reference and Done lists: React Native's bulk bar (move to a status, Range, add
+ * and remove tags, delete with Undo, Someday's Move to section) and Bulk Organize
+ * on the Inbox, from core's task-list-bulk-actions.ts. Kept in its own file and
+ * spread into createNativeHostContract.
+ *
+ * Selection state stays with the host, as it stays in React state on mobile:
+ *
+ * - The selection is the tapped rows in the order they were tapped. Send it as
+ *   `taskIds`; a row tap goes in as `selectionEdit` and the view returns the new
+ *   `selectedIds` and Range's `anchorId` to keep. Range mode ends after one tap.
+ *   Leaving selection mode (the exit button, or any action that `changed`) clears
+ *   the selection and the anchor.
+ * - Select all is stateless, as on Archive: send `selectAll: { except }` (the rows
+ *   deselected since) and the view returns `selectAll: { params, revision, except }`,
+ *   the object an action takes. The action resolves it again and refuses with
+ *   STALE_REVISION once the rows on screen changed.
+ * - `params` are the list view's own inputs as last sent (the returned
+ *   `filters.state`, no `filterEdit`, no paging). A row that a filter or a folded
+ *   heading hides is not on screen: it leaves the selection and Select all skips it,
+ *   as it does rows whose project is archived (they open read-only).
+ * - Bulk Organize's choices are a `draft` the host keeps while the dialog is open
+ *   (EMPTY_BULK_ORGANIZE_DRAFT each time it opens). Send it with a control's `edit`
+ *   as `organize`; the view returns the new `draft`. Show `validationMessage` after
+ *   an Apply while `canApply` is false, until the status or the person changes.
+ * - Dates go in only as local days (yyyy-MM-dd); each date field names its picker
+ *   start and its Today and Tomorrow chips' values.
+ *
+ * Every write takes a request UUID and retries exactly (native-request-receipts.ts):
+ * while its save is owed (SAVE_FAILED) a retry only saves. Each write is
+ * target-state, so a replay after a restart writes nothing. Undo is its own
+ * command: a delete's toast carries `undo.action` ({ type: 'restoreTasks' }) to
+ * send with a new request UUID.
+ *
+ * Only functions read this module's imports from native-host-contract.ts, so the
+ * import cycle between the two files is safe.
+ */
+import { collectBulkTaskTokens, type BulkTaskTokenMode } from './bulk-task-tokens';
+import { safeParseDate, type DateFormatter } from './date';
+import { tFallback } from './i18n';
+import { isStatusListTaskReadOnly } from './menu-views-model';
+import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult, type NativeListActionResult, type NativeListToast } from './native-host-contract';
+import type { createInboxViewMethods } from './native-host-contract-inbox-view';
+import {
+    fail,
+    isObjectRecord,
+    isPaging,
+    isText,
+    matchesPickerQuery,
+    page,
+    paramsKey,
+    type createMenuViewMethods,
+} from './native-host-contract-menu-views';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import { updateRangeSelection } from './range-selection';
+import { useTaskStore } from './store';
+import {
+    applyBulkOrganizeDraftEdit,
+    BULK_ORGANIZE_DATE_FIELDS,
+    BULK_ORGANIZE_KEEP,
+    BULK_ORGANIZE_NONE,
+    BULK_ORGANIZE_STATUS_OPTIONS,
+    buildBulkOrganizeDateFieldModel,
+    buildBulkOrganizeDialogModel,
+    buildBulkOrganizeInput,
+    buildTaskListBulkBarModel,
+    EMPTY_BULK_ORGANIZE_DRAFT,
+    getBulkMoveStatusOptions,
+    getBulkOrganizeAreaOptions,
+    getBulkOrganizeProjectOptions,
+    getTaskListAddTagDialogText,
+    getTaskListBulkBusyLabels,
+    getTaskListBulkToast,
+    getTaskListRemoveTagPickerText,
+    planBulkOrganize,
+    planBulkTagEdit,
+    runTaskListBulkWrite,
+    TASK_LIST_BULK_SCREENS,
+    type BulkOrganizeDateFieldModel,
+    type BulkOrganizeDialogModel,
+    type BulkOrganizeDraft,
+    type BulkOrganizeDraftEdit,
+    type BulkOrganizeTextField,
+    type TaskListBulkBarModel,
+    type TaskListBulkWrite,
+} from './task-list-bulk-actions';
+import { getBulkTrashConfirmation, type ListConfirmation } from './trash-view-model';
+import type { Task, TaskStatus } from './types';
+
+export type NativeBulkList = 'inbox' | 'waiting' | 'someday' | 'reference' | 'done';
+const BULK_LISTS: readonly NativeBulkList[] = ['inbox', 'waiting', 'someday', 'reference', 'done'];
+
+/** Select all: every selectable row on screen for the view's `params`, less `except`. */
+export type NativeBulkSelectAll = {
+    params: Record<string, unknown>;
+    revision: string;
+    except?: string[];
+};
+type Target = { taskIds: string[]; selectAll?: undefined } | { selectAll: NativeBulkSelectAll; taskIds?: undefined };
+export type NativeBulkAction =
+    | ({ type: 'moveTasks'; status: TaskStatus } & Target)
+    | ({ type: 'editTaskTokens'; field: 'tags'; mode: BulkTaskTokenMode; values: string[] } & Target)
+    /** Bulk Organize's Apply, on the Inbox. */
+    | ({ type: 'organize'; draft: Partial<BulkOrganizeDraft> } & Target)
+    | ({ type: 'trashTasks' } & Target)
+    /** A delete's Undo: the ids its toast carries. */
+    | { type: 'restoreTasks'; taskIds: string[] };
+
+/** An open picker's options: the organize dialog's project or area picker, or the remove-tag picker. */
+export type NativeBulkPicker = {
+    kind: 'project' | 'area' | 'removeTag';
+    total: number;
+    /** Project and area pickers lead with Keep and None; choosing one sends its `edit` with `organize`. */
+    items: { value: string; label: string; selected: boolean; edit: BulkOrganizeDraftEdit | null }[];
+};
+
+export type NativeBulkOrganizeView = Omit<BulkOrganizeDialogModel, 'statuses' | 'dates' | 'waitingFor' | 'contexts' | 'tags'> & {
+    /** The draft with the edit applied: send it back as `organize.draft`, and with Apply. */
+    draft: BulkOrganizeDraft;
+    statuses: (BulkOrganizeDialogModel['statuses'][number] & { edit: BulkOrganizeDraftEdit })[];
+    waitingFor: (NonNullable<BulkOrganizeDialogModel['waitingFor']> & { value: string }) | null;
+    dates: (Omit<BulkOrganizeDateFieldModel, 'quickDates'> & {
+        field: BulkOrganizeDialogModel['dates'][number]['field'];
+        quickDates: (BulkOrganizeDateFieldModel['quickDates'][number] & { edit: BulkOrganizeDraftEdit })[];
+    })[];
+    contexts: BulkOrganizeDialogModel['contexts'] & { value: string };
+    tags: BulkOrganizeDialogModel['tags'] & { value: string };
+};
+
+export type NativeBulkActionsView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    /** The list view's revision; later picker pages send it back as `picker.revision`. */
+    revision: string;
+    list: NativeBulkList;
+    /** The explicit selection still on screen, in the order it was made; send it back as `taskIds`. Empty under Select all. */
+    selectedIds: string[];
+    selectedCount: number;
+    /** Range's anchor: the last row tapped. Send it back as `anchorId`. */
+    anchorId: string | null;
+    /** Under Select all: the object an action takes as `selectAll`. */
+    selectAll: NativeBulkSelectAll | null;
+    /** The rows Select all selects. */
+    selectableCount: number;
+    bar: TaskListBulkBarModel;
+    labels: {
+        selectAll: string;
+        /** A failed action's toast title; its message is the error, or "<busy label> failed.". */
+        failureTitle: string;
+        busy: ReturnType<typeof getTaskListBulkBusyLabels>;
+    };
+    addTag: ReturnType<typeof getTaskListAddTagDialogText>;
+    /** Null when the list offers no Remove tag; open `picker: { kind: 'removeTag' }` for the selection's tags. */
+    removeTag: ReturnType<typeof getTaskListRemoveTagPickerText> | null;
+    deleteConfirmation: ListConfirmation;
+    /** Someday: the selection's ids, for getSomedayMoveDialog and moveSomedayTasksToSection. */
+    moveToSection: { taskIds: string[] } | null;
+    /** Only when `organize` is sent (the dialog is open). */
+    organize: NativeBulkOrganizeView | null;
+    /** Only when `picker` is sent. */
+    picker: NativeBulkPicker | null;
+};
+
+type ListViews = Pick<ReturnType<typeof createMenuViewMethods>, 'getWaitingView' | 'getSomedayView' | 'getReferenceView' | 'getDoneView'>
+    & Pick<ReturnType<typeof createInboxViewMethods>, 'getInboxView'>;
+
+export type BulkActionDeps = {
+    readiness: () => NativeHostResult<null>;
+    save: () => Promise<NativeHostResult<null>>;
+    t: () => (key: string) => string;
+    /** The user's date formatting (createDateFormatter); the only formatter this block uses. */
+    formatDate: () => DateFormatter;
+    /** The list views, read to know which rows are on screen. */
+    views: ListViews;
+};
+
+type Row = { id: string; readOnly: boolean };
+type ActionOutcome = NativeHostResult<NativeListActionResult<NativeBulkAction>> | NativeUnsavedWrite<NativeListActionResult<NativeBulkAction>>;
+
+const ID_LIMIT = 10_000;
+const isIdList = (value: unknown, allowEmpty = false): value is string[] => (
+    Array.isArray(value) && value.length <= ID_LIMIT && (allowEmpty || value.length > 0)
+    && value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 200) && new Set(value).size === value.length
+);
+const isDay = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && safeParseDate(value) !== null;
+const TEXT_LIMITS: Record<BulkOrganizeTextField, number> = {
+    contexts: 2000, tags: 2000, startDate: 10, dueDate: 10, reviewDate: 10, delegateWho: 500,
+};
+const DRAFT_KEYS = new Set(Object.keys(EMPTY_BULK_ORGANIZE_DRAFT));
+const PARAM_ONLY_KEYS = ['filterEdit', 'offset', 'limit', 'revision'];
+
+export function createBulkActionMethods(deps: BulkActionDeps) {
+    const durableSave = async (): Promise<NativeHostResult<null>> => {
+        if (useTaskStore.getState().persistenceFailure) {
+            try {
+                await useTaskStore.getState().retryPersistence();
+            } catch (error) {
+                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        }
+        return deps.save();
+    };
+    const receipts = createNativeRequestReceipts({ save: durableSave });
+
+    const readOnly = (task: Task) => isStatusListTaskReadOnly(task, useTaskStore.getState()._allProjects);
+    const liveTask = (id: string): Task | undefined => {
+        const task = useTaskStore.getState()._tasksById.get(id);
+        return task && !task.deletedAt ? task : undefined;
+    };
+
+    /** Every row the list shows for these params, in list order, paged through the list's own view. */
+    const listRows = (list: NativeBulkList, params: unknown): NativeHostResult<{ revision: string; rows: Row[] }> => {
+        if (!isObjectRecord(params) || PARAM_ONLY_KEYS.some((key) => params[key] !== undefined)) {
+            return fail('INVALID_INPUT', 'The list view\'s own params are required (filters as returned, no filterEdit or paging)');
+        }
+        const read = (offset: number, revision?: string) => {
+            const input = { ...params, offset, limit: NATIVE_HOST_MAX_WINDOW, ...(revision ? { revision } : {}) };
+            const { views } = deps;
+            switch (list) {
+                case 'inbox': return views.getInboxView(input as Parameters<ListViews['getInboxView']>[0]);
+                case 'waiting': return views.getWaitingView(input as Parameters<ListViews['getWaitingView']>[0]);
+                case 'someday': return views.getSomedayView(input as Parameters<ListViews['getSomedayView']>[0]);
+                case 'reference': return views.getReferenceView(input as Parameters<ListViews['getReferenceView']>[0]);
+                case 'done': return views.getDoneView(input as Parameters<ListViews['getDoneView']>[0]);
+            }
+        };
+        const rows: Row[] = [];
+        const seen = new Set<string>();
+        let revision: string | undefined;
+        for (let offset = 0; ; offset += NATIVE_HOST_MAX_WINDOW) {
+            const result = read(offset, revision);
+            if (!result.ok) return result;
+            revision = result.value.revision;
+            const value = result.value as { total: number; rows?: { id: string }[]; items?: { type: string; row?: { id: string; readOnly?: boolean } }[] };
+            const entries: Row[] = value.rows
+                ? value.rows.map((row) => ({ id: row.id, readOnly: false }))
+                : (value.items ?? []).flatMap((item) => (item.type === 'task' && item.row ? [{ id: item.row.id, readOnly: item.row.readOnly === true }] : []));
+            // A task grouped under several headings is one row to select.
+            for (const entry of entries) {
+                if (seen.has(entry.id)) continue;
+                seen.add(entry.id);
+                rows.push(entry);
+            }
+            if (offset + NATIVE_HOST_MAX_WINDOW >= value.total) return { ok: true, value: { revision, rows } };
+        }
+    };
+    const selectableIds = (rows: Row[]) => rows.filter((row) => !row.readOnly).map((row) => row.id);
+    const selectAllRevision = (ids: string[]) => `${ids.length}:${paramsKey(ids)}`;
+
+    /** A draft as the host sends it, completed from the empty one; null when a choice is not one the dialog offers. */
+    const readDraft = (value: unknown): BulkOrganizeDraft | null => {
+        if (value === undefined) return EMPTY_BULK_ORGANIZE_DRAFT;
+        if (!isObjectRecord(value) || Object.keys(value).some((key) => !DRAFT_KEYS.has(key))) return null;
+        const draft = { ...EMPTY_BULK_ORGANIZE_DRAFT, ...value } as BulkOrganizeDraft;
+        const state = useTaskStore.getState();
+        const isChoice = (choice: unknown, ids: Set<string>) => choice === BULK_ORGANIZE_KEEP || choice === BULK_ORGANIZE_NONE
+            || (typeof choice === 'string' && ids.has(choice));
+        const valid = (draft.status === BULK_ORGANIZE_KEEP || BULK_ORGANIZE_STATUS_OPTIONS.includes(draft.status))
+            && isChoice(draft.projectChoice, new Set(getBulkOrganizeProjectOptions(state.projects).map((project) => project.id)))
+            && isChoice(draft.areaChoice, new Set(getBulkOrganizeAreaOptions(state.areas).map((area) => area.id)))
+            && (Object.keys(TEXT_LIMITS) as BulkOrganizeTextField[]).every((field) => isText(draft[field], TEXT_LIMITS[field]))
+            && BULK_ORGANIZE_DATE_FIELDS.every((field) => draft[field] === '' || isDay(draft[field]));
+        return valid ? draft : null;
+    };
+    const readEdit = (value: unknown): BulkOrganizeDraftEdit | null => {
+        if (!isObjectRecord(value)) return null;
+        switch (value.type) {
+            case 'setStatus':
+            case 'setProject':
+            case 'setArea':
+                return typeof value.value === 'string' ? value as BulkOrganizeDraftEdit : null;
+            case 'setText':
+                return typeof value.field === 'string' && value.field in TEXT_LIMITS && typeof value.value === 'string' ? value as BulkOrganizeDraftEdit : null;
+            default:
+                return null;
+        }
+    };
+
+    /** The rows an action takes: its `taskIds`, or its Select all resolved now. */
+    const resolveTarget = (list: NativeBulkList, action: Record<string, unknown>): string[] | NativeHostResult<never> => {
+        if (action.taskIds !== undefined && action.selectAll !== undefined) return fail('INVALID_INPUT', 'Send taskIds or selectAll, not both');
+        if (action.selectAll === undefined) {
+            if (!isIdList(action.taskIds)) return fail('INVALID_INPUT', 'Task IDs or Select all are required');
+            const invalid = action.taskIds.some((id) => {
+                const task = liveTask(id);
+                return !task || readOnly(task);
+            });
+            return invalid ? fail('INVALID_INPUT', 'Every task must exist, not be in Trash, and be editable') : action.taskIds;
+        }
+        const selectAll = action.selectAll;
+        if (!isObjectRecord(selectAll) || typeof selectAll.revision !== 'string' || (selectAll.except !== undefined && !isIdList(selectAll.except, true))) {
+            return fail('INVALID_INPUT', 'Select all needs the view\'s params, its revision and the rows deselected since');
+        }
+        const read = listRows(list, selectAll.params);
+        if (!read.ok) return read;
+        const ids = selectableIds(read.value.rows);
+        if (selectAllRevision(ids) !== selectAll.revision) return fail('STALE_REVISION', 'The list changed; select all again');
+        const except = new Set(selectAll.except as string[] | undefined);
+        const selected = ids.filter((id) => !except.has(id));
+        return selected.length > 0 ? selected : fail('INVALID_INPUT', 'Select all selects no task');
+    };
+
+    const toToast = (write: TaskListBulkWrite, t: (key: string) => string): NativeListToast<NativeBulkAction> | null => {
+        const toast = getTaskListBulkToast(write, t);
+        if (!toast) return null;
+        return {
+            tone: toast.tone,
+            title: toast.title,
+            message: toast.message,
+            undo: toast.undo ? { label: toast.undo.label, action: { type: 'restoreTasks', taskIds: toast.undo.taskIds } } : null,
+        };
+    };
+    const unchanged = (): ActionOutcome => ({ ok: true, value: { changed: false, toast: null } });
+    const perform = async (write: TaskListBulkWrite, t: (key: string) => string): Promise<ActionOutcome> => {
+        const written = await runStoreWrite(() => runTaskListBulkWrite(useTaskStore.getState(), write));
+        return settleWrite(written, { changed: true, toast: toToast(write, t) });
+    };
+    // Target state: a replay of an update that landed finds every field already set.
+    const hasLanded = (updates: { id: string; updates: Partial<Task> }[]) => updates.every(({ id, updates: fields }) => {
+        const task = useTaskStore.getState()._tasksById.get(id) as Record<string, unknown> | undefined;
+        return task && Object.entries(fields).every(([key, value]) => JSON.stringify(task[key] ?? null) === JSON.stringify(value ?? null));
+    });
+
+    return {
+        /**
+         * A list's selection mode: the bulk bar for the selection, its dialogs, and an
+         * open picker's options. `list` names the list, `params` are its view's inputs.
+         */
+        getBulkActions(input: {
+            list: NativeBulkList;
+            params?: Record<string, unknown>;
+            taskIds?: string[];
+            selectAll?: { except?: string[] };
+            anchorId?: string | null;
+            /** A row tap; `range` when Range mode was on. */
+            selectionEdit?: { taskId: string; range?: boolean };
+            rangeSelectMode?: boolean;
+            /** While an action runs: the bar disables its controls. */
+            busy?: boolean;
+            organize?: { draft?: Partial<BulkOrganizeDraft>; edit?: BulkOrganizeDraftEdit };
+            /** An open picker; later pages send the view's `revision`. */
+            picker?: { kind: NativeBulkPicker['kind']; query?: string; offset?: number; limit?: number; revision?: string };
+        }): NativeHostResult<NativeBulkActionsView> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !BULK_LISTS.includes(input.list)
+                || (input.taskIds !== undefined && !isIdList(input.taskIds, true))
+                || (input.selectAll !== undefined && (!isObjectRecord(input.selectAll) || input.taskIds !== undefined
+                    || (input.selectAll.except !== undefined && !isIdList(input.selectAll.except, true))))
+                || (input.anchorId != null && !isText(input.anchorId, 200))
+                || (input.selectionEdit !== undefined && (!isObjectRecord(input.selectionEdit) || input.selectAll !== undefined
+                    || !isText(input.selectionEdit.taskId, 200)
+                    || (input.selectionEdit.range !== undefined && typeof input.selectionEdit.range !== 'boolean')))
+                || (input.rangeSelectMode !== undefined && typeof input.rangeSelectMode !== 'boolean')
+                || (input.busy !== undefined && typeof input.busy !== 'boolean')
+                || (input.organize !== undefined && !isObjectRecord(input.organize))
+                || (input.picker !== undefined && (!isObjectRecord(input.picker)
+                    || !['project', 'area', 'removeTag'].includes(input.picker.kind as string)
+                    || (input.picker.query !== undefined && !isText(input.picker.query))
+                    || !isPaging({ offset: input.picker.offset ?? 0, limit: input.picker.limit ?? NATIVE_HOST_MAX_WINDOW, revision: input.picker.revision })))) {
+                return fail('INVALID_INPUT', 'A list, its view params, one selection, and valid selection, organize and picker inputs are required');
+            }
+            const screen = TASK_LIST_BULK_SCREENS[input.list];
+            if ((input.organize !== undefined || input.picker?.kind === 'project' || input.picker?.kind === 'area') && !screen.organize) {
+                return fail('INVALID_INPUT', 'This list does not offer Bulk organize');
+            }
+            if (input.picker?.kind === 'removeTag' && !screen.removeTags) return fail('INVALID_INPUT', 'This list does not offer Remove tag');
+            const read = listRows(input.list, input.params ?? {});
+            if (!read.ok) return read;
+            const { revision, rows } = read.value;
+            if ((input.picker?.offset ?? 0) > 0 && input.picker?.revision !== revision) return fail('STALE_REVISION', 'The list changed; open the picker again');
+            const selectable = selectableIds(rows);
+            const onScreen = new Set(selectable);
+
+            // The selection, as mobile keeps it: tapped rows in tap order, pruned to the rows on screen.
+            let selectedIds = (input.taskIds ?? []).filter((id) => onScreen.has(id));
+            let anchorId = input.anchorId ?? null;
+            if (input.selectionEdit) {
+                const { taskId } = input.selectionEdit;
+                if (!rows.some((row) => row.id === taskId)) return fail('INVALID_INPUT', 'That row is not on screen');
+                // A read-only row does not select.
+                if (onScreen.has(taskId)) {
+                    const result = updateRangeSelection({
+                        anchorId, range: input.selectionEdit.range === true, selectedIds: new Set(selectedIds), targetId: taskId, visibleIds: selectable,
+                    });
+                    selectedIds = Array.from(result.selectedIds);
+                    anchorId = result.anchorId;
+                }
+            }
+            const except = input.selectAll ? (input.selectAll.except ?? []).filter((id) => onScreen.has(id)) : [];
+            const exceptSet = new Set(except);
+            const selection = input.selectAll ? selectable.filter((id) => !exceptSet.has(id)) : selectedIds;
+
+            const t = deps.t();
+            const state = useTaskStore.getState();
+            const tokens = screen.removeTags ? collectBulkTaskTokens(selection, state._tasksById, 'tags') : [];
+            const bar = buildTaskListBulkBarModel({
+                selectedCount: selection.length,
+                hasSelection: selection.length > 0,
+                busy: input.busy === true,
+                rangeSelectMode: input.rangeSelectMode === true,
+                statuses: getBulkMoveStatusOptions(screen.status),
+                moveToSection: screen.moveToSection,
+                organize: screen.organize,
+                removeTag: screen.removeTags ? { canRemove: tokens.length > 0 } : null,
+                t,
+            });
+
+            let organize: NativeBulkOrganizeView | null = null;
+            let draft = EMPTY_BULK_ORGANIZE_DRAFT;
+            if (input.organize) {
+                const sent = readDraft(input.organize.draft);
+                const edit = input.organize.edit === undefined ? null : readEdit(input.organize.edit);
+                const next = sent && (input.organize.edit === undefined ? sent : edit ? readDraft(applyBulkOrganizeDraftEdit(sent, edit)) : null);
+                if (!next) return fail('INVALID_INPUT', 'A Bulk organize draft and edit with choices the dialog offers are required');
+                draft = next;
+                const projects = getBulkOrganizeProjectOptions(state.projects);
+                const areas = getBulkOrganizeAreaOptions(state.areas);
+                const dialog = buildBulkOrganizeDialogModel({ draft, projects, areas, selectedCount: selection.length, t });
+                const now = new Date();
+                const formatDate = deps.formatDate();
+                organize = {
+                    ...dialog,
+                    draft,
+                    statuses: dialog.statuses.map((status) => ({ ...status, edit: { type: 'setStatus', value: status.value } })),
+                    waitingFor: dialog.waitingFor ? { ...dialog.waitingFor, value: draft.delegateWho } : null,
+                    dates: dialog.dates.map(({ field, label }) => {
+                        const model = buildBulkOrganizeDateFieldModel({ label, value: draft[field], now, t, formatDate });
+                        return {
+                            ...model,
+                            field,
+                            quickDates: model.quickDates.map((chip) => ({ ...chip, edit: { type: 'setText', field, value: chip.value } })),
+                        };
+                    }),
+                    contexts: { ...dialog.contexts, value: draft.contexts },
+                    tags: { ...dialog.tags, value: draft.tags },
+                };
+            }
+
+            let picker: NativeBulkPicker | null = null;
+            if (input.picker) {
+                const { kind, query } = input.picker;
+                const choice = (value: string, label: string, selected: boolean, edit: BulkOrganizeDraftEdit | null) => ({ value, label, selected, edit });
+                let items: NativeBulkPicker['items'];
+                if (kind === 'removeTag') {
+                    items = tokens.filter((token) => query === undefined || matchesPickerQuery(token, query))
+                        .map((token) => choice(token, token, false, null));
+                } else {
+                    const isProject = kind === 'project';
+                    const current = isProject ? draft.projectChoice : draft.areaChoice;
+                    const set = (value: string): BulkOrganizeDraftEdit => ({ type: isProject ? 'setProject' : 'setArea', value });
+                    const options = isProject
+                        ? getBulkOrganizeProjectOptions(state.projects).map((project) => ({ id: project.id, label: project.title }))
+                        : getBulkOrganizeAreaOptions(state.areas).map((area) => ({ id: area.id, label: area.name }));
+                    // Keep and None stay whatever the search; the options narrow.
+                    items = [
+                        choice(BULK_ORGANIZE_KEEP, isProject ? tFallback(t, 'bulk.keepProject', 'Keep project') : tFallback(t, 'bulk.keepArea', 'Keep area'), current === BULK_ORGANIZE_KEEP, set(BULK_ORGANIZE_KEEP)),
+                        choice(BULK_ORGANIZE_NONE, isProject ? t('taskEdit.noProjectOption') : t('taskEdit.noAreaOption'), current === BULK_ORGANIZE_NONE, set(BULK_ORGANIZE_NONE)),
+                        ...options.filter((option) => query === undefined || matchesPickerQuery(option.label, query))
+                            .map((option) => choice(option.id, option.label, current === option.id, set(option.id))),
+                    ];
+                }
+                picker = { kind, total: items.length, items: page(items, { offset: input.picker.offset ?? 0, limit: input.picker.limit ?? NATIVE_HOST_MAX_WINDOW }) };
+            }
+
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision,
+                    list: input.list,
+                    selectedIds: input.selectAll ? [] : selectedIds,
+                    selectedCount: selection.length,
+                    anchorId,
+                    selectAll: input.selectAll
+                        ? { params: input.params ?? {}, revision: selectAllRevision(selectable), except }
+                        : null,
+                    selectableCount: selectable.length,
+                    bar,
+                    labels: {
+                        selectAll: `${tFallback(t, 'bulk.select', 'Select')} ${tFallback(t, 'common.all', 'all')}`,
+                        failureTitle: t('common.notice'),
+                        busy: getTaskListBulkBusyLabels(t),
+                    },
+                    addTag: getTaskListAddTagDialogText(t),
+                    removeTag: screen.removeTags ? getTaskListRemoveTagPickerText(t) : null,
+                    deleteConfirmation: getBulkTrashConfirmation(t),
+                    moveToSection: screen.moveToSection ? { taskIds: selection } : null,
+                    organize,
+                    picker,
+                },
+            };
+        },
+
+        /**
+         * One bulk action on a list, as its bar writes it. Reuse `requestId` to retry;
+         * a delete's Undo is `restoreTasks` with a new request UUID.
+         */
+        async runBulkAction(input: { requestId: string; list: NativeBulkList; action: NativeBulkAction }): Promise<NativeHostResult<NativeListActionResult<NativeBulkAction>>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !BULK_LISTS.includes(input.list) || !isObjectRecord(input.action)) {
+                return fail('INVALID_INPUT', 'A request UUID, a list and an action are required');
+            }
+            const { list } = input;
+            const action = input.action as NativeBulkAction & Record<string, unknown>;
+            return receipts.run(input.requestId, JSON.stringify(['bulk', list, action]), async (): Promise<ActionOutcome> => {
+                const screen = TASK_LIST_BULK_SCREENS[list];
+                const t = deps.t();
+                const state = useTaskStore.getState();
+                if (action.type === 'restoreTasks') {
+                    if (!isIdList(action.taskIds) || action.taskIds.some((id) => {
+                        const task = state._tasksById.get(id);
+                        return !task || task.purgedAt;
+                    })) {
+                        return fail('INVALID_INPUT', 'Every task must exist');
+                    }
+                    // Target state: the tasks already back stay as they are.
+                    const trashed = action.taskIds.filter((id) => state._tasksById.get(id)?.deletedAt);
+                    return trashed.length > 0 ? perform({ kind: 'restore', taskIds: trashed }, t) : unchanged();
+                }
+                if (action.type === 'trashTasks' && isIdList(action.taskIds) && action.selectAll === undefined
+                    && action.taskIds.every((id) => {
+                        const task = state._tasksById.get(id);
+                        return task?.deletedAt && !task.purgedAt;
+                    })) {
+                    return unchanged();
+                }
+                const target = resolveTarget(list, action);
+                if (!Array.isArray(target)) return target;
+                const taskIds = target;
+                switch (action.type) {
+                    case 'moveTasks': {
+                        if (!getBulkMoveStatusOptions(screen.status).includes(action.status)) return fail('INVALID_INPUT', 'This list does not offer that status');
+                        if (taskIds.every((id) => state._tasksById.get(id)?.status === action.status)) return unchanged();
+                        return perform({ kind: 'move', taskIds, status: action.status }, t);
+                    }
+                    case 'editTaskTokens': {
+                        if (action.field !== 'tags' || (action.mode !== 'add' && action.mode !== 'remove')
+                            || (action.mode === 'remove' && !screen.removeTags)
+                            || !Array.isArray(action.values) || action.values.length === 0 || action.values.length > 100
+                            || !action.values.every((value) => isText(value) && value.trim().length > 0)) {
+                            return fail('INVALID_INPUT', 'Tags to add, or tags to remove where the list offers it, are required');
+                        }
+                        const write = planBulkTagEdit(taskIds, state._tasksById, action.mode, action.values);
+                        return write ? perform(write, t) : unchanged();
+                    }
+                    case 'organize': {
+                        if (!screen.organize) return fail('INVALID_INPUT', 'This list does not offer Bulk organize');
+                        const draft = readDraft(action.draft);
+                        if (!draft) return fail('INVALID_INPUT', 'A Bulk organize draft with choices the dialog offers is required');
+                        if (draft.status === 'waiting' && !draft.delegateWho.trim()) return fail('INVALID_INPUT', 'Waiting needs the person these tasks wait for');
+                        const write = planBulkOrganize(taskIds, state._tasksById, buildBulkOrganizeInput(draft));
+                        return write && write.kind === 'update' && !hasLanded(write.updates) ? perform(write, t) : unchanged();
+                    }
+                    case 'trashTasks':
+                        return perform({ kind: 'trash', taskIds }, t);
+                    default:
+                        return fail('INVALID_INPUT', 'This list does not offer that action');
+                }
+            });
+        },
+    };
+}

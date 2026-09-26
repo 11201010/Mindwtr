@@ -89,6 +89,7 @@ export {
 } from './task-token-usage';
 export * from './people';
 export * from './bulk-task-tokens';
+export * from './task-list-bulk-actions';
 export * from './contexts';
 export * from './i18n';
 export * from './i18n/i18n-storage';

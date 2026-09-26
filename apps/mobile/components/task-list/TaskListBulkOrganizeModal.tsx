@@ -2,15 +2,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { ChevronRight, ClipboardCheck, X } from 'lucide-react-native';
 import {
-  compareAreasByOrder,
+  applyBulkOrganizeDraftEdit,
+  BULK_ORGANIZE_KEEP,
+  BULK_ORGANIZE_NONE,
+  buildBulkOrganizeDialogModel,
+  buildBulkOrganizeInput,
   createBulkOrganizeArea,
   createBulkOrganizeProject,
+  EMPTY_BULK_ORGANIZE_DRAFT,
   ensureBulkOrganizeDestinationSaved,
-  isSelectableProjectForTaskAssignment,
-  parseBulkOrganizeTokenInput,
-  tFallback,
+  getBulkOrganizeAreaOptions,
+  getBulkOrganizeProjectOptions,
   type Area,
-  type BulkOrganizeStatus,
+  type BulkOrganizeDateField,
+  type BulkOrganizeDraftEdit,
   type BulkOrganizeTaskUpdateInput,
   type Project,
 } from '@mindwtr/core';
@@ -46,10 +51,6 @@ type TaskListBulkOrganizeModalProps = {
   visible: boolean;
 };
 
-const STATUS_OPTIONS: BulkOrganizeStatus[] = ['next', 'waiting', 'someday', 'done', 'reference'];
-const KEEP_VALUE = '__KEEP__';
-const NONE_VALUE = '__NONE__';
-
 export function TaskListBulkOrganizeModal({
   areas,
   isApplying,
@@ -63,18 +64,14 @@ export function TaskListBulkOrganizeModal({
 }: TaskListBulkOrganizeModalProps) {
   const filledButton = useFilledButtonColors();
   const keyboardInset = useAndroidKeyboardInset(visible);
-  const [status, setStatus] = useState<BulkOrganizeStatus | typeof KEEP_VALUE>(KEEP_VALUE);
-  const [projectChoice, setProjectChoice] = useState(KEEP_VALUE);
-  const [areaChoice, setAreaChoice] = useState(KEEP_VALUE);
+  // The dialog's choices, as core's draft: the native host keeps the same one.
+  const [draft, setDraft] = useState(EMPTY_BULK_ORGANIZE_DRAFT);
+  const editDraft = useCallback((edit: BulkOrganizeDraftEdit) => {
+    setDraft((current) => applyBulkOrganizeDraftEdit(current, edit));
+  }, []);
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
   const [areaPickerVisible, setAreaPickerVisible] = useState(false);
-  const [contextsInput, setContextsInput] = useState('');
-  const [tagsInput, setTagsInput] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [reviewDate, setReviewDate] = useState('');
-  const [datePicker, setDatePicker] = useState<'start' | 'due' | 'review' | null>(null);
-  const [delegateWho, setDelegateWho] = useState('');
+  const [datePicker, setDatePicker] = useState<BulkOrganizeDateField | null>(null);
   const [showValidation, setShowValidation] = useState(false);
   const [isCreatingDestination, setIsCreatingDestination] = useState(false);
   const [destinationError, setDestinationError] = useState<string | null>(null);
@@ -92,17 +89,9 @@ export function TaskListBulkOrganizeModal({
       setAreaPickerVisible(false);
       return;
     }
-    setStatus(KEEP_VALUE);
-    setProjectChoice(KEEP_VALUE);
-    setAreaChoice(KEEP_VALUE);
+    setDraft(EMPTY_BULK_ORGANIZE_DRAFT);
     setProjectPickerVisible(false);
     setAreaPickerVisible(false);
-    setContextsInput('');
-    setTagsInput('');
-    setStartDate('');
-    setDueDate('');
-    setReviewDate('');
-    setDelegateWho('');
     setShowValidation(false);
     return () => {
       destinationCreateSessionRef.current += 1;
@@ -130,25 +119,28 @@ export function TaskListBulkOrganizeModal({
     }
   }, [isApplying, visible]);
 
+  const activeProjects = useMemo(() => getBulkOrganizeProjectOptions(projects), [projects]);
+  const activeAreas = useMemo(() => getBulkOrganizeAreaOptions(areas), [areas]);
+
+  // Labels, the choices shown and whether Apply may run come from core, as the native host shows them.
+  const dialog = buildBulkOrganizeDialogModel({ draft, projects: activeProjects, areas: activeAreas, selectedCount, t });
+  const selectedProjectId = dialog.project.selectedId;
+  const selectedAreaId = dialog.area.selectedId;
+  const isBusy = isApplying || isCreatingDestination;
+
   const selectDestination = async (kind: 'project' | 'area', id?: string) => {
     if (isApplying || destinationCreatePendingRef.current) return;
     try {
       const savedId = id ? await runDestinationCreate(async () => {
         await ensureBulkOrganizeDestinationSaved();
         return id;
-      }) : NONE_VALUE;
+      }) : BULK_ORGANIZE_NONE;
       if (!savedId) return;
       setDestinationError(null);
-      if (kind === 'project') {
-        setProjectChoice(savedId);
-        setAreaChoice(KEEP_VALUE);
-      } else {
-        setAreaChoice(savedId);
-      }
+      // A project choice also resets the area to Keep.
+      editDraft({ type: kind === 'project' ? 'setProject' : 'setArea', value: savedId });
     } catch {
-      setDestinationError(kind === 'project'
-        ? tFallback(t, 'projects.createFailed', 'Failed to create project.')
-        : tFallback(t, 'projects.createAreaFailed', 'Failed to create area.'));
+      setDestinationError(kind === 'project' ? dialog.createFailed.project : dialog.createFailed.area);
     }
   };
 
@@ -157,45 +149,6 @@ export function TaskListBulkOrganizeModal({
     destinationCreateSessionRef.current += 1;
     onClose();
   }, [isApplying, onClose]);
-
-  const activeProjects = useMemo(
-    () => projects
-      .filter(isSelectableProjectForTaskAssignment)
-      .sort((a, b) => a.title.localeCompare(b.title)),
-    [projects],
-  );
-  const activeAreas = useMemo(
-    () => areas
-      .filter((area) => !area.deletedAt)
-      .sort(compareAreasByOrder),
-    [areas],
-  );
-
-  const selectedProjectId = projectChoice !== KEEP_VALUE && projectChoice !== NONE_VALUE ? projectChoice : undefined;
-  const selectedAreaId = areaChoice !== KEEP_VALUE && areaChoice !== NONE_VALUE ? areaChoice : undefined;
-  const selectedProject = selectedProjectId ? activeProjects.find((project) => project.id === selectedProjectId) : undefined;
-  const selectedArea = selectedAreaId ? activeAreas.find((area) => area.id === selectedAreaId) : undefined;
-  const projectChoiceLabel = projectChoice === KEEP_VALUE
-    ? tFallback(t, 'bulk.keepProject', 'Keep project')
-    : projectChoice === NONE_VALUE
-      ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
-      : selectedProject?.title ?? tFallback(t, 'taskEdit.projectLabel', 'Project');
-  const areaChoiceLabel = areaChoice === KEEP_VALUE
-    ? tFallback(t, 'bulk.keepArea', 'Keep area')
-    : areaChoice === NONE_VALUE
-      ? tFallback(t, 'taskEdit.noAreaOption', 'No area')
-      : selectedArea?.name ?? tFallback(t, 'projects.areaLabel', 'Area');
-  const isWaiting = status === 'waiting';
-  const waitingForLabel = tFallback(t, 'process.delegateWhoLabel', 'Waiting for');
-  const startDateLabel = tFallback(t, 'taskEdit.startDateLabel', 'Start');
-  const dueDateLabel = tFallback(t, 'taskEdit.dueDateLabel', 'Due');
-  const reviewDateLabel = isWaiting
-    ? tFallback(t, 'process.followUpLabel', 'Follow-up')
-    : tFallback(t, 'taskEdit.reviewDateLabel', 'Review');
-  const contextsLabel = tFallback(t, 'taskEdit.contextsLabel', 'Contexts');
-  const tagsLabel = tFallback(t, 'taskEdit.tagsLabel', 'Tags');
-  const canApply = selectedCount > 0 && (!isWaiting || delegateWho.trim().length > 0);
-  const isBusy = isApplying || isCreatingDestination;
 
   const renderChip = (label: string, selected: boolean, onPress: () => void, disabled = false) => (
     <TouchableOpacity
@@ -260,29 +213,11 @@ export function TaskListBulkOrganizeModal({
 
   const apply = () => {
     if (isApplying || destinationCreatePendingRef.current) return;
-    if (!canApply) {
+    if (!dialog.canApply) {
       setShowValidation(true);
       return;
     }
-    const input: BulkOrganizeTaskUpdateInput = {
-      contexts: parseBulkOrganizeTokenInput(contextsInput, '@'),
-      tags: parseBulkOrganizeTokenInput(tagsInput, '#'),
-    };
-
-    if (status !== KEEP_VALUE) input.status = status;
-
-    if (projectChoice !== KEEP_VALUE) {
-      input.projectId = projectChoice === NONE_VALUE ? null : projectChoice;
-    }
-    if (!selectedProjectId && areaChoice !== KEEP_VALUE) {
-      input.areaId = areaChoice === NONE_VALUE ? null : areaChoice;
-    }
-    if (startDate.trim()) input.startTime = startDate.trim();
-    if (dueDate.trim()) input.dueDate = dueDate.trim();
-    if (reviewDate.trim()) input.reviewAt = reviewDate.trim();
-    if (isWaiting) input.assignedTo = delegateWho.trim();
-
-    void onApply(input);
+    void onApply(buildBulkOrganizeInput(draft));
   };
 
   return (
@@ -305,16 +240,16 @@ export function TaskListBulkOrganizeModal({
               <ClipboardCheck size={18} color={themeColors.tint} />
               <View style={styles.bulkOrganizeTitleBlock}>
                 <Text style={[styles.bulkOrganizeTitle, { color: themeColors.text }]}>
-                  {tFallback(t, 'bulk.organize', 'Bulk organize')}
+                  {dialog.title}
                 </Text>
                 <Text style={[styles.bulkOrganizeSubtitle, { color: themeColors.secondaryText }]}>
-                  {selectedCount} {tFallback(t, 'bulk.selected', 'selected')} - {tFallback(t, 'bulk.organizeHintShort', 'Titles and descriptions stay unchanged.')}
+                  {dialog.subtitle}
                 </Text>
               </View>
             </View>
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityLabel={tFallback(t, 'common.close', 'Close')}
+              accessibilityLabel={dialog.closeLabel}
               accessibilityState={{ disabled: isBusy }}
               disabled={isBusy}
               hitSlop={8}
@@ -332,22 +267,14 @@ export function TaskListBulkOrganizeModal({
           >
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {tFallback(t, 'bulk.organizeStatus', 'Status')}
+                {dialog.statusLabel}
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bulkOrganizeChipRow}>
-                {renderChip(
-                  tFallback(t, 'bulk.keepStatus', 'Keep status'),
-                  status === KEEP_VALUE,
+                {dialog.statuses.map((option) => renderChip(
+                  option.label,
+                  option.selected,
                   () => {
-                    setStatus(KEEP_VALUE);
-                    setShowValidation(false);
-                  },
-                )}
-                {STATUS_OPTIONS.map((option) => renderChip(
-                  tFallback(t, `status.${option}`, option),
-                  status === option,
-                  () => {
-                    setStatus(option);
+                    editDraft({ type: 'setStatus', value: option.value });
                     setShowValidation(false);
                   },
                 ))}
@@ -356,42 +283,42 @@ export function TaskListBulkOrganizeModal({
 
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {tFallback(t, 'taskEdit.projectLabel', 'Project')}
+                {dialog.project.label}
               </Text>
               {renderPickerRow({
-                label: tFallback(t, 'taskEdit.projectLabel', 'Project'),
+                label: dialog.project.label,
                 onPress: () => setProjectPickerVisible(true),
                 testID: 'bulk-organize-project-picker-row',
-                value: projectChoiceLabel,
+                value: dialog.project.value,
               })}
             </View>
 
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {tFallback(t, 'projects.areaLabel', 'Area')}
+                {dialog.area.label}
               </Text>
               {renderPickerRow({
-                disabled: Boolean(selectedProjectId),
-                label: tFallback(t, 'projects.areaLabel', 'Area'),
+                disabled: dialog.area.disabled,
+                label: dialog.area.label,
                 onPress: () => setAreaPickerVisible(true),
                 testID: 'bulk-organize-area-picker-row',
-                value: areaChoiceLabel,
+                value: dialog.area.value,
               })}
             </View>
 
-            {isWaiting && (
+            {dialog.waitingFor && (
               <View style={styles.bulkOrganizeSection}>
                 <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {waitingForLabel}
+                  {dialog.waitingFor.label}
                 </Text>
                 <TextInput
-                  accessibilityLabel={waitingForLabel}
-                  value={delegateWho}
+                  accessibilityLabel={dialog.waitingFor.label}
+                  value={draft.delegateWho}
                   onChangeText={(value) => {
-                    setDelegateWho(value);
+                    editDraft({ type: 'setText', field: 'delegateWho', value });
                     setShowValidation(false);
                   }}
-                  placeholder={tFallback(t, 'process.delegateWhoPlaceholder', 'Person or team')}
+                  placeholder={dialog.waitingFor.placeholder}
                   placeholderTextColor={themeColors.secondaryText}
                   style={[
                     styles.bulkOrganizeInput,
@@ -402,16 +329,12 @@ export function TaskListBulkOrganizeModal({
             )}
 
             <View style={styles.bulkOrganizeDateGrid}>
-              {([
-                ['start', startDateLabel, startDate, setStartDate],
-                ['due', dueDateLabel, dueDate, setDueDate],
-                ['review', reviewDateLabel, reviewDate, setReviewDate],
-              ] as const).map(([field, label, value, onChange]) => (
+              {dialog.dates.map(({ field, label }) => (
                 <TaskListBulkDateField
                   key={field}
                   label={label}
-                  value={value}
-                  onChange={onChange}
+                  value={draft[field]}
+                  onChange={(value) => editDraft({ type: 'setText', field, value })}
                   pickerVisible={visible && datePicker === field}
                   onOpenPicker={() => setDatePicker(field)}
                   onClosePicker={() => setDatePicker(null)}
@@ -424,13 +347,13 @@ export function TaskListBulkOrganizeModal({
 
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {contextsLabel}
+                {dialog.contexts.label}
               </Text>
               <TextInput
-                accessibilityLabel={contextsLabel}
-                value={contextsInput}
-                onChangeText={setContextsInput}
-                placeholder="@computer, @office"
+                accessibilityLabel={dialog.contexts.label}
+                value={draft.contexts}
+                onChangeText={(value) => editDraft({ type: 'setText', field: 'contexts', value })}
+                placeholder={dialog.contexts.placeholder}
                 placeholderTextColor={themeColors.secondaryText}
                 style={[
                   styles.bulkOrganizeInput,
@@ -441,13 +364,13 @@ export function TaskListBulkOrganizeModal({
 
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {tagsLabel}
+                {dialog.tags.label}
               </Text>
               <TextInput
-                accessibilityLabel={tagsLabel}
-                value={tagsInput}
-                onChangeText={setTagsInput}
-                placeholder="#project, #admin"
+                accessibilityLabel={dialog.tags.label}
+                value={draft.tags}
+                onChangeText={(value) => editDraft({ type: 'setText', field: 'tags', value })}
+                placeholder={dialog.tags.placeholder}
                 placeholderTextColor={themeColors.secondaryText}
                 style={[
                   styles.bulkOrganizeInput,
@@ -463,7 +386,7 @@ export function TaskListBulkOrganizeModal({
             )}
             {showValidation && (
               <Text style={[styles.bulkOrganizeValidation, { color: themeColors.danger }]}>
-                {tFallback(t, 'bulk.waitingPersonRequired', 'Choose who these items are waiting for.')}
+                {dialog.validationMessage}
               </Text>
             )}
           </ScrollView>
@@ -477,7 +400,7 @@ export function TaskListBulkOrganizeModal({
               accessibilityState={{ disabled: isBusy }}
             >
               <Text style={[styles.bulkOrganizeFooterText, { color: themeColors.secondaryText }]}>
-                {tFallback(t, 'common.cancel', 'Cancel')}
+                {dialog.cancelLabel}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -494,7 +417,7 @@ export function TaskListBulkOrganizeModal({
                 <ActivityIndicator size="small" color={filledButton.textColor ?? themeColors.onTint} />
               ) : null}
               <Text style={[styles.bulkOrganizeApplyText, { color: filledButton.textColor ?? themeColors.onTint }]}>
-                {tFallback(t, 'bulk.applyToSelected', 'Apply to selected')}
+                {dialog.applyLabel}
               </Text>
             </TouchableOpacity>
           </View>
@@ -510,14 +433,11 @@ export function TaskListBulkOrganizeModal({
         allowCreate={!isApplying}
         leadingOptions={[{
           key: 'keep-project',
-          label: tFallback(t, 'bulk.keepProject', 'Keep project'),
-          selected: projectChoice === KEEP_VALUE,
-          onPress: () => {
-            setProjectChoice(KEEP_VALUE);
-            setAreaChoice(KEEP_VALUE);
-          },
+          label: dialog.project.keepLabel,
+          selected: draft.projectChoice === BULK_ORGANIZE_KEEP,
+          onPress: () => editDraft({ type: 'setProject', value: BULK_ORGANIZE_KEEP }),
         }]}
-        selectedProjectId={projectChoice === NONE_VALUE ? null : selectedProjectId}
+        selectedProjectId={draft.projectChoice === BULK_ORGANIZE_NONE ? null : selectedProjectId}
         onClose={() => setProjectPickerVisible(false)}
         onSelectProject={(projectId?: string) => { void selectDestination('project', projectId); }}
         onCreateProject={(title) => runDestinationCreate(
@@ -533,11 +453,11 @@ export function TaskListBulkOrganizeModal({
         allowCreate={!isApplying}
         leadingOptions={[{
           key: 'keep-area',
-          label: tFallback(t, 'bulk.keepArea', 'Keep area'),
-          selected: areaChoice === KEEP_VALUE,
-          onPress: () => setAreaChoice(KEEP_VALUE),
+          label: dialog.area.keepLabel,
+          selected: draft.areaChoice === BULK_ORGANIZE_KEEP,
+          onPress: () => editDraft({ type: 'setArea', value: BULK_ORGANIZE_KEEP }),
         }]}
-        selectedAreaId={areaChoice === NONE_VALUE ? null : selectedAreaId}
+        selectedAreaId={draft.areaChoice === BULK_ORGANIZE_NONE ? null : selectedAreaId}
         onClose={() => setAreaPickerVisible(false)}
         onSelectArea={(areaId?: string) => { void selectDestination('area', areaId); }}
         onCreateArea={(name) => runDestinationCreate(() => createBulkOrganizeArea(name))}

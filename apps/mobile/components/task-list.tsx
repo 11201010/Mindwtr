@@ -33,6 +33,8 @@ import {
   REFERENCE_ARCHIVED_CHIP_ID,
   selectStatusListTasks,
   TASK_LIST_GROUP_OPTIONS,
+  getBulkMoveStatusOptions,
+  getTaskListRemoveTagPickerText,
   type StatusListKind,
 } from '@mindwtr/core';
 
@@ -67,7 +69,6 @@ import {
 } from '../lib/performance-diagnostics';
 import {
   TaskListBulkBar,
-  getBulkMoveStatusOptions,
   type TaskListBulkBarProps,
 } from './task-list/TaskListBulkBar';
 import {
@@ -1200,6 +1201,7 @@ function TaskListComponent({
     () => getBulkMoveStatusOptions(statusFilter),
     [statusFilter],
   );
+  const removeTagPickerText = useMemo(() => getTaskListRemoveTagPickerText(t), [t]);
 
   const bulkBarProps = useMemo<TaskListBulkBarProps | null>(() => {
     if (!effectiveBulkActions || !selectionMode || projectReorderMode) return null;
@@ -1833,10 +1835,10 @@ function TaskListComponent({
 
       <TokenPickerModal
         visible={removeTagPickerVisible}
-        title={tFallback(t, 'bulk.removeTag', 'Remove tag')}
-        description={tFallback(t, 'bulk.removeTag', 'Remove tag')}
+        title={removeTagPickerText.title}
+        description={removeTagPickerText.description}
         tokens={removableTagOptions}
-        placeholder={t('bulk.tagPlaceholder')}
+        placeholder={removeTagPickerText.placeholder}
         multiSelect
         onClose={() => setRemoveTagPickerVisible(false)}
         onConfirm={(values) => {

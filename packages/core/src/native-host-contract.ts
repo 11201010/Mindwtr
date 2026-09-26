@@ -209,6 +209,7 @@ import { createQuickCaptureMethods } from './native-host-contract-quick-capture'
 import { createCalendarViewMethods } from './native-host-contract-calendar';
 import { createBoardViewMethods } from './native-host-contract-board';
 import { createInboxViewMethods } from './native-host-contract-inbox-view';
+import { createBulkActionMethods } from './native-host-contract-bulk-actions';
 import {
     buildNativeFocusControls,
     createFocusControlMethods,
@@ -1015,6 +1016,30 @@ export function createNativeHostContract() {
         };
     };
 
+    // Built before the contract object: the bulk actions read these lists' views.
+    const menuViewMethods = createMenuViewMethods({
+        readiness,
+        save,
+        t: () => translate,
+        formatDate: () => createDateFormatter(dateFormatting()),
+        revision: (now) => `${revision()}:${displayRevision(now)}`,
+        rows: (tasks, now) => {
+            const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+            return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
+        },
+        requestIdPattern: CAPTURE_ID_PATTERN,
+    });
+    const inboxViewMethods = createInboxViewMethods({
+        readiness,
+        t: () => translate,
+        revision: (now) => `${revision()}:${displayRevision(now)}`,
+        // Mobile's Inbox list hides checklist progress.
+        rows: (tasks, now) => {
+            const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+            return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now, { hideChecklistProgress: true })));
+        },
+    });
+
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
         ...createInboxProcessingMethods({
@@ -1028,18 +1053,7 @@ export function createNativeHostContract() {
             rowMeta: (task, now) => rowMeta(task, now),
         }),
         // More sheet, Waiting, Someday, Reference and Done: native-host-contract-menu-views.ts.
-        ...createMenuViewMethods({
-            readiness,
-            save,
-            t: () => translate,
-            formatDate: () => createDateFormatter(dateFormatting()),
-            revision: (now) => `${revision()}:${displayRevision(now)}`,
-            rows: (tasks, now) => {
-                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
-                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
-            },
-            requestIdPattern: CAPTURE_ID_PATTERN,
-        }),
+        ...menuViewMethods,
         // Review, Weekly Review and Daily Review: native-host-contract-review-views.ts.
         ...createReviewViewMethods({
             readiness,
@@ -1075,15 +1089,14 @@ export function createNativeHostContract() {
             requestIdPattern: CAPTURE_ID_PATTERN,
         }),
         // The Inbox tab's list, toolbar and screen parts: native-host-contract-inbox-view.ts.
-        ...createInboxViewMethods({
+        ...inboxViewMethods,
+        // Selection mode on those lists: native-host-contract-bulk-actions.ts.
+        ...createBulkActionMethods({
             readiness,
+            save,
             t: () => translate,
-            revision: (now) => `${revision()}:${displayRevision(now)}`,
-            // Mobile's Inbox list hides checklist progress.
-            rows: (tasks, now) => {
-                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
-                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now, { hideChecklistProgress: true })));
-            },
+            formatDate: () => createDateFormatter(dateFormatting()),
+            views: { ...menuViewMethods, ...inboxViewMethods },
         }),
         // The Board: native-host-contract-board.ts.
         ...createBoardViewMethods({

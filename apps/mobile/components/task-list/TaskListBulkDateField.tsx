@@ -2,7 +2,7 @@ import React from 'react';
 import { Keyboard, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'lucide-react-native';
-import { safeFormatDate, safeParseDate, tFallback } from '@mindwtr/core';
+import { buildBulkOrganizeDateFieldModel, safeParseDate, toBulkOrganizeDateValue } from '@mindwtr/core';
 
 import { QuickDateChips } from '../QuickDateChips';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -25,10 +25,12 @@ export function TaskListBulkDateField({
 }: Props) {
   const [editing, setEditing] = React.useState(false);
   const selectedDate = safeParseDate(value);
+  // Display value, labels and the stored day come from core, as the native host shows them.
+  const field = buildBulkOrganizeDateFieldModel({ label, value, now: new Date(), t });
   const selectDate = (date: Date | null) => {
     if (disabled) return;
     // Bulk dates are date-only: never introduce a time or convert through UTC.
-    onChange(date ? safeFormatDate(date, 'yyyy-MM-dd') : '');
+    onChange(toBulkOrganizeDateValue(date));
   };
 
   return (
@@ -37,12 +39,12 @@ export function TaskListBulkDateField({
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <TextInput
           accessibilityLabel={label}
-          value={editing ? value : selectedDate ? safeFormatDate(selectedDate, 'P') : value}
+          value={editing ? value : field.displayValue}
           onChangeText={onChange}
           onFocus={() => setEditing(true)}
           onBlur={() => setEditing(false)}
           editable={!disabled}
-          placeholder="YYYY-MM-DD"
+          placeholder={field.placeholder}
           placeholderTextColor={tc.secondaryText}
           style={[
             styles.bulkOrganizeInput,
@@ -51,7 +53,7 @@ export function TaskListBulkDateField({
         />
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={`${label}: ${tFallback(t, 'calendar.title', 'Calendar')}`}
+          accessibilityLabel={field.calendarAccessibilityLabel}
           accessibilityState={{ disabled, expanded: pickerVisible }}
           disabled={disabled}
           onPress={() => {
@@ -92,11 +94,11 @@ export function TaskListBulkDateField({
           {Platform.OS === 'ios' && (
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityLabel={`${label}: ${tFallback(t, 'common.done', 'Done')}`}
+              accessibilityLabel={field.doneLabel}
               onPress={onClosePicker}
               style={{ minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' }}
             >
-              <Text style={{ color: tc.tint }}>{tFallback(t, 'common.done', 'Done')}</Text>
+              <Text style={{ color: tc.tint }}>{field.doneText}</Text>
             </TouchableOpacity>
           )}
           <DateTimePicker

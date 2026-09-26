@@ -1,20 +1,13 @@
 import React from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { ClipboardCheck, X } from 'lucide-react-native';
-import { tFallback, type TaskStatus } from '@mindwtr/core';
+import { BULK_MOVE_STATUS_ORDER, buildTaskListBulkBarModel, type TaskStatus } from '@mindwtr/core';
 
 import { styles } from './task-list.styles';
 import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 
-export const BULK_MOVE_STATUS_ORDER: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done', 'reference'];
-
-export function getBulkMoveStatusOptions(currentStatus?: TaskStatus | 'all'): TaskStatus[] {
-  if (!currentStatus || currentStatus === 'all') return BULK_MOVE_STATUS_ORDER;
-  if (currentStatus === 'done') {
-    return [...BULK_MOVE_STATUS_ORDER.filter((status) => status !== currentStatus), 'archived'];
-  }
-  return BULK_MOVE_STATUS_ORDER.filter((status) => status !== currentStatus);
-}
+// The statuses a list offers live in core, shared with the native host; re-exported for existing imports.
+export { BULK_MOVE_STATUS_ORDER, getBulkMoveStatusOptions } from '@mindwtr/core';
 
 type ThemeColors = {
   border: string;
@@ -66,139 +59,146 @@ export function TaskListBulkBar({
   themeColors,
 }: TaskListBulkBarProps) {
   const filledButton = useFilledButtonColors();
-  const rangeLabel = rangeSelectMode
-    ? tFallback(t, 'bulk.selectRangeActive', 'Pick end')
-    : tFallback(t, 'bulk.selectRange', 'Range');
-  const canSelectRange = hasSelection && !bulkActionLoading;
-  const moveStatusOptions = statusOptions ?? BULK_MOVE_STATUS_ORDER;
-  const deleteLabel = tFallback(t, 'common.delete', 'Delete');
+  // Labels and enabled states come from core, as the native host shows them.
+  const bar = buildTaskListBulkBarModel({
+    selectedCount,
+    hasSelection,
+    busy: bulkActionLoading,
+    busyLabel: bulkActionLabel,
+    rangeSelectMode,
+    statuses: statusOptions ?? BULK_MOVE_STATUS_ORDER,
+    moveToSection: Boolean(onMoveToSection),
+    organize: Boolean(onOpenOrganize),
+    removeTag: onOpenRemoveTagPicker ? { canRemove: canRemoveTags } : null,
+    t,
+  });
 
   return (
     <View style={[styles.bulkBar, { backgroundColor: themeColors.cardBg, borderBottomColor: themeColors.border }]}>
       <View style={styles.bulkStatusRow}>
         <Text style={[styles.bulkCount, { color: themeColors.secondaryText }]}>
-          {selectedCount} {t('bulk.selected')}
+          {bar.countLabel}
         </Text>
         <View style={styles.bulkStatusActions}>
           {bulkActionLoading && (
             <View style={styles.bulkLoadingRow}>
               <ActivityIndicator size="small" color={themeColors.tint} />
               <Text style={[styles.bulkLoadingText, { color: themeColors.secondaryText }]}>
-                {bulkActionLabel || t('common.loading')}
+                {bar.busyLabel}
               </Text>
             </View>
           )}
           <TouchableOpacity
             onPress={onExitSelectionMode}
-            disabled={bulkActionLoading}
+            disabled={!bar.exit.enabled}
             style={[
               styles.bulkExitButton,
-              { backgroundColor: themeColors.filterBg, opacity: bulkActionLoading ? 0.5 : 1 },
+              { backgroundColor: themeColors.filterBg, opacity: bar.exit.enabled ? 1 : 0.5 },
             ]}
             accessibilityRole="button"
-            accessibilityLabel={tFallback(t, 'bulk.exitSelect', 'Done')}
+            accessibilityLabel={bar.exit.accessibilityLabel}
           >
             <X size={16} color={themeColors.secondaryText} strokeWidth={2} />
           </TouchableOpacity>
         </View>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bulkMoveRow}>
-        {moveStatusOptions.map((status) => (
+        {bar.statuses.map((option) => (
           <TouchableOpacity
-            key={status}
-            onPress={() => handleBatchMove(status)}
-            disabled={!hasSelection || bulkActionLoading}
-            style={[styles.bulkMoveButton, { backgroundColor: themeColors.filterBg, opacity: hasSelection && !bulkActionLoading ? 1 : 0.5 }]}
+            key={option.status}
+            onPress={() => handleBatchMove(option.status)}
+            disabled={!option.enabled}
+            style={[styles.bulkMoveButton, { backgroundColor: themeColors.filterBg, opacity: option.enabled ? 1 : 0.5 }]}
             accessibilityRole="button"
-            accessibilityLabel={`${t('bulk.moveTo')} ${t(`status.${status}`)}`}
+            accessibilityLabel={option.accessibilityLabel}
           >
-            <Text style={[styles.bulkMoveText, { color: themeColors.text }]}>{t(`status.${status}`)}</Text>
+            <Text style={[styles.bulkMoveText, { color: themeColors.text }]}>{option.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
       <View style={styles.bulkActions}>
-        {onMoveToSection ? (
+        {onMoveToSection && bar.moveToSection ? (
           <TouchableOpacity
             onPress={onMoveToSection}
-            disabled={!hasSelection || bulkActionLoading}
-            style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: hasSelection && !bulkActionLoading ? 1 : 0.5 }]}
+            disabled={!bar.moveToSection.enabled}
+            style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: bar.moveToSection.enabled ? 1 : 0.5 }]}
             accessibilityRole="button"
-            accessibilityLabel={tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+            accessibilityLabel={bar.moveToSection.label}
           >
             <Text style={[styles.bulkActionText, { color: themeColors.text }]}>
-              {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+              {bar.moveToSection.label}
             </Text>
           </TouchableOpacity>
         ) : null}
-        {onOpenOrganize ? (
+        {onOpenOrganize && bar.organize ? (
           <TouchableOpacity
             onPress={onOpenOrganize}
-            disabled={!hasSelection || bulkActionLoading}
-            style={[styles.bulkActionButton, { backgroundColor: filledButton.backgroundColor, opacity: hasSelection && !bulkActionLoading ? 1 : 0.5 }]}
+            disabled={!bar.organize.enabled}
+            style={[styles.bulkActionButton, { backgroundColor: filledButton.backgroundColor, opacity: bar.organize.enabled ? 1 : 0.5 }]}
             accessibilityRole="button"
-            accessibilityLabel={tFallback(t, 'bulk.organize', 'Bulk organize')}
+            accessibilityLabel={bar.organize.label}
           >
             <ClipboardCheck size={14} color={filledButton.textColor ?? themeColors.onTint} />
             <Text style={[styles.bulkActionText, { color: filledButton.textColor ?? themeColors.onTint }]}>
-              {tFallback(t, 'bulk.organize', 'Bulk organize')}
+              {bar.organize.label}
             </Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity
           onPress={onToggleRangeSelectMode}
-          disabled={!canSelectRange}
+          disabled={!bar.range.enabled}
           style={[
             styles.bulkActionButton,
             {
-              backgroundColor: rangeSelectMode ? themeColors.tint : themeColors.filterBg,
-              opacity: canSelectRange ? 1 : 0.5,
+              backgroundColor: bar.range.active ? themeColors.tint : themeColors.filterBg,
+              opacity: bar.range.enabled ? 1 : 0.5,
             },
           ]}
           accessibilityRole="button"
-          accessibilityLabel={rangeLabel}
-          accessibilityState={{ disabled: !canSelectRange, selected: rangeSelectMode }}
+          accessibilityLabel={bar.range.label}
+          accessibilityState={{ disabled: !bar.range.enabled, selected: bar.range.active }}
           testID="task-list-range-select-toggle"
         >
-          <Text style={[styles.bulkActionText, { color: rangeSelectMode ? themeColors.onTint : themeColors.text }]}>
-            {rangeLabel}
+          <Text style={[styles.bulkActionText, { color: bar.range.active ? themeColors.onTint : themeColors.text }]}>
+            {bar.range.label}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={onOpenTagModal}
-          disabled={!hasSelection || bulkActionLoading}
-          style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: hasSelection && !bulkActionLoading ? 1 : 0.5 }]}
+          disabled={!bar.addTag.enabled}
+          style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: bar.addTag.enabled ? 1 : 0.5 }]}
           accessibilityRole="button"
-          accessibilityLabel={t('bulk.addTag')}
+          accessibilityLabel={bar.addTag.label}
         >
-          <Text style={[styles.bulkActionText, { color: themeColors.text }]}>{t('bulk.addTag')}</Text>
+          <Text style={[styles.bulkActionText, { color: themeColors.text }]}>{bar.addTag.label}</Text>
         </TouchableOpacity>
-        {onOpenRemoveTagPicker ? (
+        {onOpenRemoveTagPicker && bar.removeTag ? (
           <TouchableOpacity
             onPress={onOpenRemoveTagPicker}
-            disabled={!hasSelection || bulkActionLoading || !canRemoveTags}
+            disabled={!bar.removeTag.enabled}
             style={[
               styles.bulkActionButton,
               {
                 backgroundColor: themeColors.filterBg,
-                opacity: hasSelection && !bulkActionLoading && canRemoveTags ? 1 : 0.5,
+                opacity: bar.removeTag.enabled ? 1 : 0.5,
               },
             ]}
             accessibilityRole="button"
-            accessibilityLabel={tFallback(t, 'bulk.removeTag', 'Remove tag')}
+            accessibilityLabel={bar.removeTag.label}
           >
             <Text style={[styles.bulkActionText, { color: themeColors.text }]}>
-              {tFallback(t, 'bulk.removeTag', 'Remove tag')}
+              {bar.removeTag.label}
             </Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity
           onPress={handleBatchDelete}
-          disabled={!hasSelection || bulkActionLoading}
-          style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: hasSelection && !bulkActionLoading ? 1 : 0.5 }]}
+          disabled={!bar.delete.enabled}
+          style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: bar.delete.enabled ? 1 : 0.5 }]}
           accessibilityRole="button"
-          accessibilityLabel={deleteLabel}
+          accessibilityLabel={bar.delete.label}
         >
-          <Text style={[styles.bulkActionText, { color: themeColors.text }]}>{deleteLabel}</Text>
+          <Text style={[styles.bulkActionText, { color: themeColors.text }]}>{bar.delete.label}</Text>
         </TouchableOpacity>
       </View>
     </View>
