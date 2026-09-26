@@ -69,9 +69,18 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 vi.mock('@mindwtr/core', async (importOriginal) => ({
-  // The Someday section manager's rows and edits are core's own logic.
-  ...(({ buildSomedaySectionManagerRows, getSomedaySectionManagerText, moveSomedaySection, renameSomedaySection }) => ({
+  // The Someday section manager's rows and edits, and the Manage screen's texts,
+  // rows and editor writes, are core's own logic.
+  ...(({
     buildSomedaySectionManagerRows, getSomedaySectionManagerText, moveSomedaySection, renameSomedaySection,
+    DEFAULT_MANAGE_OPEN_SECTIONS, MANAGE_OPEN_SECTIONS_STORAGE_KEY, buildManagePersonRow, getManageDeleteConfirm,
+    getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageEditorSaveDisabled,
+    normalizeManageOpenSections, planManageEditorSave, sortManageAreas, sortManagePeople,
+  }) => ({
+    buildSomedaySectionManagerRows, getSomedaySectionManagerText, moveSomedaySection, renameSomedaySection,
+    DEFAULT_MANAGE_OPEN_SECTIONS, MANAGE_OPEN_SECTIONS_STORAGE_KEY, buildManagePersonRow, getManageDeleteConfirm,
+    getManageEditorDraft, getManageEditorText, getManageSettingsText, isManageEditorSaveDisabled,
+    normalizeManageOpenSections, planManageEditorSave, sortManageAreas, sortManagePeople,
   }))(await importOriginal<typeof import('@mindwtr/core')>()),
   AREA_PRESET_COLORS: ['#3b82f6', '#10b981'],
   DEFAULT_AREA_COLOR: '#3b82f6',

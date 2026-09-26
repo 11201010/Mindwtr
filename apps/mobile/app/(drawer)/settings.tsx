@@ -17,7 +17,7 @@ import {
 } from 'lucide-react-native';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { isSandboxMode } from '@mindwtr/core';
+import { buildSettingsAdvancedMenu, buildSettingsMenu, isSandboxMode, type SettingsMenuIcon } from '@mindwtr/core';
 
 import { useMobileSyncBadge } from '@/hooks/use-mobile-sync-badge';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -32,16 +32,17 @@ import { NotificationsSettingsScreen } from '@/components/settings/notifications
 import { MenuItem, SettingsTopBar } from '@/components/settings/settings.shell';
 import { styles } from '@/components/settings/settings.styles';
 import {
-    buildSettingsMenuSearchText,
-    findSettingsMenuMatch,
     normalizeSettingsScreen,
-    settingsMenuMatchesQuery,
-    type SettingsMenuRowId,
     type SettingsScreen,
     UPDATE_BADGE_AVAILABLE_KEY,
 } from '@/components/settings/settings.constants';
 import { useSettingsLocalization, useSettingsScrollContent } from '@/components/settings/settings.hooks';
 import { SandboxSettingsScreen } from '@/components/settings/sandbox-settings-screen';
+
+// The menu's icons by the names core's settings menu model uses.
+const MENU_ICONS: Record<SettingsMenuIcon, LucideIcon> = {
+    Monitor, ListChecks, Layers, Bell, RefreshCw, Database, Settings2, Info, Sparkles, CalendarDays,
+};
 
 export default function SettingsPage() {
     if (isSandboxMode()) return <SandboxSettingsScreen />;
@@ -75,23 +76,6 @@ function PersonalSettingsPage() {
         const rawHandoff = Array.isArray(onboardingHandoff) ? onboardingHandoff[0] : onboardingHandoff;
         return rawHandoff === '1';
     }, [onboardingHandoff]);
-    const dataLabel = t('settings.data');
-    const menuDescriptions = useMemo(
-        () => ({
-            general: t('settings.menuDesc.general'),
-            gtd: t('settings.menuDesc.gtd'),
-            manage: t('settings.menuDesc.manage'),
-            notifications: t('settings.menuDesc.notifications'),
-            sync: t('settings.menuDesc.sync'),
-            data: t('settings.menuDesc.data'),
-            advanced: t('settings.menuDesc.advanced'),
-            about: t('settings.menuDesc.about'),
-            ai: t('settings.menuDesc.ai'),
-            calendar: t('settings.menuDesc.calendar'),
-        }),
-        [t],
-    );
-
     const pushSettingsScreen = (nextScreen: SettingsScreen) => {
         if (nextScreen === 'main') {
             router.push('/settings');
@@ -145,92 +129,36 @@ function PersonalSettingsPage() {
     }
 
     if (currentScreen === 'advanced') {
+        const advancedMenu = buildSettingsAdvancedMenu(t);
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={t('settings.advanced')} />
+                <SettingsTopBar title={advancedMenu.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <View style={[styles.menuCard, { backgroundColor: tc.cardBg }]}>
-                        <MenuItem
-                            title={t('settings.ai')}
-                            description={menuDescriptions.ai}
-                            icon={Sparkles}
-                            onPress={() => pushSettingsScreen('ai')}
-                        />
-                        <MenuItem
-                            title={t('settings.calendar')}
-                            description={menuDescriptions.calendar}
-                            icon={CalendarDays}
-                            isLast
-                            onPress={() => pushSettingsScreen('calendar')}
-                        />
+                        {advancedMenu.rows.map((row, rowIndex) => (
+                            <MenuItem
+                                key={row.id}
+                                title={row.title}
+                                description={row.description}
+                                icon={MENU_ICONS[row.icon]}
+                                isLast={rowIndex === advancedMenu.rows.length - 1}
+                                onPress={() => pushSettingsScreen(row.id)}
+                            />
+                        ))}
                     </View>
                 </ScrollView>
             </SafeAreaView>
         );
     }
 
-    type MenuRow = {
-        id: SettingsMenuRowId;
-        title: string;
-        description?: string;
-        icon: LucideIcon;
-        onPress: () => void;
-        showIndicator?: boolean;
-        indicatorColor?: string;
-        indicatorAccessibilityLabel?: string;
-    };
-
-    const menuGroups: MenuRow[][] = [
-        [
-            { id: 'general', title: t('settings.general'), description: menuDescriptions.general, icon: Monitor, onPress: () => pushSettingsScreen('general') },
-            { id: 'gtd', title: t('settings.gtd'), description: menuDescriptions.gtd, icon: ListChecks, onPress: () => pushSettingsScreen('gtd') },
-            { id: 'manage', title: t('settings.manage'), description: menuDescriptions.manage, icon: Layers, onPress: () => pushSettingsScreen('manage') },
-            { id: 'notifications', title: t('settings.notifications'), description: menuDescriptions.notifications, icon: Bell, onPress: () => pushSettingsScreen('notifications') },
-        ],
-        [
-            {
-                id: 'sync',
-                title: t('settings.sync'),
-                description: menuDescriptions.sync,
-                icon: RefreshCw,
-                onPress: () => pushSettingsScreen('sync'),
-                showIndicator: Boolean(syncBadgeColor),
-                indicatorColor: syncBadgeColor,
-                indicatorAccessibilityLabel: syncBadgeAccessibilityLabel,
-            },
-            { id: 'data', title: dataLabel, description: menuDescriptions.data, icon: Database, onPress: () => pushSettingsScreen('data') },
-        ],
-        [
-            { id: 'advanced', title: t('settings.advanced'), description: menuDescriptions.advanced, icon: Settings2, onPress: () => pushSettingsScreen('advanced') },
-            {
-                id: 'about',
-                title: t('settings.about'),
-                description: menuDescriptions.about,
-                icon: Info,
-                onPress: () => pushSettingsScreen('about'),
-                showIndicator: hasUpdateBadge,
-                indicatorAccessibilityLabel: hasUpdateBadge ? t('settings.updateAvailable') : undefined,
-            },
-        ],
-    ];
-
-    const filteredGroups = menuGroups
-        .map((group) =>
-            group
-                .filter((row) =>
-                    settingsMenuMatchesQuery(
-                        buildSettingsMenuSearchText(row.id, row.title, row.description, t),
-                        search,
-                    ),
-                )
-                // While searching, the row's second line says which setting
-                // matched and where it lives, instead of the generic blurb.
-                .map((row) => {
-                    const match = findSettingsMenuMatch(row.id, row.title, t, search);
-                    return match ? { ...row, description: `${match.title} · ${match.path}` } : row;
-                }),
-        )
-        .filter((group) => group.length > 0);
+    // Rows, order, badges and the search come from core's settings menu model.
+    const menu = buildSettingsMenu({
+        t,
+        query: search,
+        sync: { color: syncBadgeColor, accessibilityLabel: syncBadgeAccessibilityLabel },
+        updateAvailable: hasUpdateBadge,
+    });
+    const filteredGroups = menu.groups;
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
@@ -241,14 +169,14 @@ function PersonalSettingsPage() {
                     <TextInput
                         value={search}
                         onChangeText={setSearch}
-                        placeholder={t('common.search')}
+                        placeholder={menu.searchPlaceholder}
                         placeholderTextColor={tc.secondaryText}
                         style={[searchStyles.searchInput, { color: tc.text }]}
                         autoCapitalize="none"
                         autoCorrect={false}
                         returnKeyType="search"
                         clearButtonMode="while-editing"
-                        accessibilityLabel={t('common.search')}
+                        accessibilityLabel={menu.searchPlaceholder}
                     />
                 </View>
                 <View style={styles.menuGroupStack}>
@@ -259,9 +187,9 @@ function PersonalSettingsPage() {
                                     key={row.id}
                                     title={row.title}
                                     description={row.description}
-                                    icon={row.icon}
+                                    icon={MENU_ICONS[row.icon]}
                                     isLast={rowIndex === group.length - 1}
-                                    onPress={row.onPress}
+                                    onPress={() => pushSettingsScreen(row.id)}
                                     showIndicator={row.showIndicator}
                                     indicatorColor={row.indicatorColor}
                                     indicatorAccessibilityLabel={row.indicatorAccessibilityLabel}
@@ -269,9 +197,9 @@ function PersonalSettingsPage() {
                             ))}
                         </View>
                     ))}
-                    {filteredGroups.length === 0 ? (
+                    {menu.noMatches !== null ? (
                         <Text style={[searchStyles.noResults, { color: tc.secondaryText }]}>
-                            {t('common.noMatches')}
+                            {menu.noMatches}
                         </Text>
                     ) : null}
                 </View>

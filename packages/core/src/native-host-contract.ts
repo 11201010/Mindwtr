@@ -218,6 +218,7 @@ import {
     type NativeFocusControls,
     type NativeFocusControlsInput,
 } from './native-host-contract-focus-controls';
+import { createSettingsMethods } from './native-host-contract-settings';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -1116,6 +1117,17 @@ export function createNativeHostContract() {
             save,
             t: () => translate,
             focusModel,
+            requestIdPattern: CAPTURE_ID_PATTERN,
+        }),
+        // Settings: the menu, General and Manage: native-host-contract-settings.ts.
+        ...createSettingsMethods({
+            readiness,
+            save,
+            t: () => translate,
+            language: () => language,
+            systemLocale: () => systemLocale,
+            dateFormatting,
+            dataRevision: () => `${revision()}:${settingsRevision()}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
         }),
 

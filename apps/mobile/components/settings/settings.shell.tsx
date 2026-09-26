@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ChevronRight, ExternalLink as ExternalLinkIcon, type LucideIcon } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getSettingsMenuItemAccessibilityLabel } from '@mindwtr/core';
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useLanguage } from '@/contexts/language-context';
@@ -44,11 +45,7 @@ export function MenuItem({
     disabled?: boolean;
 }) {
     const tc = useThemeColors();
-    const accessibilityLabel = [
-        title,
-        description,
-        indicatorAccessibilityLabel,
-    ].filter(Boolean).join('. ');
+    const accessibilityLabel = getSettingsMenuItemAccessibilityLabel(title, description, indicatorAccessibilityLabel);
 
     return (
         <TouchableOpacity
