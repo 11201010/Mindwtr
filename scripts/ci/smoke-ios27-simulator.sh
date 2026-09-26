@@ -139,8 +139,10 @@ xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"
 approve_url_scheme
 
 running_pid() {
+  # awk reads the whole list: exiting at the first match sent launchctl SIGPIPE, and with pipefail the smoke exited 141
+  # (Mac mini run 36273206485, while the simulator's data migration made the list long).
   xcrun simctl spawn "$SIMULATOR_UDID" launchctl list 2>/dev/null \
-    | awk -v bundle="$BUNDLE_ID" 'index($3, bundle) > 0 && $1 ~ /^[0-9]+$/ { print $1; exit }'
+    | awk -v bundle="$BUNDLE_ID" '!found && index($3, bundle) > 0 && $1 ~ /^[0-9]+$/ { print $1; found = 1 }'
 }
 
 wait_for_pid() {
