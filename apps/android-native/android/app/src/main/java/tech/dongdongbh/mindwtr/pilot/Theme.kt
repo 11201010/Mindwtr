@@ -165,6 +165,18 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     /** RN's highlight of a project's available next action. */
     val availableBg = if (isDark) rgba(59, 130, 246, 0.08f) else rgba(59, 130, 246, 0.05f)
     val availableBorder = if (isDark) rgba(59, 130, 246, 0.34f) else rgba(59, 130, 246, 0.24f)
+    /** RN's More sheet backdrop, rgba(0,0,0,0.36), and its list overflow menu's, rgba(0,0,0,0.28). */
+    val sheetScrim = rgba(0, 0, 0, 0.36f)
+    val overflowScrim = rgba(0, 0, 0, 0.28f)
+    /** The overflow menu's selected icon wash, `${tc.tint}20`. */
+    val tintWash = colors.tint.copy(alpha = 0x20 / 255f)
+    /** RN's fixed stat colors: Waiting's values, Someday's values, and every stat label (also an archived task's indicator). */
+    val waitingStat = rgb("#F59E0B")
+    val somedayStat = rgb("#8B5CF6")
+    val gray = rgb("#6B7280")
+    /** RN's Archive swipe actions (Restore, Delete) and the Someday section dialog's Save button. */
+    val restoreAction = rgb("#3B82F6")
+    val deleteAction = rgb("#EF4444")
 }
 
 /**

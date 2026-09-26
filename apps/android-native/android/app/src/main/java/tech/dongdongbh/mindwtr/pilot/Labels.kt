@@ -50,6 +50,10 @@ val LABEL_KEYS = listOf(
     "search.inProjectSuffix", "review.markDone",
     // Process Inbox: the Inbox button and scope line; the steps' words are core's view.
     "inbox.processButton", "projects.allAreas", "common.loading", "taskEdit.projectLabel", "task.aria.action",
+    // The Menu tab: the tab, RN's stack titles, the list menu and filter sheet, and the Someday name prompt; the lists' words are core's views.
+    "tab.menu", "waiting.title", "someday.title", "nav.reference", "nav.history", "taskEdit.moreOptions", "common.search",
+    "filters.excluded", "filters.remove", "filters.clear", "filters.active", "filters.contexts", "filters.projects", "filters.timeEstimate",
+    "filters.more", "filters.priority", "bulk.selected", "viewSections.add", "viewSections.nameHint", "viewSections.namePlaceholder", "common.all",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

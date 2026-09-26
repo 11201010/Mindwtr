@@ -86,13 +86,14 @@ private val MENU_STATUSES = listOf("inbox", "next", "waiting", "someday", "done"
  * project's rows are not [completable]. [focusHighlight] outlines a starred row, as RN does
  * outside Today's Focus. [starBlocked] is core's reason the star can only refuse (the section's
  * focusBlockedLabel): an unstarred row's star is then drawn disabled with that label, as RN does.
+ * [details] shows core's detail parts too, where RN's list does (Waiting, and Someday's Details toggle).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TaskRowItem(
     model: InboxViewModel, task: TaskRow, status: RowStatus = RowStatus.Hidden, star: RowStar = RowStar.Hidden,
     completable: Boolean = true, note: String? = null, available: Boolean = false, focusHighlight: Boolean = false,
-    starBlocked: String? = null,
+    starBlocked: String? = null, details: Boolean = false,
 ) = with(model) {
     val theme = LocalTheme.current
     val c = theme.colors
@@ -147,7 +148,7 @@ fun TaskRowItem(
                         if (showStar) StarButton(model, task, starBlocked?.takeIf { !task.isFocusedToday })
                     }
                     // TalkBack hears the line in core's label above, so it is not read twice.
-                    val parts = meta.parts.filter { !it.detail }
+                    val parts = if (details) meta.parts else meta.parts.filter { !it.detail }
                     if (parts.isNotEmpty()) {
                         FlowRow(Modifier.padding(top = 2.dp).clearAndSetSemantics { }, horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
@@ -257,7 +258,8 @@ private fun StatusControl(model: InboxViewModel, task: TaskRow, icon: Boolean, e
 /**
  * RN's status menu: a centered card over a dimmed screen, "Change Status", and the six statuses
  * with core's labels and colors. A choice runs core's updateTask with the status the row was
- * loaded with. RN's Move to… and Move to section… need contract calls this app lacks.
+ * loaded with. On Someday's rows RN adds Move to section… (core's move dialog, MenuModel.openMove);
+ * RN's Move to… needs a contract call this app lacks.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -292,17 +294,26 @@ fun StatusMenu(model: InboxViewModel) = with(model) {
                     }
                 }
             }
+            // RN's Move to section… pill, full width under the statuses (its text capitalized per word, as RN's menuText).
+            menu.moveLabel(task)?.let { label ->
+                val enabled = writable && !busy && failedAction == null
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).border(1.dp, c.border, RoundedCornerShape(20.dp))
+                    .clickable(enabled = enabled, role = Role.Button) { showStatusMenu(null); menu.openMove(listOf(task.id)) }
+                    .semantics { contentDescription = label }.fade(if (enabled) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Text(label.split(' ').joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }, style = rnText(14, 500), color = c.text)
+                }
+            }
         }
     }
 }
 
-/** RN's toast: an optional title, the message, and its tone (warning, error, success, or info). */
-data class Toast(val title: String?, val message: String, val tone: String)
+/** RN's toast: an optional title, the message, its tone (warning, error, success, or info), and an optional action (RN's Undo). */
+data class Toast(val title: String?, val message: String, val tone: String, val action: String? = null, val onAction: () -> Unit = {})
 
-/** RN's toast, above the tab bar: a card with the tone's accent bar, core's title, and core's message. */
+/** RN's toast, above the tab bar: a card with the tone's accent bar, core's title, core's message, and its action in the accent. */
 @Composable
 fun ToastCard(model: InboxViewModel, modifier: Modifier) {
-    val (title, message, tone) = model.toast ?: return
+    val (title, message, tone, action, onAction) = model.toast ?: return
     val theme = LocalTheme.current
     val c = theme.colors
     val shape = RoundedCornerShape(18.dp)
@@ -319,8 +330,14 @@ fun ToastCard(model: InboxViewModel, modifier: Modifier) {
         Spacer(Modifier.size(12.dp))
         Column(Modifier.weight(1f)) {
             title?.let { Text(it, style = rnText(15, 700), color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-            Text(message, style = rnText(13, 400, 18), color = c.secondaryText, maxLines = 5, overflow = TextOverflow.Ellipsis,
+            Text(message, style = rnText(13, 400, 18), color = c.secondaryText, maxLines = if (action != null) 4 else 5, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 3.dp))
+        }
+        action?.let { label ->
+            Box(Modifier.padding(start = 12.dp).heightIn(min = 44.dp).widthIn(min = 44.dp)
+                .clickable(role = Role.Button) { model.dismissToast(); onAction() }.padding(10.dp), contentAlignment = Alignment.Center) {
+                Text(label, style = rnText(13, 700), color = accent)
+            }
         }
     }
 }

@@ -44,6 +44,15 @@ const viewStateKt = source('ViewState.kt');
 const searchUi = source('SearchScreen.kt');
 const processUi = source('ProcessInbox.kt');
 const captureUi = source('CaptureScreen.kt');
+// The Menu tab (pass 6): its model, the More sheet, the shared widgets, and one file per list screen.
+const menuModel = source('MenuModel.kt');
+const moreUi = source('MoreSheet.kt');
+const menuUi = source('MenuWidgets.kt');
+const waitingUi = source('WaitingScreen.kt');
+const somedayUi = source('SomedayScreen.kt');
+const statusListUi = source('StatusListScreen.kt');
+const archiveUi = source('ArchiveScreen.kt');
+const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi };
 const snapshotsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/RecoverySnapshots.kt'), 'utf8');
 // Comments may name the rules below; only code is checked against them.
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
@@ -54,7 +63,7 @@ assert.match(activity, /if \(failedAction == null\) TextButton\(onClick = \{ ref
 assert.match(activity, /fun OwedRetry\(model: InboxViewModel\) \{\s+if \(model\.failedAction != null\) TextButton\(onClick = model::retryOwed, enabled = !model\.busy, modifier = Modifier\.testTag\("owed-retry"\)\)/);
 // The read refresh and the owed retry are told apart (test tags): the checks assert the owed one only while a retry is owed.
 assert.match(activity, /\} else OwedRetry\(model\)|else OwedRetry\(model\)/);
-for (const [name, text] of Object.entries({ activity, editorUi, searchUi, processUi })) {
+for (const [name, text] of Object.entries({ activity, editorUi, searchUi, processUi, menuUi })) {
     assert.match(text, /FailureBanner\(message\) \{[\s\S]{0,320}?OwedRetry\(model\)/, `${name}: the failure banner offers the owed retry`);
 }
 {
@@ -88,8 +97,8 @@ assert.match(rowUi, /\.combinedClickable\(enabled = enabled, role = Role\.Button
 assert.match(rowUi, /onDragStopped = \{ settle\(if \(offset\.value > open \/ 2\) open else 0f\) \}/, 'a drag only opens or closes the row');
 assert.doesNotMatch(code(rowUi), /SwipeToDismissBox|combinedClickable\([^)]*\)[^\n]*openEditor/, 'no one-gesture swipe; the row\'s own long-press stays free');
 // Every failed command holds its exact retry, except an update or editor save core refused before writing.
-assert.match(model, /private val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
-assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\)/);
+assert.match(model, /internal val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
+assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\) \+ MENU_KINDS/);
 assert.match(model, /val refused = action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
@@ -105,7 +114,7 @@ assert.equal(code(model).match(/\bperform\(action\)/g).length, 13, 'complete, ed
 assert.equal(code(model).match(/\bperform\s*\{/g).length, 9, 'editor, reload, Try again, three More, open project, open Process Inbox, open the capture popup');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
-const backgroundFn = code(model.slice(model.indexOf('private fun <T> background('), model.indexOf('private fun perform(')));
+const backgroundFn = code(model.slice(model.indexOf('internal fun <T> background('), model.indexOf('internal fun perform(')));
 assert.match(backgroundFn, /if \(runtime == null \|\| busy \|\| failedAction != null\) return\s+val mine = \+\+issued/);
 assert.doesNotMatch(backgroundFn, /busy = /);
 assert.equal(code(model).match(/\bbusy = true\b/g).length, 1, 'only a user action takes busy');
@@ -120,8 +129,8 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // a result is shown only if nothing newer was shown first (a background failure too).
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
-assert.match(model, /private fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /private enum class Part \{ Inbox, Focus, Projects, Project, Areas, Editor, Search \}/);
+assert.match(model, /internal fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
+assert.match(model, /internal enum class Part \{ Inbox, Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('private fun applyPage(')));
     for (const part of ['Inbox', 'Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -164,13 +173,14 @@ assert.equal(code(editorUi).match(/toggle = true/g).length, 2, 'only the quick t
 assert.match(editorUi, /if \(status == "waiting" && !active\) openWaitingPrompt\(\) else editFields\(mapOf\("status" to status\)\)/);
 assert.match(model, /keepEditor\(current\.assignWaiting\(person\)\)\s+editFields\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
-for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi]) {
+for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...Object.values(menuScreens)]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
 }
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const themeKt = source('Theme.kt');
 const iconsKt = source('Icons.kt');
-const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, snapshotsKt, coreHost, sqliteBridge, guard];
+const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, snapshotsKt, coreHost, sqliteBridge, guard,
+    menuModel, ...Object.values(menuScreens)];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
@@ -289,7 +299,7 @@ assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt].j
 assert.match(coreHost, /fun language\(stored: String, system: String\): JSONObject =\s*callAsync\("language", debugFault\("language"\)\.ifEmpty \{ stored \}, system\)/);
 assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
 // update and the editor's saveDraft are task commands: the fault hooks and the diagnostic line cover them.
-assert.match(coreHost, /val command = method in setOf\("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter",\s*"saveSearch", "inboxCommit", "inboxSkip"\)/);
+assert.match(coreHost, /val command = method in setOf\("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter",\s*"saveSearch", "inboxCommit", "inboxSkip", "menuCommand"\)/);
 
 // The editor reads core's model (getTaskEditorModel, plus getTask's checklist and attachments) and saves only
 // through core's saveTaskDraft, via perform with an exact FailedAction. The status menu keeps updateTask.
@@ -311,7 +321,7 @@ assert.equal(model.match(/runtime\.saveTaskDraft\(/g).length, 1, 'the editor sav
 assert.equal(model.match(/runtime\.updateTask\(/g).length, 1, 'the status menu and the Restore and Next swipes');
 assert.equal(model.match(/runtime\.editorSuggestions\(/g).length, 1);
 assert.equal([activity, owner, editorUi].join('\n').match(/taskEditorModel\(|editorContent\(|editorSuggestions\(|saveTaskDraft\(|updateTask\(/g), null);
-assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
+assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, ...Object.values(menuScreens)].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
 // The save: exactly the changed draft fields, base = their loaded values, as a perform with its exact FailedAction; no change means no call.
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
@@ -371,9 +381,9 @@ assert.match(editorUi, PICKER_START);
 assert.equal(editorUi.match(/pickerStart\(/g).length, 2, 'defined once, used once: the date picker\'s start');
 assert.match(editorUi, /val state = rememberDatePickerState\(initialSelectedDateMillis = start\?\.let \{ pickerStart\(it\) \}\)/);
 assert.match(editorUi, /val \(hour, minute\) = pickerClock\(editor\.view\.fields\.dates\.getValue\(target\)\.pickerTime\)/);
-assert.doesNotMatch([editorUi.replace(PICKER_START, ''), model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n'),
+assert.doesNotMatch([editorUi.replace(PICKER_START, ''), model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt, menuModel, ...Object.values(menuScreens)].join('\n'),
     /java\.time|LocalDate|Instant|DateTimeFormatter|java\.util\.Calendar|GregorianCalendar|Calendar\.getInstance|(?<!InboxPage|FocusView|ProjectsView|ProjectDetail|AreaFilter|EditorSuggestions|SearchView)\.parse\(|DateFormat\.get|SimpleDateFormat\(\)/);
-assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
+assert.equal([model, activity, focusUi, projectsUi, rowUi, areaUi, viewStateKt, menuModel, ...Object.values(menuScreens)].join('\n').match(/SimpleDateFormat|\.format\(/g), null);
 // A fade is always a layer (Theme.kt fade): Modifier.alpha(1f) drops its layer, which left the capture popup's
 // enabled Save pills undrawn on the test phone (runs 31-32).
 {
@@ -490,8 +500,9 @@ assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.view\.prioritie
     for (const id of ['scheduling', 'organization', 'details']) assert(labelKeys.includes(`taskEdit.${id}`), `LABEL_KEYS lacks taskEdit.${id}`);
 }
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi })) {
-    const body = code(text);
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...menuScreens })) {
+    // Icons.kt's bySymbol keys are core's SF Symbols names (more-menu-model.ts), not label keys.
+    const body = code(text).replace(/val bySymbol = mapOf\([\s\S]*?\n {4}\)/, '');
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
     for (const [, rest] of body.matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
         // Core's JSON is read by key (getString("label")); a key names a field of core's text, it is not text.
@@ -511,13 +522,13 @@ assert.match(activity, /if \(open != null && writable\) TaskEditorScreen\(model,
 assert.match(activity, /LazyColumn\(modifier, contentPadding = PaddingValues\(12\.dp\)\) \{\s*item\(key = "header"\)[\s\S]*?items\(rows, key = \{ it\.id \}\)/);
 assert.match(activity, /Screen\.Inbox -> InboxList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Capture: RN's center tab button opens RN's capture popup (CaptureScreen.kt), on core's quick capture contract.
-assert.match(activity, /CaptureButton\(model\)[\s\S]*?clickable\(role = Role\.Button\) \{ model\.openCapture\(\) \}/);
+assert.match(activity, /CaptureButton\(model\)[\s\S]*?clickable\(role = Role\.Button\) \{ model\.menu\.closeSheet\(\); model\.openCapture\(\) \}/);
 assert.match(activity, /capture\?\.let \{ CapturePopup\(model, it\) \}/);
 assert.doesNotMatch(code(activity + model), /CaptureSheet|createInboxTask|showCapture/, 'the pass-1 capture sheet is gone');
-// The tab bar: RN's order with Menu's slot kept empty, and RN's lucide icons.
+// The tab bar: RN's order, Menu last (it opens RN's More sheet), and RN's lucide icons.
 const tabBar = activity.slice(activity.indexOf('private fun TabBar('), activity.indexOf('private fun RowScope.TabItem('));
-assert.deepEqual([...tabBar.matchAll(/TabItem\(model, Screen\.(\w+)|CaptureButton\(model\)|Spacer\(Modifier\.weight\(1f\)\)/g)]
-    .map(([whole, tab]) => tab ?? (whole.startsWith('Capture') ? 'capture' : 'empty')), ['Focus', 'Inbox', 'capture', 'Projects', 'empty']);
+assert.deepEqual([...tabBar.matchAll(/TabItem\(model, Screen\.(\w+)|CaptureButton\(model\)|MenuTab\(model\)/g)]
+    .map(([whole, tab]) => tab ?? (whole.startsWith('Capture') ? 'capture' : 'menu')), ['Focus', 'Inbox', 'capture', 'Projects', 'menu']);
 // The failure text stays in the accessibility tree: drawn above the list, a live region, reached first, and the list is clipped.
 const banner = activity.slice(activity.indexOf('fun FailureBanner('), activity.indexOf('private fun TabBar('));
 assert.match(banner, /\.zIndex\(1f\)/);
@@ -567,11 +578,11 @@ for (const scheme of ['light', 'dark']) {
     assert.deepEqual(kotlinPalette(`${scheme.toUpperCase()} =`), FIELDS.map((field) => genericValue(scheme, field)), `RN default ${scheme} matches`);
 }
 // No color is written anywhere else: every other file draws with LocalTheme.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...menuScreens })) {
     assert.doesNotMatch(code(text), /\bColor\(|Color\.(Black|White|Red|Green|Blue|Gray|Yellow|Cyan|Magenta|DarkGray|LightGray|Transparent)\b|parseColor|"#[0-9A-Fa-f]{3,8}"|0x[0-9A-Fa-f]{8}/,
         `${name} writes a color; colors live only in Theme.kt`);
 }
-assert.equal([activity, focusUi, projectsUi, rowUi, areaUi, searchUi, processUi, captureUi].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
+assert.equal([activity, focusUi, projectsUi, rowUi, areaUi, searchUi, processUi, captureUi, ...Object.values(menuScreens)].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
 assert.equal(code(activity).match(/MindwtrTheme\(/g).length, 1, 'one theme wraps the whole app');
 // Core classifies the theme and owns its hues; Kotlin never names a theme mode.
 assert.doesNotMatch(code(themeKt + owner), /"(system|material3-light|material3-dark)"/);
@@ -587,7 +598,7 @@ assert.doesNotMatch(themeCall, /requireSaved/);
 // core's due tone mapped to RN's colors, the strip from meta.priority, and TalkBack's label from meta.accessibilityLabel.
 assert.match(model, /fun JSONObject\.taskRow\(\) = getJSONObject\("meta"\)\.let \{ meta ->/);
 assert.match(model, /meta\.getJSONArray\("parts"\)\.let \{ parts -> List\(parts\.length\(\)\) \{ parts\.getJSONObject\(it\)\.metaPart\(\) \} \}/);
-assert.match(rowUi, /val parts = meta\.parts\.filter \{ !it\.detail \}/);
+assert.match(rowUi, /val parts = if \(details\) meta\.parts else meta\.parts\.filter \{ !it\.detail \}/, 'detail parts show only where RN\'s list shows them');
 assert.match(rowUi, /for \(part in parts\) MetaPartView\(part\)/);
 assert.match(rowUi, /"due" -> MetaText\(part\.text, when \(part\.tone\) \{ "overdue" -> c\.danger; "dueSoon" -> c\.warning; else -> c\.secondaryText \}, 600\)/);
 assert.match(rowUi, /val strip = theme\.priority\(meta\.priority\)/);
@@ -787,6 +798,83 @@ assert.match(model, /if \(!taken\) fresh\(\) else try \{ submit\(name\) \} catch
 assert.match(captureUi, /LaunchedEffect\(draft\.session, locked\) \{ if \(!draft\.expanded && !locked\) \{ delay\(120\); runCatching \{ titleFocus\.requestFocus\(\) \} \} \}/);
 assert.match(captureUi, /const val ADD_ANOTHER_KEY = "mindwtr:quickCapture:addAnother"/);
 
+// The Menu tab (pass 6): RN's More sheet and its lists on core's menu view contract, through the shell's command path.
+// Every menu write is a perform(action) with its exact FailedAction; a failure keeps it (the banner's Try again re-sends it).
+assert.match(coreHost, /fun menuRead\(name: String, json: String\): JSONObject = callAsync\("menuRead", name, json\)/);
+assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObject = callAsync\("menuCommand", name, json\)/);
+{
+    const kinds = [...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \(input\) => contract\.\w+\(input\),$/gm)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join(' \\| ')};`));
+    assert.match(hostEntry, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];[\s\S]{0,120}?return taskResult\(name as MenuCommand, await command\(JSON\.parse\(json\) as never\)\);/);
+    assert.match(hostEntry, /menuRead\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{[\s\S]{0,300}?if \(name !== 'more'\) requireSaved\(\);\s*const read = MENU_READS\[name\];[\s\S]{0,100}?return unwrap\(read\(JSON\.parse\(json\) as never\)\);/);
+    const input = code(menuModel.slice(menuModel.indexOf('private fun input(action: FailedAction)'), menuModel.indexOf('}.toString()', menuModel.indexOf('private fun input('))));
+    for (const kind of kinds.filter((kind) => kind !== 'archiveAction')) assert.match(input, new RegExp(`"${kind}" ->`), `input() builds the ${kind} request`);
+    assert.match(input, /else -> JSONObject\(\)\.put\("requestId", action\.id\)\.put\("action", JSONObject\(action\.title\)\)/, 'an Archive action is core\'s action with its request UUID');
+}
+assert.match(menuModel, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->\s+val reply = try \{\s+runtime\.menuCommand\(action\.kind, input\(action\)\)[\s\S]{0,700}?shell\.acknowledged\(action\)/, 'menu writes run through perform with their exact FailedAction');
+assert.equal(code(menuModel).match(/runtime\.menuCommand\(/g).length, 1, 'send is the one menu write');
+assert.equal(code(menuModel).match(/shell\.perform\(action\)/g).length, 1);
+assert.match(menuModel, /fun retry\(action: FailedAction\) = send\(action\)/);
+assert.match(model, /else -> menu\.retry\(action\)\s+\}\s+\}/, 'retryOwed hands every menu kind to its exact re-send');
+for (const [name, text] of Object.entries(menuScreens)) {
+    assert.doesNotMatch(code(text).replace(/^import .*$/gm, ''), /runtime\.|menuCommand\(|menuRead\(/, `${name}: screens reach core only through MenuModel`);
+}
+// A Someday create's exact request (a capture UUID, or a section title core finds again) is on disk, synced, before the call;
+// after process death it is sent before anything else, even without saved state; it goes only after core answers.
+assert.match(menuModel, /fun saveCreate\(\) \{\s+val action = createAction\(\) \?: return\s+if \(shell\.busy \|\| \(shell\.failedAction != null && shell\.failedAction != action\)\) return\s+store\.write\(action\)\s+send\(action\)/);
+assert.match(menuModel, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+assert.match(model, /val menu = MenuModel\(this, saved, prefs, File\(app\.noBackupFilesDir, "menu"\)\)/);
+assert.match(menuModel, /store\.read\(\)\?\.let \{ pending ->\s+if \(shell\.failedAction == null\) \{\s+shell\.owe\(pending\)\s+send\(pending\)/);
+assert.match(model, /if \(reopenCapture != null\) resumeCapture\(reopenCapture\) else captureStore\.delete\(\)\s+\/\/[^\n]*\s+menu\.start\(\)/);
+assert.match(menuModel, /if \(refused && action\.kind in CREATES\) shell\.ui \{ store\.delete\(\) \}/, 'a refused create wrote nothing: its record goes');
+assert.match(menuModel, /shell\.acknowledged\(action\)\s+shell\.ui \{\s+if \(action\.kind in CREATES\) store\.delete\(\)/, 'an acknowledged create\'s record goes');
+assert.equal(code(menuModel).match(/store\.delete\(\)/g).length, 2, 'only an answer from core removes a pending create');
+assert.match(menuModel, /"addTask" -> FailedAction\("somedayTask", open\.getString\("captureId"\), text,/, 'Add task sends its capture UUID, kept with its dialog');
+// Reads: background refreshes and user reads, with the shell's per-list freshness; paging stays under one revision and a stale
+// window reads the list again from its first window (not an error).
+assert.match(menuModel, /shell\.background\(listOf\(Part\.Menu\), \{ runtime -> read\(runtime, list, params, depth, deep\) \}\) \{ next, mine ->\s+if \(shell\.fresh\(mine, Part\.Menu\)\) show\(list, next\)/);
+assert.match(menuModel, /shell\.ui \{ if \(shell\.fresh\(mine, Part\.Menu\)\) show\(list, next\) \}/);
+assert.match(menuModel, /\.put\("offset", page\.items\.size\)\.put\("limit", PAGE\)\.put\("revision", page\.revision\)/, 'later windows carry the view\'s revision');
+assert.match(menuModel, /runtime\.menuRead\("collection", JSONObject\(\)\.put\("view", list\)\.put\("collection", name\)\.put\("params", page\.params\)/, 'collections page through getMenuViewCollection with the accepted params');
+assert.equal(code(menuModel).match(/if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure/g).length, 4,
+    'read, More, a collection\'s More, and the move dialog\'s choices treat a stale window as a reread, never an error');
+assert.match(menuModel, /private fun readMoveChoices\(depth: Int = WINDOW\) \{[\s\S]*?\.put\("offset", 0\)[\s\S]*?\.put\("revision", first\.getString\("revision"\)\)[\s\S]*?if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure/,
+    'the move dialog pages its choices under the first window\'s revision and rereads from the first window');
+assert.match(menuModel, /fun moreMoveChoices\(\) \{ moveChoices\?\.getJSONObject\("choices"\)\?\.getJSONArray\("items"\)\?\.length\(\)\?\.let \{ readMoveChoices\(it \+ WINDOW\) \} \}/);
+assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)\s+menu\.refresh\(\)/, 'the open Menu list is read again after every command');
+// Filters, sorts and groups: every choice sends the exact edit or value core put on it; only typed text builds an edit.
+assert.deepEqual([...new Set([...code(menuModel + menuUi + archiveUi).matchAll(/put\("type", "?(\w+)/g)].map(([, type]) => type))].sort(),
+    ['moveTasksToInbox', 'moveToInbox', 'reactivateProject', 'trashProject', 'trashTask', 'trashTasks', 'type'],
+    'Kotlin builds only core\'s Archive action names (NativeArchiveAction) and the typed filter text\'s edit (its `type` variable)');
+assert.match(menuModel, /reload\(JSONObject\(\)\.put\("type", type\)\.put\("value", text\)\)/);
+assert.match(menuUi, /filterEdit\(option\.getJSONObject\("edit"\)\)/);
+assert.match(menuUi, /filterEdit\(filters\.getJSONObject\("clearEdit"\)\)/);
+assert.match(menuUi, /removeChip\(chip\.getJSONObject\("action"\)\)/);
+// No Kotlin policy in the new files: core's items, headings, collections and options are walked as sent.
+for (const [name, text] of Object.entries({ menuModel, ...menuScreens })) {
+    assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping (filterEdit sends core's edit)`);
+    assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|Calendar|Instant\b|\.format\(|toLocal/, `${name}: no Kotlin date formatting or parsing`);
+    assert.doesNotMatch(code(text), new RegExp(`${STATUS}(?:\\s*,\\s*${STATUS})*\\s*->\\s*${STATUS}`), `${name}: no status-to-status map`);
+}
+// The More sheet: core's destinations (getMoreMenu); a tile this app builds opens, the others are drawn disabled, never a dead tap.
+// One accessibility node holds the label, the role and the state, so TalkBack hears an unbuilt tile as disabled.
+assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
+assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects"\)/);
+assert.match(activity, /if \(menu\.sheet\) MoreSheet\(model\)/);
+assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(model, listed\)/);
+// Navigation survives rotation (the model is held by the ViewModel) and process death (the Bundle): the sheet, screen, tab, dialog, session.
+for (const key of ['menuSheet', 'menuScreen', 'historyTab', 'menuState', 'menuDialog']) assert.match(menuModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
+assert.match(menuUi, /BackHandler\(enabled = failedAction == null\) \{ if \(menu\.dialog != null\) menu\.backInDialog\(\) else menu\.closeScreen\(\) \}/);
+// Search results for the Menu lists open them (review ruling 5 of pass 4).
+assert.match(searchUi, /listed != null -> \{ closeSearch\(\); menu\.openRoute\(listed\) \}/);
+assert.match(menuModel, /"\/waiting" to \(MenuScreen\.Waiting to null\), "\/someday" to \(MenuScreen\.Someday to null\),\s+"\/reference" to \(MenuScreen\.Reference to null\), "\/done" to \(MenuScreen\.History to "done"\), "\/archived" to \(MenuScreen\.History to "archived"\)/);
+// RN's device view state: Done and Archived under RN's keys, folded groups under RN's per-list key.
+assert.match(viewStateKt, /const val DONE_VIEW_KEY = "mindwtr:view:done:v1"/);
+assert.match(viewStateKt, /const val ARCHIVED_VIEW_KEY = "mindwtr:view:archived:v1"/);
+assert.match(viewStateKt, /private fun key\(list: String\) = "mindwtr:view:group-collapse:\$list:v1"/);
+
 const fakeCore = `
 export class SqliteAdapter {
   async getData() {
@@ -810,6 +898,7 @@ export async function sqliteHasAnyData() { return globalThis.sqliteHasData; }
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
+export async function flushPendingSave() { globalThis.events.push('flush'); }
 export function createNativeHostContract() {
   return {
     async activate() {
@@ -892,6 +981,14 @@ export function createNativeHostContract() {
     async commitInboxProcessingStep(input) { globalThis.newInputs.push(JSON.stringify(['inboxCommit', input])); return globalThis.inboxCommitResult; },
     async skipInboxProcessingTask(input) { globalThis.newInputs.push(JSON.stringify(['inboxSkip', input])); return { ok: true, value: { view: null, notice: null, toast: null } }; },
     endInboxProcessing(input) { globalThis.newInputs.push(JSON.stringify(['inboxEnd', input])); return { ok: true, value: null }; },
+    getMoreMenu() { globalThis.menuInputs.push('more'); return { ok: true, value: { version: 1, revision: 'm', primary: [] } }; },
+    getWaitingView(input) { globalThis.menuInputs.push(JSON.stringify(['waiting', input])); return { ok: true, value: { version: 1, revision: 'w', total: 0, rows: [] } }; },
+    getSomedayView(input) { globalThis.menuInputs.push(JSON.stringify(['someday', input])); return globalThis.menuReadResult; },
+    getMenuViewCollection(input) { globalThis.menuInputs.push(JSON.stringify(['collection', input])); return { ok: true, value: { items: [] } }; },
+    getArchiveView(input) { globalThis.menuInputs.push(JSON.stringify(['archive', input])); return { ok: true, value: { version: 1, items: [] } }; },
+    async moveSomedayTasksToSection(input) { globalThis.menuInputs.push(JSON.stringify(['somedayMove', input])); return globalThis.menuCommandResult; },
+    async addSomedaySectionTask(input) { globalThis.menuInputs.push(JSON.stringify(['somedayTask', input])); return { ok: true, value: { id: input.captureId, toast: 'Task created' } }; },
+    async runArchiveAction(input) { globalThis.menuInputs.push(JSON.stringify(['archiveAction', input])); return { ok: true, value: { changed: true, toast: null } }; },
   };
 }
 export const DEFAULT_GLOBAL_SEARCH_FILTERS = { scope: 'all' };
@@ -926,7 +1023,9 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
         createCount: 0, completeCount: 0, persistenceFailure: null, captureInputs: [],
         snapshotResult: { ok: true, value: { fileName: 'data.2026-09-24T10-00-00.000.snapshot.json', contents: '{}' } }, editorInputs: [], updateInputs: [], focusInputs: [],
-        languageInputs: [], projectInputs: [], settings: undefined, newInputs: [],
+        languageInputs: [], projectInputs: [], settings: undefined, newInputs: [], menuInputs: [],
+        menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
+        menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
         projectDetailResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Project changed; restart paging from offset zero' } },
         focusWindowResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Focus changed; restart paging' } },
@@ -974,6 +1073,8 @@ assert.equal(secondRead.saveCount, 0);
 const ready = makeState(0);
 assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
+// Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
+assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
 // The capture popup: every call passes Kotlin's JSON to core unchanged; the snapshot comes wrapped, null in sandbox mode.
 {
     const draft = { text: 'Call @phone', options: { addAnother: false } };
@@ -1092,6 +1193,24 @@ ready.newInputs.length = 0;
     assert.deepEqual(ready.newInputs.slice(-1), [JSON.stringify(['search', { query: '', filters: { scope: 'all' }, limit: 50 }])]);
     ready.newInputs.length = 0;
 }
+// The Menu tab's reads and commands pass Kotlin's JSON to core unchanged; a refusal keeps its code prefix; an unknown name is refused.
+{
+    const somedayInput = { sortBy: 'title', filters: { tokens: ['#home'] }, filterEdit: { type: 'toggleToken', value: '#home' }, offset: 0, limit: 50 };
+    const moveInput = { taskIds: ['a', 'b'], sectionId: null, requestId: 'r' };
+    assert.equal((await poll(ready, ready.MindwtrHost.menuRead('more', '{}'))).value.revision, 'm');
+    assert.equal((await poll(ready, ready.MindwtrHost.menuRead('waiting', '{"person":"","offset":0,"limit":50}'))).ok, true);
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.menuRead('someday', JSON.stringify(somedayInput))),
+        { ok: false, error: 'STALE_REVISION: Someday changed; restart paging from offset zero' });
+    assert.equal((await poll(ready, ready.MindwtrHost.menuRead('archive', '{"offset":0,"limit":50}'))).ok, true);
+    assert.deepEqual(await poll(ready, ready.MindwtrHost.menuCommand('somedayMove', JSON.stringify(moveInput))), { ok: false, error: 'SAVE_FAILED: disk full' });
+    assert.equal((await poll(ready, ready.MindwtrHost.menuCommand('somedayTask', '{"title":"t","sectionId":null,"captureId":"c"}'))).value.id, 'c');
+    assert.match((await poll(ready, ready.MindwtrHost.menuRead('nope', '{}'))).error, /^INVALID_INPUT/);
+    assert.match((await poll(ready, ready.MindwtrHost.menuCommand('nope', '{}'))).error, /^INVALID_INPUT/);
+    assert.deepEqual(ready.menuInputs, ['more', JSON.stringify(['waiting', { person: '', offset: 0, limit: 50 }]), JSON.stringify(['someday', somedayInput]),
+        JSON.stringify(['archive', { offset: 0, limit: 50 }]), JSON.stringify(['somedayMove', moveInput]),
+        JSON.stringify(['somedayTask', { title: 't', sectionId: null, captureId: 'c' }])]);
+    ready.menuInputs.length = 0;
+}
 ready.persistenceFailure = { message: 'disk full' };
 const queriesBeforeFailure = ready.queryCount;
 const blockedRefresh = await poll(ready, ready.MindwtrHost.window(0, 50, ''));
@@ -1151,6 +1270,14 @@ for (const command of [ready.MindwtrHost.saveSearch('{"query":"a","requestId":"r
     assert.equal((await poll(ready, command)).ok, true);
 }
 assert.equal(ready.newInputs.length, 7);
+// Menu screen reads wait for the retry; the More sheet's tiles (navigation) do not, so Menu never opens empty;
+// menu commands reach core so the retry can save.
+assert.deepEqual(await poll(ready, ready.MindwtrHost.menuRead('archive', '{"offset":0,"limit":50}')), { ok: false, error: 'SAVE_FAILED: disk full' });
+assert.equal(ready.menuInputs.length, 0);
+assert.equal((await poll(ready, ready.MindwtrHost.menuRead('more', '{}'))).ok, true);
+assert.equal(ready.menuInputs.length, 1);
+assert.equal((await poll(ready, ready.MindwtrHost.menuCommand('archiveAction', '{"requestId":"r","action":{"type":"moveToInbox","taskId":"t"}}'))).ok, true);
+assert.equal(ready.menuInputs.length, 2);
 assert.equal((await poll(ready, ready.MindwtrHost.language('', 'zh-CN'))).ok, true);
 assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok, true);
 // The RN legacy import runs after the validated load and before activation. RN state changes only
@@ -1265,4 +1392,5 @@ console.log('Projects: reads only through CoreHost, core order and groups only, 
 console.log('RN legacy import: after the validated load, confirmed by a re-read before RN state changes; RKStorage checkpointed first');
 console.log('Search and Process Inbox: core reads in the background with freshness, answers and saves through perform with exact, persisted requests');
 console.log('RN look: rows read core meta (no Kotlin date formatting or coloring); stars, status, new project, and area filter run through perform with exact retries');
+console.log('Menu tab: core\'s menu views through CoreHost, writes through perform with exact requests, Someday creates on disk first, no Kotlin policy');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

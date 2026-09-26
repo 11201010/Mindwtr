@@ -135,6 +135,17 @@ const tapUntil = async (label, description, done) => {
     }
     return waitFor(description, done, 20_000);
 };
+const FOCUS_ONLY = en['agenda.collapseOtherSections'];
+const EXPAND_SECTIONS = en['agenda.expandOtherSections'];
+/**
+ * Opens every section but Today's Focus with RN's toggle, whatever view the device kept (a folded
+ * section hides its rows). "Focus only" folds them all first, so "Expand sections" then opens them all.
+ */
+const openSections = async () => {
+    let nodes = await screen();
+    if (button(nodes, FOCUS_ONLY)) nodes = await tapUntil(FOCUS_ONLY, 'Focus only', (current) => Boolean(button(current, EXPAND_SECTIONS)));
+    if (button(nodes, EXPAND_SECTIONS)) await tapUntil(EXPAND_SECTIONS, 'every section open', (current) => Boolean(button(current, FOCUS_ONLY)));
+};
 /** The editor's draft as its controls announce it ("Due Date: 2026-09-15"); the first text field is the title. */
 const editorShows = (nodes, title, values = {}) => inEditor(nodes) && field(nodes)?.text === title
     && Object.entries(values).every(([label, value]) => described(nodes, label) === value);
@@ -170,15 +181,27 @@ const findRow = async (title) => {
     // A fixed 80 ran out as the development data grew (run 21); open / 5 ran out in landscape (run 25).
     const open = sqlite("SELECT COUNT(*) AS n FROM tasks WHERE deletedAt IS NULL AND status NOT IN ('done', 'archived', 'inbox')")[0].n;
     const budget = Math.ceil(open / 2) + Math.ceil(open / 50) + 20;
+    let triedMore;
     for (let step = 0; step < budget; step += 1) {
         if (inList(nodes, title)) return nodes;
         passedSection = headers(nodes).sort((a, b) => b.top - a.top)[0]?.title ?? passedSection;
-        const more = nodes.find((node) => node['content-desc']?.startsWith('More ') && button(nodes, node['content-desc'])?.enabled === 'true');
-        if (more) {
-            await tap(button(nodes, more['content-desc']));
-            nodes = await waitFor('Load more to finish', (current) => !current.some((node) => node['content-desc'] === more['content-desc']
-                && node.bounds === more.bounds), 15_000);
-            continue;
+        // The dump can report the More pill's labelled node as not clickable (its click sits on a same-bounds node,
+        // run 32), so it is found by its label and tapped at its center; a pill that stays put after the tap is
+        // treated as disabled (a retry is owed) and the scroll goes on.
+        const listBox = box(nodes.find((node) => node.scrollable === 'true') ?? { bounds: '[0,0][0,99999]' });
+        const more = nodes.find((node) => node['content-desc']?.startsWith('More ') && node.enabled !== 'false'
+            && box(node)[1] >= listBox[1] && box(node)[3] <= listBox[3]);
+        // While a retry is owed the pill is locked by design: never tap it then (a tap that falls through can
+        // land on the tab bar and open the Menu sheet, run 33).
+        if (more && more['content-desc'] !== triedMore && !hasError(nodes)) {
+            triedMore = more['content-desc'];
+            await tap(more);
+            try {
+                nodes = await waitFor('Load more to finish', (current) => !current.some((node) => node['content-desc'] === more['content-desc']
+                    && node.bounds === more.bounds), 15_000);
+                triedMore = undefined;
+                continue;
+            } catch { nodes = await screen(); }
         }
         const next = await swipe(nodes, 'down');
         if (signature(next) === signature(nodes)) break;
@@ -289,6 +312,7 @@ try {
     // (a) Both appear under core's "Next actions" in Focus.
     await showTab('Focus');
     await focusList();
+    await openSections();
     await expectSection(first, NEXT_ACTIONS, '(a)');
     await expectSection(second, NEXT_ACTIONS, '(a)');
 

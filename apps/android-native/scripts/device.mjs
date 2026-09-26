@@ -63,6 +63,8 @@ export const check = (condition, message) => { if (!condition) fail(message); co
 const decode = (value) => value.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code))).replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 export const field = (nodes) => nodes.find((node) => node.class === 'android.widget.EditText');
+/** A swipe that starts left of this x can be read as the system Back gesture (gesture navigation). */
+export const EDGE_SAFE_X = 160;
 export const box = (node) => node.bounds.match(/\d+/g).map(Number);
 // A Compose button's label is a child node; the enabled state is on the clickable node around it.
 export const button = (nodes, label) => {
@@ -469,7 +471,9 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
         requireAppFront();
         const [x1, y1, , y2] = box(row);
         const y = Math.round((y1 + y2) / 2);
-        sh(`input swipe ${x1 + 10} ${y} ${x1 + 450} ${y} 400`);
+        // Start clear of the screen edge: Android's gesture navigation takes a swipe from the edge as Back (run 29).
+        const from = Math.max(x1 + 10, EDGE_SAFE_X);
+        sh(`input swipe ${from} ${y} ${from + 440} ${y} 400`);
         const beside = (current) => current.find((node) => (node['resource-id'] ?? '').endsWith('swipe-action') && box(node)[1] <= y && box(node)[3] >= y);
         return beside(await waitFor(`the action button beside ${title}`, (current) => Boolean(beside(current)), 8_000));
     };

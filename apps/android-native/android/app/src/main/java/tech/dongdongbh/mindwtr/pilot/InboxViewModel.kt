@@ -57,9 +57,9 @@ data class FailedAction(
 )
 
 /** Core refused the update or the editor save before writing anything, so there is no retry to hold. */
-private val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
-/** Commands core can refuse before writing: an update, an editor save, a saved search, and a Process Inbox answer. */
-private val REFUSABLE = setOf("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker")
+internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
+/** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
+private val REFUSABLE = setOf("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -198,6 +198,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private val snapshots = File(app.filesDir, "snapshots")
     /** RN's per-device Process Inbox mode (guided or quick), under RN's key. */
     var processingMode by mutableStateOf(readProcessingMode(prefs)); private set
+    /** RN's Menu tab: the More sheet and the list screens it opens (MenuModel.kt), on this screen's command path. */
+    val menu = MenuModel(this, saved, prefs, File(app.noBackupFilesDir, "menu"))
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
@@ -238,6 +240,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     pumpEdits()
                     if (reopenProcessing != null) resumeProcessing(reopenProcessing) else processingStore.delete()
                     if (reopenCapture != null) resumeCapture(reopenCapture) else captureStore.delete()
+                    // An owed Someday create left on disk goes first; then the open sheet and screen are read.
+                    menu.start()
                     search?.let { current ->
                         readSearch()
                         // A Save Search whose outcome was lost with the process: its exact request first, then the dialog unlocks.
@@ -335,10 +339,13 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     }
 
     /** The command itself succeeded, so its exact retry is no longer owed. */
-    private fun acknowledged(action: FailedAction) {
+    internal fun acknowledged(action: FailedAction) {
         ProcessCoreHost.clearFailure(action)
         ui { failedAction = null }
     }
+
+    /** A request left on disk by a dead process is owed before anything else runs (MenuModel.start), as a restored capture is. */
+    internal fun owe(action: FailedAction) { failedAction = action }
 
     /** Core's editor model and the task's read-only checklist and attachments, read together. */
     private fun readEditor(runtime: CoreHost, id: String) = EditorModel.of(runtime.taskEditorModel(id), runtime.editorContent(id))
@@ -614,10 +621,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun showStatusMenu(task: TaskRow?) { statusMenu = task }
 
     private var toastShown = 0
-    private fun showToast(title: String?, message: String, tone: String = "warning") {
-        toast = Toast(title, message, tone)
+    /** RN's toast for 3.2 s, or 5.2 s with an action (RN's Undo), which runs [onAction] and dismisses it. */
+    internal fun showToast(title: String?, message: String, tone: String = "warning", action: String? = null, onAction: () -> Unit = {}) {
+        toast = Toast(title, message, tone, action, onAction)
         val mine = ++toastShown
-        main.postDelayed({ if (mine == toastShown) toast = null }, 3_200)
+        main.postDelayed({ if (mine == toastShown) toast = null }, if (action != null) 5_200 else 3_200)
     }
 
     fun dismissToast() { toast = null }
@@ -688,6 +696,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 acknowledged(action)
                 ui { showLists(lists, ++issued) }
             }
+            // The Menu tab's commands (MENU_KINDS) keep their exact request in MenuModel.
+            else -> menu.retry(action)
         }
     }
 
@@ -1290,6 +1300,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private fun refreshAll() {
         val at = depth()
         background(Part.entries, { runtime -> read(runtime, at) }, ::showLists)
+        menu.refresh()
         if (search != null) readSearch()
     }
 
@@ -1382,7 +1393,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (failedAction == null) error = null
     }
 
-    private fun ui(update: () -> Unit) { main.post(update) }
+    internal fun ui(update: () -> Unit) { main.post(update) }
 
     // Read numbers, main thread only. A command outdates every read started before it,
     // so a read that began before a command can never show data from before it.
@@ -1392,11 +1403,14 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private var commandAt = 0L
     private val shownAt = HashMap<Part, Long>()
 
-    /** One list a read can show. */
-    private enum class Part { Inbox, Focus, Projects, Project, Areas, Editor, Search }
+    /** One list a read can show: Menu is the open Menu list, More the More sheet, MenuDialog the move dialog's choices. */
+    internal enum class Part { Inbox, Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog }
+
+    /** A new read's number, for a read the Menu tab starts through perform (as the lists' More takes one). */
+    internal fun issue(): Long = ++issued
 
     /** A read's result for [part] is shown only if no command, and no newer read of that list, came first. */
-    private fun fresh(mine: Long, part: Part) = (mine > commandAt && mine > (shownAt[part] ?: 0L)).also { if (it) shownAt[part] = mine }
+    internal fun fresh(mine: Long, part: Part) = (mine > commandAt && mine > (shownAt[part] ?: 0L)).also { if (it) shownAt[part] = mine }
 
     /**
      * A read the app starts itself: on resume, each minute, and after every command.
@@ -1404,7 +1418,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      * a user action that starts meanwhile runs, and the engine thread queues both.
      * It starts only while no user action runs and no retry is owed.
      */
-    private fun <T> background(parts: List<Part>, read: (CoreHost) -> T, apply: (T, Long) -> Unit) {
+    internal fun <T> background(parts: List<Part>, read: (CoreHost) -> T, apply: (T, Long) -> Unit) {
         val runtime = host
         if (runtime == null || busy || failedAction != null) return
         val mine = ++issued
@@ -1437,7 +1451,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      * retry keeps the failure on screen until it succeeds or fails again. After a
      * command succeeds, its lists are read again in the background.
      */
-    private fun perform(action: FailedAction? = null, work: (CoreHost) -> Unit) {
+    internal fun perform(action: FailedAction? = null, work: (CoreHost) -> Unit) {
         val runtime = host
         if (busy || runtime == null || (failedAction != null && failedAction != action)) return
         busy = true

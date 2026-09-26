@@ -15,6 +15,7 @@ import {
     type FocusTaskSectionKey,
     type SqliteClient,
     useTaskStore,
+    flushPendingSave,
 } from '@mindwtr/core';
 
 type NativeBridge = {
@@ -106,8 +107,9 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
+type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
-    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker';
+    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const meta = {
         scope: 'native-android',
@@ -184,6 +186,33 @@ const requireSaved = () => {
     if (failure) throw new Error(`SAVE_FAILED: ${failure.message}`);
 };
 
+type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
+/**
+ * The Menu tab's reads (native-host-contract-menu-views.ts, and History's tabs and Archive from the list views block):
+ * each passes Kotlin's input to the contract method unchanged.
+ */
+const MENU_READS: Record<string, (input: never) => Reply> = {
+    more: () => contract.getMoreMenu(),
+    waiting: (input) => contract.getWaitingView(input),
+    someday: (input) => contract.getSomedayView(input),
+    reference: (input) => contract.getReferenceView(input),
+    done: (input) => contract.getDoneView(input),
+    collection: (input) => contract.getMenuViewCollection(input),
+    moveDialog: (input) => contract.getSomedayMoveDialog(input),
+    history: (input) => contract.getHistoryView(input),
+    archive: (input) => contract.getArchiveView(input),
+};
+/** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
+const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
+    activateProject: (input) => contract.activateProject(input),
+    somedayMove: (input) => contract.moveSomedayTasksToSection(input),
+    somedayUndo: (input) => contract.undoSomedaySectionMove(input),
+    somedayTask: (input) => contract.addSomedaySectionTask(input),
+    somedaySection: (input) => contract.createSomedaySection(input),
+    taskListSort: (input) => contract.setTaskListSort(input),
+    archiveAction: (input) => contract.runArchiveAction(input),
+};
+
 globalThis.MindwtrHost = {
     poll(idText: string): string | null {
         const id = Number(idText);
@@ -204,8 +233,10 @@ globalThis.MindwtrHost = {
             await adapter.getData();
             if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
             unwrap(await contract.activate({ writeSafetyReady: true }));
-            const data = adapter.latestData;
-            if (!data) throw new Error('Native storage load was not validated');
+            // Activation may write (core's startup backfills a person for each assignee), so check the
+            // store against a validated load taken after its save, not the load before activation.
+            await flushPendingSave();
+            const data = await adapter.getData();
             const loaded = useTaskStore.getState();
             for (const [table, storeRows] of [
                 ['tasks', loaded._allTasks], ['projects', loaded._allProjects],
@@ -425,6 +456,25 @@ globalThis.MindwtrHost = {
         return submit(async () => {
             unwrap(contract.endInboxProcessing({ sessionId }));
             return {};
+        });
+    },
+    /** `name` is one of MENU_READS; `json` is that method's input. A read waits for an owed save, as every read does. */
+    menuRead(name: string, json: string): string {
+        return submit(async () => {
+            // The More sheet is navigation: it opens while a retry is owed (an empty sheet looked broken on the phone,
+            // 09-26); each destination's own read still waits for the retry and shows its banner.
+            if (name !== 'more') requireSaved();
+            const read = MENU_READS[name];
+            if (!read) throw new Error(`INVALID_INPUT: no menu read ${name}`);
+            return unwrap(read(JSON.parse(json) as never));
+        });
+    },
+    /** `name` is one of MENU_COMMANDS; `json` is that command's input. Its request or capture UUID makes a retry exact. */
+    menuCommand(name: string, json: string): string {
+        return submit(async () => {
+            const command = MENU_COMMANDS[name as MenuCommand];
+            if (!command) throw new Error(`INVALID_INPUT: no menu command ${name}`);
+            return taskResult(name as MenuCommand, await command(JSON.parse(json) as never));
         });
     },
 };

@@ -70,7 +70,7 @@ import java.util.UUID
 /** RN shows 50 results. */
 private const val SEARCH_LIMIT = 50
 
-/** The screens this app has for core's list routes (getGlobalSearchTaskListTarget); the others are not built yet. */
+/** The tabs this app has for core's list routes (getGlobalSearchTaskListTarget); the Menu lists' routes open through MenuModel.openRoute. */
 private val SEARCH_ROUTES = mapOf("/inbox" to Screen.Inbox, "/focus" to Screen.Focus, "/projects-screen" to Screen.Projects)
 
 /**
@@ -231,11 +231,12 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
             }
             items(view?.tasks.orEmpty(), key = { "task-${it.id}" }) { task ->
                 val route = task.route?.let(SEARCH_ROUTES::get)
+                // Waiting, Someday, Reference, Done and Archived hits open their Menu list.
+                val listed = task.route?.takeIf(::isMenuRoute)
                 val subtitle = if (task.inProject) "${t("search.resultTask")} • ${t("search.inProjectSuffix")}" else t("search.resultTask")
                 val dateColor = when (task.dateTone) { "danger" -> c.danger; "warning" -> c.warning; else -> c.secondaryText }
-                // A hit core routes to a list this app has not built yet (Done, Archived, Waiting, Someday, Reference) keeps
-                // RN's row look but has no tap and no chevron until those Menu screens exist.
-                val opens = task.editor || route != null
+                // A hit core routes to a list this app has not built keeps RN's row look but has no tap and no chevron.
+                val opens = task.editor || route != null || listed != null
                 ResultRow(task.segments, task.title, subtitle, task.dateLabel, dateColor, idle && opens, opens, {
                     when {
                         task.canComplete -> {
@@ -249,7 +250,13 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
                         task.cancelled -> Icon(Lucide.XCircle, null, tint = c.secondaryText, modifier = Modifier.size(24.dp))
                         else -> Icon(Lucide.CheckCircle, null, tint = c.tint, modifier = Modifier.size(24.dp))
                     }
-                }) { if (task.editor) openEditor(task.id) else route?.let { openFromSearch(it, task.projectId) } }
+                }) {
+                    when {
+                        task.editor -> openEditor(task.id)
+                        route != null -> openFromSearch(route, task.projectId)
+                        listed != null -> { closeSearch(); menu.openRoute(listed) }
+                    }
+                }
             }
         }
     }

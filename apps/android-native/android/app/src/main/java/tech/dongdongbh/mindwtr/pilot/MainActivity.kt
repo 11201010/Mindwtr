@@ -114,10 +114,13 @@ class MainActivity : ComponentActivity() {
                 val open = editor
                 val flow = processing?.takeUnless { it.hidden }
                 val searching = search
-                // Full-screen flows over the tabs, as RN presents them: the editor, then Process Inbox, then search.
+                val listed = menu.screen
+                // Full-screen flows over the tabs, as RN presents them: the editor, then Process Inbox, then search, then a
+                // Menu destination (RN pushes it over the tabs).
                 if (open != null && writable) TaskEditorScreen(model, open)
                 else if (flow != null && writable) ProcessInboxScreen(model, flow)
                 else if (searching != null && writable) SearchScreen(model, searching)
+                else if (listed != null && writable) MenuScreenHost(model, listed)
                 else Column(
                     Modifier.fillMaxSize().background(c.cardBg).systemBarsPadding().semantics { testTagsAsResourceId = true },
                 ) {
@@ -147,6 +150,8 @@ class MainActivity : ComponentActivity() {
                                         Screen.Focus -> FocusList(model, Modifier.fillMaxSize())
                                         Screen.Projects -> ProjectsTab(model, Modifier.fillMaxSize())
                                     }
+                                    // RN's More sheet sits over the list, above the tab bar, which stays usable.
+                                    if (menu.sheet) MoreSheet(model)
                                 }
                                 TabBar(model)
                             }
@@ -221,8 +226,8 @@ fun OwedRetry(model: InboxViewModel) {
 
 /**
  * RN's bottom tab bar: Focus, Inbox, the capture button, the quick-access view
- * (Projects), then Menu. Menu has no native screen yet, so its slot stays empty:
- * every control keeps the place an RN user's thumb expects.
+ * (Projects), then Menu, which opens RN's More sheet. Every control keeps the
+ * place an RN user's thumb expects; a tab or the capture button closes the sheet, as in RN.
  */
 @Composable
 private fun TabBar(model: InboxViewModel) {
@@ -232,7 +237,7 @@ private fun TabBar(model: InboxViewModel) {
         TabItem(model, Screen.Inbox, Lucide.Inbox)
         CaptureButton(model)
         TabItem(model, Screen.Projects, Lucide.Folder)
-        Spacer(Modifier.weight(1f))
+        MenuTab(model)
     }
 }
 
@@ -243,7 +248,7 @@ private fun RowScope.TabItem(model: InboxViewModel, tab: Screen, icon: ImageVect
     val active = screen == tab
     val color = if (active) c.tabIconSelected else c.tabIconDefault
     Column(
-        Modifier.weight(1f).fillMaxHeight().selectable(selected = active, role = Role.Tab, onClick = { show(tab) }),
+        Modifier.weight(1f).fillMaxHeight().selectable(selected = active, role = Role.Tab, onClick = { menu.closeSheet(); show(tab) }),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
     ) {
         Icon(icon, null, tint = color, modifier = Modifier.size(if (active) 26.dp else 24.dp).fade(if (active) 1f else 0.8f))
@@ -259,7 +264,7 @@ private fun RowScope.CaptureButton(model: InboxViewModel) {
     val shape = RoundedCornerShape(theme.captureRadius)
     val label = t("nav.addTask")
     Box(
-        Modifier.weight(1f).fillMaxHeight().clickable(role = Role.Button) { model.openCapture() }
+        Modifier.weight(1f).fillMaxHeight().clickable(role = Role.Button) { model.menu.closeSheet(); model.openCapture() }
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {

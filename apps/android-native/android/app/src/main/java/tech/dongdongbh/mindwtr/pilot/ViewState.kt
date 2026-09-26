@@ -1,6 +1,7 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import android.content.SharedPreferences
+import org.json.JSONArray
 import org.json.JSONObject
 
 /*
@@ -65,5 +66,72 @@ data class ProjectsViewState(val collapsedAreas: Set<String>, val showDeferred: 
             val collapsed = areas?.keys()?.asSequence()?.filter { it.isNotBlank() && areas.opt(it) == true }?.toSet().orEmpty()
             return ProjectsViewState(collapsed, raw.opt("showDeferredProjects") == true, raw.opt("showArchivedProjects") == true)
         }
+    }
+}
+
+/** RN's DONE_LIST_VIEW_STATE_STORAGE_KEY (lib/view-state/done-list-view-state.ts). */
+const val DONE_VIEW_KEY = "mindwtr:view:done:v1"
+/** RN's ARCHIVED_LIST_VIEW_STATE_STORAGE_KEY (lib/view-state/archived-list-view-state.ts). */
+const val ARCHIVED_VIEW_KEY = "mindwtr:view:archived:v1"
+
+/**
+ * RN's Done and Archived list view state, `{ groupBy, sortBy? }`: the device's grouping and sort, kept as core's option
+ * values (only this app writes them, from core's options). Absent means core's default.
+ */
+data class ListViewState(val groupBy: String?, val sortBy: String?) {
+    fun save(prefs: SharedPreferences, key: String) {
+        prefs.edit().putString(key, into(JSONObject()).toString()).apply()
+    }
+
+    /** The view's inputs: the grouping and, when chosen, the sort. */
+    fun into(params: JSONObject): JSONObject = params.apply { groupBy?.let { put("groupBy", it) }; sortBy?.let { put("sortBy", it) } }
+
+    companion object {
+        fun read(prefs: SharedPreferences, key: String): ListViewState {
+            val raw = runCatching { JSONObject(prefs.getString(key, null) ?: "{}") }.getOrDefault(JSONObject())
+            return ListViewState(raw.opt("groupBy") as? String, raw.opt("sortBy") as? String)
+        }
+    }
+}
+
+/**
+ * RN's task-group-collapse-state: one key per list ("reference", "done", "archived"), each grouping axis → its folded
+ * group ids, device-local and never synced.
+ */
+object GroupCollapse {
+    private fun key(list: String) = "mindwtr:view:group-collapse:$list:v1"
+
+    /** RN's readTaskGroupCollapseState: only arrays, only their strings, only non-empty lists. */
+    private fun read(prefs: SharedPreferences, list: String): JSONObject {
+        val raw = runCatching { JSONObject(prefs.getString(key(list), null) ?: "{}") }.getOrDefault(JSONObject())
+        val state = JSONObject()
+        for (axis in raw.keys()) {
+            val ids = raw.optJSONArray(axis) ?: continue
+            val kept = JSONArray().apply { for (index in 0 until ids.length()) (ids.opt(index) as? String)?.let(::put) }
+            if (kept.length() > 0) state.put(axis, kept)
+        }
+        return state
+    }
+
+    /** RN's toggleGroup: [id] folds or unfolds under [axis], the grouping core showed it in. */
+    fun toggle(prefs: SharedPreferences, list: String, axis: String, id: String) {
+        val state = read(prefs, list)
+        val ids = state.optJSONArray(axis) ?: JSONArray()
+        val present = (0 until ids.length()).any { ids.getString(it) == id }
+        val next = JSONArray().apply { for (index in 0 until ids.length()) if (ids.getString(index) != id) put(ids.getString(index)) }
+        if (!present) next.put(id)
+        prefs.edit().putString(key(list), state.put(axis, next).toString()).apply()
+    }
+
+    /**
+     * Every folded id, whatever its axis: core's group ids carry their axis ("project:…", "context:…", "tag:…", an area's
+     * id), so another grouping's ids match nothing and core folds only the current one's.
+     * ponytail: core takes at most [max] ids; a person who folds more sends only the first [max].
+     */
+    fun all(prefs: SharedPreferences, list: String, max: Int): JSONArray {
+        val state = read(prefs, list)
+        val all = JSONArray()
+        for (axis in state.keys()) state.getJSONArray(axis).let { ids -> for (index in 0 until ids.length()) if (all.length() < max) all.put(ids.getString(index)) }
+        return all
     }
 }

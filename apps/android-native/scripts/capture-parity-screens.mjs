@@ -8,9 +8,10 @@
 // starred task, and RN's quick-access tab set to Projects so both tab bars show the same
 // tabs. The script installs the harness RN build (154), puts the fixture in as its
 // database, and shoots Inbox, Focus, Projects, the task editor (Form tab) for one
-// task opened from Focus, global search for "kitchen", Process Inbox's first step, and the
-// capture popup (empty, with text and core's preview, and with the contexts picker open), in
-// light and dark mode. Then it installs
+// task opened from Focus, global search for "kitchen", Process Inbox's first step, the
+// capture popup (empty, with text and core's preview, and with the contexts picker open), and
+// the Menu tab (the More sheet, Waiting, Someday, and History's Done), in light and dark mode.
+// Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
 // /home/dd/.mindwtr-harness/parity/<timestamp>/.
@@ -61,6 +62,7 @@ const T = {
     flights: 'Compare flight prices', hotel: 'Shortlist three hotels', passport: 'Renew passport',
     milk: 'Buy milk and eggs', invoice: 'Send the March invoice', backup: 'Back up the laptop',
     mom: 'Call Mom back', taxes: 'Gather tax documents',
+    deck: 'Hear back from Sam about the deck', insurance: 'Renew car insurance',
 };
 const fixture = resolve(out, 'fixture/mindwtr.db');
 const buildFixture = () => execFileSync('bun', ['-e', `
@@ -102,13 +104,17 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     await add(T.review, { status: 'waiting', projectId: report.id, contexts: ['@office'] });
     await add(T.flights, { status: 'next', projectId: trip.id, contexts: ['@computer'], priority: 'low' });
     await add(T.hotel, { status: 'next', projectId: trip.id, startTime: day(3), description: 'Near the old town, with breakfast.' });
-    await add(T.passport, { status: 'someday', projectId: trip.id });
+    await add(T.passport, { status: 'someday', projectId: trip.id, viewSectionIds: { someday: 'someday-travel' } });
     await add(T.milk, { status: 'next', contexts: ['@errands'], areaId: home.id, dueDate: day(0) });
     await add(T.invoice, { status: 'next', contexts: ['@computer'], areaId: work.id, priority: 'urgent', dueDate: day(-1) });
     await add(T.backup, { status: 'next', contexts: ['@computer'], dueDate: day(6) });
     await add(T.mom, { status: 'next', contexts: ['@phone'] });
     await add(T.taxes, { status: 'someday', areaId: work.id, description: 'W-2, bank statements, receipts folder.' });
-    await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' } });
+    await add(T.deck, { status: 'waiting', assignedTo: 'Sam', contexts: ['@office'], dueDate: day(4) });
+    await add(T.insurance, { status: 'done', areaId: home.id });
+    // RN's quick-access tab set to Projects (both tab bars show the same tabs), and one Someday section for the headings.
+    await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' },
+        gtd: { ...(store().settings.gtd ?? {}), viewSections: { someday: [{ id: 'someday-travel', title: 'Travel', order: 0 }] } } });
     await flushPendingSave();
     if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -211,6 +217,38 @@ const shootPopup = async (prefix, suffix) => {
         await sleep(800);
     }
 };
+/**
+ * The Menu tab: RN's More sheet from the Menu tab (both apps label it core's tab.menu), then Waiting, Someday, and History's
+ * Done (RN by its links, native from the sheet's tiles), each shot and closed with Back.
+ */
+const MENU_SCREENS = [
+    { name: 'waiting', link: 'waiting', tile: 'Waiting For', text: T.deck },
+    { name: 'someday', link: 'someday', tile: 'Someday/Maybe', text: T.passport },
+    { name: 'done', link: 'history?tab=done', tile: 'History', text: T.insurance },
+];
+const shootMenu = async (prefix, suffix, rn) => {
+    const openSheet = async () => {
+        const nodes = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);
+        await tap(rn ? nodes.find((node) => node['content-desc'] === 'Menu') : tab(nodes, 'Menu'));
+    };
+    await openSheet();
+    await shoot(`${prefix}-more-${suffix}`, (current) => current.some((node) => node['content-desc'] === 'Waiting For'));
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(1000);
+    for (const screen of MENU_SCREENS) {
+        if (rn) openLink(screen.link);
+        else {
+            await openSheet();
+            const nodes = await waitFor(`the ${screen.tile} tile`, (current) => current.some((node) => node['content-desc'] === screen.tile), 15_000);
+            await tap(nodes.find((node) => node['content-desc'] === screen.tile));
+        }
+        await shoot(`${prefix}-${screen.name}-${suffix}`, (current) => hasText(current, screen.text));
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(1000);
+    }
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -249,6 +287,8 @@ try {
         await shootProcess(`rn-process-${mode === 'yes' ? 'dark' : 'light'}`);
         openLink('inbox');
         await shootPopup('rn', mode === 'yes' ? 'dark' : 'light');
+        openLink('inbox');
+        await shootMenu('rn', mode === 'yes' ? 'dark' : 'light', true);
     }
     await stopApp();
 
@@ -290,6 +330,7 @@ try {
         if (!tabSelected(inboxTab, 'Inbox')) await tap(tab(inboxTab, 'Inbox'));
         await shootProcess(`native-process-${mode === 'yes' ? 'dark' : 'light'}`);
         await shootPopup('native', mode === 'yes' ? 'dark' : 'light');
+        await shootMenu('native', mode === 'yes' ? 'dark' : 'light', false);
     }
     await stopApp();
 

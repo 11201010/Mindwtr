@@ -175,6 +175,12 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's endInboxProcessing; it writes nothing. */
     fun endInboxProcessing(sessionId: String): JSONObject = callAsync("inboxEnd", sessionId)
 
+    /** A Menu tab read (host-entry.ts MENU_READS: the More sheet, the lists, their collections) with [json], its input, unchanged. */
+    fun menuRead(name: String, json: String): JSONObject = callAsync("menuRead", name, json)
+
+    /** A Menu tab command (host-entry.ts MENU_COMMANDS) with [json] unchanged; its request or capture UUID makes a retry exact. */
+    fun menuCommand(name: String, json: String): JSONObject = callAsync("menuCommand", name, json)
+
     /** Core's getTaskEditorModel for one task: its draft, the fields to show by section, and each field's choices. */
     fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 
@@ -235,7 +241,7 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
 
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
         val command = method in setOf("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter",
-            "saveSearch", "inboxCommit", "inboxSkip")
+            "saveSearch", "inboxCommit", "inboxSkip", "menuCommand")
         if (command) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")
