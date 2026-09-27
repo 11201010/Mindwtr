@@ -203,6 +203,33 @@ describe('useTaskListSelection handleBatchRemoveTags', () => {
     expect(toasts.some((toast) => toast.tone === 'warning')).toBe(true);
     expect(hookRef.hasSelection).toBe(true);
   });
+
+  it('keeps the typed tag when Add tag fails, and clears it once a write succeeds', async () => {
+    let result: StoreActionResult = { success: false, error: 'nope' };
+    const batchUpdateTasks = vi.fn(async () => result);
+    renderer.act(() => {
+      renderer.create(<Harness {...baseParams({ batchUpdateTasks, tasksById: taggedTasks })} />);
+    });
+    renderer.act(() => {
+      hookRef.toggleMultiSelect('a');
+      hookRef.setTagModalVisible(true);
+      hookRef.setTagInput('#new');
+    });
+
+    await renderer.act(async () => {
+      await hookRef.handleBatchAddTag();
+    });
+    // The dialog closes so the warning toast shows; reopening it shows the tag again.
+    expect(hookRef.tagModalVisible).toBe(false);
+    expect(hookRef.tagInput).toBe('#new');
+    expect(hookRef.hasSelection).toBe(true);
+
+    result = { success: true };
+    await renderer.act(async () => {
+      await hookRef.handleBatchAddTag();
+    });
+    expect(hookRef.tagInput).toBe('');
+  });
 });
 
 describe('useTaskListSelection selection boundaries', () => {

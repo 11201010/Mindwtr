@@ -772,6 +772,7 @@ export const huOverrides: Record<string, string> = {
     'projects.reorderSections': 'Szakaszok átrendezése',
     'focus.reorderPosition': '{{title}}. {{position}}. pozíció, összesen {{count}}',
     'focus.reorderHint': 'Tartsa lenyomva és húzza az átrendezéshez',
+    'focus.reorderScreenHint': 'Külön képernyőt nyit ezeknek a feladatoknak az átrendezéséhez',
     'projects.tagFilter': 'Címkeszűrő',
     'projects.allTags': 'Összes címke',
     'projects.noTags': 'Nincsenek címkék',

@@ -1684,7 +1684,7 @@ export default function FocusScreen() {
               <TouchableOpacity
                 accessibilityRole="button"
                 accessibilityLabel={resolveText('projects.reorderTasks', 'Reorder')}
-                accessibilityHint="Opens a focused screen for reordering these tasks"
+                accessibilityHint={resolveText('focus.reorderScreenHint', 'Opens a focused screen for reordering these tasks')}
                 onPress={enterFocusReorder}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 activeOpacity={0.65}

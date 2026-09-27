@@ -772,6 +772,7 @@ export const esOverrides: Record<string, string> = {
 'projects.reorderSections': "Reordenar secciones",
 'focus.reorderPosition': "{{title}}. Posición {{position}} de {{count}}",
 'focus.reorderHint': "Mantén pulsado y arrastra para reordenar",
+'focus.reorderScreenHint': "Abre una pantalla dedicada para reordenar estas tareas",
 'projects.tagFilter': "Filtro de etiquetas",
 'projects.allTags': "Todas las etiquetas",
 'projects.noTags': "Sin etiquetas",

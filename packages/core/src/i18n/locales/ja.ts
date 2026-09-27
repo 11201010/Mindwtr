@@ -816,6 +816,7 @@ export const jaOverrides: Record<string, string> = {
         'projects.reorderSections': 'セクションを並べ替え',
         'focus.reorderPosition': '{{title}}。{{count}}件中{{position}}番目',
         'focus.reorderHint': '長押ししてドラッグすると並べ替えられます',
+        'focus.reorderScreenHint': 'これらのタスクを並べ替える専用の画面を開きます',
         'projects.tagFilter': 'タグで絞り込む',
         'projects.allTags': 'すべてのタグ',
         'projects.noTags': 'タグなし',

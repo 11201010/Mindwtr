@@ -787,6 +787,7 @@ export const zhHant: Record<string, string> = {
         'projects.reorderSections': '重新排序分區',
         'focus.reorderPosition': '{{title}}。第{{position}}項，共{{count}}項',
         'focus.reorderHint': '長按並拖曳以重新排序',
+        'focus.reorderScreenHint': '開啟專門的排序畫面來調整這些任務的順序',
         'projects.tagFilter': '標籤篩選',
         'projects.allTags': '所有標籤',
         'projects.noTags': '無標籤',

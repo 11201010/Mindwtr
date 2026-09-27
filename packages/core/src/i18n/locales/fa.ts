@@ -788,6 +788,7 @@ export const faOverrides: Record<string, string> = {
         'projects.reorderSections': 'ترتیب‌دهی مجدد بخش‌ها',
         'focus.reorderPosition': '{{title}}. جایگاه {{position}} از {{count}}',
         'focus.reorderHint': 'برای تغییر ترتیب، فشار طولانی داده و بکشید',
+        'focus.reorderScreenHint': 'صفحه‌ای جداگانه برای تغییر ترتیب این کارها باز می‌کند',
         'projects.tagFilter': 'فیلتر برچسب',
         'projects.allTags': 'همه برچسب‌ها',
         'projects.noTags': 'بدون برچسب',

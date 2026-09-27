@@ -808,6 +808,7 @@ export const en: Record<string, string> = {
         'projects.reorderSections': 'Reorder sections',
         'focus.reorderPosition': '{{title}}. Position {{position}} of {{count}}',
         'focus.reorderHint': 'Long press and drag to reorder',
+        'focus.reorderScreenHint': 'Opens a focused screen for reordering these tasks',
         'projects.tagFilter': 'Tag filter',
         'projects.allTags': 'All tags',
         'projects.noTags': 'No tags',

@@ -198,10 +198,11 @@ export function useTaskListSelection({
     if (!hasSelection || !input || bulkActionLoading) return;
     await runBulkAction(t('bulk.addTag'), async () => {
       const updates = buildBulkTaskTokenUpdates(selectedIdsArray, tasksById, 'tags', input, 'add');
-      setTagInput('');
+      // Close first so a failure's warning toast is not under the dialog; the typed tag stays for a retry.
       setTagModalVisible(false);
+      if (updates.length > 0) assertBulkActionSucceeded(await batchUpdateTasks(updates));
+      setTagInput('');
       if (updates.length === 0) return;
-      assertBulkActionSucceeded(await batchUpdateTasks(updates));
       exitSelectionMode();
       showToast({
         title: t('common.done'),

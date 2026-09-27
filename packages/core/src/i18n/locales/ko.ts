@@ -817,6 +817,7 @@ export const koOverrides: Record<string, string> = {
         'projects.moveDown': '아래로 이동',
         'focus.reorderPosition': '{{title}}. {{count}}개 중 {{position}}번째',
         'focus.reorderHint': '길게 누른 후 드래그하여 순서를 변경하세요',
+        'focus.reorderScreenHint': '이 작업들의 순서를 바꾸는 전용 화면을 엽니다',
         'projects.tagFilter': '태그 필터',
         'projects.allTags': '모든 태그',
         'projects.noTags': '태그 없음',

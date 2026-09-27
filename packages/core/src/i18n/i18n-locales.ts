@@ -41,7 +41,7 @@ type LocaleDescriptorCommon = {
 // English keys and 89.42% against 2505, which switched the check on and flagged 113 values
 // that were the deliberate English this ceiling exists to allow. The remedy is to re-pin that
 // locale's floor to its measured translated count -- the sanctioned ratchet direction, and
-// what keeps the ratio honest -- not to lower the ceiling. ko has been re-pinned twice this
+// what keeps the ratio honest -- not to lower the ceiling. ko has been re-pinned three times this
 // way now, which is the signal that a floor left stale near the ceiling is the real hazard.
 export const MIXED_ENGLISH_COVERAGE_CEILING = 90;
 
@@ -279,7 +279,7 @@ export const LOCALES = {
         // Include the newly translated sandbox and Reference strings; keep the native translation above
         // the mixed-English brand-name check threshold as the English dictionary grows.
         // Includes subsequent shipped translations and the UI simplification labels.
-        translatedKeyFloor: 2402,
+        translatedKeyFloor: 2421,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),

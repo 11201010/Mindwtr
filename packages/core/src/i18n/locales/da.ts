@@ -793,6 +793,7 @@ export const daOverrides: Record<string, string> = {
     'projects.reorderSections': 'Omarranger sektioner',
     'focus.reorderPosition': '{{title}}. Position {{position}} på {{count}}',
     'focus.reorderHint': 'Langt tryk og træk for at omarrangere',
+    'focus.reorderScreenHint': 'Åbner en separat skærm, hvor du kan ændre rækkefølgen af disse opgaver',
     'projects.tagFilter': 'Tagfilter',
     'projects.allTags': 'Alle tags',
     'projects.noTags': 'Ingen tags',
