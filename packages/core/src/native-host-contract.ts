@@ -79,7 +79,7 @@ import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
-import type { Area, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
+import type { Area, ChecklistItem, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
 import { generateUUID } from './uuid';
 import { isCustomTimeEstimate as isCustomInboxTimeEstimate, TIME_ESTIMATE_OPTIONS as INBOX_TIME_ESTIMATES } from './calendar-scheduling';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
@@ -219,6 +219,7 @@ import {
     type NativeFocusControlsInput,
 } from './native-host-contract-focus-controls';
 import { createSettingsMethods } from './native-host-contract-settings';
+import { createTaskViewMethods, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -1131,6 +1132,9 @@ export function createNativeHostContract() {
             requestIdPattern: CAPTURE_ID_PATTERN,
         }),
 
+        // The editor's View tab and checklist: native-host-contract-task-view.ts.
+        ...createTaskViewMethods({ readiness, save, t: () => translate, dateFormatting, revision: (now) => `${revision()}:${displayRevision(now)}`, isReadOnly: isInArchivedProject, readDraft: readTaskDraft }),
+
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -1817,11 +1821,17 @@ export function createNativeHostContract() {
          * Save draft fields. `base` holds each field's value when editing began; a field
          * changed since by another writer is a conflict, unless it already holds the new
          * value. A repeat of the same request after a failed save writes nothing new.
+         * `checklist` saves the editor's checklist in the same write, as React Native saves
+         * it with the draft: `base` is the saved checklist the editor loaded (getTaskView's
+         * checklistBase), `value` the edited one; it conflicts like a field, and empty items
+         * are dropped (read getTaskView again for the new base). A list task's status comes
+         * from the draft (editTaskChecklist sets it); send it in the same call.
          */
         async saveTaskDraft(input: {
             id: string;
             base: Partial<TaskDraft>;
             patch: Partial<TaskDraft>;
+            checklist?: { base: ChecklistItem[]; value: ChecklistItem[] };
         }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -1829,8 +1839,17 @@ export function createNativeHostContract() {
             if (!isObjectRecord(input.base) || !isObjectRecord(input.patch)) {
                 return fail('INVALID_INPUT', 'base and patch must be objects');
             }
+            let checklistHalf: { base: ChecklistItem[]; value: ChecklistItem[] } | undefined;
+            if (input.checklist !== undefined) {
+                const half: Record<string, unknown> = isObjectRecord(input.checklist) ? input.checklist : {};
+                const [checklistBase, checklistValue] = [readChecklist(half.base), readChecklist(half.value)];
+                if (!checklistBase || !checklistValue) {
+                    return fail('INVALID_INPUT', 'checklist needs a base and a value, each a checklist of at most 1,000 items');
+                }
+                checklistHalf = { base: checklistBase, value: checklistValue };
+            }
             const fields = Object.keys(input.patch) as TaskDraftField[];
-            if (fields.length === 0) return fail('INVALID_INPUT', 'patch must include a draft field');
+            if (fields.length === 0 && !checklistHalf) return fail('INVALID_INPUT', 'patch must include a draft field');
             if (fields.some((field) => !DRAFT_FIELD_SET.has(field))) {
                 return fail('INVALID_INPUT', 'patch fields must be task draft fields');
             }
@@ -1867,15 +1886,19 @@ export function createNativeHostContract() {
                 if (!valid) return fail('INVALID_INPUT', `${field} is not a valid value`);
             }
 
-            const key = JSON.stringify([input.base, input.patch]);
+            const key = JSON.stringify([input.base, input.patch, checklistHalf ?? null]);
             const lastSave = draftSaves.get(input.id);
             if (lastSave && lastSave.task !== task) draftSaves.delete(input.id);
             const isRetry = lastSave?.key === key && lastSave.task === task;
             let updates: Partial<Task> | null = {};
             if (!isRetry) {
                 const current = createTaskDraft(task);
-                const conflicts = fields.filter((field) => !isSameDraftValue(current[field], base[field])
+                const conflicts: string[] = fields.filter((field) => !isSameDraftValue(current[field], base[field])
                     && !isSameDraftValue(current[field], patch[field]));
+                const savedChecklist = toChecklist(task.checklist);
+                const nextChecklist = checklistHalf?.value.filter((item) => item.title.trim() !== '');
+                const checklistChanges = checklistHalf && nextChecklist && !sameChecklist(savedChecklist, nextChecklist) ? checklistHalf : null;
+                if (checklistChanges && !sameChecklist(savedChecklist, checklistChanges.base)) conflicts.push('checklist');
                 if (conflicts.length > 0) {
                     return fail('STALE_REVISION', `Task changed while editing: ${conflicts.join(', ')}`);
                 }
@@ -1884,7 +1907,12 @@ export function createNativeHostContract() {
                     .filter((field) => isSameDraftValue(current[field], base[field]))
                     .map((field) => [field, patch[field]]));
                 const draft = clearInvalidTaskDraftSection(applyTaskDraftPatch(current, pending), state.sections);
-                updates = buildTaskEditUpdatePatch({ draft, checklist: task.checklist, attachments: task.attachments }, task);
+                // One write, as React Native's editor saves: draft fields, checklist and attachments together.
+                updates = buildTaskEditUpdatePatch({
+                    draft,
+                    checklist: checklistChanges ? checklistChanges.value : task.checklist,
+                    attachments: task.attachments,
+                }, task);
                 if (!updates) return fail('INVALID_INPUT', 'title must not be blank');
             }
 

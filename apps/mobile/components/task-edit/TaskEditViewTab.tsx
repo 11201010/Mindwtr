@@ -2,13 +2,10 @@ import React from 'react';
 import { Image, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { CheckSquare, Square } from 'lucide-react-native';
 import {
-  formatRecurrenceLabel,
+  applyTaskChecklistEdit,
+  buildTaskViewModel,
   generateUUID,
-  getAttachmentDisplayTitle,
-  getRecurringTaskPreviewDate,
-  hasTimeComponent,
-  isTaskCancelled,
-  tFallback,
+  type TaskViewRow,
 } from '@mindwtr/core';
 import type {
   Attachment,
@@ -127,76 +124,225 @@ function TaskEditViewTabComponent({
     );
   };
 
-  const renderViewPills = (items: string[] | undefined, onPress?: (item: string) => void, type?: 'context' | 'tag') => {
-    if (!items || items.length === 0) return null;
-    return (
-      <View style={styles.viewPillRow}>
-        {items.map((item) => {
-          if (!onPress) {
-            return (
-              <View key={item} style={[styles.viewPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}>
-                <Text style={[styles.viewPillText, { color: tc.text }]}>{item}</Text>
-              </View>
-            );
-          }
+  const renderViewPills = (items: { value: string; accessibilityLabel: string }[], onPress?: (item: string) => void) => (
+    <View style={styles.viewPillRow}>
+      {items.map(({ value: item, accessibilityLabel }) => {
+        if (!onPress) {
           return (
-            <TouchableOpacity
-              key={item}
-              style={[styles.viewPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}
-              onPress={() => onPress(item)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open ${type === 'tag' ? 'tag' : 'context'} ${item}`}
-            >
+            <View key={item} style={[styles.viewPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}>
               <Text style={[styles.viewPillText, { color: tc.text }]}>{item}</Text>
-            </TouchableOpacity>
+            </View>
           );
-        })}
-      </View>
-    );
+        }
+        return (
+          <TouchableOpacity
+            key={item}
+            style={[styles.viewPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}
+            onPress={() => onPress(item)}
+            accessibilityRole="button"
+            accessibilityLabel={accessibilityLabel}
+          >
+            <Text style={[styles.viewPillText, { color: tc.text }]}>{item}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  const rows = buildTaskViewModel({
+    task: mergedTask,
+    projects,
+    sections,
+    areas,
+    attachments: visibleAttachments,
+    prioritiesEnabled,
+    timeEstimatesEnabled,
+    showStatusField,
+    readOnly,
+    t,
+    formatDate,
+    formatDueDate,
+    formatTimeEstimateLabel,
+    isImageAttachment,
+  });
+  const checklist = mergedTask.checklist || [];
+  const editChecklist = (edit: Parameters<typeof applyTaskChecklistEdit>[1]) => {
+    const result = applyTaskChecklistEdit(checklist, edit, { isReference: mergedTask.status === 'reference', newId: generateUUID });
+    if (result) applyChecklistUpdate(result.checklist);
+    return result;
   };
 
-  const project = projects.find((p) => p.id === mergedTask.projectId);
-  const section = sections.find((item) => item.id === mergedTask.sectionId);
-  const title = String(mergedTask.title || '').trim();
-  const description = String(mergedTask.description || '').trim();
-  const area = areas.find((a) => a.id === (mergedTask.areaId || project?.areaId));
-  const checklist = mergedTask.checklist || [];
-
-  const statusLabel = isTaskCancelled(mergedTask as Task)
-    ? tFallback(t, 'task.cancelled', 'Cancelled')
-    : mergedTask.status
-      ? tFallback(t, `status.${mergedTask.status}`, mergedTask.status)
-      : undefined;
-  const isReference = mergedTask.status === 'reference';
-  const priorityLabel = mergedTask.priority ? (tFallback(t, `priority.${mergedTask.priority}`, mergedTask.priority)) : undefined;
-  const energyLevelLabel = mergedTask.energyLevel
-    ? (tFallback(t, `energyLevel.${mergedTask.energyLevel}`, mergedTask.energyLevel))
-    : undefined;
-  const timeEstimateLabel = mergedTask.timeEstimate
-    ? (formatTimeEstimateLabel(mergedTask.timeEstimate as TimeEstimate) || String(mergedTask.timeEstimate))
-    : undefined;
-  const recurrenceLabel = formatRecurrenceLabel({ recurrence: mergedTask.recurrence, t, formatDate }) || undefined;
-  const projectedRecurrenceDateLabel = (() => {
-    if (!recurrenceLabel || !mergedTask.recurrence) return '';
-    const nowIso = new Date().toISOString();
-    const previewTask = {
-      ...mergedTask,
-      id: mergedTask.id ?? 'draft-recurrence-preview',
-      title: String(mergedTask.title ?? ''),
-      status: mergedTask.status ?? 'next',
-      tags: mergedTask.tags ?? [],
-      contexts: mergedTask.contexts ?? [],
-      createdAt: mergedTask.createdAt ?? nowIso,
-      updatedAt: mergedTask.updatedAt ?? nowIso,
-      recurrence: mergedTask.recurrence,
-    } as Task;
-    const previewDate = getRecurringTaskPreviewDate(previewTask, nowIso);
-    return previewDate ? formatDate(previewDate) : '';
-  })();
-  const recurrencePreviewLabel = recurrenceLabel && projectedRecurrenceDateLabel
-    ? `${recurrenceLabel} · ${tFallback(t, 'recurrence.nextCalendarPreview', 'Next calendar preview')}: ${projectedRecurrenceDateLabel}`
-    : recurrenceLabel;
-  const hasReminderHandoffSchedule = hasTimeComponent(mergedTask.startTime) || hasTimeComponent(mergedTask.dueDate);
+  const renderRow = (row: TaskViewRow) => {
+    switch (row.type) {
+      case 'title':
+        return (
+          <View key="title" style={[styles.viewRow, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
+            <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{row.label}</Text>
+            <Text style={[styles.viewTitleValue, { color: tc.text }]}>
+              {row.value}
+            </Text>
+          </View>
+        );
+      case 'status':
+        return (
+          <View key="status" style={[styles.viewRow, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
+            <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{row.label}</Text>
+            {row.editable && onStatusUpdate && row.status ? (
+              <TaskStatusBadge
+                status={row.status}
+                onUpdate={onStatusUpdate}
+                onBackdatedComplete={onBackdatedComplete}
+              />
+            ) : (
+              <Text style={[styles.viewValue, { color: tc.text }]}>{row.value}</Text>
+            )}
+          </View>
+        );
+      case 'field': {
+        const projectId = row.project?.id;
+        return (
+          <React.Fragment key={row.field}>
+            {renderViewRow(
+              row.label,
+              row.value,
+              projectId && onProjectPress ? () => onProjectPress(projectId) : undefined,
+              row.project?.accessibilityLabel,
+            )}
+          </React.Fragment>
+        );
+      }
+      case 'tokens':
+        return (
+          <View key={row.field} style={styles.viewSection}>
+            <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{row.label}</Text>
+            {renderViewPills(row.items, row.field === 'contexts' ? onContextPress : onTagPress)}
+          </View>
+        );
+      case 'description':
+        return (
+          <View key="description" style={styles.viewSection}>
+            <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{row.label}</Text>
+            <View style={[styles.viewCard, { borderColor: tc.border, backgroundColor: tc.inputBg }]}
+            >
+              <MarkdownText markdown={row.markdown} tc={tc} direction={resolvedDirection} selectable />
+            </View>
+          </View>
+        );
+      case 'checklist':
+        return (
+          <View key="checklist" style={styles.viewSection}>
+            <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>
+              {row.label}
+            </Text>
+            <View style={styles.viewChecklist}>
+              {row.items.map((item) => {
+                const content = (
+                  <>
+                  {row.bullets ? (
+                    <Text
+                      style={{ color: tc.secondaryText, fontSize: 18, lineHeight: 20 }}
+                      accessible={false}
+                    >
+                      •
+                    </Text>
+                  ) : item.completed ? (
+                    <CheckSquare size={18} color={tc.tint} strokeWidth={2} />
+                  ) : (
+                    <Square size={18} color={tc.secondaryText} strokeWidth={2} />
+                  )}
+                  <MarkdownInlineText
+                    markdown={item.title}
+                    tc={tc}
+                    direction={resolvedDirection}
+                    style={[styles.viewChecklistText, textDirectionStyle, { color: tc.text }]}
+                  />
+                  </>
+                );
+                if (!row.tappable) {
+                  return (
+                    <View
+                      key={item.id}
+                      style={[styles.viewChecklistItem, row.bullets ? { alignItems: 'flex-start' } : null]}
+                      accessibilityLabel={item.accessibilityLabel ?? undefined}
+                    >
+                      {content}
+                    </View>
+                  );
+                }
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.viewChecklistItem}
+                    onPress={() => editChecklist({ kind: 'toggleById', id: item.id })}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: item.completed }}
+                    accessibilityLabel={item.accessibilityLabel ?? undefined}
+                  >
+                    {content}
+                  </TouchableOpacity>
+                );
+              })}
+              {row.add ? <TextInput
+                ref={checklistDraftRef}
+                value={checklistDraft}
+                onChangeText={updateChecklistDraft}
+                onFocus={checklistKeyboard.onFocus}
+                onBlur={checklistKeyboard.onBlur}
+                onLayout={checklistKeyboard.onLayout}
+                onSubmitEditing={() => {
+                  if (!editChecklist({ kind: 'append', title: checklistDraft })) {
+                    checklistDraftRef.current?.blur();
+                    return;
+                  }
+                  updateChecklistDraft('');
+                }}
+                placeholder={row.add.placeholder}
+                placeholderTextColor={tc.secondaryText}
+                style={[styles.viewChecklistAddInput, textDirectionStyle, { color: tc.text }]}
+                accessibilityLabel={row.add.label}
+                returnKeyType="done"
+                blurOnSubmit={false}
+                submitBehavior="submit"
+              /> : null}
+            </View>
+          </View>
+        );
+      case 'attachments':
+        return (
+          <View key="attachments" style={styles.viewSection}>
+            <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{row.label}</Text>
+            <View style={styles.viewAttachmentGrid}>
+              {row.items.map(({ attachment, title, image, note, disabled }) => (
+                <TouchableOpacity
+                  key={attachment.id}
+                  style={[styles.viewAttachmentCard, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                  onPress={() => openAttachment(attachment)}
+                  disabled={disabled}
+                >
+                  {image ? (
+                    <Image source={{ uri: attachment.uri }} style={styles.viewAttachmentImage} />
+                  ) : (
+                    <View>
+                      <Text style={[styles.viewAttachmentText, { color: tc.text }]} numberOfLines={2}>
+                        {title}
+                      </Text>
+                      {note ? (
+                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
+                          {note}
+                        </Text>
+                      ) : null}
+                      <AttachmentProgressIndicator attachmentId={attachment.id} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <ScrollView
@@ -216,205 +362,7 @@ function TaskEditViewTabComponent({
       scrollEventThrottle={16}
       nestedScrollEnabled={nestedScrollEnabled}
     >
-      {title ? (
-        <View style={[styles.viewRow, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.titleLabel')}</Text>
-          <Text style={[styles.viewTitleValue, { color: tc.text }]}>
-            {title}
-          </Text>
-        </View>
-      ) : null}
-      {!isReference && showStatusField && statusLabel ? (
-        <View style={[styles.viewRow, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.statusLabel')}</Text>
-          {!readOnly && onStatusUpdate && mergedTask.status ? (
-            <TaskStatusBadge
-              status={mergedTask.status as TaskStatus}
-              onUpdate={onStatusUpdate}
-              onBackdatedComplete={onBackdatedComplete}
-            />
-          ) : (
-            <Text style={[styles.viewValue, { color: tc.text }]}>{statusLabel}</Text>
-          )}
-        </View>
-      ) : null}
-      {!isReference && prioritiesEnabled ? renderViewRow(t('taskEdit.priorityLabel'), priorityLabel) : null}
-      {!isReference ? renderViewRow(t('taskEdit.energyLevel'), energyLevelLabel) : null}
-      {renderViewRow(t('taskEdit.assignedTo'), mergedTask.assignedTo)}
-      {renderViewRow(
-        t('taskEdit.projectLabel'),
-        project?.title,
-        project?.id && onProjectPress ? () => onProjectPress(project.id) : undefined,
-        project?.title ? `Open project ${project.title}` : undefined
-      )}
-      {project?.id ? renderViewRow(t('taskEdit.sectionLabel'), section?.title) : null}
-      {!project?.id || isReference ? renderViewRow(t('taskEdit.areaLabel'), area?.name) : null}
-      {!isReference ? renderViewRow(t('taskEdit.startDateLabel'), mergedTask.startTime ? formatDate(mergedTask.startTime) : undefined) : null}
-      {!isReference ? renderViewRow(t('taskEdit.dueDateLabel'), mergedTask.dueDate ? formatDueDate(mergedTask.dueDate) : undefined) : null}
-      {!isReference && hasReminderHandoffSchedule && mergedTask.suppressMindwtrReminders === true
-        ? renderViewRow(
-            tFallback(t, 'taskEdit.suppressMindwtrReminders', 'Skip reminders'),
-            tFallback(t, 'taskEdit.suppressMindwtrRemindersViewValue', 'Mindwtr reminders off')
-          )
-        : null}
-      {!isReference ? renderViewRow(t('taskEdit.reviewDateLabel'), mergedTask.reviewAt ? formatDate(mergedTask.reviewAt) : undefined) : null}
-      {!isReference && timeEstimatesEnabled ? renderViewRow(t('taskEdit.timeEstimateLabel'), timeEstimateLabel) : null}
-      {!isReference && mergedTask.contexts?.length ? (
-        <View style={styles.viewSection}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.contextsLabel')}</Text>
-          {renderViewPills(mergedTask.contexts, onContextPress, 'context')}
-        </View>
-      ) : null}
-      {mergedTask.tags?.length ? (
-        <View style={styles.viewSection}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.tagsLabel')}</Text>
-          {renderViewPills(mergedTask.tags, onTagPress, 'tag')}
-        </View>
-      ) : null}
-      {!isReference && mergedTask.location ? renderViewRow(t('taskEdit.locationLabel'), mergedTask.location) : null}
-      {!isReference && recurrencePreviewLabel ? renderViewRow(t('taskEdit.recurrenceLabel'), recurrencePreviewLabel) : null}
-      {description ? (
-        <View style={styles.viewSection}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.descriptionLabel')}</Text>
-          <View style={[styles.viewCard, { borderColor: tc.border, backgroundColor: tc.inputBg }]}
-          >
-            <MarkdownText markdown={description} tc={tc} direction={resolvedDirection} selectable />
-          </View>
-        </View>
-      ) : null}
-      {checklist.length ? (
-        <View style={styles.viewSection}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>
-            {t(isReference ? 'taskEdit.tab.list' : 'taskEdit.checklist')}
-          </Text>
-          <View style={styles.viewChecklist}>
-            {checklist.map((item) => {
-              const content = (
-                <>
-                {isReference ? (
-                  <Text
-                    style={{ color: tc.secondaryText, fontSize: 18, lineHeight: 20 }}
-                    accessible={false}
-                  >
-                    •
-                  </Text>
-                ) : item.isCompleted ? (
-                  <CheckSquare size={18} color={tc.tint} strokeWidth={2} />
-                ) : (
-                  <Square size={18} color={tc.secondaryText} strokeWidth={2} />
-                )}
-                <MarkdownInlineText
-                  markdown={item.title}
-                  tc={tc}
-                  direction={resolvedDirection}
-                  style={[styles.viewChecklistText, textDirectionStyle, { color: tc.text }]}
-                />
-                </>
-              );
-              if (readOnly || isReference) {
-                return (
-                  <View
-                    key={item.id}
-                    style={[styles.viewChecklistItem, isReference ? { alignItems: 'flex-start' } : null]}
-                    accessibilityLabel={isReference
-                      ? undefined
-                      : `${item.title}. ${item.isCompleted ? t('common.done') : t('status.active')}`}
-                  >
-                    {content}
-                  </View>
-                );
-              }
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.viewChecklistItem}
-                  onPress={() => {
-                    const nextChecklist = checklist.map((entry) =>
-                      entry.id === item.id ? { ...entry, isCompleted: !entry.isCompleted } : entry
-                    );
-                    applyChecklistUpdate(nextChecklist);
-                  }}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: item.isCompleted }}
-                  accessibilityLabel={item.title}
-                >
-                  {content}
-                </TouchableOpacity>
-              );
-            })}
-            {!readOnly && !isReference ? <TextInput
-              ref={checklistDraftRef}
-              value={checklistDraft}
-              onChangeText={updateChecklistDraft}
-              onFocus={checklistKeyboard.onFocus}
-              onBlur={checklistKeyboard.onBlur}
-              onLayout={checklistKeyboard.onLayout}
-              onSubmitEditing={() => {
-                const title = checklistDraft.trim();
-                if (!title) {
-                  checklistDraftRef.current?.blur();
-                  return;
-                }
-                applyChecklistUpdate([...checklist, { id: generateUUID(), title, isCompleted: false }]);
-                updateChecklistDraft('');
-              }}
-              placeholder={`+ ${t('taskEdit.addItem')}`}
-              placeholderTextColor={tc.secondaryText}
-              style={[styles.viewChecklistAddInput, textDirectionStyle, { color: tc.text }]}
-              accessibilityLabel={t('taskEdit.addItem')}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              submitBehavior="submit"
-            /> : null}
-          </View>
-        </View>
-      ) : null}
-      {visibleAttachments.length ? (
-        <View style={styles.viewSection}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('attachments.title')}</Text>
-          <View style={styles.viewAttachmentGrid}>
-            {visibleAttachments.map((attachment) => (
-              <TouchableOpacity
-                key={attachment.id}
-                style={[styles.viewAttachmentCard, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
-                onPress={() => openAttachment(attachment)}
-                disabled={attachment.localStatus === 'downloading'}
-              >
-                {(() => {
-                  const isMissing = attachment.kind === 'file'
-                    && (!attachment.uri || attachment.localStatus === 'missing');
-                  const canDownload = isMissing && Boolean(attachment.cloudKey);
-                  const isDownloading = attachment.localStatus === 'downloading';
-                  if (isImageAttachment(attachment) && !isMissing) {
-                    return <Image source={{ uri: attachment.uri }} style={styles.viewAttachmentImage} />;
-                  }
-                  return (
-                    <View>
-                      <Text style={[styles.viewAttachmentText, { color: tc.text }]} numberOfLines={2}>
-                        {getAttachmentDisplayTitle(attachment)}
-                      </Text>
-                      {isDownloading ? (
-                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
-                          {t('common.loading')}
-                        </Text>
-                      ) : canDownload ? (
-                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
-                          {t('attachments.download')}
-                        </Text>
-                      ) : isMissing ? (
-                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
-                          {t('attachments.missing')}
-                        </Text>
-                      ) : null}
-                      <AttachmentProgressIndicator attachmentId={attachment.id} />
-                    </View>
-                  );
-                })()}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      ) : null}
+      {rows.map(renderRow)}
     </ScrollView>
   );
 }
