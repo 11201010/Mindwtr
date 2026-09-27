@@ -415,6 +415,7 @@ export const nlOverrides: Record<string, string> = {
         'common.hideKeyboard': 'Toetsenbord verbergen',
         'common.showCompleted': 'Voltooide tonen',
         'common.hideCompleted': 'Voltooide verbergen',
+        'common.day': 'dag',
         'common.days': 'dagen',
         'common.undo': 'Ongedaan maken',
         'common.all': 'Alle',

@@ -195,7 +195,7 @@ describe('native host contract: checklist edits', () => {
         const draft = draftOf('t-open');
         const checklist = stored('t-open').checklist as ChecklistItem[];
         const edits = [
-            { kind: 'toggle', index: 0 }, { kind: 'toggleById', id: 'o2' }, { kind: 'rename', index: 1, text: 'Two\n[x] Three' },
+            { kind: 'toggle', index: 0 }, { kind: 'toggle', index: 1 }, { kind: 'rename', index: 1, text: 'Two\n[x] Three' },
             { kind: 'remove', index: 0 }, { kind: 'move', from: 0, to: 1 }, { kind: 'append', title: '  Tail ' }, { kind: 'uncheckAll' },
         ] as const;
         for (const edit of edits) {
@@ -366,8 +366,9 @@ describe('native host contract: Reset checklist', () => {
         expect(value(await host.resetTaskChecklist({ id: 't-open', requestId: generateUUID() }))).toEqual({ id: 't-open', checklist: TASKS[2].checklist });
         expect(writes).toEqual([]);
         expect(stored('t-open').rev).toBe(rev);
-        // No saved checklist: the store refuses, as it refuses React Native.
-        expect(await host.resetTaskChecklist({ id: 't-empty', requestId: generateUUID() })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED', message: 'Task not found' } });
+        // No saved checklist (items added in this editor only): nothing to write; the host reopens its draft items.
+        expect(value(await host.resetTaskChecklist({ id: 't-empty', requestId: generateUUID() }))).toEqual({ id: 't-empty', checklist: [] });
+        expect(writes).toEqual([]);
         expect(await host.resetTaskChecklist({ id: 't-archived', requestId: generateUUID() })).toMatchObject(invalid);
     });
 

@@ -1341,6 +1341,7 @@ export const frOverrides: Record<string, string> = {
 
         // Common
         'common.tasks': 'tâches',
+        'common.day': 'jour',
         'common.days': 'jours',
         'common.cancel': 'Annuler',
         'common.discard': 'Abandonner',

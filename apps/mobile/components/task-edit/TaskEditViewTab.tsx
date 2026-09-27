@@ -273,7 +273,7 @@ function TaskEditViewTabComponent({
                   <TouchableOpacity
                     key={item.id}
                     style={styles.viewChecklistItem}
-                    onPress={() => editChecklist({ kind: 'toggleById', id: item.id })}
+                    onPress={() => editChecklist({ kind: 'toggle', index: item.index })}
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: item.completed }}
                     accessibilityLabel={item.accessibilityLabel ?? undefined}

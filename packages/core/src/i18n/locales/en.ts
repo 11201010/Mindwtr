@@ -1570,6 +1570,7 @@ export const en: Record<string, string> = {
 
         // Common
         'common.tasks': 'tasks',
+        'common.day': 'day',
         'common.days': 'days',
         'common.cancel': 'Cancel',
         'common.discard': 'Discard',

@@ -134,6 +134,31 @@ describe('useSwipeableChecklist addChecklistItem', () => {
         });
     });
 
+    it('keeps a Reference list its status when its last item is ticked from the row', () => {
+        const task = {
+            id: 'task-1',
+            title: 'Packing',
+            status: 'reference',
+            taskMode: 'list',
+            checklist: [{ id: 'item-1', title: 'Passport', isCompleted: false }],
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        } as any;
+        storeState._allTasks = [task];
+        const { hook } = renderChecklistHook(task);
+
+        renderer.act(() => {
+            hook().toggleChecklistItem(0);
+        });
+        renderer.act(() => {
+            vi.runAllTimers();
+        });
+
+        expect(updateTask).toHaveBeenCalledWith('task-1', {
+            checklist: [{ id: 'item-1', title: 'Passport', isCompleted: true }],
+        });
+    });
+
     it('flushes an item added just before unmount', () => {
         const task = {
             id: 'task-1',

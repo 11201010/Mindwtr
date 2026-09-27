@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { generateUUID, Task, useTaskStore } from '@mindwtr/core';
+import { generateUUID, getChecklistEditStatus, Task, useTaskStore } from '@mindwtr/core';
 import { logError } from '../../lib/app-log';
 import { settleStoreAction } from '../store-action-result';
 
@@ -44,15 +44,8 @@ export function useSwipeableChecklist(
             pendingChecklist.current = null;
             return;
         }
-        const isListMode = latestTask.taskMode === 'list';
-        const allComplete = checklist.length > 0 && checklist.every((entry) => entry.isCompleted);
-        const nextStatus = isListMode
-            ? allComplete
-                ? 'done'
-                : latestTask.status === 'done'
-                    ? 'next'
-                    : undefined
-            : undefined;
+        const status = getChecklistEditStatus({ taskMode: latestTask.taskMode, status: latestTask.status, checklist });
+        const nextStatus = status !== latestTask.status ? status : undefined;
         // Deliberately not toasted: this also flushes from the unmount cleanup, and
         // a toast fired during teardown lands on whatever screen the user moved to.
         // Logged so a dropped checklist tick is at least diagnosable.

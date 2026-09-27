@@ -1227,6 +1227,7 @@ export const itOverrides: Record<string, string> = {
 
         // Common
         'common.tasks': 'attività',
+        'common.day': 'giorno',
         'common.days': 'giorni',
         'common.cancel': 'Annulla',
         'common.discard': 'Scarta',

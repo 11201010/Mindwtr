@@ -1091,6 +1091,7 @@ export const trOverrides: Record<string, string> = {
         'digest.reviewDue': 'İnceleme zamanı geldi',
         'digest.noItems': 'Bugün acil ürün yok.',
         'common.tasks': 'görevler',
+        'common.day': 'gün',
         'common.days': 'gün',
         'common.cancel': 'İptal etmek',
         'common.save': 'Kaydetmek',

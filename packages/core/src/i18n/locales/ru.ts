@@ -1079,6 +1079,7 @@ export const ruOverrides: Record<string, string> = {
         'digest.reviewDue': 'Срок рассмотрения',
         'digest.noItems': 'Сегодня никаких срочных дел.',
         'common.tasks': 'задачи',
+        'common.day': 'день',
         'common.days': 'дней',
         'common.cancel': 'Отмена',
         'common.save': 'Сохранять',

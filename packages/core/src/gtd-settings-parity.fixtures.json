@@ -16,6 +16,13 @@
      "archive: defaults, the second tap on 30 days.",
      "task editor: defaults, the second tap on Simple and the second Reset to default."
     ]
+   },
+   {
+    "base": "f446734ae",
+    "command": "cd apps/mobile && MINDWTR_DUMP_GTD_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/gtd-settings-screen.parity.test.tsx, with the Auto-archive singular fix in place; only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "archive: defaults, stored values, and a value no option has: the second option reads '1 day', not '1 days' (core's count helper picks the singular noun, common.day)."
+    ]
    }
   ]
  },
@@ -8171,7 +8178,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8185,7 +8192,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],
@@ -8229,7 +8236,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8243,7 +8250,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],
@@ -8308,7 +8315,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8322,7 +8329,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],
@@ -8366,7 +8373,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8380,7 +8387,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],
@@ -8447,7 +8454,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8461,7 +8468,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],
@@ -8507,7 +8514,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8521,7 +8528,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],
@@ -8565,7 +8572,7 @@
      "Auto-archive done tasks",
      "Move completed tasks to Archived after the selected number of days.",
      "Never (keep in Done)",
-     "1 days",
+     "1 day",
      "3 days",
      "7 days",
      "14 days",
@@ -8579,7 +8586,7 @@
       false
      ],
      [
-      "1 days",
+      "1 day",
       false,
       false
      ],

@@ -30,7 +30,7 @@ export type TaskViewRow =
         label: string;
         /** A reference list: bullets, no ticks. */
         bullets: boolean;
-        /** A tap ticks the item (toggleById); not read-only and not a reference list. */
+        /** A tap ticks the item (toggle by its `index`); not read-only and not a reference list. */
         tappable: boolean;
         /** Titles are inline Markdown. `accessibilityLabel` names a static item: "Step. Done". */
         items: Array<{ index: number; id: string; title: string; completed: boolean; accessibilityLabel: string | null }>;

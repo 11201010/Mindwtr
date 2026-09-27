@@ -1576,6 +1576,7 @@ export const jaOverrides: Record<string, string> = {
 
         // Common
         'common.tasks': 'タスク',
+        'common.day': '日',
         'common.days': '日',
         'common.cancel': 'キャンセル',
         'common.discard': '破棄',

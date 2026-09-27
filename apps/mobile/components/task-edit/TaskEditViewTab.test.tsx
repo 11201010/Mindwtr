@@ -498,6 +498,60 @@ describe('TaskEditViewTab', () => {
     expect(readOnlyApply).not.toHaveBeenCalled();
   });
 
+  it('ticks only the tapped item when two items share one ID', () => {
+    const applyChecklistUpdate = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <TaskEditViewTab
+          t={(key) => key}
+          tc={{ text: '#fff', secondaryText: '#aaa', inputBg: '#111', border: '#222', cardBg: '#000', tint: '#3b82f6' } as any}
+          styles={taskEditStyles as any}
+          mergedTask={{
+            id: 'task-1',
+            title: 'Dupes',
+            status: 'next',
+            tags: [],
+            contexts: [],
+            checklist: [
+              { id: 'same', title: 'One', isCompleted: false },
+              { id: 'same', title: 'Two', isCompleted: false },
+            ],
+            createdAt: '2026-04-01T00:00:00.000Z',
+            updatedAt: '2026-04-01T00:00:00.000Z',
+          }}
+          projects={[]}
+          sections={[]}
+          areas={[]}
+          prioritiesEnabled={false}
+          timeEstimatesEnabled={false}
+          formatTimeEstimateLabel={(value) => String(value)}
+          formatDate={(value) => value}
+          formatDueDate={(value) => value}
+          getRecurrenceRuleValue={() => ''}
+          getRecurrenceStrategyValue={() => 'strict'}
+          applyChecklistUpdate={applyChecklistUpdate}
+          visibleAttachments={[]}
+          openAttachment={vi.fn()}
+          isImageAttachment={() => false}
+          textDirectionStyle={{}}
+          resolvedDirection="ltr"
+          showStatusField={false}
+        />
+      );
+    });
+
+    const boxes = tree.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'checkbox');
+    renderer.act(() => {
+      boxes[1].props.onPress();
+    });
+
+    expect(applyChecklistUpdate).toHaveBeenCalledWith([
+      { id: 'same', title: 'One', isCompleted: false },
+      { id: 'same', title: 'Two', isCompleted: true },
+    ]);
+  });
+
   // The Save button lives outside this tab, so typed-but-not-submitted text has
   // to be readable from the save path without waiting for a blur.
   it('mirrors unsubmitted add-item text into the pending draft ref', () => {

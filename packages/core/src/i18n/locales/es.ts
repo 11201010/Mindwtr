@@ -1523,6 +1523,7 @@ export const esOverrides: Record<string, string> = {
 'digest.reviewDue': "Revisión pendiente",
 'digest.noItems': "No hay elementos urgentes para hoy.",
 'common.tasks': "tareas",
+'common.day': "día",
 'common.days': "días",
 'common.cancel': "Cancelar",
 'common.discard': "Descartar",

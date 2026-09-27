@@ -116,8 +116,6 @@ const readEdit = (value: unknown, length: number): TaskChecklistEdit | null => {
         case 'insertAfter':
         case 'remove':
             return isIndex(value.index, length) ? { kind: value.kind, index: value.index as number } : null;
-        case 'toggleById':
-            return typeof value.id === 'string' && value.id.length <= 200 ? { kind: 'toggleById', id: value.id } : null;
         case 'rename':
             return isIndex(value.index, length) && isText(value.text) ? { kind: 'rename', index: value.index as number, text: value.text } : null;
         case 'move':
@@ -326,7 +324,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
          * Reset checklist: every saved item open, and a Done task back to Next, written at
          * once. Then apply the `uncheckAll` edit to the host's checklist and use `checklist`
          * as the new checklist base for saveTaskDraft. A saved checklist already open writes nothing. A task with no
-         * saved checklist is refused, as React Native's store refuses it.
+         * saved checklist (items added in this editor only) writes nothing either: the host reopens its draft items.
          */
         async resetTaskChecklist(input: { id: string; requestId: string }): Promise<NativeHostResult<{ id: string; checklist: ChecklistItem[] }>> {
             const ready = deps.readiness();
@@ -339,7 +337,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
                 if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (deps.isReadOnly(task)) return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
                 const items = task.checklist ?? [];
-                if (items.length > 0 && task.status !== 'done' && items.every((item) => !item.isCompleted)) {
+                if (items.length === 0 || (task.status !== 'done' && items.every((item) => !item.isCompleted))) {
                     return { ok: true, value: { id: task.id, checklist: toChecklist(items) } };
                 }
                 const written = await runStoreWrite(() => useTaskStore.getState().resetTaskChecklist(task.id));

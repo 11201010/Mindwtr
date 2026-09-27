@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { isSandboxMode } from '@mindwtr/core';
+import {
+  GTD_TASK_OPEN_MODES,
+  isSandboxMode,
+  MOBILE_TASK_OPEN_MODE_STORAGE_KEY,
+  readGtdTaskOpenMode,
+  type GtdTaskOpenMode,
+} from '@mindwtr/core';
 
 import { workspaceSessionStorage } from '@/lib/workspace-session-storage';
 
-export const TASK_OPEN_MODE_STORAGE_KEY = 'mindwtr:view:taskOpenMode:v1';
+// The key, the modes and the read rule live in core (gtd-settings-model.ts), shared with the native host.
+export const TASK_OPEN_MODE_STORAGE_KEY = MOBILE_TASK_OPEN_MODE_STORAGE_KEY;
 
-export const TASK_OPEN_MODES = ['automatic', 'preview', 'edit'] as const;
-export type TaskOpenMode = typeof TASK_OPEN_MODES[number];
+export const TASK_OPEN_MODES = GTD_TASK_OPEN_MODES;
+export type TaskOpenMode = GtdTaskOpenMode;
 export type TaskOpenTab = 'task' | 'view';
 
 type TaskOpenModeSnapshot = {
@@ -48,11 +55,7 @@ const publish = (state: ScopedTaskOpenModeState, snapshot: TaskOpenModeSnapshot)
   listeners.forEach((listener) => listener());
 };
 
-export function readTaskOpenMode(raw: string | null): TaskOpenMode {
-  return TASK_OPEN_MODES.includes(raw as TaskOpenMode)
-    ? raw as TaskOpenMode
-    : 'automatic';
-}
+export const readTaskOpenMode: (raw: string | null) => TaskOpenMode = readGtdTaskOpenMode;
 
 export function resolveTaskOpenTab({
   mode,

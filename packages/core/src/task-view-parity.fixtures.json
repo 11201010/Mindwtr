@@ -3,7 +3,17 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_TASK_VIEW=1 TZ=UTC bunx vitest run components/task-edit/TaskEditViewTab.parity.test.tsx",
   "capturedAt": "9a696824f403f56f2a9009f5b30323788277ccb2",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except this harness and this fixture.",
-  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). Styles passed as props and theme colors are named markers; markdown-text.tsx keeps its own styles. Lucide icons render as Icon elements with their name. generateUUID returns uuid-1, uuid-2, ... from each fresh render. The clock is pinned to `now`, TZ is UTC, strings are English."
+  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). Styles passed as props and theme colors are named markers; markdown-text.tsx keeps its own styles. Lucide icons render as Icon elements with their name. generateUUID returns uuid-1, uuid-2, ... from each fresh render. The clock is pinned to `now`, TZ is UTC, strings are English.",
+  "recaptured": [
+   {
+    "base": "f446734ae",
+    "command": "cd apps/mobile && MINDWTR_DUMP_TASK_VIEW=<file> TZ=UTC bunx vitest run components/task-edit/TaskEditViewTab.parity.test.tsx, with a temporary dump line and the React Native fixes in place; only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "viewTab: custom estimate and duplicate item ids, the tick on the first item: only that item ticks; its twin with the same ID stays open (a View tab tap ticks the item at its position).",
+     "cascade: list, reference: a Reference list keeps its status when every item is ticked; the draft no longer turns Done."
+    ]
+   }
+  ]
  },
  "now": "2026-09-26T15:00:00.000Z",
  "timeZone": "UTC",
@@ -3844,7 +3854,7 @@
          {
           "id": "same",
           "title": "Two",
-          "isCompleted": true
+          "isCompleted": false
          },
          {
           "id": "other",
@@ -5211,11 +5221,6 @@
        "isCompleted": true
       }
      ]
-    ],
-    [
-     "setDraftField",
-     "status",
-     "done"
     ]
    ],
    "read-only": []

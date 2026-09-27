@@ -1391,6 +1391,7 @@ export const csOverrides: Record<string, string> = {
         'digest.reviewDue': 'Revize na řadě',
         'digest.noItems': 'Dnes nic urgentního.',
         'common.tasks': 'úkolů',
+        'common.day': 'den',
         'common.days': 'dní',
         'common.cancel': 'Zrušit',
         'common.discard': 'Zahodit',

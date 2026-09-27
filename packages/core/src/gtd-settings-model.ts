@@ -15,6 +15,7 @@ import { getDefaultTaskAreaMode, resolveDefaultNewTaskAreaId } from './area-util
 import { normalizeClockTimeInput } from './date';
 import { FOCUS_TASK_LIMIT_OPTIONS, normalizeFocusTaskLimit } from './focus-utils';
 import { resolveI18nText, tFallback } from './i18n';
+import { formatListItemCount } from './list-count';
 import { sanitizePomodoroDurations, type PomodoroDurations } from './pomodoro';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import {
@@ -36,7 +37,7 @@ export type GtdSettingsScreenId = 'gtd' | 'gtd-archive' | 'gtd-capture' | 'gtd-i
 
 // ---------------------------------------------------------------------------
 // Task editor presets (moved verbatim from mobile's task-edit-modal.utils.ts,
-// which keeps its own copy for the sandbox screen).
+// which now re-exports these for the sandbox screen).
 
 export type TaskEditorPresetId = 'simple' | 'standard' | 'full' | 'custom';
 
@@ -685,7 +686,7 @@ export function buildGtdSettingsModel(input: {
         description: t('settings.autoArchiveDesc'),
         options: GTD_AUTO_ARCHIVE_DAY_OPTIONS.map((days) => option(
             days,
-            days <= 0 ? t('settings.autoArchiveNever') : `${days} ${tr('common.days')}`,
+            days <= 0 ? t('settings.autoArchiveNever') : formatListItemCount(days, 'day', t),
             archiveDays === days,
             { type: 'autoArchiveDays', value: days },
         )),

@@ -1155,6 +1155,7 @@ export const ptOverrides: Record<string, string> = {
 
         // Common
         'common.tasks': 'tarefas',
+        'common.day': 'dia',
         'common.days': 'dias',
         'common.cancel': 'Cancelar',
         'common.save': 'Salvar',

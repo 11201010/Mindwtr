@@ -187,7 +187,7 @@ describe('task view parity with the frozen React Native editor', () => {
             const edit = (change: TaskChecklistEdit) => applyTaskChecklistEdit(scenario.task.checklist, change, { isReference: scenario.task.status === 'reference', newId: ids() });
             if (kind === 'tick') {
                 const item = checklist?.type === 'checklist' && checklist.tappable ? checklist.items[arg as number] : undefined;
-                const result = item ? edit({ kind: 'toggleById', id: item.id }) : null;
+                const result = item ? edit({ kind: 'toggle', index: item.index }) : null;
                 return [action, result ? [['applyChecklistUpdate', result.checklist]] : [], '', ''];
             }
             if (kind === 'type') return [action, [], arg, arg];
@@ -280,5 +280,11 @@ describe('checklist edits', () => {
             checklist: [...list, { id: 'new', title: '', isCompleted: false }],
             focusId: 'new',
         });
+    });
+    it('lets every item finish a list task, except a Reference list, which keeps its status', () => {
+        const allDone = list.map((item) => ({ ...item, isCompleted: true }));
+        expect(getChecklistEditStatus({ taskMode: 'list', status: 'reference', checklist: allDone })).toBe('reference');
+        expect(getChecklistEditStatus({ taskMode: 'list', status: 'someday', checklist: allDone })).toBe('done');
+        expect(getChecklistEditStatus({ taskMode: 'list', status: 'waiting', checklist: allDone })).toBe('done');
     });
 });

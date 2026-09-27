@@ -9,10 +9,8 @@ import type { ChecklistItem, Task, TaskStatus } from './types';
  */
 
 export type TaskChecklistEdit =
-    /** The Form tab's checkbox. */
+    /** The Form tab's checkbox and the View tab's tick: the item at this position (item IDs can repeat). */
     | { kind: 'toggle'; index: number }
-    /** The View tab's tick: every item with this ID. */
-    | { kind: 'toggleById'; id: string }
     /** An item's text as typed. Text with line breaks becomes one item per line (a paste). */
     | { kind: 'rename'; index: number; text: string }
     /**
@@ -63,8 +61,6 @@ export function applyTaskChecklistEdit(
     switch (edit.kind) {
         case 'toggle':
             return done(list.map((entry, index) => (index === edit.index ? { ...entry, isCompleted: !entry.isCompleted } : entry)));
-        case 'toggleById':
-            return done(list.map((entry) => (entry.id === edit.id ? { ...entry, isCompleted: !entry.isCompleted } : entry)));
         case 'rename': {
             if (!/[\r\n]/.test(edit.text)) {
                 return done(list.map((entry, index) => (index === edit.index ? { ...entry, title: edit.text } : entry)));
@@ -112,14 +108,15 @@ export function applyTaskChecklistEdit(
 /**
  * The draft status after a checklist edit. A list task (taskMode 'list') is Done
  * once every item is; an open item takes a Done list task back to Next. Other
- * tasks keep their status.
+ * tasks keep their status, and so does a Reference list: its items are bullets,
+ * never ticked off.
  */
 export function getChecklistEditStatus(input: {
     taskMode: Task['taskMode'];
     status: TaskStatus;
     checklist: readonly ChecklistItem[];
 }): TaskStatus {
-    if (input.taskMode !== 'list') return input.status;
+    if (input.taskMode !== 'list' || input.status === 'reference') return input.status;
     if (input.checklist.length > 0 && input.checklist.every((item) => item.isCompleted)) return 'done';
     return input.status === 'done' ? 'next' : input.status;
 }

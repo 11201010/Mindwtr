@@ -10,6 +10,7 @@ import {
     createTaskCancellationUndo,
     generateUUID,
     type AIProviderId,
+    getChecklistEditStatus,
     getUsedTaskTokens,
     tFallback,
     type StoreActionResult,
@@ -142,15 +143,7 @@ export function useTaskEditActions({
     const applyChecklistUpdate = useCallback((nextChecklist: NonNullable<Task['checklist']>) => {
         if (!canMutate()) return;
         const currentStatus = taskEditDraft?.draft.status ?? task?.status ?? 'inbox';
-        let nextStatus = currentStatus;
-        if (task?.taskMode === 'list') {
-            const allComplete = nextChecklist.length > 0 && nextChecklist.every((item) => item.isCompleted);
-            if (allComplete) {
-                nextStatus = 'done';
-            } else if (currentStatus === 'done') {
-                nextStatus = 'next';
-            }
-        }
+        const nextStatus = getChecklistEditStatus({ taskMode: task?.taskMode, status: currentStatus, checklist: nextChecklist });
         setChecklist(nextChecklist);
         if (nextStatus !== currentStatus) setDraftField('status', nextStatus);
     }, [canMutate, setChecklist, setDraftField, task?.status, task?.taskMode, taskEditDraft?.draft.status]);
@@ -158,11 +151,15 @@ export function useTaskEditActions({
     const handleResetChecklist = useCallback(async () => {
         const current = taskEditDraft?.checklist || [];
         if (current.length === 0 || !task) return;
-        const succeeded = await runStoreAction(
-            () => resetTaskChecklist(task.id),
-            'Failed to reset checklist',
-        );
-        if (!succeeded) return;
+        // Items added in this editor are not saved yet: only the draft reopens them.
+        const saved = useTaskStore.getState()._tasksById.get(task.id) ?? task;
+        if (saved.checklist?.length) {
+            const succeeded = await runStoreAction(
+                () => resetTaskChecklist(task.id),
+                'Failed to reset checklist',
+            );
+            if (!succeeded) return;
+        }
         const reset = current.map((item) => ({ ...item, isCompleted: false }));
         applyChecklistUpdate(reset);
     }, [applyChecklistUpdate, resetTaskChecklist, runStoreAction, task, taskEditDraft?.checklist]);

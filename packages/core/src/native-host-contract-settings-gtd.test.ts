@@ -438,6 +438,13 @@ describe('native host contract: Settings › GTD', () => {
         },
     );
 
+    it('names one day in the singular in Auto-archive', () => {
+        const labels = (language: string) => buildGtdSettingsModel({ settings: {} as AppSettings, areas: [], taskOpenMode: 'automatic', t: getTranslator(language) })
+            .archive.options.slice(1, 3).map((option) => option.label);
+        expect(labels('en')).toEqual(['1 day', '3 days']);
+        expect(labels('de')).toEqual(['1 Tag', '3 Tage']);
+    });
+
     it('returns what core\'s GTD model returns when called directly, and opens GTD from the menu', async () => {
         freezeClock();
         await seed('stored');

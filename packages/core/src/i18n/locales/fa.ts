@@ -1544,6 +1544,7 @@ export const faOverrides: Record<string, string> = {
         'digest.noItems': 'امروز مورد فوری‌ای نیست.',
 
         'common.tasks': 'کار',
+        'common.day': 'روز',
         'common.days': 'روز',
         'common.cancel': 'لغو',
         'common.discard': 'نادیده گرفتن',

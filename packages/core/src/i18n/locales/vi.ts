@@ -1592,6 +1592,7 @@ export const viOverrides: Record<string, string> = {
 
         // Common
         'common.tasks': 'nhiệm vụ',
+        'common.day': 'ngày',
         'common.days': 'ngày',
         'common.cancel': 'Hủy',
         'common.discard': 'Bỏ',

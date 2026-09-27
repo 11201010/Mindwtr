@@ -5,6 +5,7 @@ import {
     buildTaskUpdatesFromSpeechResult,
     findSelectableProjectByTitleAndArea,
     generateUUID,
+    isImageAttachment,
     isSandboxMode,
     normalizeLinkAttachmentInput,
     planAttachmentDraftSettlement,
@@ -679,12 +680,6 @@ export function useTaskEditAttachments({
         showAttachmentResolutionError(resolution);
     }, [resolveAttachment, showAttachmentResolutionError, showSandboxUnavailable]);
 
-    const isImageAttachment = React.useCallback((attachment: Attachment) => {
-        const mime = attachment.mimeType?.toLowerCase();
-        if (mime?.startsWith('image/')) return true;
-        return /\.(png|jpg|jpeg|gif|webp|heic|heif)$/i.test(attachment.uri);
-    }, []);
-
     const openAttachment = React.useCallback(async (attachment: Attachment) => {
         if (isSandboxMode()) {
             showSandboxUnavailable();
@@ -730,7 +725,7 @@ export function useTaskEditAttachments({
         } else {
             Linking.openURL(resolved.uri).catch((error) => logTaskError('Failed to open attachment URL', error));
         }
-    }, [isAudioAttachment, isImageAttachment, openAudioAttachment, resolveAttachment, showAttachmentResolutionError, showSandboxUnavailable, t]);
+    }, [isAudioAttachment, openAudioAttachment, resolveAttachment, showAttachmentResolutionError, showSandboxUnavailable, t]);
 
     const removeAttachment = React.useCallback((id: string) => {
         const now = new Date().toISOString();

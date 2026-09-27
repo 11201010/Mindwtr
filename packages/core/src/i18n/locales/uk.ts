@@ -1519,6 +1519,7 @@ export const ukOverrides: Record<string, string> = {
     "digest.reviewDue": "Термін перевірки",
     "digest.noItems": "Сьогодні немає термінових речей.",
     "common.tasks": "завдання",
+    "common.day": "день",
     "common.days": "днів",
     "common.cancel": "Скасувати",
     "common.discard": "Відкинути",

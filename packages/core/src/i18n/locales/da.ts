@@ -1628,6 +1628,7 @@ export const daOverrides: Record<string, string> = {
     'digest.reviewDue': 'Gennemgang forfalder',
     'digest.noItems': 'Ingen akutte ting i dag.',
     'common.tasks': 'opgaver',
+    'common.day': 'dag',
     'common.days': 'dage',
     'common.cancel': 'Annuller',
     'common.discard': 'Kassér',

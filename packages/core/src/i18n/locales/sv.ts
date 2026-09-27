@@ -1544,6 +1544,7 @@ export const svOverrides: Record<string, string> = {
         'digest.noItems': 'Inga brådskande poster idag.',
 
         'common.tasks': 'uppgifter',
+        'common.day': 'dag',
         'common.days': 'dagar',
         'common.cancel': 'Avbryt',
         'common.discard': 'Kasta',

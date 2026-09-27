@@ -1478,6 +1478,7 @@ export const zhHant: Record<string, string> = {
         'digest.reviewDue': '待回顧',
         'digest.noItems': '今天沒有緊急事項。',
         'common.tasks': '個任務',
+        'common.day': '天',
         'common.days': '天',
         'common.cancel': '取消',
         'common.discard': '放棄',

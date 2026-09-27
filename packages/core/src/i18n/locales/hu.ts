@@ -1523,6 +1523,7 @@ export const huOverrides: Record<string, string> = {
     'digest.reviewDue': 'Áttekintés esedékes',
     'digest.noItems': 'Ma nincs sürgős elem.',
     'common.tasks': 'feladat',
+    'common.day': 'nap',
     'common.days': 'nap',
     'common.cancel': 'Mégse',
     'common.discard': 'Elvetés',

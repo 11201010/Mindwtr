@@ -1132,6 +1132,7 @@ export const deOverrides: Record<string, string> = {
         
         // Common
         'common.tasks': 'Aufgaben',
+        'common.day': 'Tag',
         'common.days': 'Tage',
         'common.cancel': 'Abbrechen',
         'common.save': 'Speichern',

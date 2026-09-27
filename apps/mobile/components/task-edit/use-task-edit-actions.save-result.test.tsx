@@ -396,3 +396,62 @@ describe('task editor save results', () => {
         }));
     });
 });
+
+describe('task editor checklist actions', () => {
+    const renderChecklistActions = async (task: Task, draftChecklist: NonNullable<Task['checklist']>) => {
+        const calls = {
+            resetTaskChecklist: vi.fn(async () => ({ success: true })),
+            setChecklist: vi.fn(),
+            setDraftField: vi.fn(),
+            showToast: vi.fn(),
+        };
+        let actions!: ReturnType<typeof useTaskEditActions>;
+        function Probe() {
+            actions = useTaskEditActions({
+                ...calls,
+                canMutate: () => true,
+                mergedTask: task,
+                t,
+                task,
+                taskEditDraft: { ...createTaskEditDraft(task), checklist: draftChecklist },
+                tasks: [task],
+            } as unknown as Parameters<typeof useTaskEditActions>[0]);
+            return null;
+        }
+        await act(async () => {
+            renderer.create(<Probe />);
+        });
+        return { actions, calls };
+    };
+
+    it('reopens items added in this editor on Reset checklist, and writes nothing', async () => {
+        const task: Task = { ...baseTask, checklist: undefined };
+        const { actions, calls } = await renderChecklistActions(task, [
+            { id: 'new-1', title: 'Added', isCompleted: true },
+            { id: 'new-2', title: 'Also added', isCompleted: false },
+        ]);
+
+        await act(async () => {
+            await actions.handleResetChecklist();
+        });
+
+        expect(calls.resetTaskChecklist).not.toHaveBeenCalled();
+        expect(calls.showToast).not.toHaveBeenCalled();
+        expect(calls.setChecklist).toHaveBeenCalledWith([
+            { id: 'new-1', title: 'Added', isCompleted: false },
+            { id: 'new-2', title: 'Also added', isCompleted: false },
+        ]);
+    });
+
+    it('keeps a Reference list its status when every item is ticked', async () => {
+        const task: Task = { ...baseTask, status: 'reference', taskMode: 'list' };
+        const { actions, calls } = await renderChecklistActions(task, task.checklist ?? []);
+
+        act(() => {
+            actions.applyChecklistUpdate([{ id: 'step-1', title: 'Ship it now', isCompleted: true }]);
+        });
+
+        expect(calls.setChecklist).toHaveBeenCalledWith([{ id: 'step-1', title: 'Ship it now', isCompleted: true }]);
+        expect(calls.setDraftField).not.toHaveBeenCalled();
+    });
+});

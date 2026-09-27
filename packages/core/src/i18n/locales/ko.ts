@@ -1450,6 +1450,7 @@ export const koOverrides: Record<string, string> = {
 
         // Common
         'common.tasks': '할 일',
+        'common.day': '일',
         'common.days': '일',
         'common.cancel': '취소',
         'common.discard': '버리기',
