@@ -56,7 +56,7 @@ import { tFallback } from './i18n';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import type { ListFilterEdit, ListFilterState } from './list-filter-state';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
-import { fail, firstWindow, isFilterEdit, isObjectRecord, readFilterState, type NativeWindow } from './native-host-contract-menu-views';
+import { fail, firstWindow, isFilterEdit, isObjectRecord, isText, matchesPickerQuery, readFilterState, type NativeWindow } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { useTaskStore } from './store';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
@@ -571,8 +571,11 @@ export function createFocusControlMethods(deps: FocusControlDeps) {
             );
         },
 
-        /** A later window of the filter sheet's tokens or projects, or of the saved filter chips, under a Focus revision. */
-        getFocusControlsList(input: { controls?: NativeFocusControlsInput; list: ListName; offset: number; limit: number; revision: string }): NativeHostResult<{
+        /**
+         * A later window of the filter sheet's tokens or projects, or of the saved filter chips, under a Focus revision.
+         * `query` is the tokens or projects picker's search text: the ones matching it, from offset zero (the Inbox tokens' rule).
+         */
+        getFocusControlsList(input: { controls?: NativeFocusControlsInput; list: ListName; offset: number; limit: number; revision: string; query?: string }): NativeHostResult<{
             version: typeof NATIVE_HOST_CONTRACT_VERSION;
             revision: string;
             list: ListName;
@@ -585,12 +588,18 @@ export function createFocusControlMethods(deps: FocusControlDeps) {
             if (!isObjectRecord(input) || !state || (input.list !== 'tokens' && input.list !== 'projects' && input.list !== 'savedFilters')
                 || !Number.isSafeInteger(input.offset) || input.offset < 0
                 || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
-                || typeof input.revision !== 'string') {
-                return fail('INVALID_INPUT', 'The Focus controls, a list, a valid window and the Focus revision are required');
+                || typeof input.revision !== 'string'
+                || (input.query !== undefined && (!isText(input.query) || input.list === 'savedFilters'))) {
+                return fail('INVALID_INPUT', 'The Focus controls, a list, a valid window, the Focus revision and a picker query only for tokens or projects are required');
             }
             const { model, revision } = deps.focusModel(input.controls === undefined ? null : state, new Date());
             if (revision !== input.revision) return fail('STALE_REVISION', 'Focus changed; read it again');
-            const items = focusLists(model, deps.t())[input.list as ListName];
+            const all = focusLists(model, deps.t())[input.list as ListName];
+            const query = input.query;
+            const items = query === undefined ? all : all.filter((item) => matchesPickerQuery(
+                input.list === 'tokens' ? (item as NativeFocusToken).value : (item as NativeFocusProjectOption).title,
+                query,
+            ));
             return {
                 ok: true,
                 value: {

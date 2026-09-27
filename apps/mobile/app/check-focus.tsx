@@ -2,8 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { generateUUID, tFallback, useTaskStore } from '@mindwtr/core';
-import type { Task } from '@mindwtr/core';
+import {
+    applyFocusChecklistEdit,
+    buildFocusChecklistPageModel,
+    generateUUID,
+    useTaskStore,
+    type FocusChecklistEdit,
+    type Task,
+} from '@mindwtr/core';
 import { Check, Trash2, Plus } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLanguage } from '../contexts/language-context';
@@ -27,14 +33,13 @@ export default function FocusChecklistPage() {
 
     // Local state for immediate feedback
     const [checklist, setChecklist] = useState(task?.checklist || []);
-    const addItemLabel = tFallback(t, 'taskEdit.addItem', 'Add Item');
-    const deleteLabel = tFallback(t, 'common.delete', 'Delete');
-    const itemNameLabel = tFallback(t, 'taskEdit.itemNamePlaceholder', 'Item name');
+    // The labels and each edit come from core, as the native host shows and applies them.
+    const page = buildFocusChecklistPageModel({ task, checklist, t });
 
     const showChecklistError = (message?: string) => {
         showToast({
-            title: tFallback(t, 'common.error', 'Error'),
-            message: message || tFallback(t, 'task.updateFailed', 'Could not update task.'),
+            title: page.error.title,
+            message: message || page.error.fallbackMessage,
             tone: 'error',
             durationMs: 4200,
         });
@@ -63,30 +68,16 @@ export default function FocusChecklistPage() {
             });
     };
 
-    const handleToggle = (index: number) => {
-        commitChecklist(checklist.map((item, itemIndex) => (
-            itemIndex === index ? { ...item, isCompleted: !item.isCompleted } : item
-        )));
-    };
-
-    const handleAddItem = () => {
-        commitChecklist([...checklist, { id: generateUUID(), title: '', isCompleted: false }]);
-    };
-
-    const handleUpdateItem = (index: number, text: string) => {
-        commitChecklist(checklist.map((item, itemIndex) => (
-            itemIndex === index ? { ...item, title: text } : item
-        )));
-    };
-
-    const handleDeleteItem = (index: number) => {
-        commitChecklist(checklist.filter((_, i) => i !== index));
-    };
+    const edit = (change: FocusChecklistEdit) => commitChecklist(applyFocusChecklistEdit(checklist, change));
+    const handleToggle = (index: number) => edit({ kind: 'toggle', index });
+    const handleAddItem = () => edit({ kind: 'add', id: generateUUID() });
+    const handleUpdateItem = (index: number, text: string) => edit({ kind: 'rename', index, text });
+    const handleDeleteItem = (index: number) => edit({ kind: 'remove', index });
 
     if (!task) return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]}>
             <Text style={[styles.missingText, { color: tc.text }]}>
-                {tFallback(t, 'list.noTasks', 'No tasks found')}
+                {page.missingText}
             </Text>
         </SafeAreaView>
     );
@@ -98,7 +89,7 @@ export default function FocusChecklistPage() {
                     onPress={() => router.back()}
                     style={styles.backBtn}
                     accessibilityRole="button"
-                    accessibilityLabel={tFallback(t, 'common.back', 'Back')}
+                    accessibilityLabel={page.backLabel}
                     hitSlop={10}
                 >
                     <Ionicons name="chevron-back" color={tc.text} size={24} />
@@ -111,13 +102,13 @@ export default function FocusChecklistPage() {
 
             <ScrollView style={styles.content}>
                 <View style={styles.checklistContainer}>
-                    {checklist.length === 0 && (
+                    {page.emptyText && (
                         <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-                            {tFallback(t, 'taskEdit.noChecklistItems', 'No checklist items')}
+                            {page.emptyText}
                         </Text>
                     )}
 
-                    {checklist.map((item, index) => (
+                    {page.items.map((item, index) => (
                         <View key={item.id || index} style={[styles.itemRow, { borderBottomColor: tc.border }]}>
                             <TouchableOpacity
                                 onPress={() => handleToggle(index)}
@@ -130,7 +121,7 @@ export default function FocusChecklistPage() {
                                 activeOpacity={0.6}
                                 accessibilityRole="checkbox"
                                 accessibilityState={{ checked: item.isCompleted }}
-                                accessibilityLabel={item.title.trim() || itemNameLabel}
+                                accessibilityLabel={item.checkboxLabel}
                             >
                                 {item.isCompleted && <Check color={tc.onTint} size={18} />}
                             </TouchableOpacity>
@@ -143,9 +134,9 @@ export default function FocusChecklistPage() {
                                 ]}
                                 value={item.title}
                                 onChangeText={(text) => handleUpdateItem(index, text)}
-                                placeholder={itemNameLabel}
+                                placeholder={item.placeholder}
                                 placeholderTextColor={tc.secondaryText}
-                                accessibilityLabel={itemNameLabel}
+                                accessibilityLabel={item.inputLabel}
                                 multiline
                             />
 
@@ -153,7 +144,7 @@ export default function FocusChecklistPage() {
                                 onPress={() => handleDeleteItem(index)}
                                 style={styles.deleteBtn}
                                 accessibilityRole="button"
-                                accessibilityLabel={`${deleteLabel}: ${item.title.trim() || itemNameLabel}`}
+                                accessibilityLabel={item.deleteLabel}
                             >
                                 <Trash2 color={tc.secondaryText} size={20} />
                             </TouchableOpacity>
@@ -164,10 +155,10 @@ export default function FocusChecklistPage() {
                         style={styles.addBtn}
                         onPress={handleAddItem}
                         accessibilityRole="button"
-                        accessibilityLabel={addItemLabel}
+                        accessibilityLabel={page.addLabel}
                     >
                         <Plus color={tc.tint} size={20} />
-                        <Text style={[styles.addBtnText, { color: tc.tint }]}>{addItemLabel}</Text>
+                        <Text style={[styles.addBtnText, { color: tc.tint }]}>{page.addLabel}</Text>
                     </TouchableOpacity>
                 </View>
 

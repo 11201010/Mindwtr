@@ -11,13 +11,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { getMindSweepGroups, shallow, useTaskStore, type MindSweepScope } from '@mindwtr/core';
+import {
+  addMindSweepCapture,
+  buildMindSweepView,
+  getMindSweepCaptureTitle,
+  INITIAL_MIND_SWEEP_STATE,
+  shallow,
+  useTaskStore,
+  type MindSweepScope,
+} from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { CompactText } from '@/components/compact-text';
-
-const INTRO_STEP = -1;
 
 type MindSweepModalContentProps = {
   onClose: () => void;
@@ -29,20 +35,18 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
   const filledButton = useFilledButtonColors();
   const { addTask } = useTaskStore((state) => ({ addTask: state.addTask }), shallow);
 
-  const [scope, setScope] = useState<MindSweepScope>('all');
-  const [stepIndex, setStepIndex] = useState(INTRO_STEP);
+  const [scope, setScope] = useState<MindSweepScope>(INITIAL_MIND_SWEEP_STATE.scope);
+  const [stepIndex, setStepIndex] = useState(INITIAL_MIND_SWEEP_STATE.step);
   const [draft, setDraft] = useState('');
   const [capturedByGroup, setCapturedByGroup] = useState<Record<string, string[]>>({});
   const [addFailed, setAddFailed] = useState(false);
 
-  const groups = getMindSweepGroups(scope);
-  const isIntro = stepIndex === INTRO_STEP;
-  const isSummary = stepIndex >= groups.length;
-  const group = !isIntro && !isSummary ? groups[stepIndex] : null;
-  const capturedCount = Object.values(capturedByGroup).reduce((sum, items) => sum + items.length, 0);
+  // What the screen shows comes from core, as the native host shows it.
+  const view = buildMindSweepView({ state: { scope, step: stepIndex, captured: capturedByGroup }, draft, addFailed, t });
+  const { intro, group, summary } = view;
 
   const handleAdd = async () => {
-    const title = draft.trim();
+    const title = getMindSweepCaptureTitle(draft);
     if (!title || !group) return;
     try {
       // Count the item only once the store accepted it, so the summary never
@@ -53,10 +57,7 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
         setAddFailed(true);
         return;
       }
-      setCapturedByGroup((current) => ({
-        ...current,
-        [group.id]: [...(current[group.id] ?? []), title],
-      }));
+      setCapturedByGroup((current) => addMindSweepCapture(current, group.id, title));
       setDraft('');
       setAddFailed(false);
     } catch {
@@ -65,12 +66,6 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
     }
   };
 
-  const scopeOptions: Array<{ value: MindSweepScope; label: string }> = [
-    { value: 'all', label: t('mindSweep.scopeAll') },
-    { value: 'personal', label: t('mindSweep.scopePersonal') },
-    { value: 'work', label: t('mindSweep.scopeWork') },
-  ];
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
@@ -78,15 +73,15 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.header}>
-          <Text style={[styles.headerTitle, { color: tc.text }]}>{t('mindSweep.title')}</Text>
+          <Text style={[styles.headerTitle, { color: tc.text }]}>{view.title}</Text>
           <TouchableOpacity
             testID="mind-sweep-close"
             onPress={onClose}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel={t('mindSweep.close')}
+            accessibilityLabel={view.closeLabel}
           >
-            <Text style={[styles.closeLabel, { color: tc.tint }]}>{t('mindSweep.close')}</Text>
+            <Text style={[styles.closeLabel, { color: tc.tint }]}>{view.closeLabel}</Text>
           </TouchableOpacity>
         </View>
 
@@ -95,13 +90,13 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
-          {isIntro && (
+          {intro && (
             <>
-              <Text style={[styles.bodyText, { color: tc.secondaryText }]}>{t('mindSweep.intro')}</Text>
-              <Text style={[styles.sectionLabel, { color: tc.text }]}>{t('mindSweep.scopeLabel')}</Text>
+              <Text style={[styles.bodyText, { color: tc.secondaryText }]}>{intro.text}</Text>
+              <Text style={[styles.sectionLabel, { color: tc.text }]}>{intro.scopeLabel}</Text>
               <View style={styles.scopeRow}>
-                {scopeOptions.map((option) => {
-                  const selected = scope === option.value;
+                {intro.scopes.map((option) => {
+                  const { selected } = option;
                   return (
                     <TouchableOpacity
                       key={option.value}
@@ -126,11 +121,11 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
               </View>
               <TouchableOpacity
                 testID="mind-sweep-start"
-                onPress={() => setStepIndex(0)}
+                onPress={() => setStepIndex(intro.start.step)}
                 accessibilityRole="button"
                 style={[styles.primaryButton, { backgroundColor: filledButton.backgroundColor }]}
               >
-                <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('mindSweep.start')}</Text>
+                <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{intro.start.label}</Text>
               </TouchableOpacity>
             </>
           )}
@@ -139,17 +134,15 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
             <>
               <View style={styles.groupHeader}>
                 <Text testID="mind-sweep-group-title" style={[styles.groupTitle, { color: tc.text }]}>
-                  {t(group.titleKey)}
+                  {group.title}
                 </Text>
                 <Text style={[styles.progress, { color: tc.secondaryText }]}>
-                  {t('mindSweep.progress')
-                    .replace('{{current}}', String(stepIndex + 1))
-                    .replace('{{total}}', String(groups.length))}
+                  {group.progress}
                 </Text>
               </View>
-              {group.promptKeys.map((promptKey) => (
-                <Text key={promptKey} style={[styles.prompt, { color: tc.secondaryText }]}>
-                  {'•'} {t(promptKey)}
+              {group.prompts.map((prompt, index) => (
+                <Text key={`${prompt}-${index}`} style={[styles.prompt, { color: tc.secondaryText }]}>
+                  {'•'} {prompt}
                 </Text>
               ))}
               <View style={styles.inputRow}>
@@ -160,31 +153,31 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
                   onSubmitEditing={() => void handleAdd()}
                   blurOnSubmit={false}
                   returnKeyType="done"
-                  placeholder={t('mindSweep.inputPlaceholder')}
+                  placeholder={group.placeholder}
                   placeholderTextColor={tc.secondaryText}
                   style={[styles.input, { borderColor: tc.border, color: tc.text }]}
                 />
                 <TouchableOpacity
                   testID="mind-sweep-add"
                   onPress={() => void handleAdd()}
-                  disabled={!draft.trim()}
+                  disabled={group.add.disabled}
                   accessibilityRole="button"
-                  style={[styles.addButton, { backgroundColor: filledButton.backgroundColor, opacity: draft.trim() ? 1 : 0.5 }]}
+                  style={[styles.addButton, { backgroundColor: filledButton.backgroundColor, opacity: group.add.disabled ? 0.5 : 1 }]}
                 >
-                  <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('mindSweep.add')}</Text>
+                  <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{group.add.label}</Text>
                 </TouchableOpacity>
               </View>
-              {addFailed && (
+              {group.addFailed && (
                 <Text testID="mind-sweep-add-failed" style={[styles.addFailed, { color: tc.danger }]}>
-                  {t('task.addFailed')}
+                  {group.addFailed}
                 </Text>
               )}
-              {(capturedByGroup[group.id]?.length ?? 0) > 0 && (
+              {group.captured && (
                 <View style={styles.capturedBlock}>
                   <Text style={[styles.capturedLabel, { color: tc.secondaryText }]}>
-                    {t('mindSweep.groupCaptured')}
+                    {group.captured.label}
                   </Text>
-                  {capturedByGroup[group.id].map((item, index) => (
+                  {group.captured.items.map((item, index) => (
                     <Text testID="mind-sweep-captured-item" key={`${item}-${index}`} style={[styles.capturedItem, { color: tc.text }]} numberOfLines={1}>
                       {'•'} {item}
                     </Text>
@@ -195,11 +188,11 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
                 <TouchableOpacity
                   testID="mind-sweep-back"
                   onPress={() => setStepIndex((index) => index - 1)}
-                  disabled={stepIndex === 0}
+                  disabled={group.back.disabled}
                   accessibilityRole="button"
-                  style={[styles.secondaryButton, { borderColor: tc.border, opacity: stepIndex === 0 ? 0.5 : 1 }]}
+                  style={[styles.secondaryButton, { borderColor: tc.border, opacity: group.back.disabled ? 0.5 : 1 }]}
                 >
-                  <Text style={[styles.secondaryButtonText, { color: tc.text }]}>{t('mindSweep.back')}</Text>
+                  <Text style={[styles.secondaryButtonText, { color: tc.text }]}>{group.back.label}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   testID="mind-sweep-next"
@@ -207,22 +200,20 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
                   accessibilityRole="button"
                   style={[styles.primaryButtonInline, { backgroundColor: filledButton.backgroundColor }]}
                 >
-                  <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('mindSweep.next')}</Text>
+                  <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{group.next.label}</Text>
                 </TouchableOpacity>
               </View>
             </>
           )}
 
-          {isSummary && (
+          {summary && (
             <View testID="mind-sweep-summary">
-              <Text style={[styles.groupTitle, { color: tc.text }]}>{t('mindSweep.summaryTitle')}</Text>
+              <Text style={[styles.groupTitle, { color: tc.text }]}>{summary.title}</Text>
               <Text style={[styles.bodyText, { color: tc.secondaryText }]}>
-                {capturedCount > 0
-                  ? t('mindSweep.summaryCount').replace('{{count}}', String(capturedCount))
-                  : t('mindSweep.summaryEmpty')}
+                {summary.message}
               </Text>
-              {capturedCount > 0 && (
-                <Text style={[styles.bodyText, { color: tc.secondaryText }]}>{t('mindSweep.summaryHint')}</Text>
+              {summary.hint && (
+                <Text style={[styles.bodyText, { color: tc.secondaryText }]}>{summary.hint}</Text>
               )}
               <TouchableOpacity
                 testID="mind-sweep-finish"
@@ -230,7 +221,7 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
                 accessibilityRole="button"
                 style={[styles.primaryButton, { backgroundColor: filledButton.backgroundColor }]}
               >
-                <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('mindSweep.finish')}</Text>
+                <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{summary.finishLabel}</Text>
               </TouchableOpacity>
             </View>
           )}

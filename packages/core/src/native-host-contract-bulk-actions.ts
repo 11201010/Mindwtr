@@ -27,6 +27,12 @@
  * - Dates go in only as local days (yyyy-MM-dd); each date field names its picker
  *   start and its Today and Tomorrow chips' values.
  *
+ * - The organize dialog's project and area pickers can create one, as on mobile:
+ *   their search box offers `create` for a name no option carries, and `submit` is
+ *   the search box's Done key (the exact match, or the create). Send a create to
+ *   createBulkOrganizeDestination with the draft; keep the `draft` it returns
+ *   (the new project or area chosen). Creating writes no task: Apply does.
+ *
  * Every write takes a request UUID and retries exactly (native-request-receipts.ts):
  * while its save is owed (SAVE_FAILED) a retry only saves. Each write is
  * target-state, so a replay after a restart writes nothing. Undo is its own
@@ -36,6 +42,7 @@
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
  */
+import { addBulkOrganizeArea, addBulkOrganizeProject } from './bulk-organize-create';
 import { collectBulkTaskTokens, type BulkTaskTokenMode } from './bulk-task-tokens';
 import { safeParseDate, type DateFormatter } from './date';
 import { tFallback } from './i18n';
@@ -54,6 +61,7 @@ import {
 } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { updateRangeSelection } from './range-selection';
+import { getProjectChoiceState } from './project-utils';
 import { useTaskStore } from './store';
 import {
     applyBulkOrganizeDraftEdit,
@@ -86,7 +94,7 @@ import {
     type TaskListBulkWrite,
 } from './task-list-bulk-actions';
 import { getBulkTrashConfirmation, type ListConfirmation } from './trash-view-model';
-import type { Task, TaskStatus } from './types';
+import type { Area, Project, Task, TaskStatus } from './types';
 
 export type NativeBulkList = 'inbox' | 'waiting' | 'someday' | 'reference' | 'done';
 const BULK_LISTS: readonly NativeBulkList[] = ['inbox', 'waiting', 'someday', 'reference', 'done'];
@@ -113,6 +121,14 @@ export type NativeBulkPicker = {
     total: number;
     /** Project and area pickers lead with Keep and None; choosing one sends its `edit` with `organize`. */
     items: { value: string; label: string; selected: boolean; edit: BulkOrganizeDraftEdit | null }[];
+    /**
+     * Project and area pickers: the "+ Create" row for a search no option names
+     * exactly; send its `name` to createBulkOrganizeDestination. Null otherwise, and
+     * while `busy`. A failed create shows `organize.createFailed`.
+     */
+    create: { name: string; label: string; accessibilityLabel: string } | null;
+    /** The search box's Done key: choose the exact match (its `edit`), or create `create`. Null for an empty search, and while `busy`. */
+    submit: { edit: BulkOrganizeDraftEdit } | { create: string } | null;
 };
 
 export type NativeBulkOrganizeView = Omit<BulkOrganizeDialogModel, 'statuses' | 'dates' | 'waitingFor' | 'contexts' | 'tags'> & {
@@ -175,6 +191,8 @@ export type BulkActionDeps = {
 };
 
 type Row = { id: string; readOnly: boolean };
+/** createBulkOrganizeDestination's answer: the project or area chosen, and the draft with it chosen. */
+export type NativeBulkOrganizeCreateResult = { id: string; changed: boolean; draft: BulkOrganizeDraft };
 type ActionOutcome = NativeHostResult<NativeListActionResult<NativeBulkAction>> | NativeUnsavedWrite<NativeListActionResult<NativeBulkAction>>;
 
 const ID_LIMIT = 10_000;
@@ -188,6 +206,23 @@ const TEXT_LIMITS: Record<BulkOrganizeTextField, number> = {
 };
 const DRAFT_KEYS = new Set(Object.keys(EMPTY_BULK_ORGANIZE_DRAFT));
 const PARAM_ONLY_KEYS = ['filterEdit', 'offset', 'limit', 'revision'];
+
+// The mobile pickers' order: by `order`, before their exact-match check.
+const byOrder = (a: Project, b: Project) => (Number.isFinite(a.order) ? a.order : 0) - (Number.isFinite(b.order) ? b.order : 0);
+/**
+ * The option a picker search names exactly, as mobile's pickers match it: a project
+ * by its trimmed title, case-insensitive (getProjectChoiceState); an area by its name
+ * against the trimmed search, case-insensitive (TaskEditAreaPicker).
+ */
+const exactDestination = (kind: 'project' | 'area', query: string): Project | Area | undefined => {
+    const state = useTaskStore.getState();
+    if (kind === 'project') {
+        const options = getBulkOrganizeProjectOptions(state.projects);
+        return getProjectChoiceState([...options].sort(byOrder), query, [...state.projects].sort(byOrder)).exactMatch;
+    }
+    const normalized = query.trim().toLowerCase();
+    return normalized ? getBulkOrganizeAreaOptions(state.areas).find((area) => area.name.toLowerCase() === normalized) : undefined;
+};
 
 export function createBulkActionMethods(deps: BulkActionDeps) {
     const durableSave = async (): Promise<NativeHostResult<null>> => {
@@ -442,6 +477,8 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 const { kind, query } = input.picker;
                 const choice = (value: string, label: string, selected: boolean, edit: BulkOrganizeDraftEdit | null) => ({ value, label, selected, edit });
                 let items: NativeBulkPicker['items'];
+                let create: NativeBulkPicker['create'] = null;
+                let submit: NativeBulkPicker['submit'] = null;
                 if (kind === 'removeTag') {
                     items = tokens.filter((token) => query === undefined || matchesPickerQuery(token, query))
                         .map((token) => choice(token, token, false, null));
@@ -459,8 +496,16 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                         ...options.filter((option) => query === undefined || matchesPickerQuery(option.label, query))
                             .map((option) => choice(option.id, option.label, current === option.id, set(option.id))),
                     ];
+                    // Mobile hides Create and ignores Done while Apply runs.
+                    const name = input.busy === true ? '' : (query ?? '').trim();
+                    if (name) {
+                        const exact = exactDestination(kind, name);
+                        const createLabel = t(isProject ? 'projects.create' : 'areas.create');
+                        create = exact ? null : { name, label: `+ ${createLabel} "${name}"`, accessibilityLabel: `${createLabel}: ${name}` };
+                        submit = exact ? { edit: set(exact.id) } : { create: name };
+                    }
                 }
-                picker = { kind, total: items.length, items: page(items, { offset: input.picker.offset ?? 0, limit: input.picker.limit ?? NATIVE_HOST_MAX_WINDOW }) };
+                picker = { kind, total: items.length, items: page(items, { offset: input.picker.offset ?? 0, limit: input.picker.limit ?? NATIVE_HOST_MAX_WINDOW }), create, submit };
             }
 
             return {
@@ -490,6 +535,53 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     picker,
                 },
             };
+        },
+
+        /**
+         * Create a project or area from the organize dialog's picker (its `create.name`,
+         * or its search box's text on Done), as mobile does: a name an option already
+         * carries chooses that option; a project goes in the draft's chosen area. Returns
+         * the draft with it chosen (a project resets the area to Keep). Writes no task.
+         * Reuse `requestId` to retry; a replay finds the name taken and writes nothing.
+         */
+        async createBulkOrganizeDestination(input: {
+            requestId: string;
+            list: NativeBulkList;
+            kind: 'project' | 'area';
+            name: string;
+            draft?: Partial<BulkOrganizeDraft>;
+        }): Promise<NativeHostResult<NativeBulkOrganizeCreateResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const draft = isObjectRecord(input) ? readDraft(input.draft) : null;
+            if (!isObjectRecord(input) || !BULK_LISTS.includes(input.list) || !TASK_LIST_BULK_SCREENS[input.list].organize
+                || (input.kind !== 'project' && input.kind !== 'area') || !isText(input.name) || !input.name.trim() || !draft) {
+                return fail('INVALID_INPUT', 'A request UUID, a list that offers Bulk organize, a project or area name and a valid draft are required');
+            }
+            const { kind } = input;
+            const name = input.name.trim();
+            return receipts.run(input.requestId, JSON.stringify(['bulkCreate', input.list, kind, name, draft]), async () => {
+                const choose = (id: string, changed: boolean): NativeBulkOrganizeCreateResult => ({
+                    id,
+                    changed,
+                    draft: applyBulkOrganizeDraftEdit(draft, { type: kind === 'project' ? 'setProject' : 'setArea', value: id }),
+                });
+                // The search box's Done on an exact match chooses it.
+                const exact = exactDestination(kind, name);
+                if (exact) return { ok: true, value: choose(exact.id, false) };
+                const before = useTaskStore.getState();
+                // RN's picker creates the project in the dialog's chosen area (dialog.area.selectedId).
+                const areaId = draft.areaChoice !== BULK_ORGANIZE_KEEP && draft.areaChoice !== BULK_ORGANIZE_NONE ? draft.areaChoice : undefined;
+                const made: { entity: Project | Area | null } = { entity: null };
+                const written = await runStoreWrite(async () => {
+                    made.entity = kind === 'project' ? await addBulkOrganizeProject(name, areaId) : await addBulkOrganizeArea(name);
+                    return made.entity ? undefined : { success: false, error: kind === 'project' ? 'Project creation failed' : 'Area creation failed' };
+                });
+                if (!made.entity) return written.ok ? fail('ACTION_FAILED', 'Creation failed') : written;
+                const after = useTaskStore.getState();
+                const changed = kind === 'project' ? after._allProjects !== before._allProjects : after._allAreas !== before._allAreas;
+                return settleWrite(written, choose(made.entity.id, changed));
+            });
         },
 
         /**

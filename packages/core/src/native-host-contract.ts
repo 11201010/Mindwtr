@@ -220,6 +220,9 @@ import {
 } from './native-host-contract-focus-controls';
 import { createSettingsMethods } from './native-host-contract-settings';
 import { createTaskViewMethods, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
+import { createMindSweepMethods } from './native-host-contract-mind-sweep';
+import { createSavedSearchMethods } from './native-host-contract-saved-search';
+import { createFocusChecklistMethods } from './native-host-contract-focus-checklist';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -1135,6 +1138,22 @@ export function createNativeHostContract() {
 
         // The editor's View tab and checklist: native-host-contract-task-view.ts.
         ...createTaskViewMethods({ readiness, save, t: () => translate, dateFormatting, revision: (now) => `${revision()}:${displayRevision(now)}`, isReadOnly: isInArchivedProject, readDraft: readTaskDraft }),
+
+        // The Mind Sweep screen: native-host-contract-mind-sweep.ts.
+        ...createMindSweepMethods({ readiness, save, t: () => translate, revision: (now) => `${revision()}:${displayRevision(now)}` }),
+        // A saved search's screen: native-host-contract-saved-search.ts.
+        ...createSavedSearchMethods({
+            readiness,
+            save,
+            t: () => translate,
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            rows: (tasks, now) => {
+                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
+            },
+        }),
+        // The Focus checklist page: native-host-contract-focus-checklist.ts.
+        ...createFocusChecklistMethods({ readiness, save, t: () => translate, revision: (now) => `${revision()}:${displayRevision(now)}` }),
 
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
             const ready = readiness();

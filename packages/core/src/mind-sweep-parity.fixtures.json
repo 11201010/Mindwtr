@@ -1,0 +1,3564 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_MIND_SWEEP=1 MINDWTR_CAPTURE_MIND_SWEEP_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run components/mind-sweep-modal-content.parity.test.tsx",
+  "capturedAt": "0b859c1b729cd204bd3a8282be56d9ea300cd06d",
+  "sourceState": "Every file under apps/ and packages/ was at HEAD except the Mind Sweep, saved search and Focus checklist parity harnesses and their fixtures.",
+  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). The filled button color is a marker, so `selected` is true only for a scope chip drawn in the tint. Strings are English. addTask records its title and props; `failAdd` makes the next addTask resolve { success: false } (refuse) or throw."
+ },
+ "timeZone": "UTC",
+ "now": "2026-09-27T14:00:00.000Z",
+ "scenarios": [
+  {
+   "name": "the intro",
+   "actions": [
+    [
+     "scope",
+     "work"
+    ],
+    [
+     "scope",
+     "personal"
+    ],
+    [
+     "scope",
+     "all"
+    ],
+    [
+     "close"
+    ]
+   ]
+  },
+  {
+   "name": "a personal sweep with captures",
+   "actions": [
+    [
+     "scope",
+     "personal"
+    ],
+    [
+     "start"
+    ],
+    [
+     "type",
+     "  Fix the sink  "
+    ],
+    [
+     "add"
+    ],
+    [
+     "type",
+     "Call mom"
+    ],
+    [
+     "submit"
+    ],
+    [
+     "next"
+    ],
+    [
+     "type",
+     "Book dentist"
+    ],
+    [
+     "add"
+    ],
+    [
+     "back"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "finish"
+    ]
+   ]
+  },
+  {
+   "name": "a work sweep with nothing captured",
+   "actions": [
+    [
+     "scope",
+     "work"
+    ],
+    [
+     "start"
+    ],
+    [
+     "type",
+     "   "
+    ],
+    [
+     "add"
+    ],
+    [
+     "submit"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "close"
+    ]
+   ]
+  },
+  {
+   "name": "every group of a full sweep",
+   "actions": [
+    [
+     "start"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ]
+   ]
+  },
+  {
+   "name": "a refused or failed capture keeps the draft",
+   "actions": [
+    [
+     "start"
+    ],
+    [
+     "type",
+     "Buy milk"
+    ],
+    [
+     "failAdd",
+     "refuse"
+    ],
+    [
+     "add"
+    ],
+    [
+     "failAdd",
+     "throw"
+    ],
+    [
+     "submit"
+    ],
+    [
+     "add"
+    ],
+    [
+     "type",
+     "Buy milk"
+    ],
+    [
+     "add"
+    ],
+    [
+     "next"
+    ],
+    [
+     "back"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ],
+    [
+     "next"
+    ]
+   ]
+  }
+ ],
+ "observations": {
+  "the intro": [
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 1
+   }
+  ],
+  "a personal sweep with captures": [
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 5",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 5",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "  Fix the sink  ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 5",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Fix the sink",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Fix the sink",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 5",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Fix the sink",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Call mom",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 5",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Fix the sink",
+     "• Call mom",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Call mom",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 5",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 5",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Book dentist",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 5",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Captured in this list:",
+     "• Book dentist",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Book dentist",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 5",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Fix the sink",
+     "• Call mom",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 5",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Captured in this list:",
+     "• Book dentist",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Health & self",
+     "3 of 5",
+     "• Appointments to book — doctor, dentist, haircut",
+     "• Prescriptions or refills running low",
+     "• A habit you want to start, or one you want to stop",
+     "• Anything about sleep, food, or exercise nagging you",
+     "• Something that has been quietly worrying you",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Money & paperwork",
+     "4 of 5",
+     "• Bills or payments you are not sure are handled",
+     "• Subscriptions you have been meaning to cancel",
+     "• Insurance, contracts, or renewals coming due",
+     "• Forms, taxes, or applications waiting on you",
+     "• Refunds, claims, or returns you have not chased",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Fun & learning",
+     "5 of 5",
+     "• A trip you keep saying you will plan",
+     "• Books, shows, or music people recommended to you",
+     "• A hobby that has been on pause",
+     "• Events or tickets to book before they are gone",
+     "• Something you are curious to learn just for fun",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Sweep complete",
+     "You captured 3 items into your Inbox.",
+     "Process them from the Inbox whenever you are ready.",
+     "Finish"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-finish",
+      null,
+      "Finish",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Sweep complete",
+     "You captured 3 items into your Inbox.",
+     "Process them from the Inbox whenever you are ready.",
+     "Finish"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-finish",
+      null,
+      "Finish",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 1
+   }
+  ],
+  "a work sweep with nothing captured": [
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Promises & projects",
+     "1 of 4",
+     "• Anything you told someone you would do",
+     "• A project you have committed to but not started",
+     "• Work you started and left half-finished",
+     "• A decision you owe someone",
+     "• A deadline that is closer than it feels",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Promises & projects",
+     "1 of 4",
+     "• Anything you told someone you would do",
+     "• A project you have committed to but not started",
+     "• Work you started and left half-finished",
+     "• A decision you owe someone",
+     "• A deadline that is closer than it feels",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "   ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Promises & projects",
+     "1 of 4",
+     "• Anything you told someone you would do",
+     "• A project you have committed to but not started",
+     "• Work you started and left half-finished",
+     "• A decision you owe someone",
+     "• A deadline that is closer than it feels",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "   ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Promises & projects",
+     "1 of 4",
+     "• Anything you told someone you would do",
+     "• A project you have committed to but not started",
+     "• Work you started and left half-finished",
+     "• A decision you owe someone",
+     "• A deadline that is closer than it feels",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "   ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "People & messages",
+     "2 of 4",
+     "• Emails or messages still waiting on your reply",
+     "• A meeting you need to schedule, move, or cancel",
+     "• Feedback you have been meaning to give",
+     "• Something you are waiting on from someone else",
+     "• An introduction or hand-off you said you would make",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "   ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Ideas & improvements",
+     "3 of 4",
+     "• A recurring annoyance you could fix once and for all",
+     "• A tool or setup that needs fixing or learning",
+     "• An idea you have not written down or pitched yet",
+     "• Documentation or notes you keep postponing",
+     "• Something you do manually that could be automated",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "   ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Work admin",
+     "4 of 4",
+     "• Expenses, invoices, or timesheets piling up",
+     "• Files or folders that need organizing",
+     "• Trainings, reviews, or forms with a due date",
+     "• Travel, equipment, or access you need to arrange",
+     "• Anything your future self will wish you had filed today",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "   ",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Sweep complete",
+     "Nothing surfaced this time — your head may already be clear.",
+     "Finish"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-finish",
+      null,
+      "Finish",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Sweep complete",
+     "Nothing surfaced this time — your head may already be clear.",
+     "Finish"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-finish",
+      null,
+      "Finish",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 1
+   }
+  ],
+  "every group of a full sweep": [
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 9",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Health & self",
+     "3 of 9",
+     "• Appointments to book — doctor, dentist, haircut",
+     "• Prescriptions or refills running low",
+     "• A habit you want to start, or one you want to stop",
+     "• Anything about sleep, food, or exercise nagging you",
+     "• Something that has been quietly worrying you",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Money & paperwork",
+     "4 of 9",
+     "• Bills or payments you are not sure are handled",
+     "• Subscriptions you have been meaning to cancel",
+     "• Insurance, contracts, or renewals coming due",
+     "• Forms, taxes, or applications waiting on you",
+     "• Refunds, claims, or returns you have not chased",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Fun & learning",
+     "5 of 9",
+     "• A trip you keep saying you will plan",
+     "• Books, shows, or music people recommended to you",
+     "• A hobby that has been on pause",
+     "• Events or tickets to book before they are gone",
+     "• Something you are curious to learn just for fun",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Promises & projects",
+     "6 of 9",
+     "• Anything you told someone you would do",
+     "• A project you have committed to but not started",
+     "• Work you started and left half-finished",
+     "• A decision you owe someone",
+     "• A deadline that is closer than it feels",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "People & messages",
+     "7 of 9",
+     "• Emails or messages still waiting on your reply",
+     "• A meeting you need to schedule, move, or cancel",
+     "• Feedback you have been meaning to give",
+     "• Something you are waiting on from someone else",
+     "• An introduction or hand-off you said you would make",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Ideas & improvements",
+     "8 of 9",
+     "• A recurring annoyance you could fix once and for all",
+     "• A tool or setup that needs fixing or learning",
+     "• An idea you have not written down or pitched yet",
+     "• Documentation or notes you keep postponing",
+     "• Something you do manually that could be automated",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Work admin",
+     "9 of 9",
+     "• Expenses, invoices, or timesheets piling up",
+     "• Files or folders that need organizing",
+     "• Trainings, reviews, or forms with a due date",
+     "• Travel, equipment, or access you need to arrange",
+     "• Anything your future self will wish you had filed today",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Sweep complete",
+     "Nothing surfaced this time — your head may already be clear.",
+     "Finish"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-finish",
+      null,
+      "Finish",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   }
+  ],
+  "a refused or failed capture keeps the draft": [
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Walk through a few cue lists and write down whatever surfaces. Don't filter or organize — every item lands in your Inbox to sort out later.",
+     "What do you want to sweep?",
+     "Everything",
+     "Personal",
+     "Work",
+     "Start sweep"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-all",
+      null,
+      "Everything",
+      false,
+      true
+     ],
+     [
+      "mind-sweep-scope-personal",
+      null,
+      "Personal",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-scope-work",
+      null,
+      "Work",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-start",
+      null,
+      "Start sweep",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Buy milk",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Buy milk",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Failed to add task",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Buy milk",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Buy milk",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Failed to add task",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Buy milk",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Failed to add task",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Buy milk",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Buy milk",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Buy milk",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Buy milk",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Buy milk",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "Buy milk",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Buy milk",
+     "• Buy milk",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [
+     [
+      "addTask",
+      "Buy milk",
+      {
+       "status": "inbox"
+      }
+     ]
+    ],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 9",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Home & belongings",
+     "1 of 9",
+     "• Anything at home that is broken, leaking, or making a weird noise",
+     "• Something you keep meaning to replace or upgrade",
+     "• A drawer, closet, or corner that needs clearing out",
+     "• Things you have borrowed or lent and not returned",
+     "• A house project that exists only in your head so far",
+     "Add",
+     "Captured in this list:",
+     "• Buy milk",
+     "• Buy milk",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Family & friends",
+     "2 of 9",
+     "• Someone you owe a call, message, or thank-you",
+     "• Birthdays, anniversaries, or occasions coming up",
+     "• A promise you made and have not followed through on",
+     "• Someone you keep meaning to catch up with",
+     "• Gifts to find or gatherings to plan",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Health & self",
+     "3 of 9",
+     "• Appointments to book — doctor, dentist, haircut",
+     "• Prescriptions or refills running low",
+     "• A habit you want to start, or one you want to stop",
+     "• Anything about sleep, food, or exercise nagging you",
+     "• Something that has been quietly worrying you",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Money & paperwork",
+     "4 of 9",
+     "• Bills or payments you are not sure are handled",
+     "• Subscriptions you have been meaning to cancel",
+     "• Insurance, contracts, or renewals coming due",
+     "• Forms, taxes, or applications waiting on you",
+     "• Refunds, claims, or returns you have not chased",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Fun & learning",
+     "5 of 9",
+     "• A trip you keep saying you will plan",
+     "• Books, shows, or music people recommended to you",
+     "• A hobby that has been on pause",
+     "• Events or tickets to book before they are gone",
+     "• Something you are curious to learn just for fun",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Promises & projects",
+     "6 of 9",
+     "• Anything you told someone you would do",
+     "• A project you have committed to but not started",
+     "• Work you started and left half-finished",
+     "• A decision you owe someone",
+     "• A deadline that is closer than it feels",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "People & messages",
+     "7 of 9",
+     "• Emails or messages still waiting on your reply",
+     "• A meeting you need to schedule, move, or cancel",
+     "• Feedback you have been meaning to give",
+     "• Something you are waiting on from someone else",
+     "• An introduction or hand-off you said you would make",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Ideas & improvements",
+     "8 of 9",
+     "• A recurring annoyance you could fix once and for all",
+     "• A tool or setup that needs fixing or learning",
+     "• An idea you have not written down or pitched yet",
+     "• Documentation or notes you keep postponing",
+     "• Something you do manually that could be automated",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Work admin",
+     "9 of 9",
+     "• Expenses, invoices, or timesheets piling up",
+     "• Files or folders that need organizing",
+     "• Trainings, reviews, or forms with a due date",
+     "• Travel, equipment, or access you need to arrange",
+     "• Anything your future self will wish you had filed today",
+     "Add",
+     "Back",
+     "Next"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-add",
+      null,
+      "Add",
+      true,
+      false
+     ],
+     [
+      "mind-sweep-back",
+      null,
+      "Back",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-next",
+      null,
+      "Next",
+      false,
+      false
+     ]
+    ],
+    "input": [
+     "",
+     "Write whatever comes to mind…"
+    ],
+    "writes": [],
+    "closes": 0
+   },
+   {
+    "texts": [
+     "Mind Sweep",
+     "Close",
+     "Sweep complete",
+     "You captured 2 items into your Inbox.",
+     "Process them from the Inbox whenever you are ready.",
+     "Finish"
+    ],
+    "buttons": [
+     [
+      "mind-sweep-close",
+      "Close",
+      "Close",
+      false,
+      false
+     ],
+     [
+      "mind-sweep-finish",
+      null,
+      "Finish",
+      false,
+      false
+     ]
+    ],
+    "input": null,
+    "writes": [],
+    "closes": 0
+   }
+  ]
+ }
+}

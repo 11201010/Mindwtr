@@ -3,9 +3,11 @@ import { collectBulkTaskTokens } from './bulk-task-tokens';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeBulkAction } from './native-host-contract-bulk-actions';
+import { createBulkOrganizeArea, createBulkOrganizeProject } from './bulk-organize-create';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import {
     BULK_ORGANIZE_KEEP,
+    BULK_ORGANIZE_NONE,
     buildBulkOrganizeDialogModel,
     buildBulkOrganizeInput,
     buildTaskListBulkBarModel,
@@ -291,6 +293,9 @@ describe('native host contract: selection mode', () => {
                     { value: '__NONE__', label: t('taskEdit.noProjectOption'), selected: false, edit: { type: 'setProject', value: '__NONE__' } },
                     { value: 'p-launch', label: 'Launch', selected: false, edit: { type: 'setProject', value: 'p-launch' } },
                 ],
+                // "LA" names no project exactly: the search box offers to create it.
+                create: { name: 'LA', label: '+ Create "LA"', accessibilityLabel: 'Create: LA' },
+                submit: { create: 'LA' },
             });
             const areas = value(host.getBulkActions({ list: 'inbox', taskIds: ['i-call'], organize: {}, picker: { kind: 'area', offset: 2, limit: 1, revision: view.revision } }));
             expect(areas.picker).toMatchObject({ total: 4, items: [{ value: 'a-work', label: 'Work' }] });
@@ -348,6 +353,126 @@ describe('native host contract: selection mode', () => {
         });
     });
 
+    describe('creating a project or area from the organize pickers', () => {
+        const picker = (host: Awaited<ReturnType<typeof open>>['host'], kind: 'project' | 'area' | 'removeTag', query?: string, extra: Record<string, unknown> = {}) => value(host.getBulkActions({
+            list: 'inbox', taskIds: ['i-call'], organize: {}, picker: { kind, ...(query === undefined ? {} : { query }) }, ...extra,
+        })).picker!;
+        /** Projects and areas as stored, less what a new row draws at random (its ID and device stamp). */
+        const destinationsNow = () => normalize({
+            projects: useTaskStore.getState()._allProjects.map(({ id: _id, revBy: _revBy, ...project }) => project),
+            areas: useTaskStore.getState()._allAreas.map(({ id: _id, revBy: _revBy, ...area }) => area),
+        });
+
+        it('offers Create for a name no option carries, and Done chooses an exact match, as the mobile pickers do', async () => {
+            freezeClock();
+            const { host } = await open();
+            expect(picker(host, 'project', ' Garden ')).toMatchObject({
+                create: { name: 'Garden', label: '+ Create "Garden"', accessibilityLabel: 'Create: Garden' },
+                submit: { create: 'Garden' },
+            });
+            // A title match ignores case and spaces; an archived project is no option, so its title can be created.
+            expect(picker(host, 'project', ' LAUNCH ')).toMatchObject({ create: null, submit: { edit: { type: 'setProject', value: 'p-launch' } } });
+            expect(picker(host, 'project', 'Old stuff')).toMatchObject({ create: { name: 'Old stuff' }, submit: { create: 'Old stuff' } });
+            expect(picker(host, 'area', 'home')).toMatchObject({ create: null, submit: { edit: { type: 'setArea', value: 'a-home' } } });
+            expect(picker(host, 'area', 'Errands')).toMatchObject({
+                create: { name: 'Errands', label: '+ Create "Errands"', accessibilityLabel: 'Create: Errands' },
+                submit: { create: 'Errands' },
+            });
+            // Nothing to create without a search, while Apply runs, or on the remove-tag picker.
+            expect(picker(host, 'project')).toMatchObject({ create: null, submit: null });
+            expect(picker(host, 'project', '  ')).toMatchObject({ create: null, submit: null });
+            expect(picker(host, 'project', 'Garden', { busy: true })).toMatchObject({ create: null, submit: null });
+            expect(value(host.getBulkActions({ list: 'inbox', taskIds: ['i-milk'], picker: { kind: 'removeTag', query: 'x' } })).picker)
+                .toMatchObject({ create: null, submit: null });
+        });
+
+        it.each([
+            ['project', 'Garden', { areaChoice: 'a-home' }, () => createBulkOrganizeProject(' Garden ', 'a-home')],
+            ['project', 'Garden', { projectChoice: 'p-launch' }, () => createBulkOrganizeProject(' Garden ')],
+            ['area', 'Errands', { projectChoice: BULK_ORGANIZE_NONE }, () => createBulkOrganizeArea(' Errands ')],
+        ] as const)('creates the %s %s as core\'s createBulkOrganize* does for mobile, and chooses it', async (kind, name, draft, core) => {
+            freezeClock();
+            const direct = await open();
+            const created = await core();
+            const expected = destinationsNow();
+            expect(direct.log).toEqual([]);
+
+            const contract = await open();
+            const tasks = tasksNow();
+            const result = value(await contract.host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind, name: ` ${name} `, draft }));
+            expect(destinationsNow()).toEqual(expected);
+            expect(result.changed).toBe(true);
+            expect(result.id).toBe((kind === 'project' ? useTaskStore.getState().projects : useTaskStore.getState().areas).find((entry) => (
+                'title' in entry ? entry.title : entry.name) === name)!.id);
+            expect(created).not.toBeNull();
+            // The draft chooses it, as mobile's picker does after a create; a project resets the area to Keep.
+            expect(result.draft).toEqual(kind === 'project'
+                ? { ...EMPTY_BULK_ORGANIZE_DRAFT, ...draft, projectChoice: result.id, areaChoice: BULK_ORGANIZE_KEEP }
+                : { ...EMPTY_BULK_ORGANIZE_DRAFT, ...draft, areaChoice: result.id });
+            // Creating writes no task.
+            expect(contract.log).toEqual([]);
+            expect(tasksNow()).toEqual(tasks);
+        });
+
+        it('an exact match, or a replay after it landed, chooses the existing one and writes nothing', async () => {
+            freezeClock();
+            const saveData = vi.fn().mockResolvedValue(undefined);
+            const { host } = await open(saveData);
+            expect(value(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'project', name: 'launch' })))
+                .toEqual({ id: 'p-launch', changed: false, draft: { ...EMPTY_BULK_ORGANIZE_DRAFT, projectChoice: 'p-launch' } });
+            const first = value(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'area', name: 'Errands' }));
+            expect(first.changed).toBe(true);
+            const stored = destinationsNow();
+            saveData.mockClear();
+            expect(value(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'area', name: ' errands ' })))
+                .toEqual({ ...first, changed: false });
+            expect(destinationsNow()).toEqual(stored);
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it('retries exactly after a failed save', async () => {
+            freezeClock();
+            const saveData = vi.fn().mockResolvedValue(undefined);
+            const { host } = await open(saveData);
+            const input = { requestId: requestId(), list: 'inbox' as const, kind: 'project' as const, name: 'Garden', draft: { areaChoice: 'a-work' } };
+            saveData.mockRejectedValue(new Error('disk unavailable'));
+            expect(await host.createBulkOrganizeDestination(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
+            const landed = destinationsNow();
+            expect(useTaskStore.getState().projects.filter((project) => project.title === 'Garden')).toHaveLength(1);
+            saveData.mockResolvedValue(undefined);
+            const retried = value(await host.createBulkOrganizeDestination(input));
+            expect(retried).toMatchObject({ changed: true, draft: { projectChoice: retried.id, areaChoice: BULK_ORGANIZE_KEEP } });
+            // The retry only saved: the same projects, one Garden in Work, and that is what storage holds.
+            expect(destinationsNow()).toEqual(landed);
+            const saved = saveData.mock.lastCall?.[0] as { projects: { id: string; title: string; areaId?: string }[] };
+            expect(saved.projects.filter((project) => project.title === 'Garden')).toEqual([expect.objectContaining({ id: retried.id, areaId: 'a-work' })]);
+            // A lost reply repeats the request: no write, no save.
+            const saves = saveData.mock.calls.length;
+            expect(await host.createBulkOrganizeDestination(input)).toEqual({ ok: true, value: retried });
+            expect(saveData).toHaveBeenCalledTimes(saves);
+            expect(await host.createBulkOrganizeDestination({ ...input, name: 'Orchard' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }, 20_000);
+
+        it('refuses invalid input without writing', async () => {
+            freezeClock();
+            const { host } = await open();
+            const stored = destinationsNow();
+            const refused = async (input: Record<string, unknown>) => expect(await host.createBulkOrganizeDestination({
+                requestId: requestId(), list: 'inbox', kind: 'project', name: 'Garden', ...input,
+            } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            await refused({ list: 'waiting' });
+            await refused({ list: 'project' });
+            await refused({ kind: 'tag' });
+            await refused({ name: '   ' });
+            await refused({ name: 7 });
+            await refused({ name: 'x'.repeat(501) });
+            await refused({ draft: { areaChoice: 'a-gone' } });
+            await refused({ draft: { color: 'red' } });
+            await refused({ requestId: 'not-a-uuid' });
+            expect(destinationsNow()).toEqual(stored);
+        });
+    });
+
     it('is NOT_READY before native storage is activated', async () => {
         const log: unknown[] = [];
         await seedBulkActionsStore(fixture, log);
@@ -355,7 +480,10 @@ describe('native host contract: selection mode', () => {
         expect(host.getBulkActions({ list: 'inbox' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: { type: 'trashTasks', taskIds: ['i-call'] } }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'area', name: 'Errands' }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(log).toEqual([]);
+        expect(useTaskStore.getState().areas.some((area) => area.name === 'Errands')).toBe(false);
     });
 
     it('refuses invalid input without writing', async () => {

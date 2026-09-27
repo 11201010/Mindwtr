@@ -1,7 +1,16 @@
 import React, { useMemo, useRef, useState, useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Alert } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { useTaskStore, filterTasksBySearch, shallow, sortTasksBy, type Task, type TaskStatus, tFallback } from '@mindwtr/core';
+import {
+  buildSavedSearchScreenText,
+  findSavedSearch,
+  removeSavedSearch,
+  selectSavedSearchTasks,
+  shallow,
+  useTaskStore,
+  type Task,
+  type TaskStatus,
+} from '@mindwtr/core';
 import { SwipeableTaskItem, type TaskRowActions } from '@/components/swipeable-task-item';
 import { TASK_LIST_WINDOWING_PROPS } from '@/components/task-list-windowing';
 import { TaskEditModal } from '@/components/task-edit-modal';
@@ -9,7 +18,6 @@ import { useLanguage } from '@/contexts/language-context';
 import { useMobileAreaFilter } from '@/hooks/use-mobile-area-filter';
 import { useTheme } from '@/contexts/theme-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
-import { taskMatchesAreaFilterSelection } from '@mindwtr/core';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import { Trash2 } from 'lucide-react-native';
 import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
@@ -45,20 +53,20 @@ export default function SavedSearchScreen() {
     else router.replace('/inbox');
   }, []);
 
-  const savedSearch = savedSearches?.find(s => s.id === id);
+  const savedSearch = findSavedSearch(savedSearches, id);
   const query = savedSearch?.query || '';
   const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
+  // The header, the delete confirmation and the empty state come from core, as the native host shows them.
+  const screenText = buildSavedSearchScreenText({ savedSearch, savedSearches, t });
 
-  const filteredTasks = useMemo(() => {
-    if (!query) return [];
-    const projectMap = new Map(projects.map((project) => [project.id, project]));
-    return sortTasksBy(
-      filterTasksBySearch(tasks, projects, query).filter((task) => (
-        taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectMap, areaById)
-      )),
-      sortBy,
-    );
-  }, [tasks, projects, query, sortBy, resolvedAreaFilter, areaById]);
+  const filteredTasks = useMemo(() => selectSavedSearchTasks({
+    query,
+    tasks,
+    projects,
+    areaFilter: resolvedAreaFilter,
+    areaById,
+    sortBy,
+  }), [tasks, projects, query, sortBy, resolvedAreaFilter, areaById]);
 
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -70,31 +78,28 @@ export default function SavedSearchScreen() {
     setRefreshing(false);
   }, [fetchData]);
 
+  const deleteAction = screenText.deleteAction;
   const handleDeleteSearch = useCallback(() => {
-    if (!savedSearch) return;
+    if (!deleteAction) return;
     Alert.alert(
-      t('common.delete'),
-      tFallback(t, 'search.deleteConfirm', `Delete "${savedSearch.name}"?`),
+      deleteAction.confirm.title,
+      deleteAction.confirm.message,
       [
-        { text: t('common.cancel'), style: 'cancel' },
+        { text: deleteAction.confirm.cancelLabel, style: 'cancel' },
         {
-          text: t('common.delete'),
+          text: deleteAction.confirm.confirmLabel,
           style: 'destructive',
           onPress: async () => {
-            const updated = (savedSearches || []).filter(s => s.id !== id);
+            const updated = removeSavedSearch(savedSearches, id);
             await updateSettings({ savedSearches: updated });
             goBackOrInbox();
           },
         },
       ]
     );
-  }, [savedSearch, id, savedSearches, updateSettings, t, goBackOrInbox]);
+  }, [deleteAction, id, savedSearches, updateSettings, goBackOrInbox]);
 
-  const emptyMessage = (() => {
-    if (savedSearch) return t('search.noResults');
-    const hasAnySavedSearches = (savedSearches?.length ?? 0) > 0;
-    return hasAnySavedSearches ? t('search.noResults') : t('search.noSavedSearches');
-  })();
+  const emptyMessage = screenText.empty.message;
 
   // One actions object for every row, reading the current store handlers from a
   // ref, so a result-list re-render leaves untouched rows alone (#766).
@@ -127,19 +132,19 @@ export default function SavedSearchScreen() {
         <View style={styles.headerContent}>
           <View style={styles.headerText}>
             <Text style={[styles.title, { color: tc.text }]} accessibilityRole="header">
-              {savedSearch?.name || t('search.savedSearches')}
+              {screenText.title}
             </Text>
-            {query ? (
+            {screenText.query ? (
               <Text style={[styles.queryText, { color: tc.secondaryText }]} numberOfLines={1}>
-                {query}
+                {screenText.query}
               </Text>
             ) : null}
           </View>
-          {savedSearch && (
+          {deleteAction && (
             <TouchableOpacity
               onPress={handleDeleteSearch}
               style={styles.deleteButton}
-              accessibilityLabel={t('common.delete')}
+              accessibilityLabel={deleteAction.label}
             >
               <Trash2 size={20} color="#EF4444" />
             </TouchableOpacity>
@@ -161,19 +166,19 @@ export default function SavedSearchScreen() {
             <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
               {emptyMessage}
             </Text>
-            {!savedSearch && (
+            {screenText.empty.actions && (
               <View style={styles.emptyActions}>
                 <TouchableOpacity
                   onPress={() => router.replace('/inbox')}
                   style={[styles.actionButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
                 >
-                  <Text style={[styles.actionText, { color: tc.text }]}>{t('nav.inbox')}</Text>
+                  <Text style={[styles.actionText, { color: tc.text }]}>{screenText.empty.actions.inboxLabel}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={goBackOrInbox}
                   style={[styles.actionButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
                 >
-                  <Text style={[styles.actionText, { color: tc.text }]}>{t('common.back')}</Text>
+                  <Text style={[styles.actionText, { color: tc.text }]}>{screenText.empty.actions.backLabel}</Text>
                 </TouchableOpacity>
               </View>
             )}

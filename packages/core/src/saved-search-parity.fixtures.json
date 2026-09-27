@@ -1,0 +1,1535 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_SAVED_SEARCH=1 MINDWTR_CAPTURE_SAVED_SEARCH_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run 'app/(drawer)/saved-search/saved-search.parity.test.tsx'",
+  "capturedAt": "0b859c1b729cd204bd3a8282be56d9ea300cd06d",
+  "sourceState": "Every file under apps/ and packages/ was at HEAD except the Mind Sweep, saved search and Focus checklist parity harnesses and their fixtures.",
+  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). The rows (SwipeableTaskItem) and the editor (TaskEditModal) are stand-ins that record their props; a row action calls the screen's row actions directly. The area filter is the real useMobileAreaFilter over the real store. Strings are English."
+ },
+ "timeZone": "UTC",
+ "now": "2026-09-27T14:00:00.000Z",
+ "tasks": [
+  {
+   "id": "t-milk",
+   "title": "Buy milk",
+   "status": "next",
+   "contexts": [
+    "@errand"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-10T12:00:00.000Z",
+   "updatedAt": "2026-09-10T12:00:00.000Z",
+   "areaId": "a-home",
+   "dueDate": "2026-09-27"
+  },
+  {
+   "id": "t-bank",
+   "title": "Deposit check",
+   "status": "next",
+   "contexts": [
+    "@errand"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-12T12:00:00.000Z",
+   "updatedAt": "2026-09-12T12:00:00.000Z",
+   "projectId": "p-launch",
+   "priority": "high"
+  },
+  {
+   "id": "t-seeds",
+   "title": "Buy seeds",
+   "status": "someday",
+   "contexts": [
+    "@errand"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-11T12:00:00.000Z",
+   "updatedAt": "2026-09-11T12:00:00.000Z",
+   "projectId": "p-garden"
+  },
+  {
+   "id": "t-print",
+   "title": "Print flyers",
+   "status": "inbox",
+   "contexts": [
+    "@errand",
+    "@office"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-09T12:00:00.000Z",
+   "updatedAt": "2026-09-09T12:00:00.000Z"
+  },
+  {
+   "id": "t-done",
+   "title": "Return library books",
+   "status": "done",
+   "contexts": [
+    "@errand"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-08T12:00:00.000Z",
+   "updatedAt": "2026-09-08T12:00:00.000Z",
+   "completedAt": "2026-09-20T12:00:00.000Z"
+  },
+  {
+   "id": "t-archived",
+   "title": "Old errand",
+   "status": "archived",
+   "contexts": [
+    "@errand"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-05T12:00:00.000Z",
+   "updatedAt": "2026-09-05T12:00:00.000Z",
+   "completedAt": "2026-09-06T12:00:00.000Z"
+  },
+  {
+   "id": "t-deleted",
+   "title": "Deleted errand",
+   "status": "next",
+   "contexts": [
+    "@errand"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-05T12:00:00.000Z",
+   "updatedAt": "2026-09-05T12:00:00.000Z",
+   "deletedAt": "2026-09-06T12:00:00.000Z"
+  },
+  {
+   "id": "t-report",
+   "title": "Write report",
+   "status": "next",
+   "contexts": [],
+   "tags": [
+    "#milk-run"
+   ],
+   "createdAt": "2026-09-13T12:00:00.000Z",
+   "updatedAt": "2026-09-13T12:00:00.000Z",
+   "projectId": "p-launch"
+  },
+  {
+   "id": "t-call",
+   "title": "Call plumber",
+   "status": "waiting",
+   "contexts": [
+    "@phone"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-14T12:00:00.000Z",
+   "updatedAt": "2026-09-14T12:00:00.000Z",
+   "areaId": "a-home"
+  }
+ ],
+ "projects": [
+  {
+   "id": "p-launch",
+   "title": "Launch",
+   "status": "active",
+   "color": "#94a3b8",
+   "order": 0,
+   "tagIds": [],
+   "areaId": "a-work",
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z"
+  },
+  {
+   "id": "p-garden",
+   "title": "Garden",
+   "status": "active",
+   "color": "#94a3b8",
+   "order": 1,
+   "tagIds": [],
+   "areaId": "a-home",
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z"
+  }
+ ],
+ "areas": [
+  {
+   "id": "a-work",
+   "name": "Work",
+   "color": "#2563eb",
+   "order": 0,
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z"
+  },
+  {
+   "id": "a-home",
+   "name": "Home",
+   "color": "#16a34a",
+   "order": 1,
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-01T12:00:00.000Z"
+  }
+ ],
+ "settings": {
+  "base": {
+   "savedSearches": [
+    {
+     "id": "ss-errands",
+     "name": "Errands",
+     "query": "@errand"
+    },
+    {
+     "id": "ss-milk",
+     "name": "Milk run",
+     "query": "milk"
+    },
+    {
+     "id": "ss-next-work",
+     "name": "Next at Launch",
+     "query": "status:next project:Launch"
+    },
+    {
+     "id": "ss-none",
+     "name": "Nothing",
+     "query": "zzz-nothing"
+    },
+    {
+     "id": "ss-blank",
+     "name": "Blank",
+     "query": ""
+    }
+   ]
+  },
+  "titleSort": {
+   "savedSearches": [
+    {
+     "id": "ss-errands",
+     "name": "Errands",
+     "query": "@errand"
+    },
+    {
+     "id": "ss-milk",
+     "name": "Milk run",
+     "query": "milk"
+    },
+    {
+     "id": "ss-next-work",
+     "name": "Next at Launch",
+     "query": "status:next project:Launch"
+    },
+    {
+     "id": "ss-none",
+     "name": "Nothing",
+     "query": "zzz-nothing"
+    },
+    {
+     "id": "ss-blank",
+     "name": "Blank",
+     "query": ""
+    }
+   ],
+   "taskSortBy": "title"
+  },
+  "homeArea": {
+   "savedSearches": [
+    {
+     "id": "ss-errands",
+     "name": "Errands",
+     "query": "@errand"
+    },
+    {
+     "id": "ss-milk",
+     "name": "Milk run",
+     "query": "milk"
+    },
+    {
+     "id": "ss-next-work",
+     "name": "Next at Launch",
+     "query": "status:next project:Launch"
+    },
+    {
+     "id": "ss-none",
+     "name": "Nothing",
+     "query": "zzz-nothing"
+    },
+    {
+     "id": "ss-blank",
+     "name": "Blank",
+     "query": ""
+    }
+   ],
+   "filters": {
+    "areaIds": [
+     "a-home"
+    ]
+   }
+  },
+  "noSaved": {}
+ },
+ "scenarios": [
+  {
+   "name": "results for a saved search",
+   "settings": "base",
+   "id": "ss-errands",
+   "actions": []
+  },
+  {
+   "name": "sorted by title",
+   "settings": "titleSort",
+   "id": "ss-errands",
+   "actions": []
+  },
+  {
+   "name": "the Home area only",
+   "settings": "homeArea",
+   "id": "ss-errands",
+   "actions": []
+  },
+  {
+   "name": "a text query",
+   "settings": "base",
+   "id": "ss-milk",
+   "actions": []
+  },
+  {
+   "name": "a status and project query",
+   "settings": "base",
+   "id": "ss-next-work",
+   "actions": []
+  },
+  {
+   "name": "a query with no results",
+   "settings": "base",
+   "id": "ss-none",
+   "actions": []
+  },
+  {
+   "name": "a blank query",
+   "settings": "base",
+   "id": "ss-blank",
+   "actions": []
+  },
+  {
+   "name": "an unknown saved search",
+   "settings": "base",
+   "id": "ss-gone",
+   "actions": [
+    [
+     "emptyAction",
+     "Inbox"
+    ],
+    [
+     "emptyAction",
+     "Back"
+    ]
+   ]
+  },
+  {
+   "name": "an unknown saved search that can go back",
+   "settings": "base",
+   "id": "ss-gone",
+   "canGoBack": true,
+   "actions": [
+    [
+     "emptyAction",
+     "Back"
+    ]
+   ]
+  },
+  {
+   "name": "no saved searches at all",
+   "settings": "noSaved",
+   "id": "ss-errands",
+   "actions": []
+  },
+  {
+   "name": "delete: cancel, then delete",
+   "settings": "base",
+   "id": "ss-milk",
+   "actions": [
+    [
+     "delete"
+    ],
+    [
+     "alert",
+     "Cancel"
+    ],
+    [
+     "delete"
+    ],
+    [
+     "alert",
+     "Delete"
+    ]
+   ]
+  },
+  {
+   "name": "delete and go back",
+   "settings": "base",
+   "id": "ss-none",
+   "canGoBack": true,
+   "actions": [
+    [
+     "delete"
+    ],
+    [
+     "alert",
+     "Delete"
+    ]
+   ]
+  },
+  {
+   "name": "row actions and the editor",
+   "settings": "base",
+   "id": "ss-errands",
+   "actions": [
+    [
+     "row",
+     "t-bank",
+     "edit"
+    ],
+    [
+     "editorSave",
+     "t-bank",
+     {
+      "title": "Deposit the check"
+     }
+    ],
+    [
+     "row",
+     "t-milk",
+     "edit"
+    ],
+    [
+     "editorClose"
+    ],
+    [
+     "row",
+     "t-print",
+     "edit"
+    ],
+    [
+     "editorFocus",
+     "t-print"
+    ],
+    [
+     "row",
+     "t-milk",
+     "status",
+     "done"
+    ],
+    [
+     "row",
+     "t-seeds",
+     "remove"
+    ]
+   ]
+  }
+ ],
+ "observations": {
+  "results for a saved search": [
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "sorted by title": [
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk",
+     "t-seeds",
+     "t-bank",
+     "t-print"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "the Home area only": [
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "a text query": [
+   {
+    "header": [
+     "Milk run",
+     "milk"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "a status and project query": [
+   {
+    "header": [
+     "Next at Launch",
+     "status:next project:Launch"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-bank",
+     "t-report"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "a query with no results": [
+   {
+    "header": [
+     "Nothing",
+     "zzz-nothing"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found"
+     ],
+     "actions": []
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "a blank query": [
+   {
+    "header": [
+     "Blank"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found"
+     ],
+     "actions": []
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "an unknown saved search": [
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "writes": []
+   },
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "writes": []
+   }
+  ],
+  "an unknown saved search that can go back": [
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "writes": []
+   }
+  ],
+  "no saved searches at all": [
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No saved searches yet.",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   }
+  ],
+  "delete: cancel, then delete": [
+   {
+    "header": [
+     "Milk run",
+     "milk"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Milk run",
+     "milk"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [
+     [
+      "Delete",
+      "Delete this saved search?",
+      [
+       [
+        "Cancel",
+        "cancel"
+       ],
+       [
+        "Delete",
+        "destructive"
+       ]
+      ]
+     ]
+    ],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Milk run",
+     "milk"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Milk run",
+     "milk"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [
+     [
+      "Delete",
+      "Delete this saved search?",
+      [
+       [
+        "Cancel",
+        "cancel"
+       ],
+       [
+        "Delete",
+        "destructive"
+       ]
+      ]
+     ]
+    ],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "writes": [
+     [
+      "updateSettings",
+      {
+       "savedSearches": [
+        {
+         "id": "ss-errands",
+         "name": "Errands",
+         "query": "@errand"
+        },
+        {
+         "id": "ss-next-work",
+         "name": "Next at Launch",
+         "query": "status:next project:Launch"
+        },
+        {
+         "id": "ss-none",
+         "name": "Nothing",
+         "query": "zzz-nothing"
+        },
+        {
+         "id": "ss-blank",
+         "name": "Blank",
+         "query": ""
+        }
+       ]
+      }
+     ]
+    ]
+   }
+  ],
+  "delete and go back": [
+   {
+    "header": [
+     "Nothing",
+     "zzz-nothing"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found"
+     ],
+     "actions": []
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Nothing",
+     "zzz-nothing"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found"
+     ],
+     "actions": []
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [
+     [
+      "Delete",
+      "Delete this saved search?",
+      [
+       [
+        "Cancel",
+        "cancel"
+       ],
+       [
+        "Delete",
+        "destructive"
+       ]
+      ]
+     ]
+    ],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Saved Searches"
+    ],
+    "deleteButton": [],
+    "rows": [],
+    "rowProps": null,
+    "empty": {
+     "texts": [
+      "No results found",
+      "Inbox",
+      "Back"
+     ],
+     "actions": [
+      "Inbox",
+      "Back"
+     ]
+    },
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [
+     [
+      "back"
+     ]
+    ],
+    "writes": [
+     [
+      "updateSettings",
+      {
+       "savedSearches": [
+        {
+         "id": "ss-errands",
+         "name": "Errands",
+         "query": "@errand"
+        },
+        {
+         "id": "ss-milk",
+         "name": "Milk run",
+         "query": "milk"
+        },
+        {
+         "id": "ss-next-work",
+         "name": "Next at Launch",
+         "query": "status:next project:Launch"
+        },
+        {
+         "id": "ss-blank",
+         "name": "Blank",
+         "query": ""
+        }
+       ]
+      }
+     ]
+    ]
+   }
+  ],
+  "row actions and the editor": [
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     true,
+     "t-bank",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     null,
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": [
+     [
+      "updateTask",
+      "t-bank",
+      {
+       "title": "Deposit the check"
+      }
+     ]
+    ]
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     true,
+     "t-milk",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     "t-milk",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     true,
+     "t-print",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": []
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-milk",
+     "t-bank",
+     "t-seeds"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     "t-print",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [
+     [
+      "push",
+      "/check-focus?id=t-print"
+     ]
+    ],
+    "writes": []
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-bank",
+     "t-seeds",
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     "t-print",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": [
+     [
+      "updateTask",
+      "t-milk",
+      {
+       "status": "done"
+      }
+     ]
+    ]
+   },
+   {
+    "header": [
+     "Errands",
+     "@errand"
+    ],
+    "deleteButton": [
+     [
+      "Delete",
+      1
+     ]
+    ],
+    "rows": [
+     "t-print",
+     "t-bank",
+     "t-milk"
+    ],
+    "rowProps": {
+     "sameActions": true,
+     "handlers": [
+      "function",
+      "function",
+      "function"
+     ]
+    },
+    "empty": null,
+    "editor": [
+     false,
+     "t-print",
+     "view"
+    ],
+    "alerts": [],
+    "navigation": [],
+    "writes": [
+     [
+      "deleteTask",
+      "t-seeds"
+     ]
+    ]
+   }
+  ]
+ }
+}

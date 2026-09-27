@@ -180,6 +180,32 @@ describe('native host contract: Focus controls', () => {
             .toEqual(['@office', '@phone']);
     });
 
+    it('narrows the tokens and projects pickers by their search box, as the Inbox tokens do', async () => {
+        freezeClock();
+        const host = await openHost('base');
+        const view = value(host.getFocus({ limit: 1, controls: DEFAULT_FOCUS_CONTROL_STATE }));
+        const list = (name: 'tokens' | 'projects' | 'savedFilters', query?: string) => host.getFocusControlsList({
+            controls: view.controls.state, list: name, offset: 0, limit: 100, revision: view.revision, ...(query === undefined ? {} : { query }),
+        });
+        // The Inbox tokens' rule: a trimmed, case-insensitive substring.
+        const matches = (label: string, query: string) => label.toLowerCase().includes(query.trim().toLowerCase());
+        const tokens = view.controls.filterSheet.tokens.items.map((token) => token.value);
+        const needle = tokens[0].slice(1, 3).toUpperCase();
+        const found = value(list('tokens', ` ${needle} `));
+        expect(found.items.map((item) => (item as { value: string }).value)).toEqual(tokens.filter((token) => matches(token, needle)));
+        expect(found.total).toBe(found.items.length);
+        const projects = view.controls.filterSheet.projects.items;
+        const projectNeedle = projects[0].title.slice(0, 2).toLowerCase();
+        expect(value(list('projects', projectNeedle)).items).toEqual(projects.filter((project) => matches(project.title, projectNeedle)));
+        expect(value(list('tokens', 'zzz-none'))).toMatchObject({ total: 0, items: [] });
+        // An empty search is every option.
+        expect(value(list('tokens', '  ')).items).toEqual(value(list('tokens')).items);
+        const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
+        expect(list('savedFilters', 'x')).toMatchObject(invalid);
+        expect(list('tokens', 7 as never)).toMatchObject(invalid);
+        expect(list('tokens', 'x'.repeat(501))).toMatchObject(invalid);
+    });
+
     it('refuses what Focus cannot hold or offer', async () => {
         freezeClock();
         const host = await openHost('prioritiesOff');

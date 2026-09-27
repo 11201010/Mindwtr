@@ -27,24 +27,36 @@ async function saveDestination<T>(create: () => Promise<T | null>): Promise<T | 
     return created;
 }
 
+/**
+ * The store call behind createBulkOrganizeProject, without its durable save: the
+ * trimmed title, the placeholder color and the chosen area. addProject returns the
+ * same-titled project already in that area instead of adding another.
+ */
+export function addBulkOrganizeProject(title: string, areaId?: string): Promise<Project | null> {
+    return useTaskStore.getState().addProject(
+        title.trim(),
+        DEFAULT_PROJECT_COLOR,
+        areaId ? { areaId } : undefined,
+    );
+}
+
+/** The store call behind createBulkOrganizeArea, without its durable save: an area of that name is reused. */
+export async function addBulkOrganizeArea(name: string): Promise<Area | null> {
+    const state = useTaskStore.getState();
+    const choice = resolveCaptureAreaQuery(state.areas, name);
+    if (choice.kind === 'select') return choice.area;
+    if (choice.kind === 'empty') return null;
+    return state.addArea(choice.areaToCreate.name, { color: choice.areaToCreate.color });
+}
+
 export async function createBulkOrganizeProject(title: string, areaId?: string): Promise<Project | null> {
     const trimmed = title.trim();
     if (!trimmed) return null;
-    return saveDestination(() => useTaskStore.getState().addProject(
-        trimmed,
-        DEFAULT_PROJECT_COLOR,
-        areaId ? { areaId } : undefined,
-    ));
+    return saveDestination(() => addBulkOrganizeProject(trimmed, areaId));
 }
 
 export async function createBulkOrganizeArea(name: string): Promise<Area | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
-    return saveDestination(async () => {
-        const state = useTaskStore.getState();
-        const choice = resolveCaptureAreaQuery(state.areas, trimmed);
-        if (choice.kind === 'select') return choice.area;
-        if (choice.kind === 'empty') return null;
-        return state.addArea(choice.areaToCreate.name, { color: choice.areaToCreate.color });
-    });
+    return saveDestination(() => addBulkOrganizeArea(trimmed));
 }
