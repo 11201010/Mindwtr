@@ -40,3 +40,46 @@ test('global search highlights separate Chinese title substrings', async ({ page
     await expect(row.locator('.text-primary.font-semibold')).toHaveText(['资料', '会议']);
     await page.screenshot({ path: testInfo.outputPath('global-search-chinese-highlights.png') });
 });
+
+// #1262: 25 unsectioned tasks, 11 sections, 105 total / 93 active.
+for (const opener of ['project', 'task', 'inbox']) test(`search keeps an unsectioned project result in view (${opener})`, async ({ page }) => {
+    await dismissOnboarding(page);
+    await page.addInitScript(() => {
+        const stamp = '2026-09-01T12:00:00.000Z';
+        const base = { createdAt: stamp, updatedAt: stamp };
+        localStorage.setItem('mindwtr-data', JSON.stringify({
+            tasks: Array.from({ length: 105 }, (_, i) => ({
+                ...base, id: `task-${i}`, title: i === 24 ? 'Needle unsectioned' : `Task ${i}`,
+                status: i >= 93 ? 'done' : 'next', projectId: 'project',
+                ...(i >= 25 ? { sectionId: `section-${(i - 25) % 11}` } : {}),
+                tags: [], contexts: [], order: i,
+            })),
+            projects: [{ ...base, id: 'project', title: 'Large project', status: 'active', color: '#94a3b8' }],
+            sections: Array.from({ length: 11 }, (_, i) => ({ ...base, id: `section-${i}`, projectId: 'project', title: `Section ${i}`, order: i })),
+            areas: [], people: [], settings: { gtd: { autoArchiveDays: 0 } },
+        }));
+    });
+    await page.goto('/?view=projects');
+    await page.locator('[data-project-navigation-item][data-project-id="project"]').click();
+    await expect(page.locator('[data-project-scroll-container]')).toBeVisible();
+    if (opener === 'inbox') {
+        await page.goto('/?view=inbox');
+        await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
+    }
+    if (opener === 'task') await page.locator('[data-task-id="task-0"] [data-task-view-toggle]').focus();
+    await page.keyboard.press('Control+k');
+    const dialog = page.getByRole('dialog');
+    await dialog.locator('input').first().fill('Needle unsectioned');
+    if (opener === 'inbox') {
+        await expect(dialog.locator('[data-search-index]')).toHaveCount(1);
+        await page.keyboard.press('Enter');
+    } else {
+        await dialog.locator('[data-search-index]').click();
+    }
+    await expect(dialog).toHaveCount(0);
+    const task = page.locator('[data-task-id="task-24"]');
+    await expect(task).toBeInViewport();
+    // Include the end of the smooth scroll and highlight removal.
+    await page.waitForTimeout(4500);
+    await expect(task).toBeInViewport();
+});

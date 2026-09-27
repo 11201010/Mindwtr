@@ -213,6 +213,8 @@ function ProjectTaskRows({ tasks, renderTask, scrollRef, pinnedTaskId }: Project
     });
 
     const rowVirtualizer = useVirtualizer({
+        // Inactive section virtualizers must not reset the shared scroller on mount (#1262).
+        enabled: shouldVirtualize,
         count: shouldVirtualize ? tasks.length : 0,
         getScrollElement: () => scrollRef.current,
         estimateSize: () => PROJECT_TASK_ROW_ESTIMATE,
