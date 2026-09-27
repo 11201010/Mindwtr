@@ -108,8 +108,9 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     return result.value;
 };
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
-    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder';
-type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
+    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder'
+    | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete';
+type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const meta = {
@@ -191,8 +192,8 @@ type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; 
 /**
  * The Menu tab's reads (native-host-contract-menu-views.ts; History's tabs, Archive, Contexts and Trash from the list views
  * block; the Review screen and the Weekly and Daily Review from native-host-contract-review-views.ts; the Calendar and the
- * Board from native-host-contract-calendar.ts and native-host-contract-board.ts): each passes Kotlin's input to the contract
- * method unchanged. The composer's open and edit write nothing, so they are reads.
+ * Board from native-host-contract-calendar.ts and native-host-contract-board.ts; Settings from native-host-contract-settings.ts):
+ * each passes Kotlin's input to the contract method unchanged. The composer's open and edit write nothing, so they are reads.
  */
 const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
@@ -222,6 +223,14 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     archiveTokens: (input) => contract.getArchiveFilterTokens(input),
     bulk: (input) => contract.getBulkActions(input),
     focusList: (input) => contract.getFocusControlsList(input),
+    // Settings (native-host-contract-settings.ts): the menu, General, GTD, Manage and its lists, and Manage's Someday sections.
+    settingsMenu: (input) => contract.getSettingsMenu(input),
+    generalSettings: (input) => contract.getGeneralSettings(input),
+    gtdSettings: (input) => contract.getGtdSettings(input),
+    manageSettings: (input) => contract.getManageSettings(input),
+    manageList: (input) => contract.getManageSettingsList(input),
+    manageCheck: (input) => contract.checkManageEditor(input),
+    somedaySections: (input) => contract.getSomedaySections(input),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -249,6 +258,14 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     focusCriterion: (input) => contract.removeFocusFilterCriterion(input),
     focusDelete: (input) => contract.deleteFocusFilter(input),
     focusReorder: (input) => contract.reorderFocus(input),
+    // Settings: General's and GTD's controls, Manage's editor Save and Delete, and Manage's Someday section rename, reorder and delete.
+    generalSetting: (input) => contract.setGeneralSetting(input),
+    gtdSetting: (input) => contract.setGtdSetting(input),
+    manageEditor: (input) => contract.saveManageEditor(input),
+    manageDelete: (input) => contract.deleteManageItem(input),
+    somedayRename: (input) => contract.renameSomedaySection(input),
+    somedayReorder: (input) => contract.reorderSomedaySections(input),
+    somedayDelete: (input) => contract.deleteSomedaySection(input),
 };
 
 globalThis.MindwtrHost = {
@@ -315,16 +332,23 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getTaskEditorModel({ id }));
         });
     },
-    /** The checklist and live attachment titles of core's getTask, which the editor shows read-only. */
-    editorContent(id: string): string {
+    /** `json` is `{ id, draft?, checklist?, offset?, limit?, revision? }`, passed to core's getTaskView unchanged: RN's View tab. */
+    taskView(json: string): string {
         return submit(async () => {
             requireSaved();
-            const task = unwrap(contract.getTask({ id }));
-            return {
-                checklist: (task.checklist ?? []).map(({ title, isCompleted }) => ({ title, isCompleted: isCompleted === true })),
-                attachments: (task.attachments ?? []).filter((attachment) => !attachment.deletedAt).map((attachment) => attachment.title),
-            };
+            return unwrap(contract.getTaskView(JSON.parse(json)));
         });
+    },
+    /** `json` is `{ id, draft, checklist, edit? }`, passed to core's editTaskChecklist unchanged: one checklist edit on the draft. Nothing is written. */
+    editChecklist(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.editTaskChecklist(JSON.parse(json)));
+        });
+    },
+    /** `json` is `{ id, requestId }`: RN's Reset checklist, written at once. A repeat of the request after a failed save only finishes it. */
+    resetChecklist(json: string): string {
+        return submit(async () => taskResult('resetChecklist', await contract.resetTaskChecklist(JSON.parse(json))));
     },
     /** `json` is `{ id, draft, edit? }`, passed to core's editTaskDraft unchanged: the model for the edited draft. */
     editDraft(json: string): string {
@@ -391,7 +415,7 @@ globalThis.MindwtrHost = {
     update(json: string): string {
         return submit(async () => taskResult('update', await contract.updateTask(JSON.parse(json))));
     },
-    /** `json` is the editor's `{ id, base, patch }` of draft fields, passed to core's saveTaskDraft unchanged. */
+    /** `json` is the editor's `{ id, base, patch, checklist? }` (draft fields and the edited checklist), passed to core's saveTaskDraft unchanged. */
     saveDraft(json: string): string {
         return submit(async () => taskResult('saveTaskDraft', await contract.saveTaskDraft(JSON.parse(json))));
     },

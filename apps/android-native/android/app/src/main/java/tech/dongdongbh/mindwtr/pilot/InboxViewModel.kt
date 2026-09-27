@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
+import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots
@@ -59,7 +60,7 @@ data class FailedAction(
 /** Core refused the update or the editor save before writing anything, so there is no retry to hold. */
 internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
 /** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
-private val REFUSABLE = setOf("update", "saveDraft", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS
+private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -114,6 +115,11 @@ const val RELATIVE_AMOUNT = "relativeAmount"
 const val WAITING_PROMPT = "waitingFor"
 /** RN's editor shows 4 matches (MAX_VISIBLE_SUGGESTIONS). */
 private const val SUGGESTIONS = 4
+/** Core windows the View tab's checklist by NATIVE_HOST_MAX_WINDOW. */
+private const val VIEW_WINDOW = 100
+
+/** The editor after one control's edit: core's model with its checklist field, the checklist a checklist edit made, and the item to focus. */
+private class Stepped(val view: EditorModel, val checklist: String?, val focusId: String?)
 
 /** How deep each list is shown, so a refresh reads it again as deep; [controls] is Focus's control state (FocusModel) as JSON. */
 private data class Depth(val focus: Map<String, Int>, val project: String?, val projectItems: Int, val controls: String)
@@ -176,6 +182,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var suggestions by mutableStateOf<Map<String, EditorSuggestions>>(emptyMap()); private set
     /** The last save was refused as stale; the screen offers Reload. */
     var conflict by mutableStateOf(false); private set
+    /** Core's View tab (getTaskView) for the open editor's draft and checklist, its checklist read [taskViewDepth] items deep. */
+    var taskView by mutableStateOf<JSONObject?>(null); private set
+    private var taskViewDepth = VIEW_WINDOW
+    /** The new empty checklist item core named to focus (editTaskChecklist's focusId). */
+    var checklistFocus by mutableStateOf<String?>(null); private set
     /** The open global search (RN's global-search route): its query, filters, and save dialog; small, so it rides the Bundle. */
     var search by mutableStateOf(saved.get<String>("search")?.let(SearchState::restore)); private set
     /** Core's searchTasks reply for the query on screen. */
@@ -209,6 +220,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         Thread({
             try {
                 val runtime = ProcessCoreHost.get(getApplication())
+                // The language and theme chosen in this app's Settings (RN's device keys) win over the ones found at boot.
+                applyDeviceChoices(runtime, prefs)
                 ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing, storedCapture) }; return@Thread }
                 val lists = try {
                     read(runtime, at)
@@ -278,7 +291,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
         val key = editorKey ?: UUID.randomUUID().toString().also(::keepKey)
         val state = value.state()
-        pendingSave?.let { state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch))) }
+        pendingSave?.let { state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch)).put("checklist", it.title)) }
         drafts.write(key, state)
     }
 
@@ -291,7 +304,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         keepEditor(restored)
         if (pending == null || failedAction != null) return
         fun map(name: String) = pending.getJSONObject(name).let { m -> m.keys().asSequence().associateWith<String, String?> { m.getString(it) } }
-        val action = FailedAction("saveDraft", restored.id, base = map("base"), patch = map("patch"))
+        val action = FailedAction("saveDraft", restored.id, pending.optString("checklist"), base = map("base"), patch = map("patch"))
         failedAction = action
         sendDraft(action)
     }
@@ -338,18 +351,55 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** A request left on disk by a dead process is owed before anything else runs (MenuModel.start), as a restored capture is. */
     internal fun owe(action: FailedAction) { failedAction = action }
 
-    /** Core's editor model and the task's read-only checklist and attachments, read together. */
-    private fun readEditor(runtime: CoreHost, id: String) = EditorModel.of(runtime.taskEditorModel(id), runtime.editorContent(id))
-
-    fun openEditor(id: String) = perform { runtime ->
-        val opened = readEditor(runtime, id)
-        ui { suggestions = emptyMap(); keepEditor(TaskEditor.open(opened)) }
+    /**
+     * Core's editor model, its View tab for the saved task (the saved checklist and the attachment titles), and the Form tab's
+     * checklist field, read together.
+     */
+    private fun readEditor(runtime: CoreHost, id: String): EditorModel {
+        val model = runtime.taskEditorModel(id)
+        val view = runtime.taskView(JSONObject().put("id", id).toString())
+        val field = if (view.getBoolean("readOnly")) null
+            else runtime.editTaskChecklist(id, model.getJSONObject("draft").toString(), view.getJSONArray("checklistBase").toString(), "").getJSONObject("field")
+        return EditorModel.of(model, view, field)
     }
 
-    /** The editor [current] with core's model for its whole draft (editTaskDraft without an edit). */
+    /**
+     * RN's resolveTaskOpenTab: a read-only task shows only the View tab; an explicit edit ([routeTab] "task": RN's Save & edit, the
+     * Board's Duplicate, the Weekly Review's Add task and edit) opens the Form tab; else the device's "Open tasks in" choice, else
+     * the list's own tab: the Inbox list's is the Form tab (RN's defaultEditTab="task"), every other screen's, a search result's and a
+     * link's ([routeTab] "view") the View tab.
+     */
+    fun openEditor(id: String, routeTab: String? = null) {
+        val mode = prefs.getString(TASK_OPEN_MODE_KEY, null)
+        val automatic = routeTab ?: if (menu.screen == null && screen == Screen.Inbox && search == null) "task" else "view"
+        perform { runtime ->
+            val opened = readEditor(runtime, id)
+            val tab = if (opened.readOnly) "view" else if (routeTab == "task") "task" else if (mode == "preview") "view" else if (mode == "edit") "task" else automatic
+            ui { suggestions = emptyMap(); taskView = null; taskViewDepth = VIEW_WINDOW; keepEditor(TaskEditor.open(opened, tab)) }
+        }
+    }
+
+    /** The editor [current] with core's model for its whole draft (editTaskDraft without an edit) and its checklist field. */
     private fun withView(runtime: CoreHost, current: TaskEditor): TaskEditor {
         val sent = current.fullDraft()
-        return current.viewed(current.model.edited(runtime.editTaskDraft(current.id, draftJson(sent), "")), sent)
+        return current.viewed(stepEditor(runtime, current, sent, "").view, sent)
+    }
+
+    /**
+     * The editor after one control's edit ([edit], "" for none): a checklist edit (`{ checklist }`, core's TaskChecklistEdit) goes
+     * to core's editTaskChecklist first (a list task's status follows its items), then core's editTaskDraft gives the model for
+     * the draft, and editTaskChecklist without an edit the Form tab's checklist field for it. Nothing is written.
+     */
+    private fun stepEditor(engine: CoreHost, current: TaskEditor, sent: Map<String, String>, edit: String): Stepped {
+        val queued = edit.takeIf { it.isNotEmpty() }?.let { JSONObject(it).optJSONObject("checklist") }
+        // An item's edit resolved against the checklist as it is now; an edit whose item is gone is dropped (only the view is read).
+        val listEdit = queued?.let { currentChecklistEdit(it, current.checklistNow) }
+        val checked = listEdit?.let { engine.editTaskChecklist(current.id, draftJson(sent), current.checklistNow, it.toString()) }
+        val list = checked?.getJSONArray("checklist")?.toString() ?: current.checklistNow
+        // The layout follows the editor's checklist, unsaved items included (a hidden Checklist field shows while it has items, as RN's).
+        val model = engine.editTaskDraft(current.id, checked?.getJSONObject("draft")?.toString() ?: draftJson(sent), if (queued == null) edit else "", list)
+        val field = if (current.readOnly) null else engine.editTaskChecklist(current.id, model.getJSONObject("draft").toString(), list, "").getJSONObject("field")
+        return Stepped(current.model.edited(model, field), checked?.let { list }, checked?.menuText("focusId"))
     }
 
     /** Control edits are with core or wait for it (the editor's persisted queue); Save waits for them, and Close counts them as unsaved. */
@@ -384,7 +434,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             .put("unit", unit ?: latest?.getString("unit") ?: shown.getString("unit")), if (amount != null) RELATIVE_AMOUNT else null)
     }
 
-    private fun pumpEdits() {
+    fun pumpEdits() {
         val current = editor
         val runtime = host
         if (inFlight != null || current == null || runtime == null || busy || failedAction != null) return
@@ -392,15 +442,16 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val ticket = current.session to next.seq
         inFlight = ticket
         val sent = current.fullDraft()
-        background(listOf(Part.Editor), { engine -> runCatching { current.model.edited(engine.editTaskDraft(current.id, draftJson(sent), next.edit)) } }) { reply, _ ->
+        background(listOf(Part.Editor), { engine -> runCatching { stepEditor(engine, current, sent, next.edit) } }) { reply, _ ->
             if (inFlight == ticket) inFlight = null
             // A reply counts only for its own session and the edit it answers, still first in the queue: a closed,
             // discarded, or reloaded editor, or an older edit, never changes the draft on screen.
             val now = editor?.takeIf { it.session == ticket.first && it.pending.firstOrNull()?.seq == ticket.second }
                 ?: return@background pumpEdits()
-            reply.onSuccess { view ->
-                // The new draft and the removal of the edit it answers go to the draft file in one write.
-                keepEditor(now.viewed(view, sent).copy(pending = now.pending.drop(1)))
+            reply.onSuccess { step ->
+                // The new draft (and checklist) and the removal of the edit it answers go to the draft file in one write.
+                keepEditor(now.viewed(step.view, sent).copy(pending = now.pending.drop(1), checklist = step.checklist ?: now.checklist))
+                step.focusId?.let { checklistFocus = it }
                 if (error != null && error == editRefusal) error = null
                 editRefusal = null
             }.onFailure { failure ->
@@ -414,6 +465,89 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             }
             pumpEdits()
             if (!editsPending && saveQueued && editor?.waiting == false) { saveQueued = false; saveEditor() }
+        }
+    }
+
+    /**
+     * A queued checklist edit as core takes it: the item it names by its stable id (`itemId`) at the item's position in [checklist]
+     * as it is now, after every edit sent before it; a move keeps its direction (`step`). Null (the edit is dropped) when the item
+     * is gone or the move would leave the list. A position is never taken from the screen: an edit still with core can shift it.
+     */
+    private fun currentChecklistEdit(edit: JSONObject, checklist: String): JSONObject? {
+        if (!edit.has("itemId")) return edit
+        val items = JSONArray(checklist)
+        val index = (0 until items.length()).firstOrNull { items.getJSONObject(it).getString("id") == edit.getString("itemId") } ?: return null
+        val sent = JSONObject(edit.toString()).apply { remove("itemId"); remove("step") }
+        if (edit.getString("kind") != "move") return sent.put("index", index)
+        val to = index + edit.getInt("step")
+        return if (to in 0 until items.length()) sent.put("from", index).put("to", to) else null
+    }
+
+    /**
+     * One of RN's checklist edits (core's TaskChecklistEdit: a tick, a rename, Return, remove, add, a move, the View tab's add input),
+     * queued with the draft's own edits, so each applies to the checklist and status the one before returned. An item's edit names
+     * the item by its id (see [currentChecklistEdit]). [field] names the typed item it came from. Nothing is written until Save.
+     */
+    fun editChecklist(edit: JSONObject, field: String? = null) = editDraft(JSONObject().put("checklist", edit), field)
+
+    /** The focus request for a new checklist item is used. */
+    fun checklistFocused() { checklistFocus = null }
+
+    /** RN's editor tabs: the Form tab ("task") or the View tab, kept with the draft. */
+    fun editorTab(tab: String) { editor?.let { keepEditor(it.copy(tab = tab)) } }
+
+    /**
+     * Core's View tab (getTaskView) for the editor's draft and checklist, as the RN editor shows its merged task, in the background;
+     * [more] reads one more window of its checklist. A read-only task shows the saved task.
+     */
+    fun readTaskView(more: Boolean = false) {
+        val current = editor ?: return
+        if (more) taskViewDepth += VIEW_WINDOW
+        val depth = taskViewDepth
+        val input = JSONObject().put("id", current.id)
+        if (!current.readOnly) input.put("draft", JSONObject(draftJson(current.fullDraft()))).put("checklist", JSONArray(current.checklistNow))
+        background(listOf(Part.TaskView), { runtime -> readView(runtime, input, depth) }) { view, mine ->
+            if (fresh(mine, Part.TaskView) && editor?.id == current.id) taskView = view
+        }
+    }
+
+    /**
+     * The View tab from its first window, its checklist items read to [depth] under that window's revision. A view that changed
+     * between windows (a new minute, a new draft) keeps what it read; the next read starts from the first window again.
+     */
+    private fun readView(runtime: CoreHost, input: JSONObject, depth: Int): JSONObject {
+        val first = runtime.taskView(JSONObject(input.toString()).put("offset", 0).put("limit", VIEW_WINDOW).toString())
+        val checklist = { view: JSONObject -> view.menuObjects("rows").firstOrNull { it.getString("type") == "checklist" } }
+        val items = checklist(first)?.getJSONArray("items") ?: return first
+        try {
+            while (items.length() < minOf(depth, checklist(first)!!.getInt("total"))) {
+                val next = checklist(runtime.taskView(JSONObject(input.toString()).put("offset", items.length()).put("limit", VIEW_WINDOW)
+                    .put("revision", first.getString("revision")).toString()))?.getJSONArray("items")
+                if (next == null || next.length() == 0) break // core sent no items: stop, never spin
+                for (index in 0 until next.length()) items.put(next.get(index))
+            }
+        } catch (failure: Exception) {
+            if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+        }
+        return first
+    }
+
+    /**
+     * RN's Reset checklist: core's resetTaskChecklist writes at once (a new request UUID; its retry only finishes a failed save);
+     * then the reset task becomes the editor's base and the editor's own items reopen (core's uncheckAll), as RN does.
+     */
+    fun resetChecklist() {
+        val current = editor ?: return
+        sendReset(FailedAction("resetChecklist", current.id, UUID.randomUUID().toString()))
+    }
+
+    private fun sendReset(action: FailedAction) = perform(action) { runtime ->
+        runtime.resetTaskChecklist(action.id, action.title)
+        acknowledged(action)
+        val fresh = readEditor(runtime, action.id)
+        ui {
+            editor?.takeIf { it.id == action.id }?.let { keepEditor(it.reloaded(fresh, keepChecklist = true)) }
+            editChecklist(JSONObject().put("kind", "uncheckAll"))
         }
     }
 
@@ -449,6 +583,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun closeEditor() {
         inFlight = null
         editRefusal = null
+        taskView = null
+        checklistFocus = null
         keepEditor(null)
         suggestions = emptyMap()
         saveQueued = false
@@ -474,7 +610,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         editFields(mapOf("status" to "waiting", "assignedTo" to person))
     }
 
-    fun saveDraftAction(current: TaskEditor) = FailedAction("saveDraft", current.id, base = current.base, patch = current.patch)
+    /** A save's exact request: the changed draft fields with their loaded values, and the checklist's base and value ("" when unchanged). */
+    fun saveDraftAction(current: TaskEditor) = FailedAction("saveDraft", current.id, current.checklistSave, base = current.base, patch = current.patch)
 
     /**
      * Sends only the changed draft fields with their loaded values, to core's saveTaskDraft. Nothing
@@ -484,7 +621,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun saveEditor() {
         val current = editor ?: return
         if (current.waiting || editsPending) { saveQueued = true; return }
-        if (current.patch.isEmpty()) { closeEditor(); return }
+        if (current.patch.isEmpty() && !current.checklistChanged) { closeEditor(); return }
         if (busy || (failedAction != null && failedAction != saveDraftAction(current))) return
         val action = saveDraftAction(current)
         pendingSave = action
@@ -495,7 +632,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** Core's saveTaskDraft with [action]'s exact request. A refusal wrote nothing, so no request is owed. */
     private fun sendDraft(action: FailedAction) = perform(action) { runtime ->
         try {
-            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch))
+            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch), action.title)
         } catch (failure: Exception) {
             // A restored request locked the draft before it was sent; a refusal unlocks it, as nothing is owed.
             if (UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }) ui { pendingSave = null; failedAction = null; editor?.let(::keepEditor) }
@@ -665,6 +802,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "complete" -> complete(action.id)
             "update" -> sendUpdate(action)
             "saveDraft" -> sendDraft(action)
+            "resetChecklist" -> sendReset(action)
             "taskFocus" -> setTaskFocus(action.id, action.patch["focused"] == "true")
             "projectFocus" -> setProjectFocus(action.id, action.patch["focused"] == "true")
             "createProject" -> createProject(action.base["areaId"].orEmpty())
@@ -856,7 +994,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 "open" -> {
                     keepCapture(null)
                     val id = reply.getString("taskId")
-                    main.post { openEditor(id) }
+                    main.post { openEditor(id, "task") }
                 }
                 "addAnother" -> {
                     val reset = reply.getJSONObject("reset")
@@ -1383,7 +1521,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private val shownAt = HashMap<Part, Long>()
 
     /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices. */
-    internal enum class Part { Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog }
+    internal enum class Part { Focus, Projects, Project, Areas, Editor, TaskView, Search, Menu, More, MenuDialog }
 
     /** A new read's number, for a read the Menu tab starts through perform (as the lists' More takes one). */
     internal fun issue(): Long = ++issued

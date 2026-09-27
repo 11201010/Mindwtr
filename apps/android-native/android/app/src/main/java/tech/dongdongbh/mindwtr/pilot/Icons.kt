@@ -27,9 +27,9 @@ import androidx.compose.ui.unit.dp
  */
 
 /** Lucide's `<circle>` as a path. */
-private fun circle(cx: Int, cy: Int, r: Int) = "M${cx - r} ${cy}a$r $r 0 1 0 ${2 * r} 0a$r $r 0 1 0 ${-2 * r} 0"
+internal fun circle(cx: Int, cy: Int, r: Int) = "M${cx - r} ${cy}a$r $r 0 1 0 ${2 * r} 0a$r $r 0 1 0 ${-2 * r} 0"
 
-private fun lucide(name: String, vararg paths: String, stroke: Float = 2f, filled: Boolean = false): ImageVector =
+internal fun lucide(name: String, vararg paths: String, stroke: Float = 2f, filled: Boolean = false): ImageVector =
     ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
         for (path in paths) {
             addPath(
@@ -191,7 +191,7 @@ object Lucide {
  * so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-private fun ionicon(name: String, path: String): ImageVector =
+internal fun ionicon(name: String, path: String): ImageVector =
     ImageVector.Builder(name, 24.dp, 24.dp, 512f, 512f).apply { addPath(addPathNodes(path), fill = SolidColor(ICON_MASK)) }.build()
 
 object Ionicons {

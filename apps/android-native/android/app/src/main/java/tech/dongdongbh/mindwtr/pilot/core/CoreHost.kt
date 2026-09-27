@@ -185,23 +185,41 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 
     /**
-     * Core's editTaskDraft: the editor model for [draftJson] after one control's edit ([editJson], "" for none).
+     * Core's editTaskDraft: the editor model for [draftJson] after one control's edit ([editJson], "" for none), laid out for the
+     * editor's own checklist ([checklistJson], unsaved items included; "" for the saved one).
      * It writes nothing; the editor saves the returned draft with saveTaskDraft.
      */
-    fun editTaskDraft(id: String, draftJson: String, editJson: String): JSONObject =
+    fun editTaskDraft(id: String, draftJson: String, editJson: String, checklistJson: String = ""): JSONObject =
         callAsync("editDraft", JSONObject().put("id", id).put("draft", JSONObject(draftJson))
+            .apply { if (editJson.isNotEmpty()) put("edit", JSONObject(editJson)) }
+            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONArray(checklistJson)) }.toString())
+
+    /** Core's getTaskView with [json] (`{ id, draft?, checklist?, offset?, limit?, revision? }`) unchanged: RN's View tab. */
+    fun taskView(json: String): JSONObject = callAsync("taskView", json)
+
+    /**
+     * Core's editTaskChecklist: one checklist edit ([editJson], "" for none: the Form tab's field as it is) on [draftJson] and
+     * [checklistJson]. It writes nothing; saveTaskDraft saves the checklist with the draft.
+     */
+    fun editTaskChecklist(id: String, draftJson: String, checklistJson: String, editJson: String): JSONObject =
+        callAsync("editChecklist", JSONObject().put("id", id).put("draft", JSONObject(draftJson)).put("checklist", JSONArray(checklistJson))
             .apply { if (editJson.isNotEmpty()) put("edit", JSONObject(editJson)) }.toString())
 
-    /** The task's checklist and attachment titles from core's getTask, shown read-only in the editor. */
-    fun editorContent(id: String): JSONObject = callAsync("editorContent", id)
+    /** Core's resetTaskChecklist, written at once; [requestId] makes a retry only finish a failed save. */
+    fun resetTaskChecklist(id: String, requestId: String): JSONObject =
+        callAsync("resetChecklist", JSONObject().put("id", id).put("requestId", requestId).toString())
 
     /** Core's getTaskEditorSuggestions for a context, tag, or person input's whole text as typed. */
     fun editorSuggestions(id: String, field: String, query: String, limit: Int): JSONObject =
         callAsync("editorSuggestions", id, field, query, limit)
 
-    /** [baseJson] and [patchJson] go to core's saveTaskDraft unchanged; core decides everything. */
-    fun saveTaskDraft(id: String, baseJson: String, patchJson: String): JSONObject =
-        callAsync("saveDraft", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
+    /**
+     * [baseJson], [patchJson] and [checklistJson] (`{ base, value }`, "" when the checklist is unchanged) go to core's saveTaskDraft
+     * unchanged, in one write; core decides everything.
+     */
+    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String): JSONObject =
+        callAsync("saveDraft", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
+            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }.toString())
 
     /** The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged. */
     fun updateTask(id: String, baseJson: String, patchJson: String): JSONObject =
@@ -240,8 +258,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     }
 
     private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
-        val command = method in setOf("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "taskFocus", "projectFocus", "createProject", "setAreaFilter",
-            "saveSearch", "inboxCommit", "inboxSkip", "menuCommand")
+        val command = method in setOf("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "resetChecklist", "taskFocus", "projectFocus",
+            "createProject", "setAreaFilter", "saveSearch", "inboxCommit", "inboxSkip", "menuCommand")
         if (command) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             debugDelay("delay_before_ms")

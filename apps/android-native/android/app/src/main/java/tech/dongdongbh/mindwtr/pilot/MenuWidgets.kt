@@ -123,7 +123,9 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
             MenuScreen.Daily -> DailyReview(model)
             else -> Column(Modifier.fillMaxSize()) {
                 val list = menu.list
-                if (screen != MenuScreen.Projects || openProjectId == null) MenuHeader(t(screen.title), enabled = failedAction == null, onBack = menu::closeScreen) {
+                // Settings titles RN's top bar with its open screen's title (core's words).
+                val title = if (screen == MenuScreen.Settings) menu.settings.title else t(screen.title)
+                if (screen != MenuScreen.Projects || openProjectId == null) MenuHeader(title, enabled = failedAction == null, onBack = menu::closeScreen) {
                     // Reference and Done put their list menu in the header (RN's overflowPlacement "navigation").
                     if (list == "reference" || list == "done") OverflowTrigger(plain = true) { menu.openDialog("overflow") }
                 }
@@ -147,6 +149,7 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
                         "review" -> ReviewList(model)
                         "calendar" -> CalendarList(model)
                         "board" -> BoardList(model)
+                        "settings" -> SettingsList(model)
                     }
                     if (screen == MenuScreen.Projects) ProjectsTab(model, Modifier.fillMaxSize())
                     ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))

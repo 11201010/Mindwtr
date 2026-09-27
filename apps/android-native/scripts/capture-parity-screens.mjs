@@ -174,8 +174,8 @@ const shootEditor = async (name, rn) => {
     await tap(inList(nodes, EDITOR_TASK));
     const formShown = (current) => current.some((node) => node.class === 'android.widget.EditText' && node.text === EDITOR_TASK)
         && (rn || inEditor(current));
-    // RN may open on its View tab (Edit | Preview tabs, no title field); its Edit tab is the Form tab this app builds.
-    const rnTabs = (current) => rn && hasText(current, 'Preview') && Boolean(button(current, 'Edit'));
+    // Both open on the View tab here (Edit | Preview tabs, no title field; RN's resolveTaskOpenTab for Focus); the Edit tab is the Form tab.
+    const rnTabs = (current) => (rn ? hasText(current, 'Preview') : Boolean(withDescription(current, 'Preview'))) && Boolean(button(current, 'Edit'));
     const open = await waitFor(`the editor for ${EDITOR_TASK}`, (current) => formShown(current) || rnTabs(current), 30_000);
     if (!formShown(open)) await tap(button(open, 'Edit'));
     await shoot(name, formShown);

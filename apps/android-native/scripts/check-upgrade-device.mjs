@@ -169,8 +169,9 @@ const snapshot = () => new Map(runAs(
     const [hash, path] = line.split(/\s+/, 2);
     return [path, hash];
 }));
-// androidx profileinstaller rewrites this marker after every package update; it holds no user data.
-const PLATFORM_STATE = new Set(['files/profileInstalled']);
+// androidx profileinstaller rewrites this marker after every package update, and Samsung's One UI framework counts launches
+// in the IDS file (`IDSCount`, S23 2026-09-27); neither holds user data.
+const PLATFORM_STATE = new Set(['files/profileInstalled', 'shared_prefs/android.app.ActivityThread.IDS.xml']);
 const differences = (before, after, { changedOk = () => false, newOk = () => false } = {}) => [
     ...[...before].filter(([path, hash]) => !PLATFORM_STATE.has(path) && !changedOk(path) && after.get(path) !== hash)
         .map(([path]) => `${after.has(path) ? 'changed' : 'removed'} ${path}`),

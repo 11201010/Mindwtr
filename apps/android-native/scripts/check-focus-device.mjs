@@ -244,7 +244,8 @@ const openFromInbox = async (title) => {
         const row = inList(nodes, title);
         if (row) {
             await tap(row);
-            return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
+            // The Inbox list opens the Form tab (RN's defaultEditTab="task").
+            return waitFor(`the editor for ${title} on its Form tab`, (current) => editorShows(current, title) && isOn(withDescription(current, 'Edit')));
         }
         const more = button(nodes, 'More');
         if (!more) break;
@@ -253,11 +254,14 @@ const openFromInbox = async (title) => {
     }
     return fail(`row ${title} is not in the Inbox`);
 };
+/** RN opens a task from Focus on its View tab (resolveTaskOpenTab); the Edit tab then shows the Form this check edits. */
 const openFromFocus = async (title) => {
     const nodes = await findRow(title);
     await tap(inList(nodes, title));
-    return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
+    const open = await waitFor(`the editor for ${title} on its View tab`, (current) => inEditor(current) && isOn(withDescription(current, 'Preview')) && hasTitle(current, title));
+    return tapExpecting(withDescription(open, 'Edit'), (current) => editorShows(current, title) && isOn(withDescription(current, 'Edit')), 'the Form tab');
 };
+const hasTitle = (nodes, title) => nodes.some((node) => node.text === title && node.class !== 'android.widget.EditText');
 
 // ---- database ----
 const sqlite = (sql) => {

@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -52,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -63,6 +66,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
+import android.content.Intent
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -95,9 +100,9 @@ data class EditorChoice(val id: String, val title: String)
 data class SomedayChoice(val id: String, val title: String, val selected: Boolean, val viewSectionIds: String)
 
 /**
- * Core's getTaskEditorModel reply and the task's read-only checklist and attachments (core's getTask),
- * parsed once. [source] is kept verbatim for saved instance state. Kotlin reads it as sent: the
- * fields to show, their order and sections, and every list a control picks from.
+ * Core's getTaskEditorModel reply, core's getTaskView reply when the editor opened (the saved checklist and the attachment
+ * titles), and core's checklist field for the draft (editTaskChecklist), parsed once. Kotlin reads it as sent: the fields to
+ * show, their order and sections, and every list a control picks from.
  */
 class EditorModel(val source: String) {
     private val root = JSONObject(source)
@@ -129,18 +134,29 @@ class EditorModel(val source: String) {
         SomedayChoice(it.getString("id"), it.getString("title"), it.getBoolean("selected"), draftLiteral(it.opt("viewSectionIds")))
     }
     private val content = root.getJSONObject("content")
-    /** The checklist and attachment titles, shown read-only (their editors are not built). */
-    val checklist = content.getJSONArray("checklist").objects().map { it.getString("title") to it.getBoolean("isCompleted") }
-    val attachments = content.getJSONArray("attachments").texts()
+    /** The saved checklist (getTaskView's checklistBase), as JSON text: where the editor's checklist starts, and the save's base. */
+    val checklistBase: String = content.getJSONArray("checklistBase").toString()
+    /** The attachment titles, shown read-only in the Form tab (its attachment editor is not built). */
+    val attachments = content.getJSONArray("rows").objects().firstOrNull { it.getString("type") == "attachments" }
+        ?.getJSONArray("items")?.objects().orEmpty().map { it.getString("title") }
+    /** Core's Form tab checklist field for the draft and the editor's checklist; null for a read-only task. */
+    val checklistField: JSONObject? = root.optJSONObject("field")
     /** Core's schedule and estimate controls for this draft: date labels, picker starts, quick dates, recurrence, reminders. */
     val fields = EditorFields(reply.getJSONObject("fields"))
 
-    /** Core's model for an edited draft (editTaskDraft), with this task's checklist and attachments. */
-    fun edited(model: JSONObject) = of(model, content)
+    /** Core's model for an edited draft (editTaskDraft) and its checklist field, with this task's saved checklist and attachments. */
+    fun edited(model: JSONObject, field: JSONObject?) = of(model, content, field)
 
     companion object {
-        fun of(model: JSONObject, content: JSONObject) = EditorModel(JSONObject().put("model", model).put("content", content).toString())
+        fun of(model: JSONObject, content: JSONObject, field: JSONObject? = null) =
+            EditorModel(JSONObject().put("model", model).put("content", content).apply { field?.let { put("field", it) } }.toString())
     }
+}
+
+/** Two checklists as core sends them hold the same items (id, title, done) in the same order. */
+fun sameChecklist(left: String, right: String): Boolean {
+    val items = { text: String -> JSONArray(text).objects().map { Triple(it.getString("id"), it.getString("title"), it.getBoolean("isCompleted")) } }
+    return items(left) == items(right)
 }
 
 /** One control's edit for core's editTaskDraft, numbered in its session; [field] names a typed input it came from. */
@@ -195,7 +211,9 @@ data class EditorSuggestions(val text: String, val draftValue: String, val match
  * with, so a draft restored onto a fresh model still saves against its own base and core
  * refuses a field another writer changed. [inputs] holds the typed text of the token and
  * person fields, and [resolved] the text whose draft value core already gave, so Save waits
- * for core. [waitingFor] is RN's "waiting for" prompt text while that prompt is open.
+ * for core. [waitingFor] is RN's "waiting for" prompt text while that prompt is open. [checklist] is RN's draft
+ * checklist (core's items as JSON text, edited only through core's editTaskChecklist), saved with the draft in one write,
+ * and [tab] is RN's open tab, the Form ("task") or the View tab.
  */
 data class TaskEditor(
     val model: EditorModel, val edited: Map<String, String>, val inputs: Map<String, String> = emptyMap(),
@@ -207,6 +225,8 @@ data class TaskEditor(
     /** Control edits not yet answered by core, in order; kept in the draft file before they are sent. */
     val pending: List<PendingEdit> = emptyList(),
     val nextSeq: Long = 1,
+    val checklist: String? = null,
+    val tab: String = "task",
 ) {
     val id get() = model.id
     val readOnly get() = model.readOnly
@@ -230,8 +250,13 @@ data class TaskEditor(
     /** Core has not yet said which draft value the typed text stands for. */
     fun unresolved(field: String) = input(field) != (resolved[field] ?: (draftValue(loaded(field)) as? String ?: ""))
     val waiting get() = TYPED_FIELDS.any(::unresolved)
-    /** Unsaved: a changed field, or typed text core has not turned into a draft value yet (RN asks before closing either). */
-    val dirty get() = patch.isNotEmpty() || waiting
+    /** The checklist as edited, or the saved one. */
+    val checklistNow get() = checklist ?: model.checklistBase
+    val checklistChanged get() = checklist != null && !sameChecklist(checklist, model.checklistBase)
+    /** saveTaskDraft's `checklist`: the base the editor loaded and the edited items; "" while unchanged. */
+    val checklistSave: String get() = if (!checklistChanged) "" else JSONObject().put("base", JSONArray(model.checklistBase)).put("value", JSONArray(checklistNow)).toString()
+    /** Unsaved: a changed field or checklist, or typed text core has not turned into a draft value yet (RN asks before closing any). */
+    val dirty get() = patch.isNotEmpty() || waiting || checklistChanged
 
     fun typed(field: String, text: String) = copy(inputs = inputs + (field to text))
 
@@ -272,20 +297,23 @@ data class TaskEditor(
      * value still equals its old base; where another writer changed a field, the draft takes the
      * stored value, and its typed text starts again from it.
      */
-    fun reloaded(fresh: EditorModel): TaskEditor {
+    fun reloaded(fresh: EditorModel, keepChecklist: Boolean = false): TaskEditor {
         val kept = { field: String -> (fresh.draft[field] ?: "null") == base(field) }
+        // The edited checklist stays while the saved one is unchanged, or after Reset checklist (its items are then reopened).
+        val list = checklist?.takeIf { keepChecklist || sameChecklist(fresh.checklistBase, model.checklistBase) }
         // A new session: a reply to an edit sent before the reload never enters the reloaded editor.
-        return TaskEditor(fresh, edited.filterKeys(kept), inputs.filterKeys(kept), resolved.filterKeys(kept), waitingFor = waitingFor, view = view)
+        return TaskEditor(fresh, edited.filterKeys(kept), inputs.filterKeys(kept), resolved.filterKeys(kept), waitingFor = waitingFor, view = view,
+            checklist = list, tab = tab)
     }
 
     /** The draft's own state, without the model: the edits with their bases, the typed text, and the open prompt. */
     fun state(): JSONObject = JSONObject().put("id", id).put("edited", JSONObject(edited)).put("bases", JSONObject(edited.keys.associateWith { base(it) }))
         .put("inputs", JSONObject(inputs)).put("resolved", JSONObject(resolved)).put("waitingFor", waitingFor ?: JSONObject.NULL)
         .put("edits", JSONArray().apply { pending.forEach { put(JSONObject().put("seq", it.seq).put("edit", it.edit).put("field", it.field ?: JSONObject.NULL)) } })
-        .put("nextSeq", nextSeq)
+        .put("nextSeq", nextSeq).put("checklist", checklist ?: JSONObject.NULL).put("tab", tab)
 
     companion object {
-        fun open(model: EditorModel) = TaskEditor(model, emptyMap())
+        fun open(model: EditorModel, tab: String) = TaskEditor(model, emptyMap(), tab = tab)
 
         /** A saved draft onto a model read again from core: the edits keep their own bases, so core still checks them. */
         fun restore(model: EditorModel, saved: JSONObject): TaskEditor {
@@ -296,7 +324,8 @@ data class TaskEditor(
             }
             return TaskEditor(model, map("edited"), map("inputs"), map("resolved"), map("bases"),
                 if (saved.isNull("waitingFor")) null else saved.getString("waitingFor"),
-                pending = edits, nextSeq = saved.optLong("nextSeq", (edits.maxOfOrNull { it.seq } ?: 0) + 1))
+                pending = edits, nextSeq = saved.optLong("nextSeq", (edits.maxOfOrNull { it.seq } ?: 0) + 1),
+                checklist = if (saved.isNull("checklist")) null else saved.optString("checklist").ifEmpty { null }, tab = saved.optString("tab", "task"))
         }
     }
 }
@@ -336,6 +365,9 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     val failed = failedAction != null
     val locked = busy || failed || editor.readOnly
     var confirmLeave by rememberSaveable { mutableStateOf(false) }
+    // A task, project, context or tag link tapped while the draft has unsaved edits: followed after Discard.
+    var linkAfterLeave by rememberSaveable { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     var help by rememberSaveable { mutableStateOf(false) }
     var picker by rememberSaveable { mutableStateOf<String?>(null) }
     // The open date picker (a date field, or "until" for the recurrence end) and the open time picker (a date field).
@@ -344,6 +376,23 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
     // As in the mobile editor: with nothing to save it closes; unsaved edits (typed text core has not resolved included) ask first.
     val leave = { if (editor.readOnly || (!editor.dirty && !editsPending)) closeEditor() else confirmLeave = true }
     BackHandler(enabled = !failed) { if (!busy) leave() }
+    // Where a link goes: a web, mail or phone link opens outside the app; a project, a task, a context or a tag closes this editor
+    // first (asking, as Close does, when there are unsaved edits), as RN's links navigate away from it.
+    val go = { target: JSONObject ->
+        when (target.getString("kind")) {
+            "project" -> { closeEditor(); menu.openProjects(target.getString("id")) }
+            "task" -> { closeEditor(); openEditor(target.getString("id"), "view") }
+            else -> { closeEditor(); menu.openContexts(target.getString("value")) }
+        }
+    }
+    val follow = { target: JSONObject ->
+        if (target.getString("kind") == "external") runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, target.getString("href").toUri())) }
+        else if (editor.readOnly || (!editor.dirty && !editsPending)) go(target)
+        else { linkAfterLeave = target.toString(); confirmLeave = true }
+        Unit
+    }
+    // Edits queued while a command ran (Reset checklist's reopened items) go to core once it ends.
+    LaunchedEffect(busy, failed) { if (!busy && !failed) pumpEdits() }
     // Core's quick chips and the draft value of restored typed text, whenever no action runs.
     LaunchedEffect(editor.id, busy, failed) { if (!busy && !failed) TYPED_FIELDS.forEach { suggest(it, editor.input(it)) } }
 
@@ -377,7 +426,10 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
                 else OwedRetry(model)
             }
         }
-        Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(20.dp)) {
+        // RN's tabs under the header; a read-only task shows only its View tab.
+        if (!editor.readOnly) EditorTabs(model, editor)
+        if (editor.readOnly || editor.tab == "view") TaskViewTab(model, editor, locked, { picker = "status" }, follow, Modifier.weight(1f))
+        else Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(20.dp)) {
             if (editor.readOnly) Text(t("projects.archivedReadOnlyHint"), style = rnText(14, 400), color = c.secondaryText,
                 modifier = Modifier.padding(bottom = 16.dp))
             FormGroup {
@@ -415,6 +467,13 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
             for (project in editor.view.projects) PickerItem(project.title, "destination-project") { editFields(mapOf("projectId" to project.id)); picker = null }
             PickerHeading(t("taskEdit.areaLabel"))
             for (area in editor.view.areas) PickerItem(area.title) { editFields(mapOf("projectId" to "", "areaId" to area.id)); picker = null }
+        }
+        // The View tab's status badge: RN's status menu, with the Form tab's rule (Waiting asks who or what first).
+        "status" -> PickerDialog(t("taskEdit.statusLabel"), { picker = null }) {
+            for (status in editor.view.statuses) PickerItem(t("status.$status")) {
+                picker = null
+                if (status == "waiting" && editor.text("status") != status) openWaitingPrompt() else editFields(mapOf("status" to status))
+            }
         }
         "section" -> PickerDialog(t("taskEdit.sectionLabel"), { picker = null }) {
             PickerItem(t("taskEdit.noSectionOption")) { editFields(mapOf("sectionId" to "")); picker = null }
@@ -462,11 +521,16 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
             onDismissRequest = { confirmLeave = false },
             title = { Text(t("taskEdit.discardChanges")) },
             text = { Text(t("taskEdit.discardChangesDesc")) },
-            confirmButton = { TextButton(onClick = { confirmLeave = false; saveEditor() }) { Text(t("common.save")) } },
+            confirmButton = { TextButton(onClick = { confirmLeave = false; linkAfterLeave = null; saveEditor() }) { Text(t("common.save")) } },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { confirmLeave = false }) { Text(t("common.cancel")) }
-                    TextButton(onClick = { confirmLeave = false; closeEditor() }) { Text(t("common.discard")) }
+                    TextButton(onClick = { confirmLeave = false; linkAfterLeave = null }) { Text(t("common.cancel")) }
+                    TextButton(onClick = {
+                        confirmLeave = false
+                        val link = linkAfterLeave?.let(::JSONObject)
+                        linkAfterLeave = null
+                        if (link != null) go(link) else closeEditor()
+                    }) { Text(t("common.discard")) }
                 }
             },
         )
@@ -666,14 +730,9 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
             FieldHeading(Lucide.Repeat, t("taskEdit.recurrenceLabel"))
             RecurrenceField(model, editor, locked, pickDate)
         }
-        // Read-only: the checklist and attachment editors are not built.
-        "checklist" -> if (editor.view.checklist.isNotEmpty()) FormGroup {
-            FieldHeading(Lucide.ListChecks, t(if (editor.text("status") == "reference") "taskEdit.tab.list" else "taskEdit.checklist"))
-            for ((title, done) in editor.view.checklist) Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (done) Lucide.Check else Lucide.Circle, null, tint = if (done) c.tint else c.secondaryText, modifier = Modifier.size(16.dp))
-                Text(title, style = rnText(15, 400), color = if (done) c.secondaryText else c.text, modifier = Modifier.padding(start = 8.dp))
-            }
-        }
+        // RN's checklist field on core's field model (TaskView.kt); every change is core's checklist edit on the draft.
+        "checklist" -> ChecklistField(model, editor, locked)
+        // Read-only: the attachment editor is not built.
         "attachments" -> if (editor.view.attachments.isNotEmpty()) FormGroup {
             FieldHeading(Lucide.Paperclip, t("attachments.title"))
             for (title in editor.view.attachments) Text(title, style = rnText(14, 500), color = c.text, modifier = Modifier.padding(vertical = 4.dp))
@@ -1052,7 +1111,10 @@ private fun SuggestionMenu(matches: List<Pair<String, String>>, enabled: Boolean
     val theme = LocalTheme.current
     val c = theme.colors
     val shape = RoundedCornerShape(10.dp)
-    Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)) {
+    // The menu opens under the field, where the keyboard can cover it: scroll it into view (run 48's tap hit the keyboard).
+    val reveal = remember { BringIntoViewRequester() }
+    LaunchedEffect(matches) { reveal.bringIntoView() }
+    Column(Modifier.bringIntoViewRequester(reveal).padding(top = 8.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)) {
         matches.forEachIndexed { index, (value, text) ->
             Text(value, style = rnText(14, 500), color = c.text, modifier = Modifier.fillMaxWidth()
                 .clickable(enabled = enabled, role = Role.Button) { choose(text) }

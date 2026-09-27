@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { box, button, chipOn, check, connect, draftText, evidenced, fail, field, inEditor, inboxCount, Stopped, tagged, withDescription } from './device.mjs';
+import { box, button, chipOn, check, connect, draftText, evidenced, fail, field, inEditor, inboxCount, isOn, Stopped, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -184,9 +184,10 @@ try {
     nodes = await tapExpecting(withDescription(nodes, en['status.inbox']), (current) => !withDescription(current, en['status.inbox']), 'the active chip cleared');
     check(results(nodes).includes(title), '(b) clearing the chip keeps the result');
 
-    // (c) The result opens the editor; Close returns to the search with its query.
+    // (c) The result opens the editor on its View tab (RN's global search: defaultTab "view"); Close returns to the search with its query.
     const row = nodes.find((node) => (node['resource-id'] ?? '').endsWith('search-result') && (node['content-desc'] || node.text) === title);
-    nodes = await tapExpecting(row, (current) => inEditor(current) && field(current)?.text === title, 'the editor for the result');
+    nodes = await tapExpecting(row, (current) => inEditor(current) && isOn(withDescription(current, en['markdown.preview']))
+        && current.some((node) => node.text === title && node.class !== 'android.widget.EditText'), 'the editor for the result on its View tab');
     nodes = await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close in the editor'), (current) => inSearch(current) && field(current)?.text === title, 'the search again');
     check(results(nodes).includes(title), '(c) Close returns to the search with its query');
 

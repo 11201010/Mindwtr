@@ -7,6 +7,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -79,8 +82,11 @@ object ThemeChoice {
     class Reply(val mode: String, val preset: String, val material: Boolean, val scheme: String?,
                 val statusLight: Map<String, StatusColors>, val statusDark: Map<String, StatusColors>, val priority: Map<String, Color>)
 
-    /** Set once at boot, before any list shows. Null until then, or when the read failed: RN's default look. */
-    @Volatile var current: Reply? = null
+    /**
+     * Set at boot, before any list shows, and again after Settings › General changes the theme (so the app redraws). Null until
+     * then, or when the read failed: RN's default look.
+     */
+    var current by mutableStateOf<Reply?>(null)
         private set
 
     private fun palette(json: JSONObject): Map<String, StatusColors> = json.keys().asSequence().associateWith { status ->
@@ -193,6 +199,12 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     /** RN's calendar washes, `toRgba(color, isDark ? dark : light)`. */
     fun wash(color: Color, light: Float, dark: Float): Color = color.copy(alpha = if (isDark) dark else light)
     /** RN's calendar now line (#EF4444), a task block's title (#FFFFFF; its time at 90%), and the composer's backdrop, rgba(0,0,0,0.55). */
+    /** RN's Settings: the Manage editor's and Add buttons (manageEditorButtonPrimary), the color swatches' borders, the pickers' overlay, Auto-archive's check. */
+    val manageButton = rgb("#2563EB")
+    val swatchBorder = rgba(15, 23, 42, 0.15f)
+    val swatchSelected = rgb("#0F172A")
+    val settingsScrim = rgba(0, 0, 0, 0.4f)
+    val settingsCheck = rgb("#3B82F6")
     val nowLine = rgb("#EF4444")
     val blockText = rgb("#FFFFFF")
     val composerScrim = rgba(0, 0, 0, 0.55f)

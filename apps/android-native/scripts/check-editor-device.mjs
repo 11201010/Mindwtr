@@ -120,7 +120,8 @@ const openEditor = async (title) => {
         const row = inList(nodes, title);
         if (row) {
             await tap(row);
-            return waitFor(`the editor for ${title}`, (current) => editorShows(current, title));
+            // The Inbox list opens the Form tab (RN's defaultEditTab="task", resolveTaskOpenTab).
+            return waitFor(`the editor for ${title} on its Form tab`, (current) => editorShows(current, title) && isOn(withDescription(current, 'Edit')));
         }
         const more = button(nodes, 'More');
         if (!more) break;
@@ -184,7 +185,13 @@ const typeInto = async (node, digits, expected, erase = 0) => {
     await waitFor(`the text ${expected}`, (nodes) => nodes.some((current) => current.class === 'android.widget.EditText' && current.text === expected), 10_000);
 };
 const appendTitle = async (digits, expected) => typeInto(field(await screen()), digits, expected);
-const contextsField = (nodes) => tagged(nodes, 'editor-contexts') ?? fail('no Contexts field on screen');
+/** The Contexts field, scrolled into view first: on the S23 the open keyboard leaves it below the form's visible part. */
+const contextsField = async () => {
+    await hideKeyboard();
+    let nodes = await screen();
+    for (let step = 0; step < 4 && !tagged(nodes, 'editor-contexts'); step += 1) nodes = await device.swipe(nodes, 'down');
+    return tagged(nodes, 'editor-contexts') ?? fail('no Contexts field on screen');
+};
 /** An editor save took effect: the editor closed, or it is busy (Save disabled), or core's failure shows. */
 const saveTookEffect = (nodes) => !inEditor(nodes) || button(nodes, 'Save')?.enabled === 'false'
     || nodes.some((node) => /^[A-Z_]+: /.test(node.text ?? '') || node.text?.includes('Injected commit failure'));
@@ -264,7 +271,7 @@ try {
     const { value: due } = await pickDueDay(15);
     const titleA = `${captured}7`;
     await appendTitle('7', titleA);
-    await typeInto(contextsField(await screen()), context, context);
+    await typeInto(await contextsField(), context, context);
     await save();
     await inbox();
     row = expectStored({
@@ -379,12 +386,12 @@ try {
     const stored0 = `@${context}`;
     const prefix = `78${run.slice(0, 6)}`;
     // Erase the stored context and type its first digits: core suggests the stored one.
-    await typeInto(contextsField(await screen()), prefix, prefix, stored0.length + 2);
+    await typeInto(await contextsField(), prefix, prefix, stored0.length + 2);
     nodes = await waitFor(`core's suggestion ${stored0}`, (current) => current.some((node) => node.text === stored0 && node.class !== 'android.widget.EditText'));
     await tapExpecting(nodes.find((node) => node.text === stored0 && node.class !== 'android.widget.EditText'),
         (current) => tagged(current, 'editor-contexts')?.text === `${stored0}, `, 'the suggestion in the field');
     const second = `79${run.slice(0, 6)}`;
-    await typeInto(contextsField(await screen()), second, `${stored0}, ${second}`);
+    await typeInto(await contextsField(), second, `${stored0}, ${second}`);
     await hideKeyboard();
     const { label: dateOnlyLabel } = await pickDueDay(16);
     // RN's clock opens the time picker on core's time for the field: midnight for a date-only due.

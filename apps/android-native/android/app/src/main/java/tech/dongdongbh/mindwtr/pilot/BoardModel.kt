@@ -177,10 +177,10 @@ class BoardModel(private val menu: MenuModel, private val saved: SavedStateHandl
     fun duplicate(taskId: String) = menu.create(FailedAction("boardCreate", UUID.randomUUID().toString(),
         JSONObject().put("action", JSONObject().put("type", "duplicateTask").put("taskId", taskId)).toString()))
 
-    /** Core's answer: a Duplicate opens its copy in the editor, as RN's openTaskScreen does. */
+    /** Core's answer: a Duplicate opens its copy on the editor's Form tab, as RN's openTaskScreen(…, 'task') does. */
     fun done(action: FailedAction, reply: JSONObject) {
         if (action.kind != "boardCreate") return
         // After the command ends: openEditor is a read that refuses while the command still runs (the copy never opened, run 44).
-        reply.optJSONObject("open")?.let { open -> menu.whenIdle { shell.openEditor(open.getString("taskId")) } }
+        reply.optJSONObject("open")?.let { open -> menu.whenIdle { shell.openEditor(open.getString("taskId"), "task") } }
     }
 }

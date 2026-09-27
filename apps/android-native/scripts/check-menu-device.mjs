@@ -203,7 +203,7 @@ try {
     nodes = await device.settle(nodes);
     for (const tile of seen.tiles) {
         const node = withDescription(nodes, tile.label) ?? fail(`the sheet lacks core's "${tile.label}"`);
-        const built = ['waiting', 'someday', 'reference', 'history', 'projects', 'review', 'contexts', 'trash', 'calendar', 'board'].includes(tile.id);
+        const built = ['waiting', 'someday', 'reference', 'history', 'projects', 'review', 'contexts', 'trash', 'calendar', 'board', 'settings'].includes(tile.id);
         if (!built && node.enabled !== 'false') fail(`"${tile.label}" is not built here but is enabled`);
     }
     check(true, `(a) the sheet shows core's ${seen.tiles.length} destinations; the unbuilt ones are disabled`);

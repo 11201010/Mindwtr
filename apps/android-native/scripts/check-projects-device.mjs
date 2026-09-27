@@ -41,7 +41,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, owedRetry, readRetry, Stopped, tab, tabSelected, taskRows } from './device.mjs';
+import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, isOn, owedRetry, readRetry, Stopped, tab, tabSelected, taskRows, withDescription } from './device.mjs';
 
 const cliArgs = process.argv.slice(2);
 const prune = cliArgs.includes('--prune-old');
@@ -205,7 +205,8 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 await flushPendingSave();
                 pruned += 1;
             }
-            for (const area of live(store()._allAreas).filter((item) => /^Area[0-9]{12}$/.test(item.name) && !item.name.endsWith(names.run))) {
+            // The settings and editor check's per-run area (69, a 12-digit run id, 2) goes too.
+            for (const area of live(store()._allAreas).filter((item) => (/^Area[0-9]{12}$/.test(item.name) && !item.name.endsWith(names.run)) || /^69[0-9]{12}2$/.test(item.name))) {
                 const result = await store().deleteArea(area.id);
                 if (!result.success) throw new Error('prune failed: ' + result.error);
                 await flushPendingSave();
@@ -226,7 +227,8 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             // The other checks' captures from earlier runs, by each script's exact title shape (a 12-digit run id):
             // lifecycle 81-86, focus 71-72, editor 91 (plus the 7 and 78 its renames append), search 51, Process Inbox 52, capture 53-59 (57 appends a line number),
             // menu 60 (plus the 1-6 of its five captures and its Someday task), review 67 (plus the 1-4 of its four captures),
-            // calendar and board 68 (plus the 1-2 of its two captures; the Board's Duplicate keeps the title), toolbars 69 (plus the 1-6 of its six captures).
+            // calendar and board 68 (plus the 1-2 of its two captures; the Board's Duplicate keeps the title), toolbars 69 (plus the 1-6 of its six captures),
+            // settings and editor 70 (plus the 1 of its injected Done list task).
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
                 lifecycle: /^8[1-6][0-9]{12}$/,
@@ -239,6 +241,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 review: /^67[0-9]{12}[1-4]$/,
                 calendarBoard: /^68[0-9]{12}[12]$/,
                 toolbars: /^69[0-9]{12}[1-6]$/,
+                settingsEditor: /^70[0-9]{12}1$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);
@@ -441,13 +444,13 @@ try {
     detail = coreDetail('c', ids.sequential);
     expectCoreOrder(await screen(), detail, '(c) after Done,');
 
-    // (d) A row opens the editor; Close returns to the open project.
+    // (d) A row opens the editor on its View tab (RN's resolveTaskOpenTab); Close returns to the open project.
     const editTask = detail.items.find((item) => item.cue !== undefined && item.text !== firstTask && /^\d+$/.test(item.text))?.text
         ?? fail('core lists no task to edit');
-    nodes = await tapUntil(editTask, `the editor for ${editTask}`, (current) => inEditor(current) && field(current)?.text === editTask);
+    nodes = await tapUntil(editTask, `the editor for ${editTask} on its View tab`, (current) => inEditor(current) && isOn(withDescription(current, 'Preview')) && hasText(current, editTask));
     await tap(button(nodes, 'Close'));
     await openProject(names.sequential, 'the project after Close');
-    check(true, '(d) the editor opened from the project, and Close returned to it');
+    check(true, '(d) the editor opened from the project on its View tab, and Close returned to it');
 
     // (e) Rotation keeps the open project, on the same process and host.
     await rotate(1);

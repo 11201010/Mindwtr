@@ -1,6 +1,9 @@
 package tech.dongdongbh.mindwtr.pilot
 
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.util.Collections
@@ -59,11 +62,14 @@ val LABEL_KEYS = listOf(
     "common.noMatches", "review.markReviewed", "review.markReviewedDone", "review.advanceWeek", "task.select", "task.deselect",
     // The Calendar and the Board: their stack titles and the Board filter sheet's match control; the screens' words are core's views.
     "nav.calendar", "nav.board", "filters.contextMatchMode", "filters.tagMatchMode", "filters.matchAny", "bulk.moveTo",
+    // Settings and the editor's View tab: RN's editor tabs and Settings' header; the screens' words are core's views.
+    "markdown.edit", "markdown.preview", "settings.title",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */
 object Labels {
-    @Volatile private var strings: Map<String, String> = emptyMap()
+    /** Snapshot state: a language chosen in Settings reloads it, and every screen redraws in that language. */
+    private var strings by mutableStateOf<Map<String, String>>(emptyMap())
     private val logged: MutableSet<String> = Collections.synchronizedSet(HashSet())
 
     /** Replaces the map with a getStrings reply. Core already put English in for a key the language lacks. */

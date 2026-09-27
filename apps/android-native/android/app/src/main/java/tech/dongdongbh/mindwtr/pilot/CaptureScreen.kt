@@ -174,7 +174,7 @@ private fun JSONObject.items(name: String): List<JSONObject> = optJSONArray(name
  * thumb color (tint on, border off), so the off thumb stays visible on the border-colored track.
  */
 @Composable
-private fun RnSwitch(on: Boolean, enabled: Boolean, label: String, toggle: () -> Unit) {
+internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, toggle: () -> Unit) {
     val theme = LocalTheme.current
     val c = theme.colors
     Box(Modifier.size(48.dp).toggleable(on, enabled = enabled, role = Role.Switch) { toggle() }.semantics { contentDescription = label }

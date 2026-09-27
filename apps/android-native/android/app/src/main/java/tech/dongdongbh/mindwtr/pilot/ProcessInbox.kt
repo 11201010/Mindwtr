@@ -45,13 +45,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.TextRange
@@ -246,13 +251,16 @@ private fun DraftInput(key: String, coreValue: String, pending: Boolean, placeho
                        onDone: (() -> Unit)? = null, send: (String) -> Unit) {
     val c = LocalTheme.current.colors
     var field by remember(key) { mutableStateOf(TextFieldValue(coreValue, TextRange(coreValue.length))) }
-    LaunchedEffect(key, coreValue) { if (!pending && field.text != coreValue) field = TextFieldValue(coreValue, TextRange(coreValue.length)) }
+    // While the field has focus the typing wins: `pending` is read from an older frame, so a reply to an earlier keystroke could
+    // reset the text mid-typing (the checklist field lost letters that way, S23 run 54).
+    var typing by remember(key) { mutableStateOf(false) }
+    LaunchedEffect(key, coreValue, typing) { if (!typing && !pending && field.text != coreValue) field = TextFieldValue(coreValue, TextRange(coreValue.length)) }
     BasicTextField(field, { typed -> val changed = typed.text != field.text; field = typed; if (changed) send(typed.text) },
         enabled = enabled, singleLine = singleLine, minLines = minLines, textStyle = style.copy(color = if (enabled) c.text else c.secondaryText),
         cursorBrush = SolidColor(c.tint),
         keyboardOptions = KeyboardOptions(imeAction = if (onDone != null) ImeAction.Done else ImeAction.Default),
         keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
-        modifier = modifier.semantics { contentDescription = description },
+        modifier = modifier.onFocusChanged { typing = it.isFocused }.semantics { contentDescription = description },
         decorationBox = { inner ->
             Box {
                 if (field.text.isEmpty() && placeholder != null) Text(placeholder, style = style, color = c.secondaryText)
@@ -340,8 +348,9 @@ private fun StepBody(model: InboxViewModel, flow: InboxProcessing, locked: Boole
         val id = choice.getString("id")
         val label = choice.getString("label")
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.Center) {
-            Row(Modifier.heightIn(min = 44.dp).clickable(enabled = canAnswer("inboxCommit", id), role = Role.Button) { answer("inboxCommit", id) }
-                .semantics { contentDescription = label }.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val enabled = canAnswer("inboxCommit", id)
+            Row(Modifier.heightIn(min = 44.dp).button(label, enabled) { answer("inboxCommit", id) }
+                .clickable(enabled = enabled, role = Role.Button) { answer("inboxCommit", id) }.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Lucide.Trash2, null, tint = c.danger, modifier = Modifier.size(16.dp))
                 Text(label, style = rnText(14, 600), color = c.danger, modifier = Modifier.padding(start = 6.dp))
             }
@@ -373,6 +382,17 @@ private fun StepBody(model: InboxViewModel, flow: InboxProcessing, locked: Boole
     view.child("moreOptions")?.let { MoreOptions(flow, it, locked, send, pickDate) }
 }
 
+/**
+ * One accessibility node per button: its label, role and state together. A `.clickable` followed by a separate
+ * `.semantics { contentDescription }` splits into two nodes, and the labelled one reads enabled while the button is
+ * locked (S23 run 50: "Yes" announced enabled during an owed retry).
+ */
+private fun Modifier.button(label: String, enabled: Boolean, action: () -> Unit) = clearAndSetSemantics {
+    contentDescription = label
+    role = Role.Button
+    if (enabled) onClick { action(); true } else disabled()
+}
+
 /** RN's ChoiceButton: a card-colored button with core's glyph and label. */
 @Composable
 private fun ChoiceButton(choice: JSONObject, compact: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
@@ -380,7 +400,7 @@ private fun ChoiceButton(choice: JSONObject, compact: Boolean, enabled: Boolean,
     val label = choice.getString("label")
     val shape = RoundedCornerShape(14.dp)
     Row(modifier.heightIn(min = if (compact) 48.dp else 52.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = label }
+        .button(label, enabled, onClick).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .fade(if (enabled) 1f else 0.5f).padding(horizontal = if (compact) 12.dp else 16.dp, vertical = if (compact) 10.dp else 12.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         choice.text("icon")?.let(CHOICE_ICONS::get)?.let { Icon(it, null, tint = c.text, modifier = Modifier.padding(end = 8.dp).size(18.dp)) }
@@ -421,7 +441,7 @@ private fun SmallOutlined(text: String, description: String, enabled: Boolean, f
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(10.dp)
     Box(Modifier.clip(shape).then(if (filled) Modifier.background(c.cardBg) else Modifier).border(1.dp, c.border, shape)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = description }
+        .button(description, enabled, onClick).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .padding(horizontal = 10.dp, vertical = 8.dp)) {
         Text(text, style = rnText(if (filled) 13 else 12, 400), color = if (filled) c.text else c.secondaryText)
     }

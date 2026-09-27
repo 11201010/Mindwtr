@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { button, check, connect, draftText, evidenced, fail, hasText, inboxCount, Stopped, tagged, withDescription } from './device.mjs';
+import { button, check, connect, draftText, evidenced, fail, hasText, inboxCount, Stopped, tab, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -226,17 +226,20 @@ try {
             break;
         }
         nodes = await waitFor('the item', (current) => showsStep(current, item), 15_000);
-        setProp(prop, '8000');
+        // Held long enough for Home, the launcher and the kill to finish first (8 s ran out on the S23, run 51).
+        setProp(prop, '20000');
         await tapExpecting(withDescription(nodes, en['inbox.trash']), (current) => withDescription(current, en['inbox.trash'])?.enabled !== 'true', 'the Trash in flight');
-        if (written) await waitFor('the Trash on disk', () => core('guided', [], item.taskId).deleted === true, 7_000);
+        if (written) await waitFor('the Trash on disk', () => core('guided', [], item.taskId).deleted === true, 10_000);
         check(record(), `(g) ${label}: the answer's request is on disk before core answers`);
         await killInBackground();
         setProp(prop, '');
         if (written) {
             // A second death while the replay itself is held: the record must still be there for the next launch.
-            setProp('delay_before_ms', '8000');
+            setProp('delay_before_ms', '20000');
             device.launch(ACTIVITY);
-            await waitFor('the Inbox during the replay', onInbox, 60_000);
+            // The owed answer is replayed before the Inbox list is read, so during the held replay the list is still loading
+            // (no Process Inbox button yet); the tab bar shows the app is up (run 53 on the S23).
+            await waitFor('the app during the replay', (current) => !tagged(current, 'process-inbox') && Boolean(tab(current, en['tab.inbox'])), 60_000);
             await killInBackground();
             setProp('delay_before_ms', '');
             check(record(), '(g) a death during the replay keeps the request on disk');
