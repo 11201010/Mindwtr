@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/flatpak-secret-service`** — desktop `apps/desktop/src-tauri/src/sync.rs`, after a Dropbox credential write is read back from the system keyring and its plaintext fallback is cleared. Message: `Dropbox credentials verified in system keyring`. Connect Dropbox in the next Flathub release with a working Secret Service: expect this line and no plaintext-storage warning, without a Flatseal override. The permission-only rebuild of v1.3.2 does not contain this marker. No credential values or identifiers are logged. (#1297)
+
 - **`v1.3.3/saved-list-shortcut`** — mobile `app/(drawer)/widget-list/[id].tsx`: `Saved list shortcut destination resolved`, with `available`. Run Open Mindwtr Saved List from Shortcuts; expect `available: true` and the selected filter's current tasks. A removed filter reports false without opening a different list. No list names, IDs, or task content are logged.
 
 - **`v1.3.3/encrypted-remote-recovery`** — desktop `sync-service.ts` and mobile `sync-service.ts`, after a verified WebDAV encrypted-document read durably restores a matching stale `remote-plaintext` state to `enabled` (#1293). Message: `Verified encrypted remote cleared stale plaintext state`. The next automatic sync must proceed rather than report plaintext suppression; the marker alone proves the local state repair, not a completed sync. No remote location, task content, or encryption material is logged.

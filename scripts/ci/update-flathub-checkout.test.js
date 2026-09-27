@@ -60,6 +60,7 @@ test("updates an unpatched Flathub manifest fixture", () => {
   expect(updated).not.toContain("org.tech_dongdongbh_mindwtr.SingleInstance");
   expect(updated).toContain("- --socket=pulseaudio");
   expect(updated).toContain("- --talk-name=org.freedesktop.Notifications");
+  expect(updated).toContain("- --talk-name=org.freedesktop.secrets");
   expect(updated).toContain("- VITE_ANALYTICS_HEARTBEAT_URL=https://analytics.fixture/");
   expect(updated).toContain("- VITE_ANALYTICS_RELEASE_VERSION=1.2.5");
   expect(updated).toContain("- VITE_DROPBOX_APP_KEY=fixture-key");
