@@ -138,6 +138,8 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
                         "contexts" -> ContextsList(model)
                         "trash" -> TrashList(model)
                         "review" -> ReviewList(model)
+                        "calendar" -> CalendarList(model)
+                        "board" -> BoardList(model)
                     }
                     if (screen == MenuScreen.Projects) ProjectsTab(model, Modifier.fillMaxSize())
                     ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))
@@ -151,8 +153,8 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
 }
 
 /**
- * RN's quick-access tab when it holds Review or Contexts: that screen under the tab header, read on every resume, with its
- * dialogs (drawn over the tabs by MainActivity) and Back closing an open dialog.
+ * RN's quick-access tab when it holds Review, Contexts or the Calendar: that screen under the tab header, read on every resume,
+ * with its dialogs (drawn over the tabs by MainActivity) and Back closing an open dialog.
  */
 @Composable
 fun QuickList(model: InboxViewModel, modifier: Modifier) = with(model) {
@@ -163,6 +165,7 @@ fun QuickList(model: InboxViewModel, modifier: Modifier) = with(model) {
         when (menu.list) {
             "contexts" -> ContextsList(model)
             "review" -> ReviewList(model)
+            "calendar" -> CalendarList(model)
         }
     }
 }
@@ -683,11 +686,11 @@ private fun JSONArray?.strings(): List<String> = this?.let { list -> List(list.l
 private fun List<JSONObject>.chosenLabels(): List<String> = mapNotNull { option -> option.optString("title").ifEmpty { option.optString("label") }.takeIf { option.optBoolean("selected") } }
 
 @Composable
-private fun SheetLabel(text: String) = Text(text.uppercase(), style = rnText(12, 600, letterSpacing = 0.4f), color = LocalTheme.current.colors.secondaryText)
+internal fun SheetLabel(text: String) = Text(text.uppercase(), style = rnText(12, 600, letterSpacing = 0.4f), color = LocalTheme.current.colors.secondaryText)
 
 /** RN's overview row: the section's label, its summary (the tint once anything is chosen), and a chevron (or the fold's). */
 @Composable
-private fun OverviewRow(label: String, summary: String, all: String, expanded: Boolean?, onClick: () -> Unit) {
+internal fun OverviewRow(label: String, summary: String, all: String, expanded: Boolean?, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(12.dp)
     Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).clip(shape).background(c.bg).border(1.dp, c.border, shape).clickable(role = Role.Button, onClick = onClick)
@@ -725,7 +728,7 @@ private fun ChipFlow(model: InboxViewModel, options: List<JSONObject>) {
  * (an active filter) is not pressable itself: its X, labelled [remove], runs [onClick], as in RN.
  */
 @Composable
-private fun SheetChip(label: String, selected: Boolean, excluded: Boolean, remove: String? = null, enabled: Boolean, onClick: () -> Unit) {
+internal fun SheetChip(label: String, selected: Boolean, excluded: Boolean, remove: String? = null, enabled: Boolean, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(22.dp)
     val color = if (excluded) c.danger else if (selected) c.onTint else c.text

@@ -190,6 +190,23 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val promptScrim = rgba(0, 0, 0, 0.5f)
     /** RN's review status dot and summary tones (core's ReviewTone). */
     fun tone(value: String?): Color? = when (value) { "success" -> colors.success; "warning" -> colors.warning; "danger" -> colors.danger; else -> null }
+    /** RN's calendar washes, `toRgba(color, isDark ? dark : light)`. */
+    fun wash(color: Color, light: Float, dark: Float): Color = color.copy(alpha = if (isDark) dark else light)
+    /** RN's calendar now line (#EF4444), a task block's title (#FFFFFF; its time at 90%), and the composer's backdrop, rgba(0,0,0,0.55). */
+    val nowLine = rgb("#EF4444")
+    val blockText = rgb("#FFFFFF")
+    val composerScrim = rgba(0, 0, 0, 0.55f)
+    /** RN's themed alert backdrop (components/themed-alert.tsx), rgba(0,0,0,0.58). */
+    val alertScrim = rgba(0, 0, 0, 0.58f)
+    /** Core's calendar tone (CalendarTone) as RN paints it; `source` is an event's calendar color; `none` is null. */
+    fun calendarTone(value: String?, source: Color? = null): Color? = when (value) {
+        "tint" -> colors.tint; "danger" -> colors.danger; "secondary" -> colors.secondaryText; "text" -> colors.text; "input" -> colors.inputBg
+        "source" -> source ?: colors.secondaryText; else -> null
+    }
+    /** Core's Board column tone (BoardColumnTone), one of RN's theme colors by name. */
+    fun columnTone(value: String): Color = when (value) {
+        "tint" -> colors.tint; "warning" -> colors.warning; "secondaryText" -> colors.secondaryText; "success" -> colors.success; else -> colors.text
+    }
 }
 
 /**

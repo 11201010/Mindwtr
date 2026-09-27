@@ -418,15 +418,17 @@ assert.doesNotMatch(code(captureUi), /material3\.Switch|SwitchDefaults/);
 {
     const { readdirSync } = await import('node:fs');
     const dir = resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot');
+    // The Calendar composer's time edits are core's edit names (NativeCalendarComposerEdit), not a task's field: that one line is left out.
+    const composerTimeEdit = 'put("type", if (field == "start") "startTime" else "endTime")';
     for (const name of readdirSync(dir).filter((file) => file.endsWith('.kt') && file !== 'TaskEditor.kt')) {
-        assert.doesNotMatch(code(readFileSync(resolve(dir, name), 'utf8')), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|\bdueDate\b|\bstartTime\b/,
+        assert.doesNotMatch(code(readFileSync(resolve(dir, name), 'utf8')).replace(composerTimeEdit, ''), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|\bdueDate\b|\bstartTime\b/,
             `${name} formats, parses, or colors a date; only core's meta text is shown`);
     }
 }
 assert.equal(editorUi.match(/SimpleDateFormat|\.format\(/g).length, 4); // import, pickedDay's constructor and format call, pickerStart's constructor
 assert.match(editorUi, /private fun pickedDay\(pickerMillis: Long\): String =\s*SimpleDateFormat\("yyyy-MM-dd", Locale\.US\)\.apply \{ timeZone = TimeZone\.getTimeZone\("UTC"\) \}\.format\(Date\(pickerMillis\)\)/);
 assert.equal(editorUi.match(/pickedDay\(/g).length, 2);
-assert.match(editorUi, /private fun pickedTime\(hour: Int, minute: Int\) = "\$\{hour\.toString\(\)\.padStart\(2, '0'\)\}:\$\{minute\.toString\(\)\.padStart\(2, '0'\)\}"/);
+assert.match(editorUi, /internal fun pickedTime\(hour: Int, minute: Int\) = "\$\{hour\.toString\(\)\.padStart\(2, '0'\)\}:\$\{minute\.toString\(\)\.padStart\(2, '0'\)\}"/);
 assert.equal(editorUi.match(/pickedTime\(/g).length, 3, 'defined once; the editor\'s time picker and the shared ClockPickerDialog (the capture popup\'s due time)');
 // A draft date is never read apart: no substring, split, or pattern over a date field's value.
 assert.doesNotMatch(code(editorUi), /text\("(dueDate|startTime|reviewAt)"\)\.(substring|split|take|drop|contains|startsWith|endsWith|matches|replace)/);
@@ -517,7 +519,9 @@ assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.view\.prioritie
     for (const id of ['scheduling', 'organization', 'details']) assert(labelKeys.includes(`taskEdit.${id}`), `LABEL_KEYS lacks taskEdit.${id}`);
 }
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...menuScreens })) {
+// Pass 8's Calendar and Board screens and models are held to the same rule.
+const pass8Sources = { calendarModel: source('CalendarModel.kt'), calendarUi: source('CalendarScreen.kt'), boardModel: source('BoardModel.kt'), boardUi: source('BoardScreen.kt') };
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...menuScreens, ...pass8Sources })) {
     // Icons.kt's bySymbol keys are core's SF Symbols names (more-menu-model.ts), not label keys.
     const body = code(text).replace(/val bySymbol = mapOf\([\s\S]*?\n {4}\)/, '');
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
@@ -830,12 +834,13 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
     const input = code(menuModel.slice(menuModel.indexOf('private fun input(action: FailedAction)'), menuModel.indexOf('}.toString()', menuModel.indexOf('private fun input('))));
     // The list actions (Archive, Contexts, Trash, Review, and the Review's project Add task) are core's action with its request UUID.
     const LIST_KINDS = ['archiveAction', 'contextsAction', 'trashAction', 'reviewAction', 'reviewTask'];
-    for (const kind of kinds.filter((kind) => !LIST_KINDS.includes(kind))) assert.match(input, new RegExp(`"${kind}" ->`), `input() builds the ${kind} request`);
+    for (const kind of kinds.filter((kind) => !LIST_KINDS.includes(kind))) assert.match(input, new RegExp(`"${kind}"(, "\\w+")* ->`), `input() builds the ${kind} request`);
     for (const kind of LIST_KINDS) assert(kinds.includes(kind), `MENU_KINDS has ${kind}`);
     assert.doesNotMatch(input, new RegExp(`"(${LIST_KINDS.join('|')})" ->`), 'no list action has a request of its own shape');
     assert.match(input, /else -> JSONObject\(\)\.put\("requestId", action\.id\)\.put\("action", JSONObject\(action\.title\)\)/, 'a list action is core\'s action with its request UUID');
 }
-assert.match(menuModel, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->\s+val reply = try \{\s+runtime\.menuCommand\(action\.kind, input\(action\)\)[\s\S]{0,700}?shell\.acknowledged\(action\)/, 'menu writes run through perform with their exact FailedAction');
+assert.match(menuModel, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->\s+val reply = try \{\s+runtime\.menuCommand\(action\.kind, input\(action\)\)[\s\S]{0,900}?shell\.acknowledged\(action\)/, 'menu writes run through perform with their exact FailedAction');
+assert.match(menuModel, /if \(refused && action\.kind == "calendarCreate"\) shell\.ui \{ calendar\.refused\(action\) \}/, 'a refused composer Save frees its request UUID');
 assert.equal(code(menuModel).match(/runtime\.menuCommand\(/g).length, 1, 'send is the one menu write');
 assert.equal(code(menuModel).match(/shell\.perform\(action\)/g).length, 1);
 assert.match(menuModel, /fun retry\(action: FailedAction\) = send\(action\)/);
@@ -884,7 +889,7 @@ for (const [name, text] of Object.entries({ menuModel, ...menuScreens })) {
 // The More sheet: core's destinations (getMoreMenu); a tile this app builds opens, the others are drawn disabled, never a dead tap.
 // One accessibility node holds the label, the role and the state, so TalkBack hears an unbuilt tile as disabled.
 assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
-assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash"\)/);
+assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash", "calendar", "board"\)/);
 assert.match(activity, /if \(menu\.sheet\) MoreSheet\(model\)/);
 assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(model, listed\)/);
 // Navigation survives rotation (the model is held by the ViewModel) and process death (the Bundle): the sheet, screen, tab, dialog, session.
@@ -939,7 +944,7 @@ assert.match(reviewUi, /"delete" -> confirm\(bulk\.getJSONObject\("deleteConfirm
 assert.match(rowUi, /\.clickable\(enabled = enabled, role = Role\.Button\) \{ if \(!menu\.rowStatus\(task, status\)\) changeStatus\(task, status\) \}/);
 assert.match(menuModel, /private val ROW_KINDS = mapOf\("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction"\)/);
 // The Weekly Review's project Add task creates a task: its exact request (the request UUID core makes the task's id) is on disk first.
-assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask"\)/);
+assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate"\)/);
 assert.match(menuModel, /"projectTask" -> FailedAction\("reviewTask", open\.getString\("requestId"\), addProjectTask\(open\.getString\("projectId"\), open\.optString\("text"\)\)\.toString\(\)\)/);
 assert.equal(code(weeklyUi).match(/saveCreate\(\)/g).length, 3, 'Return, Save & edit and Add all send the one persisted request');
 // A review's place is core's checkpoint, stored under core's key (RN's session keys) and sent back; Finish deletes it.
@@ -954,10 +959,101 @@ assert.match(menuModel, /if \(list == "weekly" \|\| list == "daily"\) prefs\.edi
 assert.match(weeklyUi, /prefs\.edit\(\)\.remove\(view\.getString\("storageKey"\)\)\.apply\(\)/);
 // Paging stays under the view's revision: the Weekly Review's nested lists page through getWeeklyReviewList with the view's own inputs.
 assert.match(menuModel, /runtime\.menuRead\("weeklyList", JSONObject\(page\.params\.toString\(\)\)\.put\("list", name\.substringBefore\(':'\)\)[\s\S]{0,160}?\.put\("revision", page\.revision\)/);
-// RN's quick-access tab: core's quickAccessView; Review and Contexts are built, anything else shows Projects (Calendar: pass 8).
-assert.match(menuModel, /val quickView: String get\(\) = quickAccess\?\.takeIf \{ it == "review" \|\| it == "contexts" \} \?: "projects"/);
-assert.match(activity, /TabItem\(model, Screen\.Projects, when \(quick\) \{ "review" -> Lucide\.ClipboardCheck; "contexts" -> Lucide\.Circle; else -> Lucide\.Folder \}, model\.menu\.quickLabel\)/);
+// RN's quick-access tab: core's quickAccessView; Review, Contexts and the Calendar (pass 8) are built, anything else shows Projects.
+assert.match(menuModel, /val quickView: String get\(\) = quickAccess\?\.takeIf \{ it == "review" \|\| it == "contexts" \|\| it == "calendar" \} \?: "projects"/);
+assert.match(activity, /TabItem\(model, Screen\.Projects, when \(quick\) \{ "review" -> Lucide\.ClipboardCheck; "contexts" -> Lucide\.Circle; "calendar" -> Lucide\.Calendar; else -> Lucide\.Folder \}, model\.menu\.quickLabel\)/);
 assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.getOrNull\(\)/, 'the quick-access view is read on the boot thread, before the first frame');
+
+// Pass 8: the Calendar and the Board, on core's calendar and Board contracts.
+{
+    const calendarModel = source('CalendarModel.kt');
+    const calendarUi = source('CalendarScreen.kt');
+    const boardModel = source('BoardModel.kt');
+    const boardUi = source('BoardScreen.kt');
+    const pass8 = { calendarModel, calendarUi, boardModel, boardUi };
+    // Reads pass Kotlin's input to core unchanged (the composer's open and edit write nothing); writes are core's actions.
+    for (const [name, method] of [['calendar', 'getCalendarView'], ['calendarSheet', 'getCalendarItemSheet'], ['calendarComposer', 'openCalendarComposer'],
+        ['calendarEdit', 'editCalendarComposer'], ['board', 'getBoardView'], ['boardList', 'getBoardList']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
+    }
+    for (const [name, method] of [['calendarAction', 'runCalendarAction'], ['calendarCreate', 'runCalendarAction'], ['boardAction', 'runBoardAction'], ['boardCreate', 'runBoardAction']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
+    }
+    // Every write is MenuModel's send -> perform(action) with its exact FailedAction: an action through command (a new request UUID,
+    // core's whole input its exact retry), a create (the composer's Save, Duplicate) through create, on disk (synced) before the call.
+    assert.match(menuModel, /internal fun command\(kind: String, input: JSONObject\) = send\(FailedAction\(kind, UUID\.randomUUID\(\)\.toString\(\), input\.toString\(\)\)\)/);
+    assert.match(menuModel, /internal fun create\(action: FailedAction\) \{\s+if \(shell\.busy \|\| \(shell\.failedAction != null && shell\.failedAction != action\)\) return\s+store\.write\(action\)\s+send\(action\)/);
+    assert.match(menuModel, /"calendarAction", "calendarCreate", "boardAction", "boardCreate" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(menuModel, /"calendarAction", "calendarCreate" -> calendar\.done\(action, reply\)\s+"boardAction", "boardCreate" -> board\.done\(action, reply\)/);
+    assert.match(calendarModel, /private fun act\(action: JSONObject\) = menu\.command\("calendarAction", JSONObject\(\)\.put\("action", action\)/);
+    assert.match(calendarModel, /private fun saveAction\(draft: ComposerDraft\) = FailedAction\("calendarCreate", draft\.requestId, /, 'a composer Save keeps its request UUID (core makes it the new task\'s id)');
+    assert.match(calendarModel, /owed\(draft\)\?\.let \{ return menu\.create\(it\) \}[\s\S]{0,200}?menu\.create\(saveAction\(draft\)\)/, 'Save re-sends the owed request, else the composer\'s own');
+    assert.match(boardModel, /fun duplicate\(taskId: String\) = menu\.create\(FailedAction\("boardCreate", UUID\.randomUUID\(\)\.toString\(\),/, 'Duplicate\'s request UUID is the copy\'s id, on disk first');
+    assert.equal(code(calendarModel).match(/menu\.command\(/g).length, 1, 'the Calendar writes through act');
+    assert.equal(code(boardModel).match(/menu\.command\(/g).length, 2, 'the Board writes moveCard and trashTask through command');
+    for (const [name, text] of Object.entries({ calendarUi, boardUi })) {
+        assert.doesNotMatch(code(text).replace(/^import .*$/gm, ''), /runtime\.|menuCommand\(|menuRead\(|\bsend\(|shell\.perform|FailedAction\(|menu\.command|menu\.create/, `${name}: the screen reaches core only through its model`);
+    }
+    for (const [name, text] of Object.entries({ calendarModel, boardModel })) {
+        assert.doesNotMatch(code(text), /menuCommand\(|\bsend\(|shell\.perform\(action|\.perform\([A-Za-z]/, `${name}: writes only through MenuModel.command or create`);
+    }
+    // Kotlin names only core's actions and edits: NativeCalendarAction, NativeCalendarComposerEdit, NativeBoardAction and BoardFilterEdit.
+    const calendarSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract-calendar.ts'), 'utf8');
+    const boardSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract-board.ts'), 'utf8');
+    const boardViewSource = readFileSync(resolve(app, '../../packages/core/src/board-view-model.ts'), 'utf8');
+    const union = (text, type) => [...(new RegExp(`export type ${type} =([\\s\\S]*?);\\n`).exec(text)?.[1] ?? '').matchAll(/'(\w+)'/g)].map(([, name]) => name);
+    const allowed = new Set([...union(calendarSource, 'NativeCalendarAction'), ...union(calendarSource, 'NativeCalendarComposerEdit'),
+        ...union(boardSource, 'NativeBoardAction'), ...union(boardViewSource, 'BoardFilterEdit')]);
+    for (const name of ['moveTask', 'saveComposer', 'selectTask', 'startTime', 'moveCard', 'duplicateTask', 'toggleDuePreset', 'setMatchMode']) assert(allowed.has(name), `core's unions were read (${name})`);
+    const typed = [...code(Object.values(pass8).join('\n')).matchAll(/put\("type", (?:if \([^)]*\) )?"(\w+)"(?: else "(\w+)")?\)/g)].flatMap(([, a, b]) => [a, b].filter(Boolean));
+    assert(typed.length > 10);
+    for (const type of typed) assert(allowed.has(type), `${type} is one of core's calendar or Board actions or edits`);
+    assert.doesNotMatch(code(Object.values(pass8).join('\n')), /put\("type", (?!if \()[^"]/, 'no action or edit type is built from a variable');
+    // Paging under one revision; STALE_REVISION reads again from the first window (once), never an error.
+    assert.match(calendarModel, /\.put\("offset", items\.length\(\)\)\.put\("limit", WINDOW\)\s*\.put\("revision", first\.getString\("revision"\)\)/);
+    assert.match(calendarModel, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+if \(again\) return read\(runtime, sent, sentQuery, again = false\)/);
+    assert.match(boardModel, /\.put\("revision", shown\.revision\)/);
+    assert.match(boardModel, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+if \(again\) return read\(runtime, view\.getJSONObject\("filters"\), null, depth, again = false\)/);
+    // A calendar changes with the clock: read again each minute while it shows, and on resume (the screen hosts' refresh).
+    assert.match(calendarUi, /owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{ while \(true\) \{ delay\(60_000\); refresh\(\) \} \}/);
+    assert.match(menuModel, /if \(list == "calendar"\) return calendar\.refresh\(\)\s+if \(list == "board"\) return board\.refresh\(\)/);
+    // Navigation state rides the Bundle: the Calendar's place, search, sheet and composer draft; the Board's filters, search and sheet.
+    for (const key of ['calendarState', 'calendarQuery', 'calendarSheet', 'calendarComposer']) assert.match(calendarModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
+    for (const key of ['boardFilters', 'boardSearch', 'boardSheet']) assert.match(boardModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
+    // No Kotlin task policy, sorting, filtering, date math or date formatting in the new files.
+    for (const [name, text] of Object.entries(pass8)) {
+        // `.filters` is core's filter state (the Board view's), not a filtering call.
+        assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b|s\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping`);
+        assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|LocalTime|java\.time|java\.util\.Calendar|Calendar\.getInstance|GregorianCalendar|Instant\b|\.format\(|toLocal|currentTimeMillis|\bDate\(|TimeZone/, `${name}: no Kotlin date math, formatting or parsing`);
+        assert.doesNotMatch(code(text), new RegExp(`${STATUS}(?:\\s*,\\s*${STATUS})*\\s*->\\s*${STATUS}`), `${name}: no status-to-status map`);
+    }
+    // Kotlin turns a finger's place into core's grid cell only: core's minutes (snapped to core's step), core's day keys, core's extent.
+    const calendarModelSource = readFileSync(resolve(app, '../../packages/core/src/calendar-view-model.ts'), 'utf8');
+    for (const [kotlin, core] of [['SNAP_MINUTES', 'CALENDAR_SNAP_MINUTES'], ['TAP_MINUTES', 'CALENDAR_TAP_DURATION_MINUTES']]) {
+        const value = new RegExp(`export const ${core} = (\\d+);`).exec(calendarModelSource)[1];
+        assert.match(calendarUi, new RegExp(`internal const val ${kotlin} = ${value}\\n`), `${kotlin} is core's ${core}`);
+    }
+    assert.match(calendarUi, /private fun JSONObject\.extentMinutes\(\): Int = \(getJSONArray\("hourLabels"\)\.length\(\) - 1\) \* 60/, 'the grid\'s extent is core\'s hour labels');
+    // A drop sends exactly one core action: a Calendar block's moveTask; a Board card's moveCard with the moved card's id (a position only inside its column).
+    assert.equal(code(calendarUi).match(/calendar\.move\(/g).length, 1);
+    assert.match(calendarModel, /if \(startMinutes == timed\.getInt\("startMinutes"\)\) return/, 'a block let go where it was sends nothing');
+    assert.equal(code(boardUi).match(/board\.move\(/g).length, 3, 'a drop into another column, a drop inside its own, and TalkBack\'s Move to');
+    assert.match(boardUi, /if \(after != before\) board\.move\(id, status, after, sameColumn = true\)/, 'a drop that changes nothing sends nothing');
+    assert.match(boardModel, /if \(sameColumn\) action\.put\("afterId", afterId \?: JSONObject\.NULL\)/);
+    // TalkBack reaches every card action (RN's swipes and a Move to per other column), with core's words, and hears the card
+    // disabled with no actions while a command runs or a retry is owed (one semantics block: label, role and state).
+    assert.match(boardUi, /if \(canEdit\) \{\s+onClick\(t\("common\.edit"\)\) \{ model\.openEditor\(id\); true \}\s+customActions = swipeActions\.map \{ \(side, label\) -> CustomAccessibilityAction\(label\)[^\n]*\+ moveActions\s+\} else disabled\(\)/);
+    // Lines lie exactly at their minute (RN's offsets are RN bugs, fixed there separately): the day's 18-high hour rows and the
+    // 10-high now line are centered on their minute, and the first hour label shows whole in the day and week timelines.
+    assert.match(calendarUi, /Row\(Modifier\.offset\(y = \(index \* 60 \* PPM\)\.dp - 9\.dp\)\.fillMaxWidth\(\)\.height\(18\.dp\)/);
+    assert.match(calendarUi, /Box\(Modifier\.fillMaxWidth\(\)\.padding\(vertical = 9\.dp\)\.height\(\(extent \* PPM\)\.dp\)/);
+    assert.match(calendarUi, /Row\(Modifier\.offset\(y = \(minutes \* PPM\)\.dp - 5\.dp\)\.then\(modifier\)\.height\(10\.dp\)/);
+    assert.match(calendarUi, /Box\(Modifier\.offset\(y = \(index \* 60 \* PPM\)\.dp\)\.fillMaxWidth\(\)\.height\(1\.dp\)/, 'a week hour rule lies at its minute');
+    assert.match(calendarUi, /\.verticalScroll\(down\)\.padding\(top = 7\.dp, bottom = 24\.dp\)/, 'the week\'s first hour label shows whole');
+    // The screens open from the More sheet, the Calendar also from the quick-access tab, each read on resume.
+    assert.match(menuUi, /"calendar" -> CalendarList\(model\)\s+"board" -> BoardList\(model\)/);
+    assert.match(menuUi, /"review" -> ReviewList\(model\)\s+"calendar" -> CalendarList\(model\)\s+\}/);
+}
 
 const fakeCore = `
 export class SqliteAdapter {
@@ -1509,4 +1605,5 @@ console.log('Search and Process Inbox: core reads in the background with freshne
 console.log('RN look: rows read core meta (no Kotlin date formatting or coloring); stars, status, new project, and area filter run through perform with exact retries');
 console.log('Menu tab: core\'s menu views through CoreHost, writes through perform with exact requests, Someday creates on disk first, no Kotlin policy');
 console.log('Contexts, Trash, Review and the reviews: core\'s views, core\'s actions through perform, destructive actions behind core\'s question, checkpoints under core\'s keys');
+console.log('Calendar and Board: core\'s views under one revision, core\'s actions through perform, composer and Duplicate on disk first, a drop is one core action, no Kotlin date math or policy');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

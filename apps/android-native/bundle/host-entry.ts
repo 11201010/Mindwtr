@@ -107,7 +107,7 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
-type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask';
+type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -189,8 +189,9 @@ const requireSaved = () => {
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
 /**
  * The Menu tab's reads (native-host-contract-menu-views.ts; History's tabs, Archive, Contexts and Trash from the list views
- * block; the Review screen and the Weekly and Daily Review from native-host-contract-review-views.ts): each passes Kotlin's
- * input to the contract method unchanged.
+ * block; the Review screen and the Weekly and Daily Review from native-host-contract-review-views.ts; the Calendar and the
+ * Board from native-host-contract-calendar.ts and native-host-contract-board.ts): each passes Kotlin's input to the contract
+ * method unchanged. The composer's open and edit write nothing, so they are reads.
  */
 const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
@@ -208,6 +209,12 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     weekly: (input) => contract.getWeeklyReview(input),
     weeklyList: (input) => contract.getWeeklyReviewList(input),
     daily: (input) => contract.getDailyReview(input),
+    calendar: (input) => contract.getCalendarView(input),
+    calendarSheet: (input) => contract.getCalendarItemSheet(input),
+    calendarComposer: (input) => contract.openCalendarComposer(input),
+    calendarEdit: (input) => contract.editCalendarComposer(input),
+    board: (input) => contract.getBoardView(input),
+    boardList: (input) => contract.getBoardList(input),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -223,6 +230,11 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     reviewAction: (input) => contract.runReviewAction(input),
     // The Weekly Review's project Add task: runReviewAction too, logged apart because its request is kept on disk.
     reviewTask: (input) => contract.runReviewAction(input),
+    // The Calendar's and the Board's actions; a create (a composer save, a Duplicate) is logged apart because its request is kept on disk.
+    calendarAction: (input) => contract.runCalendarAction(input),
+    calendarCreate: (input) => contract.runCalendarAction(input),
+    boardAction: (input) => contract.runBoardAction(input),
+    boardCreate: (input) => contract.runBoardAction(input),
 };
 
 globalThis.MindwtrHost = {

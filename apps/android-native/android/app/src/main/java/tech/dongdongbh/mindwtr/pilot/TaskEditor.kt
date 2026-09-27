@@ -306,7 +306,7 @@ private fun pickedDay(pickerMillis: Long): String =
     SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(pickerMillis))
 
 /** The picker's hour and minute as core's pickTime takes them, `HH:mm`. */
-private fun pickedTime(hour: Int, minute: Int) = "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
+internal fun pickedTime(hour: Int, minute: Int) = "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
 
 /** Where core says the date picker starts (`yyyy-MM-dd`), as the picker's UTC midnight: the reverse of [pickedDay]. */
 private fun pickerStart(coreDate: String): Long? =

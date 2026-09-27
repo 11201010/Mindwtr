@@ -11,7 +11,8 @@
 // task opened from Focus, global search for "kitchen", Process Inbox's first step, the
 // capture popup (empty, with text and core's preview, and with the contexts picker open),
 // the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
-// task, and Review), and the Weekly Review's first step, in light and dark mode.
+// task, and Review), the Weekly Review's first step, the Calendar's week and month, and the Board, in light
+// and dark mode.
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
@@ -25,7 +26,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, evidenced, hasText, inEditor, inList, Stopped, tab, tabSelected } from './device.mjs';
+import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, tab, tabSelected, withDescription } from './device.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -238,7 +239,16 @@ const MENU_SCREENS = [
     { name: 'trash', link: 'trash', tile: en['nav.trash'], text: TRASHED },
     // RN's Review opens on its Due scope: the fixture has nothing due for review, so both show core's empty line.
     { name: 'review', link: 'review', tile: en['nav.review'], text: en['review.dueEmpty'] },
+    // The Calendar is shot in its week and month views (a mode tap saves the mode, in both apps); the Board opens on its Inbox column.
+    { name: 'calendar', link: 'calendar', tile: en['nav.calendar'], text: en['calendar.mobile.week'] },
+    { name: 'board', link: 'board', tile: en['tab.board'], text: T.call },
 ];
+/** Taps the Calendar's mode labelled [label] (both apps label the mode buttons with core's words) and waits for it to be on. */
+const calendarMode = async (label) => {
+    const nodes = await waitFor(`the ${label} mode`, (current) => Boolean(withDescription(current, label)), 15_000);
+    if (!chipOn(nodes, label)) await tap(withDescription(nodes, label));
+    return waitFor(`the ${label} view`, (current) => chipOn(current, label), 15_000);
+};
 const shootMenu = async (prefix, suffix, rn) => {
     const openSheet = async () => {
         const nodes = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);
@@ -256,8 +266,19 @@ const shootMenu = async (prefix, suffix, rn) => {
             const nodes = await waitFor(`the ${screen.tile} tile`, (current) => current.some((node) => node['content-desc'] === screen.tile), 15_000);
             await tap(nodes.find((node) => node['content-desc'] === screen.tile));
         }
-        // A Trash row speaks its title (the row is one TalkBack node), so its title may be the node's description.
-        await shoot(`${prefix}-${screen.name}-${suffix}`, (current) => hasText(current, screen.text) || current.some((node) => node['content-desc'] === screen.text));
+        if (screen.name === 'calendar') {
+            await calendarMode(en['calendar.mobile.week']);
+            await shoot(`${prefix}-calendar-week-${suffix}`, (current) => chipOn(current, en['calendar.mobile.week']) && hasText(current, en['calendar.allDay']));
+            await calendarMode(en['calendar.mobile.month']);
+            await shoot(`${prefix}-calendar-month-${suffix}`, (current) => chipOn(current, en['calendar.mobile.month']));
+            requireAppFront();
+            sh('input keyevent KEYCODE_BACK');
+            await sleep(1000);
+            continue;
+        }
+        // A Trash row speaks its title (the row is one TalkBack node), so its title may be the node's description; so does a Board card.
+        await shoot(`${prefix}-${screen.name}-${suffix}`, (current) => hasText(current, screen.text) || current.some((node) => node['content-desc'] === screen.text
+            || (node['content-desc'] ?? '').startsWith(`${screen.text}, `)));
         // From Review: Start Review, then the Weekly Review's first step (the Inbox), closed with its X.
         if (screen.name === 'review') {
             const start = await waitFor('Start Review', (current) => Boolean(button(current, en['review.startReview'])), 15_000);

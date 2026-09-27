@@ -229,7 +229,7 @@ fun OwedRetry(model: InboxViewModel) {
 
 /**
  * RN's bottom tab bar: Focus, Inbox, the capture button, the quick-access view
- * (core's quickAccessView: Review, Contexts, or Projects), then Menu, which opens RN's More sheet. Every control keeps the
+ * (core's quickAccessView: Review, Contexts, the Calendar, or Projects), then Menu, which opens RN's More sheet. Every control keeps the
  * place an RN user's thumb expects; a tab or the capture button closes the sheet, as in RN.
  */
 @Composable
@@ -240,7 +240,7 @@ private fun TabBar(model: InboxViewModel) {
         TabItem(model, Screen.Focus, Lucide.Target)
         TabItem(model, Screen.Inbox, Lucide.Inbox)
         CaptureButton(model)
-        TabItem(model, Screen.Projects, when (quick) { "review" -> Lucide.ClipboardCheck; "contexts" -> Lucide.Circle; else -> Lucide.Folder }, model.menu.quickLabel)
+        TabItem(model, Screen.Projects, when (quick) { "review" -> Lucide.ClipboardCheck; "contexts" -> Lucide.Circle; "calendar" -> Lucide.Calendar; else -> Lucide.Folder }, model.menu.quickLabel)
         MenuTab(model)
     }
 }
