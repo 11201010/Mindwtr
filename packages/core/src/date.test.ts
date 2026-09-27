@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { isValid, parseISO } from 'date-fns';
 import { buildCompletionDateSections } from './completion-grouping';
 import { createTaskDraft, setTaskDraftField, taskDraftToChangedUpdatePatch, toTaskDraftDateTimeLocalValue } from './task-draft';
@@ -20,6 +20,7 @@ import {
     normalizeDateFormatSetting,
     normalizeTimeFormatSetting,
     getSystemWeekStart,
+    setHostSystemLocale,
     getShortWeekdayLabels,
     normalizeWeekStartPreference,
     normalizeWeekStartSetting,
@@ -381,5 +382,25 @@ describe('getShortWeekdayLabels (#929)', () => {
 
     it('falls back to narrow for Arabic, where truncation collides', () => {
         expect(getShortWeekdayLabels('ar')).toEqual(['ح', 'ن', 'ث', 'ر', 'خ', 'ج', 'س']);
+    });
+});
+
+describe('host system locale for week start', () => {
+    afterEach(() => setHostSystemLocale(null));
+
+    it('uses the locale a native host passed when the runtime gives none', () => {
+        // A native host (QuickJS) has no Intl locale; core must use the device locale the host sent.
+        setHostSystemLocale('de-DE');
+        expect(getSystemWeekStart()).toBe('monday');
+        setHostSystemLocale('en-US');
+        expect(getSystemWeekStart()).toBe('sunday');
+        expect(getWeekStartsOnIndex('system')).toBe(0);
+        setHostSystemLocale('ar-EG');
+        expect(getSystemWeekStart()).toBe('saturday');
+    });
+
+    it('lets an explicit locale argument win over the host locale', () => {
+        setHostSystemLocale('en-US');
+        expect(getSystemWeekStart('de-DE')).toBe('monday');
     });
 });

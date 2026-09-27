@@ -33,7 +33,7 @@ import { computeGlobalSearchResults, type DuePreset, type GlobalSearchScope } fr
 import { clearGlobalSearchActiveChip, DEFAULT_GLOBAL_SEARCH_FILTERS, fetchGlobalSearchAdapterResults, getGlobalSearchActiveChips, getGlobalSearchFilterOptions, getGlobalSearchResultDate, getGlobalSearchTaskListTarget, resolveSavedSearch, GLOBAL_SEARCH_DUE_OPTIONS, GLOBAL_SEARCH_SCOPE_OPTIONS, GLOBAL_SEARCH_STATUS_OPTIONS, type GlobalSearchFilterState } from './global-search-model';
 import type { SearchProjectResult } from './storage';
 import { createSearchHighlighter } from './search-highlight';
-import { createDateFormatter, hasTimeComponent, normalizeClockTimeInput, safeParseDate, type DateFormatter, type DateFormattingConfig } from './date';
+import { createDateFormatter, hasTimeComponent, normalizeClockTimeInput, safeParseDate, setHostSystemLocale, type DateFormatter, type DateFormattingConfig } from './date';
 import { WEEKDAY_ORDER } from './recurrence-constants';
 import {
     editTaskDraftRecurrence,
@@ -1219,6 +1219,8 @@ export function createNativeHostContract() {
                 await loadTranslations(nextLanguage);
                 language = nextLanguage;
                 systemLocale = input.systemLocale;
+                // Week start follows the device locale; the host runtime has no Intl locale of its own.
+                setHostSystemLocale(input.systemLocale);
                 translate = getTranslator(language);
                 return { ok: true, value: { language } };
             } catch (error) {

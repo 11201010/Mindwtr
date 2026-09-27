@@ -1674,6 +1674,7 @@
     "setComposerQuery",
     "setComposerStart",
     "setComposerTitle",
+    "setHostSystemLocale",
     "setLogger",
     "setSha256HexProvider",
     "setSleepBypass",

@@ -260,13 +260,22 @@ function regionWeekStart(region: string): WeekStartSetting {
     return 'monday';
 }
 
+// The device locale a native host sent (its runtime has no Intl or navigator locale); null elsewhere.
+let hostSystemLocale: string | null = null;
+
+/** A native host sets the device locale it reads from the platform; React Native and desktop never call this. */
+export function setHostSystemLocale(locale: string | null): void {
+    hostSystemLocale = typeof locale === 'string' && locale.trim() ? locale.trim() : null;
+}
+
 /**
  * Week start inferred from the device locale, so calendars look right without
  * a setting. Uses Intl week info when the runtime provides it and falls back
- * to CLDR region data parsed from the locale tag.
+ * to CLDR region data parsed from the locale tag. A native host's locale
+ * (setHostSystemLocale) comes before the runtime's.
  */
 export function getSystemWeekStart(localeInput?: string | null): WeekStartSetting {
-    let locale = typeof localeInput === 'string' && localeInput.trim() ? localeInput.trim() : '';
+    let locale = typeof localeInput === 'string' && localeInput.trim() ? localeInput.trim() : (hostSystemLocale ?? '');
     if (!locale) {
         try {
             if (typeof navigator !== 'undefined' && typeof navigator.language === 'string' && navigator.language) {
