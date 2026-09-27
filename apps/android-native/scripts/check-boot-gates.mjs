@@ -65,7 +65,12 @@ const weeklyUi = source('WeeklyReviewScreen.kt');
 const dailyUi = source('DailyReviewScreen.kt');
 const listActionsKt = source('ListActions.kt');
 const reviewScreens = { contextsUi, trashUi, reviewUi, weeklyUi, dailyUi, listActionsKt };
-const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi, ...reviewScreens };
+// Pass 9: the Inbox tab on its view contract, the lists' selection mode (the bulk bar and its dialogs), and Focus's controls.
+const inboxUi = source('InboxScreen.kt');
+const bulkUi = source('BulkBar.kt');
+const focusControlsUi = source('FocusControls.kt');
+const focusModelKt = source('FocusModel.kt');
+const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi, ...reviewScreens, inboxUi, bulkUi, focusControlsUi };
 const snapshotsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/RecoverySnapshots.kt'), 'utf8');
 // Comments may name the rules below; only code is checked against them.
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
@@ -100,9 +105,10 @@ for (const [name, text] of Object.entries({ rowUi, model, focusUi, projectsUi, a
 assert.doesNotMatch(code(rowUi), /swipeTarget|archived\.restoreToInbox/);
 assert.match(rowUi, /when \(swipe\.icon\) \{ "restore" -> Lucide\.RotateCcw; "done" -> Lucide\.Check; else -> Lucide\.ArrowRight \}/);
 // A list whose contract writes its rows (Contexts, the Review screens) sends its own status action, with the same enabled rule for swipe and TalkBack.
-assert.match(rowUi, /val swipeOn = if \(actions != null\) canEdit && !actions\.selecting else completable && \(if \(target == "done"\) canComplete else canMove\)/);
+// A selecting row has no swipe; a list with core's bulk contract (RowActions without a status) keeps the row's own swipe.
+assert.match(rowUi, /val listed = actions\?\.status\s+val swipeOn = !selecting && if \(listed != null\) canEdit else completable && \(if \(target == "done"\) canComplete else canMove\)/);
 assert.match(rowUi, /val canMove = writable && !busy && \(failedAction == null \|\| failedAction == statusAction\(task, target\)\)/);
-assert.match(rowUi, /val onSwipe = actions\?\.let \{ listed -> \{ listed\.status\(target\) \} \} \?: \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
+assert.match(rowUi, /val onSwipe = listed\?\.let \{ status -> \{ status\(target\) \} \} \?: \{ if \(target == "done"\) complete\(task\.id\) else changeStatus\(task, target\) \}/);
 assert.match(rowUi, /SwipeAction\(enabled = swipeOn, swipe = meta\.swipe, shape = shape, onSwipe = onSwipe, onMenu = \{ showStatusMenu\(task\) \}, onDelete = onDelete\)/);
 assert.match(rowUi, /if \(swipeOn\) customActions = listOf\(CustomAccessibilityAction\(swipeLabel\) \{ onSwipe\(\); true \},\s*CustomAccessibilityAction\(t\("taskStatus\.changeStatus"\)\) \{ showStatusMenu\(task\); true \}\)/);
 assert.doesNotMatch(code(rowUi + activity), /IconButton\(onClick = \{ complete\(/, 'no visible Done button: RN has none');
@@ -121,21 +127,21 @@ assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("S
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
 assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
-assert.equal(code(model).match(/\berror = null\b/g).length, 4, 'perform and applyPage (no retry owed), closeEditor, and an accepted edit clearing only a refused edit\'s message');
+assert.equal(code(model).match(/\berror = null\b/g).length, 4, 'perform and a read\'s success (no retry owed), closeEditor, and an accepted edit clearing only a refused edit\'s message');
 assert.match(model, /if \(error != null && error == editRefusal\) error = null/);
 assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s success never clears an owed retry\'s failure');
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
 assert.equal(code(model).match(/\bperform\(action\)/g).length, 13, 'complete, editor save, task star, project star, status, project create, area filter, saved search, Process Inbox answer, the storage retry, and the capture popup\'s capture, lines and picker create');
-assert.equal(code(model).match(/\bperform\s*\{/g).length, 9, 'editor, reload, Try again, three More, open project, open Process Inbox, open the capture popup');
+assert.equal(code(model).match(/\bperform\s*\{/g).length, 9, 'editor, reload, Try again, two More (Focus, a project), open project, open Process Inbox, open the capture popup, a Focus control\'s edit');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
 const backgroundFn = code(model.slice(model.indexOf('internal fun <T> background('), model.indexOf('internal fun perform(')));
 assert.match(backgroundFn, /if \(runtime == null \|\| busy \|\| failedAction != null\) return\s+val mine = \+\+issued/);
 assert.doesNotMatch(backgroundFn, /busy = /);
 assert.equal(code(model).match(/\bbusy = true\b/g).length, 1, 'only a user action takes busy');
-assert.match(model, /fun refreshFocus\(\) \{\s+val depth = focus\.depth\(\)\s+background\(/);
+assert.match(model, /fun refreshFocus\(\) \{\s+val depth = focus\.depth\(\)\s+val controls = menu\.focusControls\.state\.toString\(\)\s+background\(/);
 assert.match(model, /fun refreshProjects\(\) \{\s+val at = depth\(\)\s+background\(/);
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds, in the background, once busy is released.
@@ -147,15 +153,15 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /internal fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /internal enum class Part \{ Inbox, Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog \}/);
+assert.match(model, /internal enum class Part \{ Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog \}/);
 {
-    const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('private fun applyPage(')));
-    for (const part of ['Inbox', 'Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
+    const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('internal fun readSucceeded(')));
+    for (const part of ['Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
     assert.doesNotMatch(code(model), /\bfresh\(mine\)/, 'every freshness check names its list');
 }
 assert.match(backgroundFn, /if \(result\.isFailure && parts\.map \{ fresh\(mine, it\) \}\.none \{ it \}\) return@ui\s+result\.onSuccess \{ apply\(it, mine\) \}\.onFailure/);
 assert.match(backgroundFn, /if \(busy \|\| failedAction != null\) return@onFailure/, 'a background failure never replaces an owed retry or a running action');
-for (const read of ['fun refresh()', 'fun loadMore()', 'fun loadMoreFocus(', 'fun openProject(', 'fun loadMoreProject(']) {
+for (const read of ['fun refresh()', 'fun loadMoreFocus(', 'fun openProject(', 'fun loadMoreProject(']) {
     const body = code(model.slice(model.indexOf(read), model.indexOf('\n    }\n', model.indexOf(read))));
     assert.match(body, /val mine = \+\+issued[\s\S]*ui \{ (if \(fresh\(mine, Part\.\w+\)\)|showLists\(lists, mine\))/, `${read} shows its result only if nothing newer came first`);
 }
@@ -262,7 +268,8 @@ assert.match(activity, /model\.attach\(\)/);
 // A failed command's exact retry outlives its screen inside this process only.
 assert.match(model, /val failed = if \(\(action != null[\s\S]*?ProcessCoreHost\.recordFailure\([\s\S]*?ui \{/);
 // A failed update keeps its editor draft with the retry, so a new screen reopens the editor on it.
-assert.match(model, /PendingFailure\(failed, message, rows, total, editor, screen, focus, projects, project, areaFilter\)/);
+assert.match(model, /PendingFailure\(failed, message, menu\.page, editor, screen, focus, projects, project, areaFilter\)/);
+assert.match(model, /pending\.menuPage\?\.let\(menu::restorePage\)/, 'a new screen shows the failed command\'s list page again');
 assert.match(model, /pending\.editor\?\.let\(::keepEditor\)/);
 // ...and a failure on Focus reopens Focus with its rows, since reads wait for the retry.
 assert.match(model, /focus = pending\.focus\s+projects = pending\.projects\s+keepProject\(pending\.project\?\.projectId\)\s+project = pending\.project\s+show\(pending\.screen\)/);
@@ -438,13 +445,16 @@ assert.match(editorUi, /val locked = busy \|\| failed \|\| editor\.readOnly/);
 assert.match(editorUi, /BackHandler\(enabled = !failed\)/);
 assert.match(editorUi, /clickable\(enabled = !busy && !failed, role = Role\.Button, onClick = leave\)/);
 
-// Focus reaches core only through CoreHost's two calls, which reach only core's two Focus queries.
-assert.match(coreHost, /fun focus\(limit: Int\): JSONObject = callAsync\("focus", limit\)/);
-assert.match(coreHost, /fun focusWindow\(key: String, offset: Int, limit: Int, revision: String\): JSONObject =\s*callAsync\("focusWindow", key, offset, limit, revision\)/);
-assert.match(hostEntry, /focus\(limit: number\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocus\(\{ limit \}\)\);/);
-assert.match(hostEntry, /focusWindow\(key: string, offset: number, limit: number, revision: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocusSectionWindow\(\{ key: key as FocusTaskSectionKey, offset, limit, revision \}\)\);/);
+// Focus reaches core only through CoreHost's two calls, which reach only core's two Focus queries. Kotlin sends Focus's control
+// state (FocusModel) with both, and a control's edit with the first; a read that sends neither keeps the flat Focus.
+assert.match(coreHost, /fun focus\(limit: Int, controls: String = "", controlEdit: String = ""\): JSONObject = callAsync\("focus", limit, controls, controlEdit\)/);
+assert.match(coreHost, /fun focusWindow\(key: String, offset: Int, limit: Int, revision: String, controls: String = ""\): JSONObject =\s*callAsync\("focusWindow", key, offset, limit, revision, controls\)/);
+assert.match(hostEntry, /focus\(limit: number, controls = '', controlEdit = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocus\(\{ limit, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\), \.\.\.\(controlEdit \? \{ controlEdit: JSON\.parse\(controlEdit\) \} : \{\}\) \}\)\);/);
+assert.match(hostEntry, /focusWindow\(key: string, offset: number, limit: number, revision: string, controls = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocusSectionWindow\(\{ key: key as FocusTaskSectionKey, offset, limit, revision, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\) \}\)\);/);
 assert.equal(model.match(/runtime\.focus\(/g).length, 1);
 assert.equal(model.match(/runtime\.focusWindow\(/g).length, 1);
+assert.match(model, /FocusView\.parse\(runtime\.focus\(PAGE, controls, edit\)\)/, 'every Focus read sends the control state');
+assert.match(model, /view\.append\(runtime\.focusWindow\(key, loaded\.rows\.size, PAGE, view\.revision, state\)\)/, 'later windows go with the state core answered');
 assert.equal([activity, owner, editorUi, focusUi, projectsUi].join('\n').match(/\.focus\(|focusWindow\(/g), null);
 // Rows render in core's order: sections and rows are walked as parsed, never sorted, filtered, or regrouped.
 const focusCode = code(focusUi) + code(model.slice(model.indexOf('fun JSONObject.taskRows()'), model.indexOf('private const val PAGE')));
@@ -464,14 +474,15 @@ assert.match(focusUi, /star = RowStar\.Shown, starBlocked = section\.focusBlocke
 assert.doesNotMatch(code(focusUi), /"upcoming"/, 'Focus never names a section to decide a control');
 assert.match(rowUi, /val label = blocked \?: t\(if \(task\.isFocusedToday\) "agenda\.removeFromFocus" else "agenda\.addToFocus"\)/);
 // A stale Load more reads Focus again from offset 0; it is never shown as an error.
-assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth\)/);
+assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth, state\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
 assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*delay\(60_000\)/);
 assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 1, 'one caller: the lifecycle loop');
 assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Commands from Focus and a project use the Inbox's command path and its exact-retry lock.
 assert.match(rowUi, /fun TaskRowItem\(\s*model: InboxViewModel, task: TaskRow, status: RowStatus = RowStatus\.Hidden, star: RowStar = RowStar\.Hidden,/);
-assert.match(focusUi, /item\(key = "\$\{section\.key\}:\$\{task\.id\}"\) \{\s*TaskRowItem\(model, task,/);
+// A task grouped under two Next actions headings shows under each: its heading is part of its key.
+assert.match(focusUi, /item\(key = "\$\{section\.key\}:\$\{group\}:\$\{task\.id\}"\) \{\s*GroupedRow\(grouped\) \{\s*TaskRowItem\(model, task,/);
 // RN hides a section core counts as empty, "Projects to review" included, and folds a section on its title.
 assert.match(focusUi, /if \(section\.total == 0\) continue/);
 assert.match(focusUi, /if \(reviewCount > 0\) \{/);
@@ -540,8 +551,9 @@ assert.match(model, /enum class Screen\(val label: String\) \{ Inbox\("tab\.inbo
 assert.match(activity, /\} else if \(!writable\) \{[^}]*Text\(error\.orEmpty\(\), color = MaterialTheme\.colorScheme\.error, modifier = Modifier\.testTag\("boot-failure"\)\.padding\(24\.dp\)\)\s*\} else \{/);
 assert.match(activity, /if \(open != null && writable\) TaskEditorScreen\(model, open\)/);
 
-// Landscape: the Inbox's Process button and scope line are the list's first item; only the header, the tabs (and a failure) stay fixed.
-assert.match(activity, /LazyColumn\(modifier, contentPadding = PaddingValues\(12\.dp\)\) \{\s*item\(key = "header"\)[\s\S]*?items\(rows, key = \{ it\.id \}\)/);
+// Landscape: the Inbox's controls, Process button and scope line are the list's first items; only the header, the tabs (and a
+// failure, and the bulk bar while selecting) stay fixed.
+assert.match(inboxUi, /LazyColumn\(Modifier\.weight\(1f\)\.fillMaxWidth\(\), contentPadding = PaddingValues\(bottom = 12\.dp\)\) \{\s*val view = shown\?\.view \?: return@LazyColumn\s*item\(key = "toolbar"\)[\s\S]*?item\(key = "header"\)[\s\S]*?items\(shown\.items, key = \{ it\.key \}\)/);
 assert.match(activity, /Screen\.Inbox -> InboxList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Capture: RN's center tab button opens RN's capture popup (CaptureScreen.kt), on core's quick capture contract.
 assert.match(activity, /CaptureButton\(model\)[\s\S]*?clickable\(role = Role\.Button\) \{ model\.menu\.closeSheet\(\); model\.openCapture\(\) \}/);
@@ -751,9 +763,10 @@ assert.match(processUi, /LaunchedEffect\(key, coreValue\) \{ if \(!pending && fi
 assert.match(processUi, /DayPickerDialog\(row\?\.text\("date"\)/, 'the picker starts on core\'s date and hands core only the picked day');
 assert.doesNotMatch(code(processUi), /"(inbox|next|waiting|someday|reference|done)"\s*->/, 'no status decides a Process Inbox control');
 assert.match(processUi, /const val PROCESSING_MODE_KEY = "mindwtr:view:inboxProcessingMode:v1"/);
-// The Inbox's Process button: core's Inbox count, and TalkBack hears the exact count as RN does.
-assert.match(activity, /if \(total > 0\) ProcessButton\(model\)/);
-assert.match(activity, /semantics \{ contentDescription = "\$label \(\$total\)" \}/);
+// The Inbox's Process button: core's label (99+ above 99), and TalkBack hears core's exact count as RN does; Mind Sweep takes its
+// slot while the Inbox is empty, drawn disabled (its flow is not built).
+assert.match(inboxUi, /view\.optJSONObject\("process"\)\?\.let \{ ProcessButton\(model, it\) \}\s+\?: ActionButton\(Lucide\.Brain, view\.getJSONObject\("mindSweep"\)\.getString\("label"\), false, dimmed = true\) \{\}/);
+assert.match(inboxUi, /ActionButton\(Lucide\.ListChecks, process\.getString\("label"\), writable && !busy && failedAction == null, process\.getString\("accessibilityLabel"\)\) \{ openProcessing\(\) \}/);
 assert.doesNotMatch(code(activity), /"\$inbox · \$total"/, 'the "Inbox · N" count line is gone, as in RN');
 
 // The capture popup (pass 5): core's quick capture contract, every write through perform with its exact request on disk first.
@@ -828,7 +841,7 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
     const kinds = [...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \(input\) => contract\.\w+\(input\),$/gm)].map(([, kind]) => kind);
     assert.deepEqual(hostKinds.sort(), [...kinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join(' \\| ')};`));
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.match(hostEntry, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];[\s\S]{0,120}?return taskResult\(name as MenuCommand, await command\(JSON\.parse\(json\) as never\)\);/);
     assert.match(hostEntry, /menuRead\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{[\s\S]{0,300}?if \(name !== 'more'\) requireSaved\(\);\s*const read = MENU_READS\[name\];[\s\S]{0,100}?return unwrap\(read\(JSON\.parse\(json\) as never\)\);/);
     const input = code(menuModel.slice(menuModel.indexOf('private fun input(action: FailedAction)'), menuModel.indexOf('}.toString()', menuModel.indexOf('private fun input('))));
@@ -839,7 +852,8 @@ assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObjec
     assert.doesNotMatch(input, new RegExp(`"(${LIST_KINDS.join('|')})" ->`), 'no list action has a request of its own shape');
     assert.match(input, /else -> JSONObject\(\)\.put\("requestId", action\.id\)\.put\("action", JSONObject\(action\.title\)\)/, 'a list action is core\'s action with its request UUID');
 }
-assert.match(menuModel, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->\s+val reply = try \{\s+runtime\.menuCommand\(action\.kind, input\(action\)\)[\s\S]{0,900}?shell\.acknowledged\(action\)/, 'menu writes run through perform with their exact FailedAction');
+assert.match(menuModel, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->\s+val reply = try \{\s+runtime\.menuCommand\(action\.kind, input\(action\)\)[\s\S]{0,1200}?shell\.acknowledged\(action\)/, 'menu writes run through perform with their exact FailedAction');
+assert.match(menuModel, /if \(refused && action\.kind == "focusSave"\) shell\.ui \{ focusControls\.refused\(action\) \}/, 'a refused saved filter frees its request UUID');
 assert.match(menuModel, /if \(refused && action\.kind == "calendarCreate"\) shell\.ui \{ calendar\.refused\(action\) \}/, 'a refused composer Save frees its request UUID');
 assert.equal(code(menuModel).match(/runtime\.menuCommand\(/g).length, 1, 'send is the one menu write');
 assert.equal(code(menuModel).match(/shell\.perform\(action\)/g).length, 1);
@@ -861,20 +875,31 @@ assert.equal(code(menuModel).match(/store\.delete\(\)/g).length, 2, 'only an ans
 assert.match(menuModel, /"addTask" -> FailedAction\("somedayTask", open\.getString\("captureId"\), text,/, 'Add task sends its capture UUID, kept with its dialog');
 // Reads: background refreshes and user reads, with the shell's per-list freshness; paging stays under one revision and a stale
 // window reads the list again from its first window (not an error).
-assert.match(menuModel, /shell\.background\(listOf\(Part\.Menu\), \{ runtime -> read\(runtime, list, params, depth, deep\) \}\) \{ next, mine ->\s+if \(shell\.fresh\(mine, Part\.Menu\)\) show\(list, next\)/);
+assert.match(menuModel, /shell\.background\(listOf\(Part\.Menu\), \{ runtime -> read\(runtime, list, params, depth, deep, bulk = bulk\) \}\) \{ next, mine ->\s+if \(shell\.fresh\(mine, Part\.Menu\)\) show\(list, next\)/);
 assert.match(menuModel, /shell\.ui \{ if \(shell\.fresh\(mine, Part\.Menu\)\) show\(list, next\) \}/);
 assert.match(menuModel, /\.put\("offset", page\.items\.size\)\.put\("limit", PAGE\)\.put\("revision", page\.revision\)/, 'later windows carry the view\'s revision');
 assert.match(menuModel, /runtime\.menuRead\("collection", JSONObject\(\)\.put\("view", list\)\.put\("collection", name\)\.put\("params", page\.params\)/, 'collections page through getMenuViewCollection with the accepted params');
-assert.equal(code(menuModel).match(/if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure/g).length, 4,
-    'read, More, a collection\'s More, and the move dialog\'s choices treat a stale window as a reread, never an error');
+// The Inbox's and Archive's filter tokens page through their own reads (getInboxFilterTokens, getArchiveFilterTokens), with the
+// accepted params and the view's revision; a picker search (query) reads the matches from offset zero.
+assert.match(menuModel, /"inbox", "archive" -> runtime\.menuRead\(if \(list == "inbox"\) "inboxTokens" else "archiveTokens", JSONObject\(\)\.put\("params", page\.params\)\s+\.put\("offset", offset\)\.put\("limit", WINDOW\)\.put\("revision", page\.revision\)\.apply \{ query\?\.let \{ put\("query", it\) \} \}/);
+assert.equal(code(menuModel).match(/if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure/g).length, 5,
+    'read, More, a collection\'s More, the move dialog\'s choices and a picker search treat a stale window as a reread, never an error');
 assert.match(menuModel, /private fun readMoveChoices\(depth: Int = WINDOW\) \{[\s\S]*?\.put\("offset", 0\)[\s\S]*?\.put\("revision", first\.getString\("revision"\)\)[\s\S]*?if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure/,
     'the move dialog pages its choices under the first window\'s revision and rereads from the first window');
 assert.match(menuModel, /fun moreMoveChoices\(\) \{ moveChoices\?\.getJSONObject\("choices"\)\?\.getJSONArray\("items"\)\?\.length\(\)\?\.let \{ readMoveChoices\(it \+ WINDOW\) \} \}/);
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)\s+menu\.refresh\(\)/, 'the open Menu list is read again after every command');
 // Filters, sorts and groups: every choice sends the exact edit or value core put on it; only typed text builds an edit.
-assert.deepEqual([...new Set([...code(menuModel + menuUi + archiveUi).matchAll(/put\("type", "?(\w+)/g)].map(([, type]) => type))].sort(),
-    ['moveTasksToInbox', 'moveToInbox', 'reactivateProject', 'trashProject', 'trashTask', 'trashTasks', 'type'],
-    'Kotlin builds only core\'s Archive action names (NativeArchiveAction) and the typed filter text\'s edit (its `type` variable)');
+{
+    // Kotlin names only core's Archive and bulk actions (NativeArchiveAction, NativeBulkAction), the typed text's edits (a filter's
+    // setSearch or setLocation through its `type` variable, Bulk Organize's setText), and nothing else.
+    const bulkSource = readFileSync(resolve(app, '../../packages/core/src/native-host-contract-bulk-actions.ts'), 'utf8');
+    const unionOf = (text, type) => [...(new RegExp(`export type ${type} =([\\s\\S]*?);\\n`).exec(text)?.[1] ?? '').matchAll(/type: '(\w+)'/g)].map(([, name]) => name);
+    const allowed = new Set([...unionOf(contractSource, 'NativeArchiveAction'), ...unionOf(bulkSource, 'NativeBulkAction'), 'setSearch', 'setText', 'type']);
+    assert(allowed.has('setCompletedAt') && allowed.has('organize') && allowed.has('restoreTasks'), 'core\'s action unions were read');
+    const used = new Set([...code(menuModel + menuUi + archiveUi + bulkUi).matchAll(/put\("type", "?(\w+)/g)].map(([, type]) => type));
+    for (const type of used) assert(allowed.has(type), `${type} is one of core's Archive or bulk actions, or typed text's edit`);
+    assert(['setCompletedAt', 'moveTasks', 'editTaskTokens', 'organize', 'trashTasks'].every((type) => used.has(type)));
+}
 assert.match(menuModel, /reload\(JSONObject\(\)\.put\("type", type\)\.put\("value", text\)\)/);
 assert.match(menuUi, /filterEdit\(option\.getJSONObject\("edit"\)\)/);
 assert.match(menuUi, /filterEdit\(filters\.getJSONObject\("clearEdit"\)\)/);
@@ -894,7 +919,7 @@ assert.match(activity, /if \(menu\.sheet\) MoreSheet\(model\)/);
 assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(model, listed\)/);
 // Navigation survives rotation (the model is held by the ViewModel) and process death (the Bundle): the sheet, screen, tab, dialog, session.
 for (const key of ['menuSheet', 'menuScreen', 'historyTab', 'menuState', 'menuDialog', 'quickAccess', 'reviewFrom']) assert.match(menuModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
-assert.match(menuUi, /BackHandler\(enabled = failedAction == null\) \{ if \(menu\.dialog != null\) menu\.backInDialog\(\) else menu\.closeScreen\(\) \}/);
+assert.match(menuUi, /BackHandler\(enabled = failedAction == null\) \{ if \(menu\.dialog != null\) menu\.backInDialog\(\) else if \(menu\.page\?\.bulk != null\) menu\.list\?\.let\(menu::endBulk\) else menu\.closeScreen\(\) \}/);
 // Search results for the Menu lists open them (review ruling 5 of pass 4).
 assert.match(searchUi, /listed != null -> \{ closeSearch\(\); menu\.openRoute\(listed\) \}/);
 assert.match(menuModel, /"\/waiting" to \(MenuScreen\.Waiting to null\), "\/someday" to \(MenuScreen\.Someday to null\),\s+"\/reference" to \(MenuScreen\.Reference to null\), "\/done" to \(MenuScreen\.History to "done"\), "\/archived" to \(MenuScreen\.History to "archived"\)/);
@@ -944,7 +969,7 @@ assert.match(reviewUi, /"delete" -> confirm\(bulk\.getJSONObject\("deleteConfirm
 assert.match(rowUi, /\.clickable\(enabled = enabled, role = Role\.Button\) \{ if \(!menu\.rowStatus\(task, status\)\) changeStatus\(task, status\) \}/);
 assert.match(menuModel, /private val ROW_KINDS = mapOf\("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction"\)/);
 // The Weekly Review's project Add task creates a task: its exact request (the request UUID core makes the task's id) is on disk first.
-assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate"\)/);
+assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave"\)/);
 assert.match(menuModel, /"projectTask" -> FailedAction\("reviewTask", open\.getString\("requestId"\), addProjectTask\(open\.getString\("projectId"\), open\.optString\("text"\)\)\.toString\(\)\)/);
 assert.equal(code(weeklyUi).match(/saveCreate\(\)/g).length, 3, 'Return, Save & edit and Add all send the one persisted request');
 // A review's place is core's checkpoint, stored under core's key (RN's session keys) and sent back; Finish deletes it.
@@ -1053,6 +1078,90 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // The screens open from the More sheet, the Calendar also from the quick-access tab, each read on resume.
     assert.match(menuUi, /"calendar" -> CalendarList\(model\)\s+"board" -> BoardList\(model\)/);
     assert.match(menuUi, /"review" -> ReviewList\(model\)\s+"calendar" -> CalendarList\(model\)\s+\}/);
+}
+
+// Pass 9: the Inbox tab on core's Inbox view, selection mode on the Inbox, Waiting, Someday, Reference and Done on core's bulk
+// contract, Archived's filter sheet, stateless Select all and completion time, and Focus's controls.
+{
+    // Reads pass Kotlin's input to core unchanged; writes are core's commands, logged as their operation.
+    for (const [name, method] of [['inbox', 'getInboxView'], ['inboxTokens', 'getInboxFilterTokens'], ['archiveTokens', 'getArchiveFilterTokens'],
+        ['bulk', 'getBulkActions'], ['focusList', 'getFocusControlsList']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
+    }
+    for (const [name, method] of [['bulkAction', 'runBulkAction'], ['focusGroup', 'setFocusGroupBy'], ['focusSave', 'saveFocusFilter'],
+        ['focusCriterion', 'removeFocusFilterCriterion'], ['focusDelete', 'deleteFocusFilter'], ['focusReorder', 'reorderFocus']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
+    }
+    // Every write is MenuModel's send -> perform(action) with its exact FailedAction: core's whole input (with the request UUID).
+    assert.match(menuModel, /"bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(menuModel, /"bulkAction" -> bulkDone\(action, reply\)\s+"focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder" -> focusControls\.done\(action, reply\)/);
+    assert.match(menuModel, /fun bulkAction\(action: JSONObject, busy: String\) \{\s+bulkBusy = busy\s+act\("bulkAction", bulkPayload\(action\) \?: return\)/);
+    assert.match(menuModel, /confirm\(bulk\.getJSONObject\("deleteConfirmation"\), bulkPayload\(JSONObject\(\)\.put\("type", "trashTasks"\)\) \?: return, "bulkAction"\)/, 'a bulk delete asks core\'s question first');
+    assert.match(menuModel, /undo\?\.let \{ whenIdle \{ bulkBusy = "undo"; act\("bulkAction", JSONObject\(\)\.put\("list", list\)\.put\("action", it\.getJSONObject\("action"\)\)\) \} \}/, 'Undo is core\'s restoreTasks, a new request UUID');
+    assert.match(menuModel, /if \(reply\.optBoolean\("changed"\)\) endBulk\(list\)/, 'an action that changed something leaves selection mode');
+    assert.match(focusModelKt, /private fun command\(kind: String, input: JSONObject\) = menu\.command\(kind, JSONObject\(input\.toString\(\)\)\.put\("controls", state\)\)/);
+    assert.match(focusModelKt, /menu\.create\(FailedAction\("focusSave", open\.getString\("requestId"\), JSONObject\(\)\.put\("controls", state\)\.put\("name", name\)\.toString\(\)\)\)/,
+        'a saved Focus filter is a create: its request UUID (the filter\'s id) and its input on disk before the call');
+    assert.doesNotMatch(code(focusModelKt), /menuCommand\(|\bsend\(|shell\.perform\(action|FailedAction\((?!"focusSave")/, 'FocusModel writes only through MenuModel.command or create');
+    for (const [name, text] of Object.entries({ inboxUi, bulkUi, focusControlsUi })) {
+        assert.doesNotMatch(code(text).replace(/^import .*$/gm, ''), /runtime\.|menuCommand\(|menuRead\(|\bsend\(|shell\.perform|FailedAction\(|menu\.command|menu\.create/, `${name}: the screen reaches core only through its model`);
+    }
+    // The Inbox is RN's TaskList on core's getInboxView through the menu list machinery (paging, filters, folds); its sort is the
+    // stored task-list sort (setTaskListSort); a heading's fold keeps core's collapseEdit whole under RN's key, for its grouping.
+    assert.match(menuModel, /shell\.screen == Screen\.Inbox -> "inbox"/);
+    // The Inbox reads only core's getInboxView: Kotlin has no getInboxWindow call left, and a full read carries no Inbox part.
+    assert.doesNotMatch(code(kotlinFiles.join('\n') + inboxUi + bulkUi + focusControlsUi + focusModelKt), /inboxWindow|callAsync\("window"|InboxPage|Part\.Inbox/, 'no getInboxWindow read is left in Kotlin');
+    assert.match(model, /private class Lists\(val focus: FocusView, val projects: ProjectsView, val projectId: String\?, val project: ProjectDetail\?, val areas: AreaFilter\)/);
+    assert.match(menuModel, /if \(list != this\.list\) return\s+shell\.readSucceeded\(\)/, 'the Inbox view\'s (or a Menu list\'s) success clears a read\'s failure');
+    assert.match(menuModel, /"reference", "inbox" -> send\(FailedAction\("taskListSort", value\)\)/);
+    assert.match(menuModel, /"inbox" -> kept\(listOf\("groupBy", "filters"\)\)\.put\("collapsedGroupIds", GroupCollapse\.axis\(prefs, "inbox", own\.optString\("groupBy", "none"\), 200\)\)/);
+    assert.match(menuModel, /if \(list == "inbox" && collapse != null\) GroupCollapse\.keep\(prefs, list, axis, collapse\.getJSONArray\("collapsedGroupIds"\)\)/);
+    assert.match(menuUi, /Choice\(option\.getString\("label"\), option\.getBoolean\("selected"\)\) \{ sort\(option\.optJSONObject\("edit"\)\?\.getString\("sortBy"\) \?: option\.getString\("value"\)\) \}/);
+    assert.match(activity, /if \(quick \|\| screen == Screen\.Inbox\) MenuDialogs\(model\)\s+if \(screen == Screen\.Focus\) FocusDialogs\(model\)/);
+    assert.match(inboxUi, /empty\.getJSONObject\("action"\)\.optJSONObject\("filterEdit"\)\?\.let\(::filterEdit\) \?: model\.openCapture\(\)/, 'the empty state runs core\'s action');
+    // A page belongs to the list it was read for, so a tab change never draws another list's reply.
+    assert.match(menuModel, /val page: MenuPage\? get\(\) = loaded\?\.takeIf \{ it\.list == list \}/);
+    // Selection mode: RN's session state (the Bundle), core's bar read with the list's accepted params, a row tap as core's
+    // selectionEdit, Select all as core's stateless one; read-only rows never select.
+    assert.match(menuModel, /bulk\?\.let \{ input -> page = page\.withBulk\(runtime\.menuRead\("bulk", JSONObject\(input\.toString\(\)\)\.put\("params", sent\)\.toString\(\)\)\) \}/);
+    assert.match(menuModel, /bulk\.optJSONArray\("except"\)\?\.let \{ put\("selectAll", JSONObject\(\)\.put\("except", it\)\) \} \?: put\("taskIds", bulk\.optJSONArray\("selected"\) \?: JSONArray\(\)\)/);
+    assert.match(menuModel, /bulk\.optJSONObject\("selectAll"\)\?\.let \{ put\("selectAll", it\) \} \?: put\("taskIds", bulk\.getJSONArray\("selectedIds"\)\)/, 'an action takes core\'s own Select all object');
+    assert.match(menuModel, /reload\(bulkEdit = JSONObject\(\)\.put\("selectionEdit", JSONObject\(\)\.put\("taskId", taskId\)\.put\("range", range\)\)\)/);
+    assert.match(menuModel, /if \(list !in BULK_LISTS \|\| readOnly\) return null/);
+    for (const [name, text] of Object.entries({ inboxUi, statusListUi, waitingUi, somedayUi })) assert.match(text, /actions = bulkRow\(/, `${name}: rows start and show selection mode`);
+    assert.match(menuModel, /val BULK_LISTS = setOf\("inbox", "waiting", "someday", "reference", "done"\)/);
+    // Archived: core's filter edits and chips (the deprecated fields are never read), its tokens paged by getArchiveFilterTokens with
+    // the open sheet's filterSheetOpen, stateless Select all, and the completion time from a local day and time with core's start.
+    assert.doesNotMatch(code(kotlinFiles.join('\n') + inboxUi + bulkUi + focusControlsUi + focusModelKt), /"tokenOptions"|"timeEstimateOptions"/, 'Kotlin never reads the deprecated Archive fields');
+    assert.doesNotMatch(code(archiveUi + menuUi), /getJSONObject\("filters"\)\.menuObjects\("chips"\)/, 'chips come from the view\'s own `chips`, not the deprecated filters.chips');
+    assert.match(menuModel, /if \(dialog\?\.optString\("kind"\) == "filters"\) put\("filterSheetOpen", true\)/);
+    assert.match(menuModel, /own\.optJSONArray\("except"\)\?\.let \{ put\("selectAll", JSONObject\(\)\.put\("except", it\)\) \} \?: put\("selectedIds", own\.optJSONArray\("selected"\) \?: JSONArray\(\)\)/);
+    assert.match(menuModel, /view\?\.optJSONObject\("selectAll"\)\?\.let \{ put\("selectAll", it\) \} \?: put\("taskIds", view\?\.optJSONArray\("selectedIds"\) \?: JSONArray\(\)\)/);
+    assert.match(menuModel, /archive\(JSONObject\(\)\.put\("type", "setCompletedAt"\)\.put\("taskId", open\.getString\("taskId"\)\)\.put\("day", open\.getString\("day"\)\)\.put\("time", time\)\)/);
+    assert.match(archiveUi, /DayPickerDialog\(open\.getString\("day"\), [^\n]*\) \{ pickCompletedDay\(it\) \}/, 'the date dialog starts on core\'s day');
+    assert.match(archiveUi, /val \(hour, minute\) = pickerClock\(open\.getString\("time"\)\)/, 'the time dialog starts on core\'s time');
+    // Picker search (menu lists, the Inbox, Archive): core's matches for the typed query, read again when the list changes.
+    assert.match(menuUi, /LaunchedEffect\(shown\.revision, name\) \{ if \(query\.isNotBlank\(\)\) searchPicker\(name, query,/);
+    assert.match(menuUi, /for \(mode in filters\.menuObjects\("matchModes"\)\) MatchModeRow\(mode\.getString\("label"\), mode\.menuObjects\("options"\), idle\) \{ filterEdit\(it\) \}/);
+    // Focus: every read sends the control state (asserted with the Focus bridge above); core's answer becomes the state; the state,
+    // the open sheet and reorder mode ride the Bundle; reorder mode ends once core no longer offers it.
+    for (const key of ['focusControls', 'focusDialog', 'focusReorder']) assert.match(focusModelKt, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
+    assert.match(focusModelKt, /keepState\(controls\.getJSONObject\("state"\)\)\s+if \(reordering && controls\.isNull\("reorder"\)\) keepReordering\(false\)/);
+    assert.match(model, /private fun showFocus\(view: FocusView\?\) \{\s+focus = view\s+view\?\.let\(menu\.focusControls::adopt\)/);
+    assert.match(focusControlsUi, /if \(to != index\) reorderTo\(ids\.toMutableList\(\)\.apply \{ add\(to, removeAt\(index\)\) \}\)/, 'a drop that moves nothing sends nothing; a move sends one reorderFocus');
+    assert.match(focusControlsUi, /row\.optJSONArray\("moveUp"\)\?\.let \{ order -> CustomAccessibilityAction/, 'TalkBack moves a row by core\'s own order');
+    // One node per new control: its label, role and state together (the device checks and TalkBack read it there). A backdrop
+    // keeps a plain label: clearing its semantics would hide the sheet inside it.
+    for (const [name, text] of Object.entries({ inboxUi, bulkUi, focusControlsUi })) {
+        assert.doesNotMatch(code(text), /\.clickable\(enabled = [^\n]*\.semantics \{ contentDescription|\.semantics \{ contentDescription[^\n]*\}\s*\.clickable\(enabled/,
+            `${name}: no control with a clickable and a separate semantics block`);
+        assert(code(text).match(/clearAndSetSemantics \{/g).length >= 3, `${name}: its controls set label, role and state in one block`);
+    }
+    // No Kotlin policy in the new models and screens (the gates above also hold them to core's text and edits).
+    for (const [name, text] of Object.entries({ focusModelKt, focusControlsUi, inboxUi, bulkUi })) {
+        assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping`);
+        assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|java\.util\.Calendar|Calendar\.getInstance|GregorianCalendar|Instant\b|\.format\(|toLocal/, `${name}: no Kotlin date formatting or parsing`);
+    }
 }
 
 const fakeCore = `
@@ -1317,6 +1426,11 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.focus(50)), { ok: true, val
 assert.deepEqual(await poll(ready, ready.MindwtrHost.focusWindow('next', 50, 50, 'f')),
     { ok: false, error: 'STALE_REVISION: Focus changed; restart paging' });
 assert.deepEqual(ready.focusInputs, ['{"limit":50}', '{"key":"next","offset":50,"limit":50,"revision":"f"}']);
+// With Focus's control state (and a control's edit), both pass them to core as parsed JSON.
+await poll(ready, ready.MindwtrHost.focus(50, '{"sortBy":"due"}', '{"type":"sort","sortBy":"title"}'));
+await poll(ready, ready.MindwtrHost.focusWindow('next', 50, 50, 'f', '{"sortBy":"due"}'));
+assert.deepEqual(ready.focusInputs.slice(2), ['{"limit":50,"controls":{"sortBy":"due"},"controlEdit":{"type":"sort","sortBy":"title"}}',
+    '{"key":"next","offset":50,"limit":50,"revision":"f","controls":{"sortBy":"due"}}']);
 // A command is accepted while a read is still in flight: the host neither serializes nor refuses them.
 {
     const completesBefore = ready.completeCount;
@@ -1438,7 +1552,7 @@ assert.equal(ready.editorInputs.length, 4);
 for (const blocked of [ready.MindwtrHost.focus(50), ready.MindwtrHost.focusWindow('next', 0, 50, 'f')]) {
     assert.deepEqual(await poll(ready, blocked), { ok: false, error: 'SAVE_FAILED: disk full' });
 }
-assert.equal(ready.focusInputs.length, 2);
+assert.equal(ready.focusInputs.length, 4);
 // Commands never wait on requireSaved: the exact retry of a failed command must reach core, which retries the save.
 const commandsBefore = ready.completeCount + ready.createCount + ready.updateInputs.length;
 assert.equal((await poll(ready, ready.MindwtrHost.complete('t'))).ok, true);
@@ -1606,4 +1720,5 @@ console.log('RN look: rows read core meta (no Kotlin date formatting or coloring
 console.log('Menu tab: core\'s menu views through CoreHost, writes through perform with exact requests, Someday creates on disk first, no Kotlin policy');
 console.log('Contexts, Trash, Review and the reviews: core\'s views, core\'s actions through perform, destructive actions behind core\'s question, checkpoints under core\'s keys');
 console.log('Calendar and Board: core\'s views under one revision, core\'s actions through perform, composer and Duplicate on disk first, a drop is one core action, no Kotlin date math or policy');
+console.log('Toolbars and bulk: the Inbox on core\'s view, core\'s bulk bar and Focus controls through perform with exact requests, a saved Focus filter on disk first, stateless Select all, no deprecated Archive fields, no Kotlin policy');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

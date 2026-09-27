@@ -313,7 +313,7 @@ private fun pickerStart(coreDate: String): Long? =
     runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(coreDate)?.time }.getOrNull()
 
 /** Where core says the time picker starts (`HH:mm`), as the picker's hour and minute. */
-private fun pickerClock(coreTime: String): Pair<Int, Int> =
+internal fun pickerClock(coreTime: String): Pair<Int, Int> =
     coreTime.split(":").mapNotNull { it.toIntOrNull() }.let { if (it.size == 2) it[0] to it[1] else 0 to 0 }
 
 /** RN's editor field glyphs (TaskEditOrganizationField and friends). */

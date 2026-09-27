@@ -22,7 +22,12 @@ val FOCUS_SECTION_KEYS = listOf("focus", "schedule", "next", "upcoming", "review
 class FocusViewState(private val raw: JSONObject, val expanded: Map<String, Boolean>) {
     fun isOpen(key: String) = expanded[key] ?: true
 
+    /** RN's Show details (View options), kept in the same JSON. */
+    val showDetails: Boolean get() = raw.optBoolean("showDetails", false)
+
     fun with(changes: Map<String, Boolean>): FocusViewState = FocusViewState(raw, expanded + changes)
+
+    fun withDetails(on: Boolean): FocusViewState = FocusViewState(JSONObject(raw.toString()).put("showDetails", on), expanded)
 
     /** RN's serializeFocusViewState: it also writes the legacy `nextActions` twin of `next`. */
     fun save(prefs: SharedPreferences) {
@@ -102,7 +107,7 @@ data class ListViewState(val groupBy: String?, val sortBy: String?) {
 }
 
 /**
- * RN's task-group-collapse-state: one key per list ("reference", "done", "archived"), each grouping axis → its folded
+ * RN's task-group-collapse-state: one key per list ("inbox", "reference", "done", "archived"), each grouping axis → its folded
  * group ids, device-local and never synced.
  */
 object GroupCollapse {
@@ -128,6 +133,17 @@ object GroupCollapse {
         val next = JSONArray().apply { for (index in 0 until ids.length()) if (ids.getString(index) != id) put(ids.getString(index)) }
         if (!present) next.put(id)
         prefs.edit().putString(key(list), state.put(axis, next).toString()).apply()
+    }
+
+    /** One grouping's folded ids (the Inbox sends only the current grouping's, as RN does), at most [max]. */
+    fun axis(prefs: SharedPreferences, list: String, axis: String, max: Int): JSONArray {
+        val ids = read(prefs, list).optJSONArray(axis) ?: JSONArray()
+        return JSONArray().apply { for (index in 0 until minOf(ids.length(), max)) put(ids.getString(index)) }
+    }
+
+    /** Core's folds for [axis] after a tap (an Inbox heading's collapseEdit), written whole as RN writes them. */
+    fun keep(prefs: SharedPreferences, list: String, axis: String, ids: JSONArray) {
+        prefs.edit().putString(key(list), read(prefs, list).put(axis, ids).toString()).apply()
     }
 
     /**

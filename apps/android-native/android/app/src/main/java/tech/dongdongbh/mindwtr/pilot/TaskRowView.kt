@@ -108,9 +108,10 @@ fun TaskRowItem(
     // Done keeps its own command (core's completeTask); Restore and Next are RN's status change, with its exact retry.
     // A list whose contract writes its rows sends that list's own status action instead; a selecting list has no swipe.
     val canMove = writable && !busy && (failedAction == null || failedAction == statusAction(task, target))
-    val swipeOn = if (actions != null) canEdit && !actions.selecting else completable && (if (target == "done") canComplete else canMove)
-    val onSwipe = actions?.let { listed -> { listed.status(target) } } ?: { if (target == "done") complete(task.id) else changeStatus(task, target) }
     val selecting = actions?.selecting == true
+    val listed = actions?.status
+    val swipeOn = !selecting && if (listed != null) canEdit else completable && (if (target == "done") canComplete else canMove)
+    val onSwipe = listed?.let { status -> { status(target) } } ?: { if (target == "done") complete(task.id) else changeStatus(task, target) }
     val onDelete = actions?.delete?.takeIf { canEdit && !selecting }
     val onTap = { if (selecting) actions?.select?.invoke() else openEditor(task.id) }
     val shape = RoundedCornerShape(theme.rowRadius)
@@ -187,10 +188,12 @@ fun TaskRowItem(
  * A list whose contract writes its rows (Contexts, Review, the Weekly and Daily Review), as RN's rowActions there: the swipe and
  * the status menu send [status] (core's setTaskStatus for that list), RN's swipe left reveals Delete ([delete], core's trashTask
  * with its Undo), and a long-press selects the row ([select]) where the list offers bulk actions; while [selecting], a tap
- * toggles the row and the swipes rest. [footer] sits under the meta line (the Daily Review's Follow up today).
+ * toggles the row and the swipes rest. [footer] sits under the meta line (the Daily Review's Follow up today). Without
+ * [status] (the lists with core's bulk contract: Inbox, Waiting, Someday, Reference, Done) the row keeps its own swipe and
+ * status menu, and only selection comes from here.
  */
 class RowActions(
-    val status: (String) -> Unit, val delete: (() -> Unit)? = null, val selecting: Boolean = false, val selected: Boolean = false,
+    val status: ((String) -> Unit)? = null, val delete: (() -> Unit)? = null, val selecting: Boolean = false, val selected: Boolean = false,
     val select: (() -> Unit)? = null, val footer: (@Composable () -> Unit)? = null,
 )
 

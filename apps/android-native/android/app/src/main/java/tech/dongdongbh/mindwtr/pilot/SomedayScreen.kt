@@ -33,7 +33,8 @@ import org.json.JSONObject
  * RN's Someday/Maybe (components/views/someday-view.tsx) on core's getSomedayView: core's stats with the filter summary
  * chip (its X clears the filters) and RN's list menu (Filters, Sort, Group, Details, New section…, all core's), the
  * parked projects, core's headings with their Add task, core's rows (their detail parts when Details is on) whose status
- * menu offers Move to section…, and core's empty state.
+ * menu offers Move to section… (a long-press starts selection mode, core's bulk bar with its own Move to section…), and
+ * core's empty state.
  */
 @Composable
 fun SomedayList(model: InboxViewModel) = with(model.menu) {
@@ -65,7 +66,7 @@ fun SomedayList(model: InboxViewModel) = with(model.menu) {
         items(shown.items, key = { it.key }) { item ->
             Box(Modifier.padding(horizontal = 16.dp)) {
                 val row = item.row
-                if (row == null) Heading(model, item.json) else TaskRowItem(model, row, status = RowStatus.Icon, details = details)
+                if (row == null) Heading(model, item.json) else TaskRowItem(model, row, status = RowStatus.Icon, details = details, actions = bulkRow(row))
             }
         }
         if (shown.items.size < shown.total) item(key = "more") { MoreRow(model) }

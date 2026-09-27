@@ -68,7 +68,11 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -111,7 +115,8 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
     val c = LocalTheme.current.colors
     val owner = LocalLifecycleOwner.current
     LaunchedEffect(owner) { owner.repeatOnLifecycle(Lifecycle.State.RESUMED) { menu.refresh() } }
-    BackHandler(enabled = failedAction == null) { if (menu.dialog != null) menu.backInDialog() else menu.closeScreen() }
+    // Back closes an open dialog, then leaves selection mode, then the screen.
+    BackHandler(enabled = failedAction == null) { if (menu.dialog != null) menu.backInDialog() else if (menu.page?.bulk != null) menu.list?.let(menu::endBulk) else menu.closeScreen() }
     Box(Modifier.fillMaxSize().background(c.bg).systemBarsPadding().semantics { testTagsAsResourceId = true }.testTag("menu-screen")) {
         when (screen) {
             MenuScreen.Weekly -> WeeklyReview(model)
@@ -129,6 +134,8 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
                     }
                 }
                 if (screen == MenuScreen.History) HistoryTabs(model)
+                // RN's bulk bar over a selecting list (Waiting, Someday, Reference, Done).
+                BulkBar(model)
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (list) {
                         "waiting" -> WaitingList(model)
@@ -288,7 +295,8 @@ fun ActiveChips(model: InboxViewModel, chips: List<JSONObject>, clear: (() -> Un
             val excluded = chip.optBoolean("excluded")
             val accent = if (excluded) c.danger else c.tint
             val label = chip.getString("label")
-            val spoken = if (excluded) "${t("filters.remove")}: $label (${t("filters.excluded")})" else "${t("filters.remove")}: $label"
+            val spoken = chip.menuText("accessibilityLabel")
+                ?: if (excluded) "${t("filters.remove")}: $label (${t("filters.excluded")})" else "${t("filters.remove")}: $label"
             Row(Modifier.clip(CircleShape).background(c.filterBg).border(1.dp, accent, CircleShape)
                 .clickable(enabled = idle, role = Role.Button) { removeChip(chip.getJSONObject("action")) }
                 .semantics { contentDescription = spoken }.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -458,19 +466,24 @@ private fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: 
 fun MenuDialogs(model: InboxViewModel) = with(model.menu) {
     val open = dialog ?: return
     val view = page?.view
+    // The Inbox's sort and group modals come from its toolbar; each option carries core's edit.
+    val controls = if (list == "inbox") view?.optJSONObject("toolbar") else view
     when (open.optString("kind")) {
         "overflow" -> view?.let { OverflowFor(model, it, open) }
         "filters" -> view?.let { FilterSheet(model, it, open) }
-        "sort" -> view?.getJSONObject("sort")?.let { modal ->
+        "sort" -> controls?.getJSONObject("sort")?.let { modal ->
             ChoiceModal(model, modal.getString("title"), modal.menuObjects("options").map { option ->
-                Choice(option.getString("label"), option.getBoolean("selected")) { sort(option.getString("value")) }
+                Choice(option.getString("label"), option.getBoolean("selected")) { sort(option.optJSONObject("edit")?.getString("sortBy") ?: option.getString("value")) }
             })
         }
-        "group" -> view?.getJSONObject("group")?.let { modal ->
+        "group" -> controls?.getJSONObject("group")?.let { modal ->
             ChoiceModal(model, modal.getString("title"), modal.menuObjects("options").map { option ->
-                Choice(option.getString("label"), option.getBoolean("selected")) { group(option.getString("value")) }
+                Choice(option.getString("label"), option.getBoolean("selected")) { group(option.optJSONObject("edit")?.getString("groupBy") ?: option.getString("value")) }
             })
         }
+        "completedAt" -> CompletedAtPicker(model, open)
+        "bulkTag" -> AddTagDialog(model, open)
+        "organize" -> OrganizeDialog(model, open)
         "move" -> MoveDialog(model, open)
         "newSection", "addTask" -> CreateDialog(model, open)
         "tokens" -> TokenPicker(model, open)
@@ -524,8 +537,8 @@ private fun OverflowFor(model: InboxViewModel, view: JSONObject, open: JSONObjec
                         selected = option.getBoolean("selected")) { if (pageId == "sort") sort(option.getString("id")) else group(option.getString("id")) }
                 })
             } else {
-                // Archive's Filters is left out: its contract takes the filter state, not core's edits (a gap), so it has no sheet here.
                 OverflowSheet(model, t("taskEdit.moreOptions"), listOf(
+                    OverflowAction(listMenu.getString("filtersLabel"), Lucide.SlidersHorizontal, selected = view.getJSONObject("filters").getBoolean("hasActive")) { openDialog("filters") },
                     OverflowAction(sortMenu.getString("label"), Lucide.ArrowUpDown, "${sortMenu.getString("label")}: ${sortMenu.getString("value")}", sortMenu.getString("value"), page = "sort"),
                     OverflowAction(groupMenu.getString("label"), Lucide.Folder, "${groupMenu.getString("label")}: ${groupMenu.getString("value")}", groupMenu.getString("value"), page = "group"),
                 ))
@@ -584,9 +597,17 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
             }
             if (picker != null) {
                 val name = if (picker == "tokens") "tokens" else "projects"
-                val options = shown.collection(name)
+                // RN's picker search: core's matching options (the query from offset zero), read again whenever the list changes,
+                // since a tap changes the options' states.
+                val query = open.optString("query")
+                val found = pickerFound?.takeIf { it.getString("name") == name && it.getString("query") == query && it.getString("revision") == shown.revision }
+                LaunchedEffect(shown.revision, name) { if (query.isNotBlank()) searchPicker(name, query, pickerFound?.optJSONArray("items")?.length() ?: 0) }
+                Box(Modifier.padding(bottom = 10.dp)) {
+                    SheetField(query, t("common.search"), "${t("common.search")} ${t(if (name == "tokens") "filters.contexts" else "filters.projects")}") { pickerQuery(name, it) }
+                }
+                val options = if (query.isBlank()) shown.collection(name) else found?.menuObjects("items").orEmpty()
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    if (options.isEmpty()) Text(t("search.noResults"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
+                    if (options.isEmpty() && (query.isBlank() || found != null)) Text(t("search.noResults"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp))
                     for (option in options) {
                         val label = option.optString("title").ifEmpty { option.getString("value") }
@@ -601,7 +622,12 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                             if (on || out) Text(if (out) excluded else t("bulk.selected"), style = rnText(12, 600), color = if (out) c.danger else c.tint)
                         }
                     }
-                    if (options.size < shown.collectionTotal(name)) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { loadCollection(name) } }
+                    if (query.isBlank() && options.size < shown.collectionTotal(name)) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { loadCollection(name) } }
+                    if (found != null && options.size < found.getInt("total")) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { searchPicker(name, query, options.size + 100) } }
+                    // RN's footer: Any or All for two or more chosen contexts (or tags), core's edits.
+                    if (name == "tokens") Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        for (mode in filters.menuObjects("matchModes")) MatchModeRow(mode.getString("label"), mode.menuObjects("options"), idle) { filterEdit(it) }
+                    }
                 }
             } else {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -647,10 +673,10 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                         }
                         val estimates = filters.menuObjects("timeEstimates")
                         if (visibility.optBoolean("timeEstimate") && estimates.isNotEmpty()) {
-                            Disclosure(model, t("filters.timeEstimate"), estimates, all, open.optBoolean("time")) { toggleDisclosure("time") }
+                            Disclosure(t("filters.timeEstimate"), estimates, all, open.optBoolean("time"), idle, { toggleDisclosure("time") }) { filterEdit(it) }
                         }
                         if (visibility.optBoolean("energyLevel")) {
-                            Disclosure(model, t("taskEdit.energyLevel"), filters.menuObjects("energyLevels"), all, open.optBoolean("energy")) { toggleDisclosure("energy") }
+                            Disclosure(t("taskEdit.energyLevel"), filters.menuObjects("energyLevels"), all, open.optBoolean("energy"), idle, { toggleDisclosure("energy") }) { filterEdit(it) }
                         }
                         if (visibility.optBoolean("priority") || visibility.optBoolean("location")) {
                             val priorities = filters.menuObjects("priorities")
@@ -661,7 +687,7 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                             if (open.optBoolean("more")) Column(Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 if (visibility.optBoolean("priority")) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     SheetLabel(t("filters.priority"))
-                                    ChipFlow(model, priorities)
+                                    ChipFlow(priorities, idle) { filterEdit(it) }
                                 }
                                 if (visibility.optBoolean("location")) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     SheetLabel(t("taskEdit.locationLabel"))
@@ -705,20 +731,49 @@ internal fun OverviewRow(label: String, summary: String, all: String, expanded: 
     }
 }
 
-/** A folding overview row whose chips (core's options with their edits) show while it is open. */
+/** A folding overview row whose chips (core's options with their edits, sent to [onEdit]) show while it is open; [summary] is core's when it sends one. */
 @Composable
-private fun Disclosure(model: InboxViewModel, label: String, options: List<JSONObject>, all: String, open: Boolean, onToggle: () -> Unit) {
-    OverviewRow(label, options.chosenLabels().joinToString(", ").ifEmpty { all }, all, open, onToggle)
-    if (open) Box(Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp)) { ChipFlow(model, options) }
+internal fun Disclosure(label: String, options: List<JSONObject>, all: String, open: Boolean, enabled: Boolean, onToggle: () -> Unit,
+                        summary: String? = null, onEdit: (JSONObject) -> Unit) {
+    OverviewRow(label, summary ?: options.chosenLabels().joinToString(", ").ifEmpty { all }, all, open, onToggle)
+    if (open) Box(Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp)) { ChipFlow(options, enabled, onEdit) }
 }
 
-/** Core's options as RN's filter chips; a tap sends the option's own edit. */
+/** Core's options as RN's filter chips; a tap sends the option's own edit to [onEdit]. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChipFlow(model: InboxViewModel, options: List<JSONObject>) {
+internal fun ChipFlow(options: List<JSONObject>, enabled: Boolean, onEdit: (JSONObject) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (option in options) SheetChip(option.getString("label"), option.getBoolean("selected"), false, enabled = model.menu.idle) {
-            model.menu.filterEdit(option.getJSONObject("edit"))
+        for (option in options) SheetChip(option.getString("label"), option.getBoolean("selected"), false, enabled = enabled) {
+            onEdit(option.getJSONObject("edit"))
+        }
+    }
+}
+
+/**
+ * RN's match mode control (the token picker's footer): core's label, then Any and All in a pill, the chosen one in the tint.
+ * A tap sends that option's edit to [onEdit]. One node per option holds its label, role and state.
+ */
+@Composable
+internal fun MatchModeRow(label: String, options: List<JSONObject>, enabled: Boolean, onEdit: (JSONObject) -> Unit) {
+    val c = LocalTheme.current.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = rnText(12, 600), color = c.secondaryText)
+        val shape = RoundedCornerShape(18.dp)
+        Row(Modifier.heightIn(min = 36.dp).clip(shape).background(c.filterBg).border(1.dp, c.border, shape).padding(2.dp)) {
+            for (option in options) {
+                val on = option.getBoolean("selected")
+                val text = option.getString("label")
+                val choose = { onEdit(option.getJSONObject("edit")) }
+                Box(Modifier.widthIn(min = 52.dp).heightIn(min = 30.dp).clip(RoundedCornerShape(15.dp)).then(if (on) Modifier.background(c.tint) else Modifier)
+                    .clearAndSetSemantics {
+                        contentDescription = "$label: $text"; role = Role.Button; selected = on
+                        if (enabled) onClick { choose(); true } else disabled()
+                    }
+                    .clickable(enabled = enabled) { choose() }.padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+                    Text(text, style = rnText(12, 700), color = if (on) c.onTint else c.secondaryText)
+                }
+            }
         }
     }
 }
@@ -752,7 +807,7 @@ internal fun SheetChip(label: String, selected: Boolean, excluded: Boolean, remo
  * sheet until core has read it), else core's.
  */
 @Composable
-private fun SheetField(value: String, placeholder: String, description: String, onChange: (String) -> Unit) {
+internal fun SheetField(value: String, placeholder: String, description: String, onChange: (String) -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(8.dp)
     BasicTextField(value, onChange, singleLine = true, textStyle = rnText(15, 400).copy(color = c.text), cursorBrush = SolidColor(c.tint),
@@ -768,7 +823,7 @@ private fun SheetField(value: String, placeholder: String, description: String, 
 
 /** RN's Android Switch, as the capture popup draws it: a raised thumb on a faint track, the tint when on. */
 @Composable
-private fun RnSwitch(on: Boolean) {
+internal fun RnSwitch(on: Boolean) {
     val theme = LocalTheme.current
     val c = theme.colors
     Box(Modifier.size(width = 36.dp, height = 20.dp), contentAlignment = Alignment.CenterStart) {
@@ -866,7 +921,7 @@ private fun CreateDialog(model: InboxViewModel, open: JSONObject) = with(model.m
  * dialog's backdrop closes it ([dismissible]); RN's name prompts sit on a plain overlay.
  */
 @Composable
-private fun DialogCard(model: InboxViewModel, dismissible: Boolean, content: @Composable ColumnScope.() -> Unit) {
+internal fun DialogCard(model: InboxViewModel, dismissible: Boolean, content: @Composable ColumnScope.() -> Unit) {
     val theme = LocalTheme.current
     val c = theme.colors
     Box(Modifier.fillMaxSize().background(theme.pickerScrim)

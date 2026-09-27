@@ -203,8 +203,15 @@ internal fun MenuModel.toggleRow(list: String, id: String) {
     reload()
 }
 
-/** The picker the open dialog names: a Contexts token action (core's picker), or Review's Remove tag (core's tags). */
+/** The picker the open dialog names: a Contexts token action (core's picker), Review's Remove tag (core's tags), or a list's Remove tag (core's bulk picker). */
 private fun MenuModel.tokenPicker(open: JSONObject): JSONObject? {
+    if (open.optString("list") == "bulk") {
+        val bar = page?.bulk ?: return null
+        val remove = bar.optJSONObject("removeTag") ?: return null
+        val tokens = JSONArray().apply { for (item in bar.optJSONObject("picker")?.menuObjects("items").orEmpty()) put(item.getString("value")) }
+        return JSONObject().put("title", remove.getString("title")).put("placeholder", remove.getString("placeholder"))
+            .put("tokens", tokens).put("allowCustomValue", false).put("multiSelect", true)
+    }
     val bulk = page?.view?.optJSONObject("bulk") ?: return null
     if (open.optString("list") == "review") {
         val remove = bulk.getJSONObject("removeTag")
@@ -235,7 +242,12 @@ fun TokenPicker(model: InboxViewModel, open: JSONObject) = with(model.menu) {
     val save = {
         val ids = page?.view?.optJSONArray("selectedIds")?.ids() ?: page?.view?.optJSONObject("bulk")?.optJSONArray("selectedIds").ids()
         keepDialog(null)
-        if (review) act("reviewAction", removeTags(ids, values)) else act("contextsAction", editTaskTokens(ids, open.getString("field"), open.getString("mode"), values))
+        when {
+            // A list's Remove tag: core's editTaskTokens on its selection (or Select all).
+            open.optString("list") == "bulk" -> bulkAction(JSONObject().put("type", "editTaskTokens").put("field", "tags").put("mode", "remove").put("values", JSONArray(values)), "removeTag")
+            review -> act("reviewAction", removeTags(ids, values))
+            else -> act("contextsAction", editTaskTokens(ids, open.getString("field"), open.getString("mode"), values))
+        }
     }
     Box(Modifier.fillMaxSize().background(theme.pickerScrim).clickable(role = Role.Button) { keepDialog(null) }.imePadding().padding(20.dp),
         contentAlignment = Alignment.Center) {

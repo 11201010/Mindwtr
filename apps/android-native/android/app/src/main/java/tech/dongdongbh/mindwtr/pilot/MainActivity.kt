@@ -161,7 +161,9 @@ class MainActivity : ComponentActivity() {
                             if (capture == null) ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 78.dp))
                             capture?.let { CapturePopup(model, it) }
                             if (areaSheet) AreaSheet(model)
-                            if (quick) MenuDialogs(model)
+                            // The Inbox's and the quick-access tab's sheets and dialogs (MenuModel), and Focus's (FocusModel), over the tabs.
+                            if (quick || screen == Screen.Inbox) MenuDialogs(model)
+                            if (screen == Screen.Focus) FocusDialogs(model)
                             StatusMenu(model)
                         }
                     }
@@ -280,29 +282,6 @@ private fun RowScope.CaptureButton(model: InboxViewModel) {
 }
 
 /**
- * RN's "Process Inbox (N)": a tint wash with a tint border (Material 3: the filled container), the ListChecks
- * glyph, and core's Inbox count, shown as 99+ above 99; TalkBack hears the exact count, as in RN.
- */
-@Composable
-private fun ProcessButton(model: InboxViewModel) = with(model) {
-    val theme = LocalTheme.current
-    val c = theme.colors
-    val label = t("inbox.processButton")
-    val shown = if (total > 99) "99+" else "$total"
-    val shape = RoundedCornerShape(12.dp)
-    val material = theme.isMaterial
-    Row(Modifier.padding(bottom = 12.dp).fillMaxWidth().heightIn(min = 44.dp).clip(shape).background(if (material) theme.filledBg else theme.processWash)
-        .then(if (material) Modifier else Modifier.border(1.dp, c.tint, shape))
-        .clickable(enabled = writable && !busy && failedAction == null, role = Role.Button) { openProcessing() }
-        .semantics { contentDescription = "$label ($total)" }.padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        Icon(Lucide.ListChecks, null, tint = if (material) theme.filledText else c.tint, modifier = Modifier.size(18.dp))
-        Text("$label ($shown)", style = rnText(15, 600), color = if (material) theme.filledText else c.text, textAlign = TextAlign.Center,
-            maxLines = 2, modifier = Modifier.padding(start = 8.dp))
-    }
-}
-
-/**
  * RN's pill button: filled with the tint (RN's Save) or outlined (RN's empty-state
  * action, and this app's More). [description] replaces the spoken label when set.
  */
@@ -352,29 +331,5 @@ fun SectionTitle(title: String, count: Int?, modifier: Modifier = Modifier, trai
         count?.let { Text("($it)", style = rnText(12, 600), color = c.secondaryText, modifier = Modifier.padding(start = 10.dp)) }
         Spacer(Modifier.weight(1f))
         trailing()
-    }
-}
-
-/**
- * The Inbox as one list: RN's Process Inbox button and scope line scroll with the rows, so landscape
- * shows rows, not chrome.
- */
-@Composable
-private fun InboxList(model: InboxViewModel, modifier: Modifier) = with(model) {
-    val c = LocalTheme.current.colors
-    LazyColumn(modifier, contentPadding = PaddingValues(12.dp)) {
-        item(key = "header") {
-            if (total > 0) ProcessButton(model)
-            Text(t("projects.allAreas"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
-        }
-        if (total == 0) item(key = "empty") {
-            EmptyState(t("inbox.empty"), t("inbox.emptyAddHint"), t("nav.addTask")) { openCapture() }
-        }
-        items(rows, key = { it.id }) { task -> TaskRowItem(model, task, status = RowStatus.Icon) }
-        if (rows.size < total) item(key = "more") {
-            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                PillButton(t("common.more"), onClick = model::loadMore, enabled = writable && !busy && failedAction == null)
-            }
-        }
     }
 }

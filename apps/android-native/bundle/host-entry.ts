@@ -107,7 +107,8 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
 };
-type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate';
+type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
+    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -215,6 +216,12 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     calendarEdit: (input) => contract.editCalendarComposer(input),
     board: (input) => contract.getBoardView(input),
     boardList: (input) => contract.getBoardList(input),
+    // The Inbox tab and its filter sheet's tokens, Archive's tokens, a list's selection mode, and Focus's sheet lists.
+    inbox: (input) => contract.getInboxView(input),
+    inboxTokens: (input) => contract.getInboxFilterTokens(input),
+    archiveTokens: (input) => contract.getArchiveFilterTokens(input),
+    bulk: (input) => contract.getBulkActions(input),
+    focusList: (input) => contract.getFocusControlsList(input),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -235,6 +242,13 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     calendarCreate: (input) => contract.runCalendarAction(input),
     boardAction: (input) => contract.runBoardAction(input),
     boardCreate: (input) => contract.runBoardAction(input),
+    // A list's bulk bar (its delete's Undo too), and Focus's View options grouping, saved filters and Today's Focus order.
+    bulkAction: (input) => contract.runBulkAction(input),
+    focusGroup: (input) => contract.setFocusGroupBy(input),
+    focusSave: (input) => contract.saveFocusFilter(input),
+    focusCriterion: (input) => contract.removeFocusFilterCriterion(input),
+    focusDelete: (input) => contract.deleteFocusFilter(input),
+    focusReorder: (input) => contract.reorderFocus(input),
 };
 
 globalThis.MindwtrHost = {
@@ -278,17 +292,21 @@ globalThis.MindwtrHost = {
             return unwrap(contract.getInboxWindow({ offset, limit, revision: revision || undefined }));
         });
     },
-    focus(limit: number): string {
+    /**
+     * `controls` is the control state Kotlin keeps and `controlEdit` a control's edit, as JSON; "" leaves either out, so a read
+     * that sends neither keeps the flat Focus it always had.
+     */
+    focus(limit: number, controls = '', controlEdit = ''): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.getFocus({ limit }));
+            return unwrap(contract.getFocus({ limit, ...(controls ? { controls: JSON.parse(controls) } : {}), ...(controlEdit ? { controlEdit: JSON.parse(controlEdit) } : {}) }));
         });
     },
-    /** Core checks `key` and refuses a stale `revision`; Kotlin then reads Focus again from offset 0. */
-    focusWindow(key: string, offset: number, limit: number, revision: string): string {
+    /** Core checks `key` and refuses a stale `revision`; Kotlin then reads Focus again from offset 0. `controls` as for focus. */
+    focusWindow(key: string, offset: number, limit: number, revision: string, controls = ''): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.getFocusSectionWindow({ key: key as FocusTaskSectionKey, offset, limit, revision }));
+            return unwrap(contract.getFocusSectionWindow({ key: key as FocusTaskSectionKey, offset, limit, revision, ...(controls ? { controls: JSON.parse(controls) } : {}) }));
         });
     },
     editorModel(id: string): string {

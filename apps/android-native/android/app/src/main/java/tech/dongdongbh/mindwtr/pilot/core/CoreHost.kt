@@ -105,15 +105,15 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
         }
     }
 
-    fun inboxWindow(offset: Int, limit: Int, revision: String): JSONObject =
-        callAsync("window", offset, limit, revision)
+    /**
+     * Core's getFocus: its sections in its order, the first [limit] rows of each, for the control state [controls] (JSON; ""
+     * reads the flat Focus) after a control's [controlEdit] (JSON, or "").
+     */
+    fun focus(limit: Int, controls: String = "", controlEdit: String = ""): JSONObject = callAsync("focus", limit, controls, controlEdit)
 
-    /** Core's getFocus: its sections in its order, the first [limit] rows of each. */
-    fun focus(limit: Int): JSONObject = callAsync("focus", limit)
-
-    /** Core's getFocusSectionWindow. A changed Focus fails with "STALE_REVISION: …". */
-    fun focusWindow(key: String, offset: Int, limit: Int, revision: String): JSONObject =
-        callAsync("focusWindow", key, offset, limit, revision)
+    /** Core's getFocusSectionWindow for the same [controls]. A changed Focus fails with "STALE_REVISION: …". */
+    fun focusWindow(key: String, offset: Int, limit: Int, revision: String, controls: String = ""): JSONObject =
+        callAsync("focusWindow", key, offset, limit, revision, controls)
 
     /** Core's openQuickCapture: the popup's empty draft and its starting options. */
     fun openQuickCapture(): JSONObject = callAsync("captureOpen")

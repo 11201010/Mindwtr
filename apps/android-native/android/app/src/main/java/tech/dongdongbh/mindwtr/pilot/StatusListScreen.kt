@@ -24,7 +24,8 @@ import androidx.compose.ui.unit.dp
  * RN's task list for Reference (app/(drawer)/reference.tsx) and History's Done (done.tsx), on core's getReferenceView and
  * getDoneView: the "Filters · N" button and the active chips with Clear under the header (whose list menu holds Filters,
  * Sort and Group), core's headings (folding ones fold, kept on the device as RN keeps them), core's rows with RN's status
- * glyph, read-only rows (an archived project's) without a swipe, and core's empty state with its Clear.
+ * glyph, read-only rows (an archived project's) without a swipe or selection, a long-press that starts selection mode
+ * (core's bulk bar), and core's empty state with its Clear.
  */
 @Composable
 fun StatusList(model: InboxViewModel) = with(model.menu) {
@@ -48,7 +49,10 @@ fun StatusList(model: InboxViewModel) = with(model.menu) {
             Box(Modifier.padding(horizontal = 12.dp)) {
                 val row = item.row
                 if (row == null) GroupHeading(model, item.json)
-                else TaskRowItem(model, row, status = RowStatus.Icon, completable = !item.json.getJSONObject("row").optBoolean("readOnly"))
+                else {
+                    val readOnly = item.json.getJSONObject("row").optBoolean("readOnly")
+                    TaskRowItem(model, row, status = RowStatus.Icon, completable = !readOnly, actions = bulkRow(row, readOnly))
+                }
             }
         }
         if (shown.items.size < shown.total) item(key = "more") { MoreRow(model) }

@@ -20,7 +20,9 @@ import java.util.UUID
  * RN's Menu tab (app/(drawer)/(tabs)/_layout.tsx): the More sheet and the list screens it opens, on core's menu view
  * contract (native-host-contract-menu-views.ts), History's Archive, Contexts and Trash (the list views block of
  * native-host-contract.ts), Review with the Weekly and Daily Review (native-host-contract-review-views.ts), and the Calendar and
- * the Board (CalendarModel.kt, BoardModel.kt, on native-host-contract-calendar.ts and native-host-contract-board.ts).
+ * the Board (CalendarModel.kt, BoardModel.kt, on native-host-contract-calendar.ts and native-host-contract-board.ts), the Inbox
+ * tab's list (native-host-contract-inbox-view.ts), the lists' selection mode (native-host-contract-bulk-actions.ts), and Focus's
+ * controls (FocusModel.kt, on native-host-contract-focus-controls.ts).
  * Kotlin keeps only RN's screen state: which sheet, screen and dialog are open, the session choices RN keeps in React
  * state, and the device choices RN keeps under its keys. Every row, heading, count, label, filter and edit is core's.
  * Reads and commands run on InboxViewModel's paths (perform, background, freshness, the exact-retry lock).
@@ -32,12 +34,16 @@ private const val WINDOW = 100
 
 /** The Menu tab's commands (host-entry.ts MENU_COMMANDS); core can refuse each before writing. */
 val MENU_KINDS = setOf("activateProject", "somedayMove", "somedayUndo", "somedayTask", "somedaySection", "taskListSort", "archiveAction",
-    "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction", "boardCreate")
+    "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction", "boardCreate",
+    "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder")
 /**
  * The creates whose exact request waits on disk until core answers: Someday's, the Weekly Review's project Add task, the
- * Calendar composer's Save, and the Board's Duplicate.
+ * Calendar composer's Save, the Board's Duplicate, and a saved Focus filter.
  */
-private val CREATES = setOf("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate")
+private val CREATES = setOf("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave")
+
+/** The lists with RN's selection mode on core's bulk contract (getBulkActions, runBulkAction). */
+val BULK_LISTS = setOf("inbox", "waiting", "someday", "reference", "done")
 
 /**
  * The screens the More sheet opens here, with the title key of RN's stack header. History holds Done and Archived; Projects is
@@ -91,10 +97,12 @@ private fun window(view: JSONObject, name: String): JSONObject? = when (name) {
 }
 
 /**
- * A menu view at one revision: core's reply for its first window ([view]), the inputs core accepted ([params], sent again
- * for every later window), its items as deep as shown, and each windowed collection as paged.
+ * A menu view at one revision: the [list] it was read for, core's reply for its first window ([view]), the inputs core accepted
+ * ([params], sent again for every later window), its items as deep as shown, each windowed collection as paged, and, while the
+ * list is selecting, core's getBulkActions reply for it ([bulk]).
  */
-class MenuPage(val view: JSONObject, val params: JSONObject, val items: List<MenuItem>, private val paged: Map<String, List<JSONObject>>) {
+class MenuPage(val list: String, val view: JSONObject, val params: JSONObject, val items: List<MenuItem>, private val paged: Map<String, List<JSONObject>>,
+               val bulk: JSONObject? = null) {
     val revision: String get() = view.getString("revision")
     val total: Int get() = view.optInt("total")
     /** A collection's items as shown: its first window, or as many as More loaded. */
@@ -105,8 +113,9 @@ class MenuPage(val view: JSONObject, val params: JSONObject, val items: List<Men
         ?: items.firstNotNullOfOrNull { item -> item.json.optJSONObject("tasks")?.takeIf { name == "contextTasks:${item.json.optString("context")}" } }
     /** How deep each paged collection is shown, so a refresh reads it as deep. */
     val deep: Map<String, Int> get() = paged.mapValues { it.value.size }
-    fun appended(more: List<MenuItem>) = MenuPage(view, params, items + more, paged)
-    fun withCollection(name: String, items: List<JSONObject>) = MenuPage(view, params, this.items, paged + (name to items))
+    fun appended(more: List<MenuItem>) = MenuPage(list, view, params, items + more, paged, bulk)
+    fun withCollection(name: String, items: List<JSONObject>) = MenuPage(list, view, params, this.items, paged + (name to items), bulk)
+    fun withBulk(bulk: JSONObject?) = MenuPage(list, view, params, items, paged, bulk)
 }
 
 /** A Someday create's exact request in the no-backup folder, synced before the call, until core answers (as the capture's). */
@@ -153,8 +162,10 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     var historyTab by mutableStateOf(saved.get<String>("historyTab") ?: "done"); private set
     /** Core's getHistoryView reply: its tabs and their labels. */
     var history by mutableStateOf<JSONObject?>(null); private set
-    /** The open list at one revision. */
-    var page by mutableStateOf<MenuPage?>(null); private set
+    /** The last list read, at one revision. */
+    private var loaded by mutableStateOf<MenuPage?>(null)
+    /** The open list at one revision: a page read for another list (the tab changed since) is not shown. */
+    val page: MenuPage? get() = loaded?.takeIf { it.list == list }
     /**
      * RN's session choices, as its screens keep them in React state, by list: Waiting's person; Someday's sort, grouping,
      * details and filters; Reference's grouping, archived-projects switch and filters; Done's filters; Archive's segment,
@@ -168,6 +179,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /** RN's Calendar and Board: their own state and reads; their writes come back here (command, create). */
     val calendar = CalendarModel(this, saved)
     val board = BoardModel(this, saved)
+    /** Focus's controls (the filter sheet, saved filters, View options, reorder); Focus's reads stay InboxViewModel's. */
+    val focusControls = FocusModel(this, saved)
+    /** The bulk action running now (a key of core's `labels.busy`), for the bar's spinner and label. */
+    var bulkBusy by mutableStateOf<String?>(null); private set
+    /** The filter picker's search: core's tokens or projects matching the typed query, from offset zero, at the list's revision. */
+    var pickerFound by mutableStateOf<JSONObject?>(null); private set
 
     /** The core read behind the open screen (History shows Done or Archive), or behind the quick-access tab when it shows. */
     val list: String? get() = when (screen) {
@@ -183,7 +200,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         MenuScreen.Calendar -> "calendar"
         MenuScreen.Board -> "board"
         MenuScreen.Projects -> null
-        null -> if (shell.screen == Screen.Projects && quickView != "projects") quickView else null
+        null -> when {
+            shell.screen == Screen.Projects && quickView != "projects" -> quickView
+            // The Inbox tab: RN's TaskList on core's getInboxView.
+            shell.screen == Screen.Inbox -> "inbox"
+            else -> null
+        }
     }
 
     /** No command runs and no retry is owed: the lists' controls are enabled. */
@@ -276,7 +298,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         screen = target
         saved["menuScreen"] = target.name
         tab?.let(::keepTab)
-        page = null
+        loaded = null
         keepDialog(null)
         if (target == MenuScreen.History) readHistory()
         reload()
@@ -296,7 +318,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (screen == MenuScreen.Projects) shell.closeProject()
         screen = back
         saved["menuScreen"] = back?.name
-        page = null
+        loaded = null
         keepDialog(null)
     }
 
@@ -309,7 +331,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun showTab(tab: String) {
         if (tab == historyTab) return
         keepTab(tab)
-        page = null
+        loaded = null
         keepDialog(null)
         readHistory()
         reload()
@@ -326,9 +348,15 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             "someday" -> kept(listOf("sortBy", "groupBy", "showDetails", "filters"))
             "reference" -> kept(listOf("groupBy", "includeArchivedProjects", "filters")).put("collapsedGroupIds", GroupCollapse.all(prefs, "reference", 200))
             "done" -> ListViewState.read(prefs, DONE_VIEW_KEY).into(kept(listOf("filters"))).put("collapsedGroupIds", GroupCollapse.all(prefs, "done", 200))
-            "archive" -> ListViewState.read(prefs, ARCHIVED_VIEW_KEY).into(kept(listOf("segment")))
-                .put("filters", JSONObject().put("searchQuery", own.optString("search")))
-                .put("collapsedGroupIds", GroupCollapse.all(prefs, "archived", 1000)).put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+            // The Inbox's grouping and filters are RN's session choices; its folds are the device's, for the grouping shown.
+            "inbox" -> kept(listOf("groupBy", "filters")).put("collapsedGroupIds", GroupCollapse.axis(prefs, "inbox", own.optString("groupBy", "none"), 200))
+            // Archive's filters are core's state (its search is core's setSearch); the open sheet asks for every token in use.
+            // Select all is core's stateless one: the rows deselected since go as `except`.
+            "archive" -> ListViewState.read(prefs, ARCHIVED_VIEW_KEY).into(kept(listOf("segment", "filters")))
+                .put("collapsedGroupIds", GroupCollapse.all(prefs, "archived", 1000)).apply {
+                    if (dialog?.optString("kind") == "filters") put("filterSheetOpen", true)
+                    own.optJSONArray("except")?.let { put("selectAll", JSONObject().put("except", it)) } ?: put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+                }
             "contexts" -> kept(listOf("tokens", "matchMode", "searchQuery")).put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
             "trash" -> JSONObject().put("selected", JSONObject().put("taskIds", own.optJSONArray("selectedTasks") ?: JSONArray())
                 .put("projectIds", own.optJSONArray("selectedProjects") ?: JSONArray()))
@@ -356,14 +384,15 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /**
      * [list] from its first window ([edit], a filter control's exact edit or Review's expansion edit, goes with it once), its
      * items to [depth] at one revision, then each collection to its depth in [deep]. A list that changed between windows keeps
-     * what it has; the next refresh reads it again, as the Inbox does.
+     * what it has; the next refresh reads it again, as the Inbox does. A selecting list ([bulk], its getBulkActions input) also
+     * reads core's bar for the inputs core accepted.
      */
-    private fun read(runtime: CoreHost, list: String, params: JSONObject, depth: Int, deep: Map<String, Int>, edit: JSONObject? = null): MenuPage {
+    private fun read(runtime: CoreHost, list: String, params: JSONObject, depth: Int, deep: Map<String, Int>, edit: JSONObject? = null, bulk: JSONObject? = null): MenuPage {
         val first = runtime.menuRead(list, JSONObject(params.toString()).put("offset", 0).put("limit", PAGE)
             .apply { edit?.let { put(if (list == "review") "expansionEdit" else "filterEdit", it) } }.toString())
         check(first.optInt("version", 1) == 1) { "Unsupported core contract" }
         val sent = accepted(list, params, first)
-        var page = MenuPage(first, sent, first.menuItems(), emptyMap())
+        var page = MenuPage(list, first, sent, first.menuItems(), emptyMap())
         try {
             while (page.items.size < minOf(depth, page.total)) {
                 val next = runtime.menuRead(list, JSONObject(sent.toString()).put("offset", page.items.size).put("limit", PAGE).put("revision", page.revision).toString()).menuItems()
@@ -374,39 +403,69 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         } catch (failure: Exception) {
             if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
         }
+        bulk?.let { input -> page = page.withBulk(runtime.menuRead("bulk", JSONObject(input.toString()).put("params", sent).toString())) }
         return page
     }
 
-    /** [page]'s collection [name] paged through core's getMenuViewCollection until [want] items show. */
+    /** [page]'s collection [name] paged until [want] items show. */
     private fun collectionTo(runtime: CoreHost, list: String, page: MenuPage, name: String, want: Int): MenuPage {
         var loaded = page.collection(name)
         while (loaded.size < minOf(want, page.collectionTotal(name))) {
-            // The Weekly Review pages its nested lists with its own inputs (getWeeklyReviewList); the menu views through getMenuViewCollection.
-            val next = if (list == "weekly") runtime.menuRead("weeklyList", JSONObject(page.params.toString()).put("list", name.substringBefore(':'))
-                .apply { if (':' in name) put("key", name.substringAfter(':')) }.put("offset", loaded.size).put("limit", WINDOW).put("revision", page.revision).toString()).list("items")
-            else runtime.menuRead("collection", JSONObject().put("view", list).put("collection", name).put("params", page.params)
-                .put("offset", loaded.size).put("limit", WINDOW).put("revision", page.revision).toString()).list("items")
+            val next = collectionWindow(runtime, list, page, name, loaded.size).list("items")
             if (next.isEmpty()) break
             loaded = loaded + next
         }
         return page.withCollection(name, loaded)
     }
 
+    /**
+     * One window of [page]'s collection [name] from [offset] ([query]: the filter picker's search, from offset zero): the Weekly
+     * Review's nested lists through getWeeklyReviewList, the Inbox's and Archive's filter tokens through their own reads, the menu
+     * views' collections through getMenuViewCollection, each with the view's accepted inputs and revision.
+     */
+    private fun collectionWindow(runtime: CoreHost, list: String, page: MenuPage, name: String, offset: Int, query: String? = null): JSONObject = when (list) {
+        "weekly" -> runtime.menuRead("weeklyList", JSONObject(page.params.toString()).put("list", name.substringBefore(':'))
+            .apply { if (':' in name) put("key", name.substringAfter(':')) }.put("offset", offset).put("limit", WINDOW).put("revision", page.revision).toString())
+        "inbox", "archive" -> runtime.menuRead(if (list == "inbox") "inboxTokens" else "archiveTokens", JSONObject().put("params", page.params)
+            .put("offset", offset).put("limit", WINDOW).put("revision", page.revision).apply { query?.let { put("query", it) } }.toString())
+        else -> runtime.menuRead("collection", JSONObject().put("view", list).put("collection", name).put("params", page.params)
+            .put("offset", offset).put("limit", WINDOW).put("revision", page.revision).apply { query?.let { put("query", it) } }.toString())
+    }
+
+    /** A failed command's page, shown again on a new screen while its retry is owed (no read runs then). */
+    internal fun restorePage(page: MenuPage) { loaded = page }
+
     /** A new list becomes the screen's, and core's accepted inputs become its choices (the filters core pruned, the person it offers). */
     private fun show(list: String, next: MenuPage) {
         if (list != this.list) return
-        page = next
+        shell.readSucceeded()
+        // A bar read before selection mode ended is not shown.
+        loaded = if (list in BULK_LISTS && own(list).optJSONObject("bulk") == null) next.withBulk(null) else next
         editOwn(list) {
             when (list) {
                 "waiting" -> put("person", next.params.getString("person"))
-                "someday", "done" -> put("filters", next.params.getJSONObject("filters"))
+                "someday", "done", "inbox" -> put("filters", next.params.getJSONObject("filters"))
                 "reference" -> put("filters", next.params.getJSONObject("filters")).put("includeArchivedProjects", next.params.getBoolean("includeArchivedProjects"))
-                "archive", "contexts" -> put("selected", next.view.getJSONArray("selectedIds"))
+                "archive" -> {
+                    put("filters", next.params.getJSONObject("filters")).put("selected", next.view.getJSONArray("selectedIds"))
+                    next.view.optJSONObject("selectAll")?.let { put("except", it.getJSONArray("except")) }
+                }
+                "contexts" -> put("selected", next.view.getJSONArray("selectedIds"))
                 "trash" -> next.view.getJSONObject("selected").let { put("selectedTasks", it.getJSONArray("taskIds")).put("selectedProjects", it.getJSONArray("projectIds")) }
                 "review" -> put("expandedAreaIds", next.params.getJSONArray("expandedAreaIds")).put("expandedProjectIds", next.params.getJSONArray("expandedProjectIds"))
                     .put("selected", next.view.optJSONObject("bulk")?.getJSONArray("selectedIds") ?: JSONArray())
             }
             if (list == "contexts") put("tokens", next.params.getJSONArray("tokens")).put("matchMode", next.params.getString("matchMode"))
+            // Selection mode: core's selection still on screen, in tap order, Range's anchor, and Select all's pruned except.
+            val kept = optJSONObject("bulk")
+            next.bulk?.takeIf { kept != null }?.let { bulk ->
+                kept!!.put("selected", bulk.getJSONArray("selectedIds")).put("anchorId", bulk.opt("anchorId") ?: JSONObject.NULL)
+                bulk.optJSONObject("selectAll")?.let { kept.put("except", it.getJSONArray("except")) }
+            }
+        }
+        // Bulk Organize's draft: core's, with the edit applied.
+        next.bulk?.optJSONObject("organize")?.let { organize ->
+            dialog?.takeIf { it.optString("kind") == "organize" }?.let { keepDialog(JSONObject(it.toString()).put("draft", organize.getJSONObject("draft"))) }
         }
         // A review's place: the checkpoint core answered with, kept under core's key until the review is finished.
         if (list == "weekly" || list == "daily") prefs.edit().putString(next.view.getString("storageKey"), next.view.getString("checkpoint")).apply()
@@ -416,19 +475,24 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
      * A read the user asked for (a screen opening, a filter, sort or group choice): through perform, as the lists' More,
      * once no action runs, so a choice made while a command finishes is still read.
      */
-    internal fun reload(edit: JSONObject? = null, fresh: Boolean = false) = whenIdle {
+    internal fun reload(edit: JSONObject? = null, fresh: Boolean = false, bulkEdit: JSONObject? = null) = whenIdle {
         val list = list ?: return@whenIdle
         // The Calendar and the Board read their own contracts.
         if (list == "calendar") return@whenIdle calendar.reload()
         if (list == "board") return@whenIdle board.reload()
         val params = params(list)
+        // A row tap (selectionEdit) or a Bulk Organize control's edit goes to core's bar once, with the selection as it is now.
+        val bulk = bulkInput(list)?.apply {
+            bulkEdit?.optJSONObject("selectionEdit")?.let { put("selectionEdit", it) }
+            bulkEdit?.optJSONObject("organizeEdit")?.let { optJSONObject("organize")?.put("edit", it) }
+        }
         // A new review step starts from its own first window, not as deep as the last step was shown.
         val shown = page.takeUnless { fresh }
         val depth = maxOf(PAGE, shown?.items?.size ?: 0)
         val deep = shown?.deep.orEmpty()
         val mine = shell.issue()
         shell.perform { runtime ->
-            val next = read(runtime, list, params, depth, deep, edit)
+            val next = read(runtime, list, params, depth, deep, edit, bulk)
             shell.ui { if (shell.fresh(mine, Part.Menu)) show(list, next) }
         }
     }
@@ -443,10 +507,11 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (list == "calendar") return calendar.refresh()
         if (list == "board") return board.refresh()
         val params = params(list)
+        val bulk = bulkInput(list)
         val shown = page
         val depth = maxOf(PAGE, shown?.items?.size ?: 0)
         val deep = shown?.deep.orEmpty()
-        shell.background(listOf(Part.Menu), { runtime -> read(runtime, list, params, depth, deep) }) { next, mine ->
+        shell.background(listOf(Part.Menu), { runtime -> read(runtime, list, params, depth, deep, bulk = bulk) }) { next, mine ->
             if (shell.fresh(mine, Part.Menu)) show(list, next)
         }
         if (screen == MenuScreen.History && history == null) readHistory()
@@ -485,6 +550,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun loadMore() {
         val shown = page ?: return
         val list = list ?: return
+        val params = params(list)
+        val bulk = bulkInput(list)
         val mine = shell.issue()
         shell.perform { runtime ->
             val next = try {
@@ -493,7 +560,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 shown.appended(window.menuItems())
             } catch (failure: Exception) {
                 if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
-                read(runtime, list, params(list), shown.items.size + PAGE, shown.deep)
+                read(runtime, list, params, shown.items.size + PAGE, shown.deep, bulk = bulk)
             }
             shell.ui { if (shell.fresh(mine, Part.Menu)) show(list, next) }
         }
@@ -505,13 +572,15 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         val shown = (if (sheetPage) more else page) ?: return
         val list = if (sheetPage) "more" else list ?: return
         val want = shown.collection(name).size + WINDOW
+        val params = if (sheetPage) JSONObject() else params(list)
+        val bulk = if (sheetPage) null else bulkInput(list)
         val mine = shell.issue()
         shell.perform { runtime ->
             val next = try {
                 collectionTo(runtime, list, shown, name, want)
             } catch (failure: Exception) {
                 if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
-                read(runtime, list, if (sheetPage) JSONObject() else params(list), shown.items.size, shown.deep + (name to want))
+                read(runtime, list, params, shown.items.size, shown.deep + (name to want), bulk = bulk)
             }
             shell.ui {
                 if (sheetPage) { if (shell.fresh(mine, Part.More)) keepMore(next) } else if (shell.fresh(mine, Part.Menu)) show(list, next)
@@ -529,12 +598,14 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
      * text chip's removal) also resets the sheet's typed text, so its fields show core's values again.
      */
     fun filterEdit(edit: JSONObject) {
+        val type = edit.optString("type")
         dialog?.takeIf { it.optString("kind") == "filters" }?.let { open ->
-            val type = edit.optString("type")
             if (type == "clear" || type == "setSearch" || type == "setLocation") {
                 keepDialog(JSONObject(open.toString()).apply { remove("typed:setSearch"); remove("typed:setLocation") })
             }
         }
+        // Archive's search box shows core's search text: Clear, or its chip's removal, empties it too.
+        if (list == "archive" && (type == "clear" || type == "setSearch")) editOwn("archive") { put("search", edit.optString("value")) }
         reload(edit)
     }
 
@@ -547,6 +618,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
      */
     fun typeFilter(type: String, text: String) {
         dialog?.let { keepDialog(JSONObject(it.toString()).put("typed:$type", text)) }
+        if (list == "archive" && type == "setSearch") editOwn("archive") { put("search", text) }
         val mine = ++filterTyped
         main.postDelayed({
             if (mine != filterTyped) return@postDelayed
@@ -583,7 +655,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
      */
     fun sort(value: String) {
         when (val list = list ?: return) {
-            "reference" -> send(FailedAction("taskListSort", value))
+            "reference", "inbox" -> send(FailedAction("taskListSort", value))
             "done" -> { ListViewState.read(prefs, DONE_VIEW_KEY).copy(sortBy = value).save(prefs, DONE_VIEW_KEY); reload() }
             "archive" -> { ListViewState.read(prefs, ARCHIVED_VIEW_KEY).copy(sortBy = value).save(prefs, ARCHIVED_VIEW_KEY); reload() }
             else -> { editOwn(list) { put("sortBy", value) }; reload() }
@@ -597,18 +669,25 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun toggleGroup(id: String) {
         val list = list ?: return
         val axis = page?.view?.optString("groupBy")?.ifEmpty { null } ?: return
-        GroupCollapse.toggle(prefs, if (list == "archive") "archived" else list, axis, id)
+        // An Inbox heading carries its grouping's folds after the tap (core's collapseEdit), written whole as RN writes them.
+        val collapse = page?.items?.firstOrNull { it.type == "section" && it.json.optString("id") == id }?.json?.optJSONObject("collapseEdit")
+        if (list == "inbox" && collapse != null) GroupCollapse.keep(prefs, list, axis, collapse.getJSONArray("collapsedGroupIds"))
+        else GroupCollapse.toggle(prefs, if (list == "archive") "archived" else list, axis, id)
         reload()
     }
 
     /** Archive's Tasks and Projects chips; a new segment leaves selection mode, as RN does. */
     fun segment(id: String) {
-        editOwn("archive") { put("segment", id); put("selecting", false); put("selected", JSONArray()) }
+        editOwn("archive") { put("segment", id); put("selecting", false); put("selected", JSONArray()); remove("except") }
         reload()
     }
 
-    /** Archive's search box, read once typing pauses. */
-    fun search(text: String) = typeSearch("archive", "search", text)
+    /** Archive's search box: kept as typed, then core's setSearch with it once typing pauses. */
+    fun search(text: String) {
+        editOwn("archive") { put("search", text) }
+        val mine = ++searchTyped
+        main.postDelayed({ if (mine == searchTyped) reload(JSONObject().put("type", "setSearch").put("value", text)) }, 200)
+    }
 
     /** A list's typed search (Archive's box, Contexts' chip search): kept as typed, read once typing pauses. */
     fun typeSearch(list: String, name: String, text: String) {
@@ -618,23 +697,37 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     }
 
     fun selecting(on: Boolean) {
-        editOwn("archive") { put("selecting", on); put("selected", JSONArray()) }
+        editOwn("archive") { put("selecting", on); put("selected", JSONArray()); remove("except") }
         if (!on) reload()
     }
 
-    /** One row in or out of Archive's selection; core prunes it to the rows on screen and counts it. */
+    /** One row in or out of Archive's selection (after Select all, in or out of its `except`); core prunes it to the rows on screen and counts it. */
     fun toggleSelected(id: String) {
-        val selected = own("archive").optJSONArray("selected")?.strings().orEmpty()
-        editOwn("archive") { put("selected", JSONArray(if (id in selected) selected - id else selected + id)) }
+        val own = own("archive")
+        val name = if (own.has("except")) "except" else "selected"
+        val ids = own.optJSONArray(name)?.strings().orEmpty()
+        editOwn("archive") { put(name, JSONArray(if (id in ids) ids - id else ids + id)) }
         reload()
     }
 
+    /** Archive's Restore to Inbox or Delete ([type]) for its selection: core's Select all (params, revision, except), or the rows tapped. */
+    fun archiveSelection(type: String): JSONObject {
+        val view = page?.view
+        return JSONObject().put("type", type).apply {
+            view?.optJSONObject("selectAll")?.let { put("selectAll", it) } ?: put("taskIds", view?.optJSONArray("selectedIds") ?: JSONArray())
+        }
+    }
+
     /**
-     * RN's Select all: every task row a folded heading has not removed (Archive), or every item in Trash, tasks and projects.
-     * Core's windows are read to the end to find them.
+     * RN's Select all: every task row a folded heading has not removed (Archive: core's stateless Select all, the rows deselected
+     * since going as `except`), or every item in Trash, tasks and projects (core's windows are read to the end to find them).
      */
     fun selectAll() {
         val list = list ?: return
+        if (list == "archive") {
+            editOwn(list) { put("except", JSONArray()); put("selected", JSONArray()) }
+            return reload()
+        }
         val params = params(list)
         val mine = shell.issue()
         shell.perform { runtime ->
@@ -656,10 +749,56 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
 
     // ---- Dialogs ----
 
-    fun openDialog(kind: String) = keepDialog(JSONObject().put("kind", kind))
+    fun openDialog(kind: String) {
+        keepDialog(JSONObject().put("kind", kind))
+        // Archive's open sheet offers every token in use (core's filterSheetOpen).
+        if (kind == "filters" && list == "archive") reload()
+    }
 
-    /** A sub-page of the open dialog (null: its first page): the overflow menu's Sort or Group panel, or the filter sheet's picker. */
-    fun dialogPage(page: String?) { dialog?.let { keepDialog(JSONObject(it.toString()).apply { if (page == null) remove("page") else put("page", page) }) } }
+    /** A sub-page of the open dialog (null: its first page): the overflow menu's Sort or Group panel, or the filter sheet's picker (its search starts empty). */
+    fun dialogPage(page: String?) {
+        pickerFound = null
+        dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("query"); if (page == null) remove("page") else put("page", page) }) }
+    }
+
+    /** The filter picker's search box: kept with the sheet as typed, then core's matching tokens or projects once typing pauses. */
+    fun pickerQuery(name: String, text: String) {
+        dialog?.let { keepDialog(JSONObject(it.toString()).put("query", text)) }
+        val mine = ++filterTyped
+        main.postDelayed({ if (mine == filterTyped) searchPicker(name, text) }, 200)
+    }
+
+    /**
+     * Core's [name] options (tokens or projects) matching [query] from offset zero at the list's revision, to [depth] (a More reads
+     * one window deeper); a blank query shows the list's own. A list that changed meanwhile keeps the last results: the sheet asks
+     * again for its new revision.
+     */
+    fun searchPicker(name: String, query: String, depth: Int = WINDOW) {
+        val shown = page ?: return
+        val list = list ?: return
+        if (query.isBlank()) { pickerFound = null; return }
+        shell.background(listOf(Part.MenuDialog), { runtime ->
+            val items = JSONArray()
+            var total: Int
+            try {
+                do {
+                    val window = collectionWindow(runtime, list, shown, name, items.length(), query)
+                    total = window.getInt("total")
+                    val next = window.getJSONArray("items")
+                    for (index in 0 until next.length()) items.put(next.get(index))
+                } while (next.length() > 0 && items.length() < minOf(depth, total))
+                JSONObject().put("name", name).put("query", query).put("revision", shown.revision).put("total", total).put("items", items)
+            } catch (failure: Exception) {
+                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+                null
+            }
+        }) { found, mine ->
+            if (found != null && shell.fresh(mine, Part.MenuDialog)) pickerFound = found
+            // The list's revision moved (a minute passed, or another write): read the list again; its new revision runs the
+            // search again (the sheet's LaunchedEffect), so a typed search never stays unanswered (run 47).
+            else if (found == null) reload()
+        }
+    }
 
     /** The filter sheet's disclosure rows (time estimate, energy, more filters) that are open. */
     fun toggleDisclosure(id: String) {
@@ -667,11 +806,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         keepDialog(JSONObject(open.toString()).put(id, !open.optBoolean(id)))
     }
 
-    /** RN's Back inside a dialog: a sub-page returns to its first page, else the dialog closes (a new section returns to its move). */
+    /** RN's Back inside a dialog: a sub-page (or Bulk Organize's picker) returns to its first page, else the dialog closes (a new section returns to its move). */
     fun backInDialog() {
         val open = dialog ?: return
         when {
             open.has("page") -> dialogPage(null)
+            open.has("picker") -> keepDialog(JSONObject(open.toString()).apply { remove("picker"); remove("query") })
             open.optString("kind") == "newSection" && open.has("taskIds") -> openMove(open.getJSONArray("taskIds").strings())
             else -> keepDialog(null)
         }
@@ -811,6 +951,204 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         return true
     }
 
+    /**
+     * RN's CompletedAtPicker on Android: the system date dialog, then the time dialog, starting at core's local day and time for
+     * the row (completedAtPicker); the picked day and time go to core's setCompletedAt, which stores them as RN's picker does.
+     */
+    fun openCompletedAt(taskId: String, start: JSONObject) =
+        keepDialog(JSONObject().put("kind", "completedAt").put("taskId", taskId).put("day", start.getString("day")).put("time", start.getString("time")))
+
+    /** The date dialog's day (`yyyy-MM-dd`, the picker's own fields): the time dialog opens next. */
+    fun pickCompletedDay(day: String) { dialog?.takeIf { it.optString("kind") == "completedAt" }?.let { keepDialog(JSONObject(it.toString()).put("day", day).put("step", "time")) } }
+
+    /** The time dialog's `HH:mm`: core's setCompletedAt for the picked day and time. */
+    fun pickCompletedTime(time: String) {
+        val open = dialog?.takeIf { it.optString("kind") == "completedAt" } ?: return
+        keepDialog(null)
+        archive(JSONObject().put("type", "setCompletedAt").put("taskId", open.getString("taskId")).put("day", open.getString("day")).put("time", time))
+    }
+
+    // ---- Selection mode (Inbox, Waiting, Someday, Reference, Done: RN's TaskList and TaskListView bulk bar) ----
+
+    /**
+     * A selecting list's getBulkActions input, without its params (read() adds the ones core accepted): the rows tapped (in tap
+     * order) or Select all with its `except`, Range and its anchor, and an open Bulk Organize draft, its picker, or the remove-tag
+     * picker. Null while the list is not selecting.
+     */
+    private fun bulkInput(list: String): JSONObject? {
+        val bulk = own(list).optJSONObject("bulk")?.takeIf { list in BULK_LISTS } ?: return null
+        val open = dialog
+        return JSONObject().put("list", list).put("anchorId", bulk.opt("anchorId") ?: JSONObject.NULL).put("rangeSelectMode", bulk.optBoolean("range")).apply {
+            bulk.optJSONArray("except")?.let { put("selectAll", JSONObject().put("except", it)) } ?: put("taskIds", bulk.optJSONArray("selected") ?: JSONArray())
+            if (open?.optString("kind") == "organize") {
+                put("organize", JSONObject().put("draft", open.optJSONObject("draft") ?: JSONObject()))
+                open.menuText("picker")?.let { kind -> put("picker", JSONObject().put("kind", kind).apply { open.menuText("query")?.let { put("query", it) } }) }
+            }
+            if (open?.optString("kind") == "tokens" && open.optString("list") == "bulk") put("picker", JSONObject().put("kind", "removeTag"))
+        }
+    }
+
+    /** A row of a list with selection mode: RN's circle and tap while selecting, the long-press that starts it; a read-only row has none. */
+    fun bulkRow(row: TaskRow, readOnly: Boolean = false): RowActions? {
+        if (list !in BULK_LISTS || readOnly) return null
+        val bulk = page?.bulk
+        val all = bulk?.optJSONObject("selectAll")
+        val picked = when {
+            bulk == null -> false
+            all != null -> row.id !in all.getJSONArray("except").ids()
+            else -> row.id in bulk.getJSONArray("selectedIds").ids()
+        }
+        return RowActions(selecting = bulk != null, selected = picked, select = { bulkTap(row.id) })
+    }
+
+    /**
+     * RN's toggleMultiSelect: a long-press starts selecting with that row, and a tap while selecting toggles it (with Range, every
+     * row between it and the last one tapped; Range then ends). Core keeps the tap order and the anchor (selectionEdit); after
+     * Select all, a tap moves the row in or out of `except`.
+     */
+    fun bulkTap(taskId: String) {
+        val list = list?.takeIf { it in BULK_LISTS } ?: return
+        val bulk = own(list).optJSONObject("bulk") ?: JSONObject().put("selected", JSONArray())
+        val except = bulk.optJSONArray("except")?.ids()
+        if (except != null) {
+            editOwn(list) { put("bulk", JSONObject(bulk.toString()).put("except", JSONArray(if (taskId in except) except - taskId else except + taskId))) }
+            return reload()
+        }
+        val range = bulk.optBoolean("range")
+        editOwn(list) { put("bulk", JSONObject(bulk.toString()).put("range", false)) }
+        reload(bulkEdit = JSONObject().put("selectionEdit", JSONObject().put("taskId", taskId).put("range", range)))
+    }
+
+    /** RN's Range: the next tap selects every row between it and the last one tapped. */
+    fun bulkRange() {
+        val list = list?.takeIf { it in BULK_LISTS } ?: return
+        editOwn(list) { optJSONObject("bulk")?.let { it.put("range", !it.optBoolean("range")) } }
+        reload()
+    }
+
+    /** The contract's stateless Select all: every selectable row on screen, less the ones tapped off since. */
+    fun bulkSelectAll() {
+        val list = list?.takeIf { it in BULK_LISTS } ?: return
+        editOwn(list) { put("bulk", JSONObject().put("except", JSONArray()).put("selected", JSONArray())) }
+        reload()
+    }
+
+    /** RN's exitSelectionMode on [list]: the bar goes with the selection, Range and its anchor. */
+    fun endBulk(list: String) {
+        editOwn(list) { remove("bulk") }
+        loaded?.takeIf { it.list == list }?.let { loaded = it.withBulk(null) }
+    }
+
+    /**
+     * One of core's bulk actions ([action] without its target) on the selection, or on Select all (core's own object), with a new
+     * request UUID; [busy] names core's label while it runs. The payload is its exact retry.
+     */
+    fun bulkAction(action: JSONObject, busy: String) {
+        bulkBusy = busy
+        act("bulkAction", bulkPayload(action) ?: return)
+    }
+
+    /** RN's bulk delete: core's question first (deleteConfirmation), then core's trashTasks with its Undo. */
+    fun bulkDelete() {
+        val bulk = page?.bulk ?: return
+        bulkBusy = "delete"
+        confirm(bulk.getJSONObject("deleteConfirmation"), bulkPayload(JSONObject().put("type", "trashTasks")) ?: return, "bulkAction")
+    }
+
+    /** runBulkAction's input without its request UUID: the list, and [action] on the explicit selection or core's Select all. */
+    private fun bulkPayload(action: JSONObject): JSONObject? {
+        val list = list ?: return null
+        val bulk = page?.bulk ?: return null
+        val target = JSONObject(action.toString()).apply {
+            bulk.optJSONObject("selectAll")?.let { put("selectAll", it) } ?: put("taskIds", bulk.getJSONArray("selectedIds"))
+        }
+        return JSONObject().put("list", list).put("action", target)
+    }
+
+    /** The remove-tag picker (core's tags on the selection), read with the bar. */
+    fun openRemoveTag() {
+        keepDialog(JSONObject().put("kind", "tokens").put("list", "bulk").put("text", "").put("picked", JSONArray()))
+        reload()
+    }
+
+    /** RN's Bulk Organize: an empty draft each time it opens (core completes it), read with the bar. */
+    fun openOrganize() {
+        keepDialog(JSONObject().put("kind", "organize").put("draft", JSONObject()))
+        reload()
+    }
+
+    /** A Bulk Organize control's edit (core's own, or typed text's setText): applied by core to the draft as it is when it runs. */
+    fun organizeEdit(edit: JSONObject) {
+        // Apply's "choose a person" line shows until the status or the person changes.
+        if (edit.optString("type") == "setStatus" || edit.optString("field") == "delegateWho") dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("validation") }) }
+        reload(bulkEdit = JSONObject().put("organizeEdit", edit))
+    }
+
+    private var organizeTyped = 0
+
+    /** Typed Bulk Organize text (a person, contexts, tags, a date): kept with the dialog as typed, then core's setText once typing pauses. */
+    fun organizeType(field: String, text: String) {
+        dialog?.let { keepDialog(JSONObject(it.toString()).put("typed:$field", text)) }
+        val mine = ++organizeTyped
+        main.postDelayed({ if (mine == organizeTyped) organizeEdit(JSONObject().put("type", "setText").put("field", field).put("value", text)) }, 200)
+    }
+
+    /** A picked or quick date replaces the date field's typed text with core's value. */
+    fun organizeDate(field: String, edit: JSONObject) {
+        dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("typed:$field"); remove("datePicker") }) }
+        organizeEdit(edit)
+    }
+
+    /** Bulk Organize's project or area picker ([kind]; null closes it), its search as typed. */
+    fun organizePicker(kind: String?) {
+        dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("query"); if (kind == null) remove("picker") else put("picker", kind) }) }
+        if (kind != null) reload()
+    }
+
+    fun organizeQuery(text: String) {
+        dialog?.let { keepDialog(JSONObject(it.toString()).put("query", text)) }
+        val mine = ++organizeTyped
+        main.postDelayed({ if (mine == organizeTyped) reload() }, 200)
+    }
+
+    /**
+     * RN's Apply: typed text still waiting for core goes first; then, while core says Apply cannot run (Waiting without a person),
+     * core's line shows; else core's organize with the draft core answered.
+     */
+    fun organizeApply() {
+        val open = dialog ?: return
+        ++organizeTyped
+        for (field in open.keys().asSequence().toList()) if (field.startsWith("typed:")) {
+            val typed = open.getString(field)
+            if (page?.bulk?.optJSONObject("organize")?.getJSONObject("draft")?.optString(field.removePrefix("typed:")) != typed) {
+                reload(bulkEdit = JSONObject().put("organizeEdit", JSONObject().put("type", "setText").put("field", field.removePrefix("typed:")).put("value", typed)))
+            }
+        }
+        whenIdle {
+            val organize = page?.bulk?.optJSONObject("organize") ?: return@whenIdle
+            if (organize.getBoolean("canApply")) bulkAction(JSONObject().put("type", "organize").put("draft", organize.getJSONObject("draft")), "organize")
+            else dialog?.let { keepDialog(JSONObject(it.toString()).put("validation", true)) }
+        }
+    }
+
+    /**
+     * Core's answer to a bulk action: its dialog closes; one that changed something leaves selection mode (RN's exitSelectionMode);
+     * core's toast shows with its Undo (the same list's restoreTasks, a new request UUID).
+     */
+    private fun bulkDone(action: FailedAction, reply: JSONObject) {
+        val list = JSONObject(action.title).getString("list")
+        bulkBusy = null
+        closeDialog("organize")
+        closeDialog("bulkTag")
+        if (reply.optBoolean("changed")) endBulk(list)
+        reply.optJSONObject("toast")?.let { toast ->
+            val undo = toast.optJSONObject("undo")
+            shell.showToast(toast.text("title"), toast.getString("message"), toast.getString("tone"), undo?.getString("label")) {
+                undo?.let { whenIdle { bulkBusy = "undo"; act("bulkAction", JSONObject().put("list", list).put("action", it.getJSONObject("action"))) } }
+            }
+        }
+    }
+
     // ---- Commands ----
 
     /** The Menu tab's owed command, from the failure banner's Try again: the same exact request. */
@@ -827,6 +1165,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         "taskListSort" -> JSONObject().put("sortBy", action.id)
         // The Calendar's and the Board's input: core's action with the view's state (or filters), and the request UUID.
         "calendarAction", "calendarCreate", "boardAction", "boardCreate" -> JSONObject(action.title).put("requestId", action.id)
+        // A bulk action (its list and core's action) and Focus's commands (the control state and the command's own input).
+        "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder" -> JSONObject(action.title).put("requestId", action.id)
         else -> JSONObject().put("requestId", action.id).put("action", JSONObject(action.title))
     }.toString()
 
@@ -842,6 +1182,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             if (refused && action.kind in CREATES) shell.ui { store.delete() }
             // A refused composer Save wrote nothing: the composer's next Save gets a fresh request UUID.
             if (refused && action.kind == "calendarCreate") shell.ui { calendar.refused(action) }
+            // A refused saved filter wrote nothing either: the next Save gets a fresh one.
+            if (refused && action.kind == "focusSave") shell.ui { focusControls.refused(action) }
             // An Undo core can no longer run wrote nothing: RN's undo-failed toast (core's text), not an error.
             if (refused && action.kind == "somedayUndo") {
                 Log.w(CoreHost.TAG, "Someday Undo refused: ${failure.message?.substringBefore(':')}")
@@ -870,6 +1212,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 val refused = reply.optJSONObject("refused")
                 if (refused != null) { shell.showToast(refused.text("title"), refused.getString("message"), "error"); return }
                 closeDialog("move")
+                // A move from the bulk bar leaves selection mode, as RN's does.
+                if (own("someday").has("bulk")) endBulk("someday")
                 reply.optJSONObject("toast")?.let { toast ->
                     val moveRequestId = reply.getString("undoRequestId")
                     shell.showToast(null, toast.getString("message"), "success", toast.getString("undoLabel")) { undo(moveRequestId) }
@@ -903,6 +1247,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             "contextsAction", "trashAction", "reviewAction", "reviewTask" -> listDone(action, reply)
             "calendarAction", "calendarCreate" -> calendar.done(action, reply)
             "boardAction", "boardCreate" -> board.done(action, reply)
+            "bulkAction" -> bulkDone(action, reply)
+            "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder" -> focusControls.done(action, reply)
         }
     }
 

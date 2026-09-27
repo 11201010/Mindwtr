@@ -46,8 +46,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontStyle
@@ -58,16 +62,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
 /**
  * RN's Archived (app/(drawer)/archived.tsx), History's second tab, on core's getArchiveView and runArchiveAction: the
- * Tasks and Projects chips, the search box with RN's list menu (Sort and Group, kept on the device under RN's key), core's
- * count with Select, the bulk bar (core's Select all, Restore to Inbox, Delete), core's headings and rows, and core's empty
- * state. A row swipes right to Restore and left to Delete (which asks core's question first); TalkBack has both as actions.
- * A completed row's date is plain text: its completion time picker needs a contract change (see the README).
+ * Tasks and Projects chips, the search box (core's setSearch) with core's "Filters · N" and RN's list menu (Filters, then Sort
+ * and Group, kept on the device under RN's key), core's count with Select, the bulk bar (core's stateless Select all, Restore
+ * to Inbox, Delete), core's headings and rows, and core's empty state. A row swipes right to Restore and left to Delete (which
+ * asks core's question first); TalkBack has both as actions. A completed row's date opens RN's completion time picker.
  */
 @Composable
 fun ArchiveList(model: InboxViewModel) = with(model.menu) {
@@ -77,7 +80,6 @@ fun ArchiveList(model: InboxViewModel) = with(model.menu) {
     val own = own("archive")
     val tasks = view.getString("segment") == "tasks"
     val selecting = tasks && own.optBoolean("selecting")
-    val selected = view.getJSONArray("selectedIds").let { ids -> List(ids.length()) { ids.getString(it) } }
     val labels = view.getJSONObject("labels")
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "segments") {
@@ -98,6 +100,7 @@ fun ArchiveList(model: InboxViewModel) = with(model.menu) {
                 Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SearchBox(own.optString("search"), row.getString("placeholder"), Modifier.weight(1f)) { search(it) }
+                    view.getJSONObject("filters").menuText("buttonLabel")?.let { ActiveFiltersButton(it, idle) { openDialog("filters") } }
                     OverflowTrigger(enabled = idle) { openDialog("overflow") }
                 }
             }
@@ -111,10 +114,12 @@ fun ArchiveList(model: InboxViewModel) = with(model.menu) {
                 }
             }
         }
-        if (selecting) item(key = "bulk") { BulkBar(model, view, selected) }
+        if (selecting) item(key = "bulk") { BulkBar(model, view) }
         if (shown.items.isEmpty()) view.optJSONObject("empty")?.let { empty ->
             item(key = "empty") {
-                IconEmptyState(Lucide.ArchiveThin, empty.getString("title"), empty.getString("message"), empty.menuText("clearLabel")) { search("") }
+                IconEmptyState(Lucide.ArchiveThin, empty.getString("title"), empty.getString("message"), empty.menuText("clearLabel")) {
+                    filterEdit(view.getJSONObject("filters").getJSONObject("clearEdit"))
+                }
             }
         }
         items(shown.items, key = { it.key }) { item ->
@@ -122,7 +127,7 @@ fun ArchiveList(model: InboxViewModel) = with(model.menu) {
                 when (item.type) {
                     "section" -> GroupHeading(model, item.json, archive = true)
                     "project" -> ArchivedProject(model, item.json)
-                    else -> ArchivedTask(model, item, labels, selecting, item.row?.id in selected)
+                    else -> ArchivedTask(model, item, labels, selecting, item.json.optBoolean("selected"))
                 }
             }
         }
@@ -164,7 +169,15 @@ private fun ArchivedTask(model: InboxViewModel, item: MenuItem, labels: JSONObje
                 json.menuText("descriptionMarkdown")?.let {
                     Text(it, style = rnText(14, 400), color = c.secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 4.dp))
                 }
-                Text(json.getString("dateLabel"), style = rnText(12, 400).copy(fontStyle = FontStyle.Italic), color = c.secondaryText)
+                // A completed row's date opens RN's completion time picker (core's start); a cancelled one's is plain text.
+                val picker = json.optJSONObject("completedAtPicker")?.takeIf { !selecting }
+                val edit = labels.getString("editCompletedAt")
+                val on = picker != null && model.writable && !model.busy && model.failedAction == null
+                Text(json.getString("dateLabel"), style = rnText(12, 400).copy(fontStyle = FontStyle.Italic), color = c.secondaryText,
+                    modifier = if (picker == null) Modifier else Modifier.clearAndSetSemantics {
+                        contentDescription = edit; role = Role.Button
+                        if (on) onClick { openCompletedAt(row.id, picker); true } else disabled()
+                    }.clickable(enabled = on) { openCompletedAt(row.id, picker) }.padding(vertical = 2.dp))
             }
             Box(Modifier.padding(start = 12.dp).width(4.dp).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(theme.gray))
         }
@@ -236,26 +249,42 @@ fun ArchiveSwipe(model: InboxViewModel, enabled: Boolean, restore: String, delet
     }
 }
 
-/** RN's bulk bar: core's count, then core's Select all, Restore to Inbox, and Delete (which asks core's question first). */
+/**
+ * RN's bulk bar: core's count, then core's Select all (stateless: core resolves it again for the action and refuses it once the
+ * rows changed), Restore to Inbox, and Delete (which asks core's question first).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BulkBar(model: InboxViewModel, view: JSONObject, selected: List<String>) = with(model.menu) {
+private fun BulkBar(model: InboxViewModel, view: JSONObject) = with(model.menu) {
     val c = LocalTheme.current.colors
     val labels = view.getJSONObject("labels")
     val shape = RoundedCornerShape(10.dp)
+    val count = view.getInt("selectedCount")
     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 4.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
         .padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(labels.getString("selected"), style = rnText(12, 600), color = c.secondaryText)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val visible = view.getInt("visibleTaskCount")
-            BulkButton(labels.getString("selectAll"), c.text, idle && visible > 0 && selected.size != visible) { selectAll() }
-            BulkButton(labels.getString("restoreSelected"), c.text, idle && selected.isNotEmpty()) {
-                archive(JSONObject().put("type", "moveTasksToInbox").put("taskIds", JSONArray(selected)))
-            }
-            BulkButton(labels.getString("delete"), c.danger, idle && selected.isNotEmpty()) {
-                confirm(view.getJSONObject("confirmations").getJSONObject("trashTasks"), JSONObject().put("type", "trashTasks").put("taskIds", JSONArray(selected)))
+            BulkButton(labels.getString("selectAll"), c.text, idle && visible > 0 && count != visible) { selectAll() }
+            BulkButton(labels.getString("restoreSelected"), c.text, idle && count > 0) { archive(archiveSelection("moveTasksToInbox")) }
+            BulkButton(labels.getString("delete"), c.danger, idle && count > 0) {
+                confirm(view.getJSONObject("confirmations").getJSONObject("trashTasks"), archiveSelection("trashTasks"))
             }
         }
+    }
+}
+
+/**
+ * RN's CompletedAtPicker on Android: the system date dialog, then the time dialog, each starting where core says (the row's
+ * completedAtPicker day and time); dismissing either ends it. The picked day and time go to core's setCompletedAt.
+ */
+@Composable
+fun CompletedAtPicker(model: InboxViewModel, open: JSONObject) = with(model.menu) {
+    if (open.optString("step") != "time") {
+        DayPickerDialog(open.getString("day"), { if (dialog?.optString("step") != "time") closeDialog("completedAt") }) { pickCompletedDay(it) }
+    } else {
+        val (hour, minute) = pickerClock(open.getString("time"))
+        ClockPickerDialog(hour, minute, { closeDialog("completedAt") }) { pickCompletedTime(it) }
     }
 }
 

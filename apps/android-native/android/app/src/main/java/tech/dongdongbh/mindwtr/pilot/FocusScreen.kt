@@ -1,12 +1,15 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -40,25 +43,35 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
-/** One Focus section as core sent it. [focusBlockedLabel] is core's reason every star here can only refuse (Upcoming). */
-data class FocusSection(val key: String, val title: String, val total: Int, val rows: List<TaskRow>, val focusBlockedLabel: String?)
+/**
+ * One Focus section as core sent it. [focusBlockedLabel] is core's reason every star here can only refuse (Upcoming). [rowTotal]
+ * is the rows to page through (under a grouping a task in two groups is listed twice), and [groups] core's Next actions headings,
+ * each drawn before the row at its `start`.
+ */
+data class FocusSection(val key: String, val title: String, val total: Int, val rows: List<TaskRow>, val focusBlockedLabel: String?,
+                        val rowTotal: Int = total, val groups: List<JSONObject> = emptyList())
 /** One of core's "Projects to review" rows: the project, its status, and core's review date text. */
 data class ReviewProject(val id: String, val title: String, val status: String, val color: String?, val reviewDate: String?)
 
 /**
  * Core's getFocus reply at one revision. Sections, titles, totals, and rows
  * stay exactly in core's order: Kotlin never sorts, drops, or regroups them.
- * [dateLabel] is core's date line, formatted with the user's settings.
+ * [dateLabel] is core's date line, formatted with the user's settings. [controls]
+ * is core's controls view (native-host-contract-focus-controls.ts), [state] its control state.
  */
-data class FocusView(val revision: String, val dateLabel: String, val sections: List<FocusSection>, val reviewProjects: List<ReviewProject>) {
+data class FocusView(val revision: String, val dateLabel: String, val sections: List<FocusSection>, val reviewProjects: List<ReviewProject>,
+                     val controls: JSONObject? = null) {
+    val state: JSONObject get() = controls?.optJSONObject("state") ?: JSONObject()
+
     fun section(key: String) = sections.firstOrNull { it.key == key }
 
-    /** Adds one getFocusSectionWindow reply after the rows its section already has. */
+    /** Adds one getFocusSectionWindow reply after the rows (and group headings) its section already has. */
     fun append(window: JSONObject): FocusView {
         check(window.getInt("version") == 1 && window.getString("revision") == revision) { "Unexpected Focus window" }
         val key = window.getString("key")
         return copy(sections = sections.map { section ->
-            if (section.key == key) section.copy(total = window.getInt("total"), rows = section.rows + window.taskRows()) else section
+            if (section.key == key) section.copy(total = window.getInt("total"), rows = section.rows + window.taskRows(),
+                rowTotal = window.optInt("rowTotal", window.getInt("total")), groups = section.groups + window.menuObjects("groups")) else section
         })
     }
 
@@ -70,24 +83,28 @@ data class FocusView(val revision: String, val dateLabel: String, val sections: 
             return FocusView(json.getString("revision"), json.getString("dateLabel"), List(items.length()) { index ->
                 items.getJSONObject(index).let {
                     FocusSection(it.getString("key"), it.getString("title"), it.getInt("total"), it.taskRows(),
-                        if (it.isNull("focusBlockedLabel")) null else it.getString("focusBlockedLabel"))
+                        if (it.isNull("focusBlockedLabel")) null else it.getString("focusBlockedLabel"),
+                        it.optInt("rowTotal", it.getInt("total")), it.menuObjects("groups"))
                 }
             }, List(review.length()) { index ->
                 review.getJSONObject(index).let {
                     ReviewProject(it.getString("id"), it.getString("title"), it.getString("status"),
                         if (it.isNull("color")) null else it.getString("color"), if (it.isNull("reviewDateLabel")) null else it.getString("reviewDateLabel"))
                 }
-            })
+            }, json.optJSONObject("controls"))
         }
     }
 }
 
 /**
- * Focus as core sent it, in one list, drawn as RN's Focus: core's date line with RN's
- * "Focus only / Expand sections" button, then each section with RN's triangle, title and
- * count. A section core counts as empty is not drawn, as in RN. A tap on a title folds the
- * section; the open sections are kept on the device as RN keeps them. Core's "Later today"
- * label goes before the first row core flags `laterToday`. "Projects to review" follows.
+ * Focus as core sent it, in one list, drawn as RN's Focus: core's date line with RN's View options,
+ * Filters and "Focus only / Expand sections" buttons, core's saved Focus filters and active chips
+ * (FocusControls.kt), then each section with RN's triangle, title and count (Today's Focus with
+ * RN's Reorder while core allows it). A section core counts as empty is not drawn, as in RN. A tap
+ * on a title folds the section; the open sections are kept on the device as RN keeps them. Core's
+ * "Later today" label goes before the first row core flags `laterToday`; core's group headings go
+ * before the row each starts, the rows under them indented. "Projects to review" follows. While
+ * reordering, RN's reorder screen takes the list's place.
  */
 @Composable
 fun FocusList(model: InboxViewModel, modifier: Modifier) {
@@ -105,6 +122,11 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
     with(model) {
         val c = LocalTheme.current.colors
         val more = t("common.more")
+        val controls = focus?.controls
+        // RN's reorder mode owns the screen while core allows it; Back leaves it, as RN's does.
+        val reorder = controls?.optJSONObject("reorder")?.takeIf { menu.focusControls.reordering }
+        BackHandler(enabled = failedAction == null && reorder != null && menu.focusControls.dialog == null) { menu.focusControls.reorder(false) }
+        if (reorder != null) return FocusReorder(model, reorder, modifier)
         LazyColumn(modifier, contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
             val view = focus
             val sections = view?.sections.orEmpty()
@@ -118,6 +140,7 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(view.dateLabel.uppercase(), style = rnText(12, 600, letterSpacing = 0.6f), color = c.secondaryText,
                         modifier = Modifier.weight(1f))
+                    view.controls?.let { FocusHeaderButtons(model, it) }
                     val label = t(if (othersOpen) "agenda.collapseOtherSections" else "agenda.expandOtherSections")
                     IconButton(onClick = { setOtherFocusSections(!othersOpen) }, enabled = others > 0,
                         modifier = Modifier.fade(if (others > 0) 1f else 0.4f).semantics { contentDescription = label; selected = !othersOpen }) {
@@ -126,11 +149,14 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
                     }
                 }
             }
-            // RN's empty Focus: its "All Clear!" title and hint, centered.
+            // Core's saved Focus filters, then the active filters with Clear.
+            view?.controls?.let { item(key = "controls") { FocusFilterRows(model, it) } }
+            // RN's empty Focus: core's title and hint (a filter that hides everything says so), centered.
             if (view != null && shown == 0 && reviewCount == 0) item(key = "empty") {
+                val empty = view.controls?.optJSONObject("empty")
                 Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(t("agenda.allClear"), style = rnText(16, 700), color = c.text, textAlign = TextAlign.Center)
-                    Text(t("agenda.noTasks"), style = rnText(12, 600), color = c.secondaryText, textAlign = TextAlign.Center,
+                    Text(empty?.getString("title") ?: t("agenda.allClear"), style = rnText(16, 700), color = c.text, textAlign = TextAlign.Center)
+                    Text(empty?.getString("subtitle") ?: t("agenda.noTasks"), style = rnText(12, 600), color = c.secondaryText, textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 4.dp))
                 }
             }
@@ -138,22 +164,40 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
             for (section in focus?.sections.orEmpty()) {
                 if (section.total == 0) continue
                 val open = focusView.isOpen(section.key)
+                // RN's Reorder beside Today's Focus, while core allows reordering (the default sort, no filter, a star).
+                val reorderable = controls?.optJSONObject("reorder")?.takeIf { section.key == "focus" }
+                val top = if (first) 8.dp else 18.dp
                 item(key = "title:${section.key}") {
-                    FocusSectionTitle(section.title, section.total, open, first) { toggleFocusSection(section.key) }
+                    Row(Modifier.fillMaxWidth().padding(top = top, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FocusSectionTitle(section.title, section.total, open) { toggleFocusSection(section.key) }
+                        reorderable?.let { ReorderToggle(model, it.getString("label")) }
+                    }
                 }
                 first = false
                 if (!open) continue
                 val laterToday = section.rows.indexOfFirst { it.laterToday }
+                // Core's group headings (Next actions under a grouping), each before the row at its start.
+                val headings = section.groups.associateBy { it.getInt("start") }
+                var group: String? = null
                 section.rows.forEachIndexed { index, task ->
                     if (index == laterToday) item(key = "later:${section.key}") {
                         SectionTitle(t("agenda.laterToday"), null, Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp, start = 4.dp))
                     }
-                    item(key = "${section.key}:${task.id}") {
-                        TaskRowItem(model, task, status = if (section.key == "reviewDue") RowStatus.Badge else RowStatus.Hidden,
-                            star = RowStar.Shown, starBlocked = section.focusBlockedLabel, focusHighlight = section.key != "focus")
+                    headings[index]?.let { heading ->
+                        group = heading.getString("id")
+                        item(key = "group:${section.key}:${heading.getString("id")}") { FocusGroupHeading(heading) }
+                    }
+                    val grouped = group != null
+                    item(key = "${section.key}:${group}:${task.id}") {
+                        GroupedRow(grouped) {
+                            TaskRowItem(model, task, status = if (section.key == "reviewDue") RowStatus.Badge else RowStatus.Hidden,
+                                star = RowStar.Shown, starBlocked = section.focusBlockedLabel, focusHighlight = section.key != "focus",
+                                details = focusView.showDetails)
+                        }
                     }
                 }
-                if (section.rows.size < section.total) item(key = "more:${section.key}") {
+                if (section.rows.size < section.rowTotal) item(key = "more:${section.key}") {
                     Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                         PillButton(more, onClick = { loadMoreFocus(section.key) }, enabled = writable && !busy && failedAction == null,
                             description = "$more ${section.title}")
@@ -162,8 +206,11 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
             }
             if (reviewCount > 0) {
                 val open = focusView.isOpen("reviewProjects")
+                val top = if (first) 8.dp else 18.dp
                 item(key = "title:reviewProjects") {
-                    FocusSectionTitle(t("agenda.reviewDueProjects"), reviewCount, open, first) { toggleFocusSection("reviewProjects") }
+                    Row(Modifier.fillMaxWidth().padding(top = top, bottom = 10.dp)) {
+                        FocusSectionTitle(t("agenda.reviewDueProjects"), reviewCount, open) { toggleFocusSection("reviewProjects") }
+                    }
                 }
                 if (open) for (project in view!!.reviewProjects) item(key = "review:${project.id}") { ReviewProjectCard(model, project) }
             }
@@ -173,12 +220,12 @@ fun FocusList(model: InboxViewModel, modifier: Modifier) {
 
 /** RN's Focus section header: ▾ or ▸, the title in capitals, and the count. TalkBack hears core's title and count. */
 @Composable
-private fun FocusSectionTitle(title: String, count: Int, open: Boolean, first: Boolean, onToggle: () -> Unit) {
+private fun RowScope.FocusSectionTitle(title: String, count: Int, open: Boolean, onToggle: () -> Unit) {
     val c = LocalTheme.current.colors
     val state = t(if (open) "markdown.collapse" else "markdown.expand")
     val spoken = "$title · $count"
     Row(
-        Modifier.fillMaxWidth().padding(top = if (first) 8.dp else 18.dp, bottom = 10.dp)
+        Modifier.weight(1f)
             .clearAndSetSemantics {
                 text = AnnotatedString(spoken); heading()
                 onClick(label = state) { onToggle(); true }

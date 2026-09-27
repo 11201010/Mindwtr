@@ -173,6 +173,10 @@ object Lucide {
     val CheckBold = lucide("CheckBold", "M20 6 9 17l-5-5", stroke = 3f)
     /** The Board's Filters button (lucide's Filter, drawn as Funnel in 0.556). */
     val Filter = lucide("Filter", "M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z")
+    /** Focus's View options, its filter sheet's Save, and the Today's Focus reorder handle. */
+    val Settings2 = lucide("Settings2", "M14 17H5", "M19 7h-9", circle(17, 17, 3), circle(7, 7, 3))
+    val BookmarkPlus = lucide("BookmarkPlus", "m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z", "M12 7L12 13", "M15 10L9 10")
+    val GripVertical = lucide("GripVertical", circle(9, 12, 1), circle(9, 5, 1), circle(9, 19, 1), circle(15, 12, 1), circle(15, 5, 1), circle(15, 19, 1))
 }
 
 /*

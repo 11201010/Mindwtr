@@ -33,8 +33,8 @@ import androidx.compose.ui.unit.dp
 /**
  * RN's Waiting For (components/views/waiting-view.tsx) on core's getWaitingView: core's two stats, the person filter
  * (core's All, each person core offers, and Clear while one is chosen), the parked projects, core's rows with their detail
- * parts (Waiting shows them) and RN's status glyph, and core's empty state. The stats and the filter scroll with the rows,
- * as every list here does, so landscape shows rows.
+ * parts (Waiting shows them) and RN's status glyph (a long-press starts selection mode, core's bulk bar), and core's empty
+ * state. The stats and the filter scroll with the rows, as every list here does, so landscape shows rows.
  */
 @Composable
 fun WaitingList(model: InboxViewModel) = with(model.menu) {
@@ -50,7 +50,7 @@ fun WaitingList(model: InboxViewModel) = with(model.menu) {
             IconEmptyState(Lucide.CirclePauseThin, empty.getString("title"), empty.getString("hint"))
         }
         items(shown.items, key = { it.key }) { item ->
-            Box(Modifier.padding(horizontal = 16.dp)) { item.row?.let { TaskRowItem(model, it, status = RowStatus.Icon, details = true) } }
+            Box(Modifier.padding(horizontal = 16.dp)) { item.row?.let { TaskRowItem(model, it, status = RowStatus.Icon, details = true, actions = bulkRow(it)) } }
         }
         if (shown.items.size < shown.total) item(key = "more") { MoreRow(model) }
     }

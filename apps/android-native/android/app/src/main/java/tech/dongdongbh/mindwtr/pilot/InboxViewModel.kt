@@ -115,18 +115,10 @@ const val WAITING_PROMPT = "waitingFor"
 /** RN's editor shows 4 matches (MAX_VISIBLE_SUGGESTIONS). */
 private const val SUGGESTIONS = 4
 
-/** How deep each list is shown, so a refresh reads it again as deep. */
-private data class Depth(val focus: Map<String, Int>, val project: String?, val projectItems: Int)
-private class Lists(val inbox: InboxPage, val focus: FocusView, val projects: ProjectsView, val projectId: String?, val project: ProjectDetail?, val areas: AreaFilter)
-
-private data class InboxPage(val revision: String, val total: Int, val rows: List<TaskRow>) {
-    companion object {
-        fun parse(json: JSONObject): InboxPage {
-            check(json.getInt("version") == 1) { "Unsupported core contract" }
-            return InboxPage(json.getString("revision"), json.getInt("total"), json.taskRows())
-        }
-    }
-}
+/** How deep each list is shown, so a refresh reads it again as deep; [controls] is Focus's control state (FocusModel) as JSON. */
+private data class Depth(val focus: Map<String, Int>, val project: String?, val projectItems: Int, val controls: String)
+/** The lists one full read gives; the Inbox tab is MenuModel's list on core's getInboxView, read with the open Menu list. */
+private class Lists(val focus: FocusView, val projects: ProjectsView, val projectId: String?, val project: ProjectDetail?, val areas: AreaFilter)
 
 /**
  * Inbox, Focus, Projects, and editor screen state. It survives Activity recreation,
@@ -145,9 +137,6 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      */
     var capture by mutableStateOf<CaptureDraft?>(null); private set
     var failedAction by mutableStateOf<FailedAction?>(null); private set
-    var rows by mutableStateOf<List<TaskRow>>(emptyList()); private set
-    private var revision = ""
-    var total by mutableStateOf(0); private set
     var screen by mutableStateOf(Screen.entries.firstOrNull { it.name == saved.get<String>("screen") } ?: Screen.Inbox); private set
     var focus by mutableStateOf<FocusView?>(null); private set
     var projects by mutableStateOf<ProjectsView?>(null); private set
@@ -318,8 +307,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         areaFilter = pending.areas
         if (action.kind == "saveDraft") pendingSave = action
         pending.editor?.let(::keepEditor)
-        rows = pending.rows
-        total = pending.total
+        // The open list (the Inbox tab's too) as it was: no read runs while the retry is owed.
+        pending.menuPage?.let(menu::restorePage)
         focus = pending.focus
         projects = pending.projects
         keepProject(pending.project?.projectId)
@@ -532,49 +521,16 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val mine = ++issued
         perform { runtime ->
             val lists = read(runtime, at)
-            ui { showLists(lists, mine) }
+            // The open Menu list (the Inbox tab's too) is read again with them.
+            ui { showLists(lists, mine); menu.retryRead() }
         }
-    }
-
-    fun loadMore() {
-        val offset = rows.size
-        val expectedRevision = revision
-        val mine = ++issued
-        perform { runtime ->
-            val page = try {
-                InboxPage.parse(runtime.inboxWindow(offset, PAGE, expectedRevision))
-            } catch (failure: Exception) {
-                // As in Focus, STALE_REVISION is never an error: the Inbox changed (an edit, a
-                // new minute, midnight), so read it again from offset 0 as deep as Load more asked.
-                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
-                val reread = readInbox(runtime, offset + PAGE)
-                ui { if (fresh(mine, Part.Inbox)) applyPage(reread, false) }
-                return@perform
-            }
-            ui { if (fresh(mine, Part.Inbox)) applyPage(page, true) }
-        }
-    }
-
-    /** The Inbox from offset 0 to [depth] rows at one revision; a read that goes stale keeps what it has. */
-    private fun readInbox(runtime: CoreHost, depth: Int): InboxPage {
-        var page = InboxPage.parse(runtime.inboxWindow(0, PAGE, ""))
-        while (page.rows.size < minOf(depth, page.total)) {
-            val next = try {
-                InboxPage.parse(runtime.inboxWindow(page.rows.size, PAGE, page.revision))
-            } catch (failure: Exception) {
-                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
-                return page
-            }
-            if (next.rows.isEmpty()) break // core sent no rows: stop, never spin
-            page = page.copy(revision = next.revision, total = next.total, rows = page.rows + next.rows)
-        }
-        return page
     }
 
     /** Focus from offset 0, in the background: on resume and each minute while Focus shows. */
     fun refreshFocus() {
         val depth = focus.depth()
-        background(listOf(Part.Focus), { runtime -> readFocus(runtime, null, depth) }) { view, mine -> if (fresh(mine, Part.Focus)) focus = view }
+        val controls = menu.focusControls.state.toString()
+        background(listOf(Part.Focus), { runtime -> readFocus(runtime, null, depth, controls) }) { view, mine -> if (fresh(mine, Part.Focus)) showFocus(view) }
     }
 
     /** The next window of one section at the loaded revision. */
@@ -583,14 +539,31 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val depth = view.depth() + (key to (view.section(key)?.rows?.size ?: 0) + PAGE)
         val mine = ++issued
         perform { runtime ->
-            val next = readFocus(runtime, view, depth)
-            ui { if (fresh(mine, Part.Focus)) focus = next }
+            val next = readFocus(runtime, view, depth, view.state.toString())
+            ui { if (fresh(mine, Part.Focus)) showFocus(next) }
         }
+    }
+
+    /** A Focus control's edit (FocusModel): Focus read again with it, as deep as shown; core's answer carries the new control state. */
+    internal fun editFocusControls(edit: JSONObject) {
+        val depth = focus.depth()
+        val controls = menu.focusControls.state.toString()
+        val mine = ++issued
+        perform { runtime ->
+            val next = readFocus(runtime, null, depth, controls, edit.toString())
+            ui { if (fresh(mine, Part.Focus)) showFocus(next) }
+        }
+    }
+
+    /** Core's Focus on screen, and its control state becomes the screen's (FocusModel.adopt). */
+    private fun showFocus(view: FocusView?) {
+        focus = view
+        view?.let(menu.focusControls::adopt)
     }
 
     private fun FocusView?.depth(): Map<String, Int> = this?.sections?.associate { it.key to it.rows.size }.orEmpty()
 
-    private fun depth() = Depth(focus.depth(), openProjectId, maxOf(PAGE, project?.items?.size ?: 0))
+    private fun depth() = Depth(focus.depth(), openProjectId, maxOf(PAGE, project?.items?.size ?: 0), menu.focusControls.state.toString())
 
     /** Opens or closes Someday / Waiting ("deferred") or Closed ("archived"), as RN's toggleProjectSection. */
     fun toggle(group: String) {
@@ -609,6 +582,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** RN's toggleSection on Focus. */
     fun toggleFocusSection(key: String) {
         focusView = focusView.with(mapOf(key to !focusView.isOpen(key)))
+        focusView.save(prefs)
+    }
+
+    /** RN's toggleShowDetails (View options): rows show their detail parts, kept with the open sections. */
+    fun setFocusDetails(on: Boolean) {
+        focusView = focusView.withDetails(on)
         focusView.save(prefs)
     }
 
@@ -1346,22 +1325,23 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     }
 
     /**
-     * Core's Focus with each section read to [depth] rows, all at one revision,
-     * so a refresh keeps what Load more showed. STALE_REVISION is never an error:
-     * Focus changed (an edit, a new minute, midnight), so read again from offset 0.
+     * Core's Focus for the control state [controls] (after a control's [edit], JSON or ""), with each section read to [depth]
+     * rows, all at one revision, so a refresh keeps what Load more showed. Later windows go with the control state core
+     * answered. STALE_REVISION is never an error: Focus changed (an edit, a new minute, midnight), so read again from offset 0.
      */
-    private fun readFocus(runtime: CoreHost, start: FocusView?, depth: Map<String, Int>): FocusView {
-        var view = start ?: FocusView.parse(runtime.focus(PAGE))
+    private fun readFocus(runtime: CoreHost, start: FocusView?, depth: Map<String, Int>, controls: String, edit: String = ""): FocusView {
+        var view = start ?: FocusView.parse(runtime.focus(PAGE, controls, edit))
+        val state = view.state.toString()
         for ((key, want) in depth) {
             while (true) {
                 val loaded = view.section(key) ?: break
-                if (loaded.rows.size >= minOf(want, loaded.total)) break
+                if (loaded.rows.size >= minOf(want, loaded.rowTotal)) break
                 val next = try {
-                    view.append(runtime.focusWindow(key, loaded.rows.size, PAGE, view.revision))
+                    view.append(runtime.focusWindow(key, loaded.rows.size, PAGE, view.revision, state))
                 } catch (failure: Exception) {
                     if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
                     // A fresh read that went stale keeps its first windows; the next refresh reads deeper.
-                    return if (start == null) view else readFocus(runtime, null, depth)
+                    return if (start == null) view else readFocus(runtime, null, depth, state)
                 }
                 if (next.section(key)?.rows?.size == loaded.rows.size) break // core sent no rows: stop, never spin
                 view = next
@@ -1370,10 +1350,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         return view
     }
 
-    /** Every list from offset 0, as deep as it is shown: after boot and after every command. */
+    /** Every list from offset 0, as deep as it is shown: after boot and after every command (the Inbox tab reads with MenuModel). */
     private fun read(runtime: CoreHost, at: Depth) = Lists(
-        InboxPage.parse(runtime.inboxWindow(0, PAGE, "")),
-        readFocus(runtime, null, at.focus),
+        readFocus(runtime, null, at.focus, at.controls),
         ProjectsView.parse(runtime.projects()),
         at.project,
         readOpen(runtime, at),
@@ -1382,18 +1361,14 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     /** A full read, each list applied on its own: a list a newer read already showed keeps the newer rows. */
     private fun showLists(lists: Lists, mine: Long) {
-        if (fresh(mine, Part.Inbox)) applyPage(lists.inbox, false)
-        if (fresh(mine, Part.Focus)) focus = lists.focus
+        if (fresh(mine, Part.Focus)) { showFocus(lists.focus); readSucceeded() }
         if (fresh(mine, Part.Projects)) projects = lists.projects
         if (fresh(mine, Part.Project)) showProject(lists.projectId, lists.project)
         if (fresh(mine, Part.Areas)) areaFilter = lists.areas
     }
 
-    private fun applyPage(page: InboxPage, append: Boolean) {
-        revision = page.revision
-        total = page.total
-        rows = if (append) rows + page.rows else page.rows
-        // A read's success clears a read's failure, never an owed retry's.
+    /** A read's success (a full read, or the open Menu list's) clears a read's failure, never an owed retry's. */
+    internal fun readSucceeded() {
         if (failedAction == null) error = null
     }
 
@@ -1407,8 +1382,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private var commandAt = 0L
     private val shownAt = HashMap<Part, Long>()
 
-    /** One list a read can show: Menu is the open Menu list, More the More sheet, MenuDialog the move dialog's choices. */
-    internal enum class Part { Inbox, Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog }
+    /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices. */
+    internal enum class Part { Focus, Projects, Project, Areas, Editor, Search, Menu, More, MenuDialog }
 
     /** A new read's number, for a read the Menu tab starts through perform (as the lists' More takes one). */
     internal fun issue(): Long = ++issued
@@ -1440,7 +1415,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     if (message.startsWith("SAVE_FAILED")) {
                         val failed = FailedAction("storage", "")
                         Log.w(CoreHost.TAG, "Core background read failed lock=storage")
-                        ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, rows, total, editor, screen, focus, projects, project, areaFilter))
+                        ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, menu.page, editor, screen, focus, projects, project, areaFilter))
                         failedAction = failed
                     }
                 }
@@ -1474,7 +1449,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 Log.e(CoreHost.TAG, "Core action failed action=${action?.kind ?: "read"} lock=${failed?.kind ?: "none"}", failure)
                 // Recorded before the UI update so a screen opening now still finds it.
                 if (failed != null) {
-                    ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, rows, total, editor, screen, focus, projects, project, areaFilter))
+                    ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, menu.page, editor, screen, focus, projects, project, areaFilter))
                 }
                 ui {
                     // A read never replaces an owed command's retry, whatever order the failures arrive in.

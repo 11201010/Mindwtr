@@ -22,8 +22,9 @@ internal object ProcessCoreHost {
     @Volatile private var boots = 0
 
     /**
-     * A failed command's exact retry, with the screen it failed on: the list
-     * (Inbox, Focus, or Projects) and its rows, and the editor draft for a failed update.
+     * A failed command's exact retry, with the screen it failed on: the tab
+     * (Inbox, Focus, or Projects) and its lists (the open Menu or Inbox list's page, Focus,
+     * Projects), and the editor draft for a failed update.
      * It lives next to the host so a new screen in this process (the old one
      * finished) reopens on the same retry instead of a locked, empty list. In
      * memory only: after process death the saved capture draft and UUID, or the
@@ -32,8 +33,7 @@ internal object ProcessCoreHost {
     data class PendingFailure(
         val action: FailedAction,
         val error: String,
-        val rows: List<TaskRow>,
-        val total: Int,
+        val menuPage: MenuPage?,
         val editor: TaskEditor? = null,
         val screen: Screen = Screen.Inbox,
         val focus: FocusView? = null,
