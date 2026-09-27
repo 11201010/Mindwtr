@@ -511,7 +511,7 @@ describe('native host contract: Settings', () => {
         const direct = buildSettingsMenu({ t, query: 'sprache', sync: getSettingsSyncBadge('attention', t) ?? undefined, updateAvailable: true });
         expect(menu.groups.map((group) => group.map(({ enabled: _enabled, ...row }) => row))).toEqual(direct.groups);
         expect(menu.advanced.rows.map(({ enabled: _enabled, ...row }) => row)).toEqual(buildSettingsAdvancedMenu(t).rows);
-        expect(menu.groups.flat().filter((row) => row.enabled).map((row) => row.id)).toEqual(['general']);
+        expect(menu.groups.flat().filter((row) => row.enabled).map((row) => row.id)).toEqual(['general', 'gtd']);
 
         const general = value(host.getGeneralSettings({ deviceTheme: 'dark', appSearch: { supported: true, enabled: true } }));
         const settings = useTaskStore.getState().settings;

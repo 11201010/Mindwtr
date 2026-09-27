@@ -4,11 +4,6 @@ import { Check } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-    buildTaskEditorPresetConfig,
-    resolveTaskEditorPresetId,
-    type TaskEditorPresetId,
-} from '@/components/task-edit/task-edit-modal.utils';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { CompactText } from '@/components/compact-text';
@@ -16,28 +11,15 @@ import { dispatchMobileOnboardingEvent } from '@/lib/mobile-onboarding-events';
 import { logSettingsError } from '@/lib/settings-utils';
 import { useToast } from '@/contexts/toast-context';
 import {
-    DEFAULT_TASK_EDITOR_ORDER,
-    DEFAULT_TASK_EDITOR_SECTION_BY_FIELD,
     DEFAULT_TASK_EDITOR_SECTION_OPEN,
-    DEFAULT_TASK_EDITOR_VISIBLE,
-    compareAreasByOrder,
-    FOCUS_TASK_LIMIT_OPTIONS,
-    getTaskEditorSectionAssignments,
-    getTaskEditorSectionOpenDefaults,
-    isTaskEditorSectionableField,
+    buildGtdSettingsModel,
+    buildGtdSettingsUpdate,
+    isGtdSettingStored,
     normalizeClockTimeInput,
-    normalizeFocusTaskLimit,
-    getDefaultTaskAreaMode,
-    resolveDefaultNewTaskAreaId,
-    resolveFeatureFlags,
-    sanitizePomodoroDurations,
+    resolveGtdPomodoroDurations,
     shallow,
-    tFallback,
-    TASK_EDITOR_FIXED_FIELDS,
-    TASK_EDITOR_SECTION_ORDER,
-    type DefaultProjectFlowMode,
-    type FeatureSettings,
-    type GtdSettings,
+    type GtdSettingsEdit,
+    type GtdTaskEditorField,
     type TaskEditorFieldId,
     type TaskEditorSectionId,
     useTaskStore,
@@ -50,11 +32,7 @@ import type { SettingsScreen } from './settings.constants';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
 import { SettingsTopBar } from './settings.shell';
 import { styles } from './settings.styles';
-import {
-    TASK_OPEN_MODES,
-    useTaskOpenMode,
-    type TaskOpenMode,
-} from '@/lib/view-state/task-open-mode';
+import { useTaskOpenMode } from '@/lib/view-state/task-open-mode';
 
 type GtdScreen =
     | 'gtd'
@@ -65,11 +43,7 @@ type GtdScreen =
     | 'gtd-review'
     | 'gtd-task-editor';
 
-type PomodoroSettings = NonNullable<GtdSettings['pomodoro']>;
-type InboxProcessingSettings = NonNullable<GtdSettings['inboxProcessing']>;
-
 const SHOW_TEMP_ONBOARDING_TRIGGER = false;
-const DEFAULT_AREA_ACTIVE_OPTION_ID = '__active-area__';
 
 export function GtdSettingsScreen({
     onNavigate,
@@ -81,7 +55,7 @@ export function GtdSettingsScreen({
     const tc = useThemeColors();
     const filledButton = useFilledButtonColors();
     const insets = useSafeAreaInsets();
-    const { tr, t } = useSettingsLocalization();
+    const { t } = useSettingsLocalization();
     const { showToast } = useToast();
     const { mode: taskOpenMode, setMode: setTaskOpenMode } = useTaskOpenMode();
     const { settings, updateSettings, areas } = useTaskStore((state) => ({
@@ -99,51 +73,19 @@ export function GtdSettingsScreen({
     const [taskEditorSelectedField, setTaskEditorSelectedField] = useState<TaskEditorFieldId | null>(null);
     const [defaultAreaPickerVisible, setDefaultAreaPickerVisible] = useState(false);
 
-    const defaultCaptureMethod = settings.gtd?.defaultCaptureMethod ?? 'text';
-    const defaultAreaMode = getDefaultTaskAreaMode(settings);
-    const sortedAreas = [...areas]
-        .filter((area) => !area.deletedAt)
-        .sort(compareAreasByOrder);
-    const defaultAreaId = resolveDefaultNewTaskAreaId(settings, sortedAreas) ?? '';
-    const defaultAreaPickerValue = defaultAreaMode === 'active'
-        ? DEFAULT_AREA_ACTIVE_OPTION_ID
-        : defaultAreaId;
-    const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false;
-    const quickAddAutoClean = settings.quickAddAutoClean === true;
-    const markdownEditorAssist = settings.markdownEditorAssist !== false;
-    const naturalLanguageDates = settings.gtd?.naturalLanguageDates !== false;
-    const inboxProcessing = settings.gtd?.inboxProcessing ?? {};
-    const inboxTwoMinuteEnabled = inboxProcessing.twoMinuteEnabled !== false;
-    const inboxProjectFirst = inboxProcessing.projectFirst === true;
-    const inboxContextStepEnabled = inboxProcessing.contextStepEnabled !== false;
-    const inboxScheduleEnabled = inboxProcessing.scheduleEnabled === true;
-    const includeContextStep = settings.gtd?.weeklyReview?.includeContextStep !== false;
-    const includeDailyFocusStep = settings.gtd?.dailyReview?.includeFocusStep !== false;
-    const defaultScheduleTime = normalizeClockTimeInput(settings.gtd?.defaultScheduleTime) || '';
-    const focusTaskLimit = normalizeFocusTaskLimit(settings.gtd?.focusTaskLimit);
-    const defaultProjectFlowMode: DefaultProjectFlowMode = settings.gtd?.defaultProjectFlowMode === 'sequential'
-        ? 'sequential'
-        : 'parallel';
-    const autoArchiveDays = Number.isFinite(settings.gtd?.autoArchiveDays)
-        ? Math.max(0, Math.floor(settings.gtd?.autoArchiveDays as number))
-        : 7;
-    const {
-        priorities: prioritiesEnabled,
-        timeEstimates: timeEstimatesEnabled,
-        pomodoro: pomodoroEnabled,
-    } = resolveFeatureFlags(settings);
-    const pomodoroCustomDurations = sanitizePomodoroDurations(settings.gtd?.pomodoro?.customDurations);
-    const pomodoroLinkTask = settings.gtd?.pomodoro?.linkTask === true;
-    const pomodoroAutoStartBreaks = settings.gtd?.pomodoro?.autoStartBreaks === true;
-    const pomodoroAutoStartFocus = settings.gtd?.pomodoro?.autoStartFocus === true;
-    // Defaults on: the alert is the point of the timer, and an off-by-default
-    // switch is what made #528 read as broken.
-    const pomodoroCompletionAlert = settings.gtd?.pomodoro?.completionAlert !== false;
+    // Every row's text, value, visibility and write comes from core's GTD model,
+    // shared with the native host.
+    const model = buildGtdSettingsModel({ settings, areas, taskOpenMode, t });
+    const { hub, capture, review, inbox, archive } = model;
+    const pomodoroModel = model.pomodoro;
+    const pomodoroEnabled = hub.pomodoro.value;
+    const pomodoroCompletionAlert = pomodoroModel.controls?.completionAlert.value ?? false;
+    const defaultScheduleTime = hub.defaultScheduleTime.value;
     const { showNotice: showExactAlarmNotice } = useExactAlarmPermission(
         screen === 'gtd-pomodoro' && pomodoroEnabled && pomodoroCompletionAlert
     );
-    const [pomodoroFocusDraft, setPomodoroFocusDraft] = useState(String(pomodoroCustomDurations.focusMinutes));
-    const [pomodoroBreakDraft, setPomodoroBreakDraft] = useState(String(pomodoroCustomDurations.breakMinutes));
+    const [pomodoroFocusDraft, setPomodoroFocusDraft] = useState(pomodoroModel.minutes.focus);
+    const [pomodoroBreakDraft, setPomodoroBreakDraft] = useState(pomodoroModel.minutes.break);
     const [defaultScheduleTimeDraft, setDefaultScheduleTimeDraft] = useState(defaultScheduleTime);
     const pomodoroAutoStartNoticeShownRef = React.useRef(false);
 
@@ -173,63 +115,30 @@ export function GtdSettingsScreen({
     ]);
 
     useEffect(() => {
-        setPomodoroFocusDraft(String(pomodoroCustomDurations.focusMinutes));
-        setPomodoroBreakDraft(String(pomodoroCustomDurations.breakMinutes));
-    }, [pomodoroCustomDurations.breakMinutes, pomodoroCustomDurations.focusMinutes]);
+        setPomodoroFocusDraft(pomodoroModel.minutes.focus);
+        setPomodoroBreakDraft(pomodoroModel.minutes.break);
+    }, [pomodoroModel.minutes.break, pomodoroModel.minutes.focus]);
 
     useEffect(() => {
         setDefaultScheduleTimeDraft(defaultScheduleTime);
     }, [defaultScheduleTime]);
 
-    const updateFeatureFlags = (next: { priorities?: boolean; timeEstimates?: boolean; pomodoro?: boolean }) => {
-        updateSettings({
-            features: {
-                ...(settings.features ?? {}),
-                ...next,
-            },
-        }).catch(logSettingsError);
+    // Re-picking the stored value writes nothing, as the native host's contract:
+    // a repeat write saves the whole document again for no change.
+    const writeSetting = (edit: GtdSettingsEdit, afterWrite?: () => void) => {
+        const update = buildGtdSettingsUpdate(settings, edit);
+        if (!update || isGtdSettingStored(settings, edit)) return;
+        updateSettings(update).then(afterWrite).catch(logSettingsError);
     };
 
     const showPomodoroAutoStartNotice = () => {
         if (pomodoroAutoStartNoticeShownRef.current) return;
         pomodoroAutoStartNoticeShownRef.current = true;
         showToast({
-            message: tr('settings.gtdMobile.pomodoroWillNowAdvancePhasesAutomatically'),
+            message: pomodoroModel.autoStartNotice,
             tone: 'info',
             durationMs: 5000,
         });
-    };
-
-    const updatePomodoroSettings = (
-        partial: Partial<PomodoroSettings>,
-        options?: { showAutoStartNotice?: boolean }
-    ) => {
-        updateSettings({
-            gtd: {
-                ...(settings.gtd ?? {}),
-                pomodoro: {
-                    ...(settings.gtd?.pomodoro ?? {}),
-                    ...partial,
-                },
-            },
-        }).then(() => {
-            if (options?.showAutoStartNotice) {
-                showPomodoroAutoStartNotice();
-            }
-        }).catch(logSettingsError);
-    };
-
-    const updateGtdSettings = (partial: Partial<GtdSettings>) => {
-        updateSettings({
-            gtd: {
-                ...(settings.gtd ?? {}),
-                ...partial,
-            },
-        }).catch(logSettingsError);
-    };
-
-    const updateDefaultCaptureMethod = (method: 'text' | 'audio') => {
-        updateGtdSettings({ defaultCaptureMethod: method });
     };
 
     const commitDefaultScheduleTime = () => {
@@ -237,182 +146,24 @@ export function GtdSettingsScreen({
         if (normalized === null) {
             setDefaultScheduleTimeDraft(defaultScheduleTime);
             showToast({
-                message: tr('settings.gtdMobile.useHhMmForTheDefaultScheduleTime'),
+                message: hub.defaultScheduleTime.invalidMessage,
                 tone: 'warning',
             });
             return;
         }
         setDefaultScheduleTimeDraft(normalized);
-        if (normalized === defaultScheduleTime) return;
-        updateGtdSettings({ defaultScheduleTime: normalized });
-    };
-
-    const savePomodoroCustomDurations = (nextDurations: { focusMinutes: number; breakMinutes: number }) => {
-        updatePomodoroSettings({ customDurations: nextDurations });
-        return nextDurations;
+        writeSetting({ type: 'defaultScheduleTime', value: normalized });
     };
 
     const commitPomodoroMinutes = () => {
-        const focusValue = Number.parseInt(pomodoroFocusDraft, 10);
-        const breakValue = Number.parseInt(pomodoroBreakDraft, 10);
-        const nextDurations = savePomodoroCustomDurations(sanitizePomodoroDurations({
-            focusMinutes: Number.isFinite(focusValue) ? focusValue : pomodoroCustomDurations.focusMinutes,
-            breakMinutes: Number.isFinite(breakValue) ? breakValue : pomodoroCustomDurations.breakMinutes,
-        }));
+        const nextDurations = resolveGtdPomodoroDurations(settings, pomodoroFocusDraft, pomodoroBreakDraft);
+        writeSetting({ type: 'pomodoroDurations', focusMinutes: pomodoroFocusDraft, breakMinutes: pomodoroBreakDraft });
         setPomodoroFocusDraft(String(nextDurations.focusMinutes));
         setPomodoroBreakDraft(String(nextDurations.breakMinutes));
     };
 
-    const updateInboxProcessing = (partial: Partial<InboxProcessingSettings>) => {
-        updateSettings({
-            gtd: {
-                ...(settings.gtd ?? {}),
-                inboxProcessing: {
-                    ...(settings.gtd?.inboxProcessing ?? {}),
-                    ...partial,
-                },
-            },
-        }).catch(logSettingsError);
-    };
-
-    const updateWeeklyReviewConfig = (partial: GtdSettings['weeklyReview']) => {
-        updateSettings({
-            gtd: {
-                ...(settings.gtd ?? {}),
-                weeklyReview: {
-                    ...(settings.gtd?.weeklyReview ?? {}),
-                    ...partial,
-                },
-            },
-        }).catch(logSettingsError);
-    };
-
-    const updateDailyReviewConfig = (partial: GtdSettings['dailyReview']) => {
-        updateSettings({
-            gtd: {
-                ...(settings.gtd ?? {}),
-                dailyReview: {
-                    ...(settings.gtd?.dailyReview ?? {}),
-                    ...partial,
-                },
-            },
-        }).catch(logSettingsError);
-    };
-
-    const featurePomodoroLabelRaw = t('settings.featurePomodoro');
-    const featurePomodoroDescRaw = t('settings.featurePomodoroDesc');
-    const featurePomodoroLabel = featurePomodoroLabelRaw === 'settings.featurePomodoro'
-        ? tr('settings.featurePomodoro')
-        : featurePomodoroLabelRaw;
-    const featurePomodoroDesc = featurePomodoroDescRaw === 'settings.featurePomodoroDesc'
-        ? tr('settings.featurePomodoroDesc')
-        : featurePomodoroDescRaw;
-    const pomodoroSettingsLabel = tFallback(t, 'settings.pomodoroSettings', tr('settings.gtdMobile.pomodoroSettings'));
-    const pomodoroCustomPresetLabelRaw = t('settings.pomodoroCustomPreset');
-    const pomodoroCustomPresetLabel = pomodoroCustomPresetLabelRaw === 'settings.pomodoroCustomPreset'
-        ? tr('settings.pomodoroCustomPreset')
-        : pomodoroCustomPresetLabelRaw;
-    const pomodoroCustomPresetDescRaw = t('settings.pomodoroCustomPresetDesc');
-    const pomodoroCustomPresetDesc = pomodoroCustomPresetDescRaw === 'settings.pomodoroCustomPresetDesc'
-        ? tr('settings.pomodoroCustomPresetDesc')
-        : pomodoroCustomPresetDescRaw;
-    const pomodoroFocusMinutesLabelRaw = t('settings.pomodoroFocusMinutes');
-    const pomodoroFocusMinutesLabel = pomodoroFocusMinutesLabelRaw === 'settings.pomodoroFocusMinutes'
-        ? tr('settings.pomodoroFocusMinutes')
-        : pomodoroFocusMinutesLabelRaw;
-    const pomodoroBreakMinutesLabelRaw = t('settings.pomodoroBreakMinutes');
-    const pomodoroBreakMinutesLabel = pomodoroBreakMinutesLabelRaw === 'settings.pomodoroBreakMinutes'
-        ? tr('settings.pomodoroBreakMinutes')
-        : pomodoroBreakMinutesLabelRaw;
-    const pomodoroLinkTaskLabel = tFallback(
-        t,
-        'settings.pomodoroLinkTask',
-        tr('settings.pomodoroLinkTask')
-    );
-    const pomodoroLinkTaskDesc = tFallback(
-        t,
-        'settings.pomodoroLinkTaskDesc',
-        tr('settings.pomodoroLinkTaskDesc')
-    );
-    const pomodoroAutoStartBreaksLabelRaw = t('settings.pomodoroAutoStartBreaks');
-    const pomodoroAutoStartBreaksLabel = pomodoroAutoStartBreaksLabelRaw === 'settings.pomodoroAutoStartBreaks'
-        ? tr('settings.gtdMobile.autoStartBreaks')
-        : pomodoroAutoStartBreaksLabelRaw;
-    const pomodoroAutoStartBreaksDescRaw = t('settings.pomodoroAutoStartBreaksDesc');
-    const pomodoroAutoStartBreaksDesc = pomodoroAutoStartBreaksDescRaw === 'settings.pomodoroAutoStartBreaksDesc'
-        ? tr('settings.gtdMobile.startTheBreakTimerAutomaticallyWhenAFocusSessionEnds')
-        : pomodoroAutoStartBreaksDescRaw;
-    const pomodoroAutoStartFocusLabelRaw = t('settings.pomodoroAutoStartFocus');
-    const pomodoroAutoStartFocusLabel = pomodoroAutoStartFocusLabelRaw === 'settings.pomodoroAutoStartFocus'
-        ? tr('settings.gtdMobile.autoStartFocus')
-        : pomodoroAutoStartFocusLabelRaw;
-    const pomodoroAutoStartFocusDescRaw = t('settings.pomodoroAutoStartFocusDesc');
-    const pomodoroAutoStartFocusDesc = pomodoroAutoStartFocusDescRaw === 'settings.pomodoroAutoStartFocusDesc'
-        ? tr('settings.gtdMobile.startTheNextFocusSessionAutomaticallyWhenABreakEnds')
-        : pomodoroAutoStartFocusDescRaw;
-    const pomodoroCompletionAlertLabel = tFallback(t, 'settings.pomodoroCompletionAlert', 'Alert when timer ends');
-    const pomodoroCompletionAlertDesc = tFallback(
-        t,
-        'settings.pomodoroCompletionAlertDesc',
-        'Notify me when a focus session or break ends.'
-    );
-    const defaultScheduleTimeLabel = tFallback(t, 'settings.defaultScheduleTime', tr('settings.gtdMobile.defaultScheduleTime'));
-    const defaultScheduleTimeDesc = tFallback(
-        t,
-        'settings.defaultScheduleTimeDesc',
-        tr('settings.gtdMobile.optionalPreFillsManualStartDueAndReviewTimeFields')
-    );
-    const focusTaskLimitLabel = tFallback(t, 'settings.focusTaskLimit', tr('settings.focusTaskLimit'));
-    const focusTaskLimitDesc = tFallback(
-        t,
-        'settings.focusTaskLimitDesc',
-        tr('settings.focusTaskLimitDesc')
-    );
-    const defaultProjectFlowModeLabel = tFallback(
-        t,
-        'settings.defaultProjectFlowMode',
-        'Default project flow'
-    );
-    const defaultProjectFlowModeDesc = tFallback(
-        t,
-        'settings.defaultProjectFlowModeDesc',
-        'Applies only when creating new projects.'
-    );
-    const defaultAreaLabel = t('settings.defaultArea');
-    const defaultAreaDesc = t('settings.defaultAreaDesc');
-    const defaultAreaNoneLabel = t('settings.defaultAreaNone');
-    const defaultAreaActiveLabel = t('settings.defaultAreaActive');
-    const captureSettingsTitle = tFallback(t, 'settings.captureSettings', tr('settings.gtdMobile.captureDefaults'));
-    const quickAddAutoCleanLabel = t('settings.quickAddAutoClean');
-    const quickAddAutoCleanDesc = t('settings.quickAddAutoCleanDesc');
-    const markdownEditorAssistLabel = t('settings.markdownEditorAssist');
-    const markdownEditorAssistDesc = t('settings.markdownEditorAssistDesc');
-    const naturalLanguageDatesLabel = t('settings.naturalLanguageDates');
-    const naturalLanguageDatesDesc = t('settings.naturalLanguageDatesDesc');
-    const reviewSettingsTitle = tFallback(t, 'settings.reviewSettings', tr('settings.gtdMobile.reviewSteps'));
-    const inboxSettingsTitle = tFallback(t, 'settings.inboxProcessing', tr('settings.inboxProcessing'));
-    const projectFlowModeOptions: Array<{ id: DefaultProjectFlowMode; label: string }> = [
-        { id: 'parallel', label: tFallback(t, 'settings.projectFlowParallel', 'Parallel') },
-        { id: 'sequential', label: tFallback(t, 'settings.projectFlowSequential', 'Sequential') },
-    ];
-    const captureMethodOptions: { id: 'text' | 'audio'; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-        { id: 'text', label: t('settings.captureDefaultText'), icon: 'text-outline' },
-        { id: 'audio', label: t('settings.captureDefaultAudio'), icon: 'mic-outline' },
-    ];
-    const defaultAreaOptions = [
-        { id: '', label: defaultAreaNoneLabel },
-        { id: DEFAULT_AREA_ACTIVE_OPTION_ID, label: defaultAreaActiveLabel },
-        ...sortedAreas.map((area) => ({ id: area.id, label: area.name })),
-    ];
-    const defaultAreaSelectedLabel = defaultAreaOptions.find((option) => option.id === defaultAreaPickerValue)?.label ?? defaultAreaNoneLabel;
-    const selectDefaultArea = (areaId: string) => {
-        if (areaId === DEFAULT_AREA_ACTIVE_OPTION_ID) {
-            updateGtdSettings({ defaultAreaMode: 'active', defaultAreaId: null });
-        } else if (areaId) {
-            updateGtdSettings({ defaultAreaMode: 'fixed', defaultAreaId: areaId });
-        } else {
-            updateGtdSettings({ defaultAreaMode: 'none', defaultAreaId: null });
-        }
+    const selectDefaultArea = (edit: GtdSettingsEdit) => {
+        writeSetting(edit);
         setDefaultAreaPickerVisible(false);
     };
 
@@ -446,39 +197,39 @@ export function GtdSettingsScreen({
     if (screen === 'gtd') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={t('settings.gtd')} />
+                <SettingsTopBar title={hub.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                    <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.gtdDesc')}</Text>
+                    <Text style={[styles.description, { color: tc.secondaryText }]}>{hub.description}</Text>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginBottom: 12 }]}>
                         <SettingRow
-                            label={t('settings.features')}
-                            description={t('settings.featuresDesc')}
+                            label={hub.features.label}
+                            description={hub.features.description}
                         />
                         <SettingToggleRow
                             divider
-                            label={featurePomodoroLabel}
-                            description={featurePomodoroDesc}
-                            value={pomodoroEnabled}
-                            onChange={(value) => updateFeatureFlags({ pomodoro: value })}
+                            label={hub.pomodoro.label}
+                            description={hub.pomodoro.description ?? undefined}
+                            value={hub.pomodoro.value}
+                            onChange={() => writeSetting(hub.pomodoro.edit)}
                         />
-                        {pomodoroEnabled && renderGtdNavigationRow(
-                            pomodoroSettingsLabel,
-                            tr('settings.gtdMobile.customPresetTaskLinkingAndAutoStartBehavior'),
-                            'gtd-pomodoro',
+                        {hub.pomodoroSettings && renderGtdNavigationRow(
+                            hub.pomodoroSettings.title,
+                            hub.pomodoroSettings.description,
+                            hub.pomodoroSettings.screen,
                             { testID: 'gtd-nav-pomodoro' }
                         )}
                     </View>
 
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
                         <SettingRow
-                            label={defaultScheduleTimeLabel}
-                            description={defaultScheduleTimeDesc}
+                            label={hub.defaultScheduleTime.label}
+                            description={hub.defaultScheduleTime.description}
                         >
                             <TextInput
                                 value={defaultScheduleTimeDraft}
                                 onChangeText={setDefaultScheduleTimeDraft}
                                 onBlur={commitDefaultScheduleTime}
-                                placeholder={tr('settings.gtdMobile.hhMm')}
+                                placeholder={hub.defaultScheduleTime.placeholder}
                                 placeholderTextColor={tc.secondaryText}
                                 keyboardType="numbers-and-punctuation"
                                 style={[
@@ -491,29 +242,29 @@ export function GtdSettingsScreen({
                         </SettingRow>
                         <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border, gap: 12 }]}>
                             <View>
-                                <Text style={[styles.settingLabel, { color: tc.text }]}>{focusTaskLimitLabel}</Text>
-                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{focusTaskLimitDesc}</Text>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{hub.focusTaskLimit.label}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{hub.focusTaskLimit.description}</Text>
                             </View>
                             <View style={[styles.gtdSegmentedControl, { backgroundColor: tc.bg, borderColor: tc.border }]}>
-                                {FOCUS_TASK_LIMIT_OPTIONS.map((option) => {
-                                    const selected = focusTaskLimit === option;
+                                {hub.focusTaskLimit.options.map((option) => {
+                                    const selected = option.selected;
                                     return (
                                         <TouchableOpacity
-                                            key={option}
+                                            key={option.value}
                                             accessibilityRole="button"
                                             accessibilityState={{ selected }}
                                             style={[
                                                 styles.gtdSegmentedOption,
                                                 { backgroundColor: selected ? tc.filterBg : 'transparent' },
                                             ]}
-                                            onPress={() => updateGtdSettings({ focusTaskLimit: option })}
+                                            onPress={() => writeSetting(option.edit)}
                                             activeOpacity={0.8}
                                         >
                                             <CompactText
                                                 style={[styles.gtdSegmentedOptionText, { color: selected ? tc.tint : tc.secondaryText }]}
                                                 numberOfLines={2}
                                             >
-                                                {option}
+                                                {option.value}
                                             </CompactText>
                                         </TouchableOpacity>
                                     );
@@ -522,22 +273,22 @@ export function GtdSettingsScreen({
                         </View>
                         <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border, gap: 12 }]}>
                             <View>
-                                <Text style={[styles.settingLabel, { color: tc.text }]}>{defaultProjectFlowModeLabel}</Text>
-                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{defaultProjectFlowModeDesc}</Text>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{hub.defaultProjectFlowMode.label}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{hub.defaultProjectFlowMode.description}</Text>
                             </View>
                             <View style={[styles.gtdSegmentedControl, { backgroundColor: tc.bg, borderColor: tc.border }]}>
-                                {projectFlowModeOptions.map((option) => {
-                                    const selected = defaultProjectFlowMode === option.id;
+                                {hub.defaultProjectFlowMode.options.map((option) => {
+                                    const selected = option.selected;
                                     return (
                                         <TouchableOpacity
-                                            key={option.id}
+                                            key={option.value}
                                             accessibilityRole="button"
                                             accessibilityState={{ selected }}
                                             style={[
                                                 styles.gtdSegmentedOption,
                                                 { backgroundColor: selected ? tc.filterBg : 'transparent' },
                                             ]}
-                                            onPress={() => updateGtdSettings({ defaultProjectFlowMode: option.id })}
+                                            onPress={() => writeSetting(option.edit)}
                                             activeOpacity={0.8}
                                         >
                                             <CompactText
@@ -552,39 +303,39 @@ export function GtdSettingsScreen({
                             </View>
                         </View>
                         {renderGtdNavigationRow(
-                            t('settings.autoArchive'),
-                            t('settings.autoArchiveDesc'),
-                            'gtd-archive',
+                            hub.autoArchive.title,
+                            hub.autoArchive.description,
+                            hub.autoArchive.screen,
                             { testID: 'gtd-nav-archive' }
                         )}
                     </View>
 
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
                         {renderGtdNavigationRow(
-                            t('settings.taskEditorLayout'),
-                            t('settings.taskEditorLayoutDesc'),
-                            'gtd-task-editor',
+                            hub.taskEditor.title,
+                            hub.taskEditor.description,
+                            hub.taskEditor.screen,
                             { first: true, testID: 'gtd-nav-task-editor' }
                         )}
                         {renderGtdNavigationRow(
-                            captureSettingsTitle,
-                            t('settings.captureDefaultDesc'),
-                            'gtd-capture',
+                            hub.capture.title,
+                            hub.capture.description,
+                            hub.capture.screen,
                             { testID: 'gtd-nav-capture' }
                         )}
                     </View>
 
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
                         {renderGtdNavigationRow(
-                            reviewSettingsTitle,
-                            tr('settings.gtdMobile.chooseWhichOptionalStepsAppearInDailyAndWeeklyReview'),
-                            'gtd-review',
+                            hub.review.title,
+                            hub.review.description,
+                            hub.review.screen,
                             { first: true, testID: 'gtd-nav-review' }
                         )}
                         {renderGtdNavigationRow(
-                            inboxSettingsTitle,
-                            t('settings.inboxProcessingDesc'),
-                            'gtd-inbox',
+                            hub.inbox.title,
+                            hub.inbox.description,
+                            hub.inbox.screen,
                             { testID: 'gtd-nav-inbox' }
                         )}
                     </View>
@@ -614,49 +365,50 @@ export function GtdSettingsScreen({
     }
 
     if (screen === 'gtd-pomodoro') {
+        const controls = pomodoroModel.controls;
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={pomodoroSettingsLabel} />
+                <SettingsTopBar title={pomodoroModel.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                    <Text style={[styles.description, { color: tc.secondaryText }]}>{featurePomodoroDesc}</Text>
-                    {!pomodoroEnabled ? (
+                    <Text style={[styles.description, { color: tc.secondaryText }]}>{pomodoroModel.description}</Text>
+                    {!controls ? (
                         <TouchableOpacity
                             style={[styles.settingCard, { backgroundColor: tc.cardBg }]}
                             accessibilityRole="button"
-                            onPress={() => updateFeatureFlags({ pomodoro: true })}
+                            onPress={() => { if (pomodoroModel.enable) writeSetting(pomodoroModel.enable.edit); }}
                             activeOpacity={0.75}
                         >
                             <View style={styles.settingRow}>
-                                <Text style={[styles.settingLabel, { color: tc.tint }]}>{featurePomodoroLabel}</Text>
+                                <Text style={[styles.settingLabel, { color: tc.tint }]}>{pomodoroModel.enable?.label}</Text>
                             </View>
                         </TouchableOpacity>
                     ) : (
                         <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                             <View style={[styles.settingRowColumn, { gap: 12 }]}>
                                 <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{pomodoroCustomPresetLabel}</Text>
-                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{pomodoroCustomPresetDesc}</Text>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{controls.customPreset.label}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{controls.customPreset.description}</Text>
                                 </View>
                                 <View style={styles.inlineInputRow}>
                                     <View style={styles.inlineInputGroup}>
-                                        <Text style={[styles.inlineInputLabel, { color: tc.secondaryText }]}>{pomodoroFocusMinutesLabel}</Text>
+                                        <Text style={[styles.inlineInputLabel, { color: tc.secondaryText }]}>{controls.customPreset.focusLabel}</Text>
                                         <TextInput
                                             value={pomodoroFocusDraft}
                                             onChangeText={setPomodoroFocusDraft}
                                             onBlur={commitPomodoroMinutes}
                                             keyboardType="number-pad"
-                                            accessibilityLabel={pomodoroFocusMinutesLabel}
+                                            accessibilityLabel={controls.customPreset.focusLabel}
                                             style={[styles.textInput, styles.inlineTextInput, { borderColor: tc.border, color: tc.text }]}
                                         />
                                     </View>
                                     <View style={styles.inlineInputGroup}>
-                                        <Text style={[styles.inlineInputLabel, { color: tc.secondaryText }]}>{pomodoroBreakMinutesLabel}</Text>
+                                        <Text style={[styles.inlineInputLabel, { color: tc.secondaryText }]}>{controls.customPreset.breakLabel}</Text>
                                         <TextInput
                                             value={pomodoroBreakDraft}
                                             onChangeText={setPomodoroBreakDraft}
                                             onBlur={commitPomodoroMinutes}
                                             keyboardType="number-pad"
-                                            accessibilityLabel={pomodoroBreakMinutesLabel}
+                                            accessibilityLabel={controls.customPreset.breakLabel}
                                             style={[styles.textInput, styles.inlineTextInput, { borderColor: tc.border, color: tc.text }]}
                                         />
                                     </View>
@@ -664,45 +416,45 @@ export function GtdSettingsScreen({
                             </View>
                             <SettingToggleRow
                                 divider
-                                label={pomodoroLinkTaskLabel}
-                                description={pomodoroLinkTaskDesc}
-                                value={pomodoroLinkTask}
-                                onChange={(value) => updatePomodoroSettings({ linkTask: value })}
+                                label={controls.linkTask.label}
+                                description={controls.linkTask.description ?? undefined}
+                                value={controls.linkTask.value}
+                                onChange={() => writeSetting(controls.linkTask.edit)}
                             />
                             <SettingToggleRow
                                 divider
-                                label={pomodoroAutoStartBreaksLabel}
-                                description={pomodoroAutoStartBreaksDesc}
-                                value={pomodoroAutoStartBreaks}
-                                onChange={(value) => updatePomodoroSettings(
-                                    { autoStartBreaks: value },
-                                    { showAutoStartNotice: value && !pomodoroAutoStartBreaks }
+                                label={controls.autoStartBreaks.label}
+                                description={controls.autoStartBreaks.description ?? undefined}
+                                value={controls.autoStartBreaks.value}
+                                onChange={() => writeSetting(
+                                    controls.autoStartBreaks.edit,
+                                    controls.autoStartBreaks.value ? undefined : showPomodoroAutoStartNotice
                                 )}
                             />
                             <SettingToggleRow
                                 divider
-                                label={pomodoroAutoStartFocusLabel}
-                                description={pomodoroAutoStartFocusDesc}
-                                value={pomodoroAutoStartFocus}
-                                onChange={(value) => updatePomodoroSettings(
-                                    { autoStartFocus: value },
-                                    { showAutoStartNotice: value && !pomodoroAutoStartFocus }
+                                label={controls.autoStartFocus.label}
+                                description={controls.autoStartFocus.description ?? undefined}
+                                value={controls.autoStartFocus.value}
+                                onChange={() => writeSetting(
+                                    controls.autoStartFocus.edit,
+                                    controls.autoStartFocus.value ? undefined : showPomodoroAutoStartNotice
                                 )}
                             />
                             <SettingToggleRow
                                 divider
-                                label={pomodoroCompletionAlertLabel}
-                                description={pomodoroCompletionAlertDesc}
-                                value={pomodoroCompletionAlert}
+                                label={controls.completionAlert.label}
+                                description={controls.completionAlert.description ?? undefined}
+                                value={controls.completionAlert.value}
                                 switchTestID="pomodoro-completion-alert"
-                                onChange={(value) => updatePomodoroSettings({ completionAlert: value })}
+                                onChange={() => writeSetting(controls.completionAlert.edit)}
                             />
-                            {showExactAlarmNotice && (
+                            {showExactAlarmNotice && controls.alarmNotice && (
                                 <ExactAlarmNoticeRow
                                     inline
-                                    label={t('settings.pomodoroAlertPermissionTitle')}
-                                    description={t('settings.pomodoroAlertPermissionDesc')}
-                                    actionLabel={t('settings.pomodoroAlertPermissionAction')}
+                                    label={controls.alarmNotice.label}
+                                    description={controls.alarmNotice.description}
+                                    actionLabel={controls.alarmNotice.actionLabel}
                                 />
                             )}
                         </View>
@@ -715,28 +467,28 @@ export function GtdSettingsScreen({
     if (screen === 'gtd-capture') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={captureSettingsTitle} />
+                <SettingsTopBar title={capture.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                    <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.captureDefaultDesc')}</Text>
+                    <Text style={[styles.description, { color: tc.secondaryText }]}>{capture.description}</Text>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                         <SettingRow
-                            label={t('settings.captureDefault')}
-                            description={t('settings.captureDefaultDesc')}
+                            label={capture.method.label}
+                            description={capture.method.description}
                         />
                         <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
                             <View style={[styles.gtdSegmentedControl, { backgroundColor: tc.bg, borderColor: tc.border }]}>
-                                {captureMethodOptions.map((option) => {
-                                    const selected = defaultCaptureMethod === option.id;
+                                {capture.method.options.map((option) => {
+                                    const selected = option.selected;
                                     return (
                                         <TouchableOpacity
-                                            key={option.id}
+                                            key={option.value}
                                             accessibilityRole="button"
                                             accessibilityState={{ selected }}
                                             style={[
                                                 styles.gtdSegmentedOption,
                                                 { backgroundColor: selected ? tc.filterBg : 'transparent' },
                                             ]}
-                                            onPress={() => updateDefaultCaptureMethod(option.id)}
+                                            onPress={() => writeSetting(option.edit)}
                                             activeOpacity={0.8}
                                         >
                                             <Ionicons
@@ -759,71 +511,53 @@ export function GtdSettingsScreen({
                             testID="default-area-picker-button"
                             style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
                             accessibilityRole="button"
-                            accessibilityLabel={`${defaultAreaLabel}: ${defaultAreaSelectedLabel}`}
+                            accessibilityLabel={capture.defaultArea.accessibilityLabel}
                             onPress={() => setDefaultAreaPickerVisible(true)}
                             activeOpacity={0.75}
                         >
                             <View style={styles.settingInfo}>
-                                <Text style={[styles.settingLabel, { color: tc.text }]}>{defaultAreaLabel}</Text>
-                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{defaultAreaDesc}</Text>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{capture.defaultArea.label}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{capture.defaultArea.description}</Text>
                             </View>
                             <View style={[styles.menuRight, { flexShrink: 1, maxWidth: '42%' }]}>
                             <CompactText
                                 style={[styles.settingValue, { color: tc.secondaryText }]}
                                 numberOfLines={2}
                             >
-                                {defaultAreaSelectedLabel}
+                                {capture.defaultArea.value}
                             </CompactText>
                                 <Ionicons name="chevron-forward" size={18} color={tc.secondaryText} />
                             </View>
                         </TouchableOpacity>
-                        {defaultCaptureMethod === 'audio' ? (
+                        {capture.saveAudio ? (
                             <SettingToggleRow
                                 divider
-                                label={t('settings.captureSaveAudio')}
-                                description={t('settings.captureSaveAudioDesc')}
-                                value={saveAudioAttachments}
-                                onChange={(value) => {
-                                    updateSettings({
-                                        gtd: {
-                                            ...(settings.gtd ?? {}),
-                                            saveAudioAttachments: value,
-                                        },
-                                    }).catch(logSettingsError);
-                                }}
+                                label={capture.saveAudio.label}
+                                description={capture.saveAudio.description ?? undefined}
+                                value={capture.saveAudio.value}
+                                onChange={() => writeSetting(capture.saveAudio!.edit)}
                             />
                         ) : null}
                         <SettingToggleRow
                             divider
-                            label={quickAddAutoCleanLabel}
-                            description={quickAddAutoCleanDesc}
-                            value={quickAddAutoClean}
-                            onChange={(value) => {
-                                updateSettings({ quickAddAutoClean: value }).catch(logSettingsError);
-                            }}
+                            label={capture.quickAddAutoClean.label}
+                            description={capture.quickAddAutoClean.description ?? undefined}
+                            value={capture.quickAddAutoClean.value}
+                            onChange={() => writeSetting(capture.quickAddAutoClean.edit)}
                         />
                         <SettingToggleRow
                             divider
-                            label={naturalLanguageDatesLabel}
-                            description={naturalLanguageDatesDesc}
-                            value={naturalLanguageDates}
-                            onChange={(value) => {
-                                updateSettings({
-                                    gtd: {
-                                        ...(settings.gtd ?? {}),
-                                        naturalLanguageDates: value,
-                                    },
-                                }).catch(logSettingsError);
-                            }}
+                            label={capture.naturalLanguageDates.label}
+                            description={capture.naturalLanguageDates.description ?? undefined}
+                            value={capture.naturalLanguageDates.value}
+                            onChange={() => writeSetting(capture.naturalLanguageDates.edit)}
                         />
                         <SettingToggleRow
                             divider
-                            label={markdownEditorAssistLabel}
-                            description={markdownEditorAssistDesc}
-                            value={markdownEditorAssist}
-                            onChange={(value) => {
-                                updateSettings({ markdownEditorAssist: value }).catch(logSettingsError);
-                            }}
+                            label={capture.markdownEditorAssist.label}
+                            description={capture.markdownEditorAssist.description ?? undefined}
+                            value={capture.markdownEditorAssist.value}
+                            onChange={() => writeSetting(capture.markdownEditorAssist.edit)}
                         />
                     </View>
                     <AndroidCaptureIntentSection />
@@ -839,14 +573,14 @@ export function GtdSettingsScreen({
                             style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                             onPress={(event) => event.stopPropagation()}
                         >
-                            <Text style={[styles.pickerTitle, { color: tc.text }]}>{defaultAreaLabel}</Text>
+                            <Text style={[styles.pickerTitle, { color: tc.text }]}>{capture.defaultArea.pickerTitle}</Text>
                             <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent}>
-                                {defaultAreaOptions.map((option) => {
-                                    const selected = defaultAreaPickerValue === option.id;
+                                {capture.defaultArea.options.map((option) => {
+                                    const selected = option.selected;
                                     return (
                                         <TouchableOpacity
-                                            key={option.id || 'none'}
-                                            testID={`default-area-picker-option-${option.id || 'none'}`}
+                                            key={option.value || 'none'}
+                                            testID={`default-area-picker-option-${option.value || 'none'}`}
                                             accessibilityRole="button"
                                             accessibilityState={{ selected }}
                                             style={[
@@ -856,7 +590,7 @@ export function GtdSettingsScreen({
                                                     borderColor: selected ? tc.tint : tc.border,
                                                 },
                                             ]}
-                                            onPress={() => selectDefaultArea(option.id)}
+                                            onPress={() => selectDefaultArea(option.edit)}
                                             activeOpacity={0.8}
                                         >
                                             <CompactText
@@ -880,34 +614,34 @@ export function GtdSettingsScreen({
     if (screen === 'gtd-review') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={reviewSettingsTitle} />
+                <SettingsTopBar title={review.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.description, { color: tc.secondaryText }]}>
-                        {tr('settings.gtdMobile.chooseWhichOptionalStepsAppearInDailyAndWeeklyReview')}
+                        {review.description}
                     </Text>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                         <SettingRow
-                            label={t('settings.dailyReviewConfig')}
-                            description={t('settings.dailyReviewConfigDesc')}
+                            label={review.daily.label}
+                            description={review.daily.description}
                         />
                         <SettingToggleRow
                             divider
-                            label={t('settings.dailyReviewIncludeFocusStep')}
-                            description={t('settings.dailyReviewIncludeFocusStepDesc')}
-                            value={includeDailyFocusStep}
-                            onChange={(value) => updateDailyReviewConfig({ includeFocusStep: value })}
+                            label={review.dailyFocusStep.label}
+                            description={review.dailyFocusStep.description ?? undefined}
+                            value={review.dailyFocusStep.value}
+                            onChange={() => writeSetting(review.dailyFocusStep.edit)}
                         />
                         <SettingRow
                             divider
-                            label={t('settings.weeklyReviewConfig')}
-                            description={t('settings.weeklyReviewConfigDesc')}
+                            label={review.weekly.label}
+                            description={review.weekly.description}
                         />
                         <SettingToggleRow
                             divider
-                            label={t('settings.weeklyReviewIncludeContextsStep')}
-                            description={t('settings.weeklyReviewIncludeContextsStepDesc')}
-                            value={includeContextStep}
-                            onChange={(value) => updateWeeklyReviewConfig({ includeContextStep: value })}
+                            label={review.weeklyContextStep.label}
+                            description={review.weeklyContextStep.description ?? undefined}
+                            value={review.weeklyContextStep.value}
+                            onChange={() => writeSetting(review.weeklyContextStep.edit)}
                         />
                     </View>
                 </ScrollView>
@@ -918,32 +652,32 @@ export function GtdSettingsScreen({
     if (screen === 'gtd-inbox') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={inboxSettingsTitle} />
+                <SettingsTopBar title={inbox.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                    <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.inboxProcessingDesc')}</Text>
+                    <Text style={[styles.description, { color: tc.secondaryText }]}>{inbox.description}</Text>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                         <SettingToggleRow
-                            label={t('settings.inboxTwoMinuteEnabled')}
-                            value={inboxTwoMinuteEnabled}
-                            onChange={(value) => updateInboxProcessing({ twoMinuteEnabled: value })}
+                            label={inbox.twoMinute.label}
+                            value={inbox.twoMinute.value}
+                            onChange={() => writeSetting(inbox.twoMinute.edit)}
                         />
                         <SettingToggleRow
                             divider
-                            label={t('settings.inboxProjectFirst')}
-                            value={inboxProjectFirst}
-                            onChange={(value) => updateInboxProcessing({ projectFirst: value })}
+                            label={inbox.projectFirst.label}
+                            value={inbox.projectFirst.value}
+                            onChange={() => writeSetting(inbox.projectFirst.edit)}
                         />
                         <SettingToggleRow
                             divider
-                            label={t('settings.inboxContextStepEnabled')}
-                            value={inboxContextStepEnabled}
-                            onChange={(value) => updateInboxProcessing({ contextStepEnabled: value })}
+                            label={inbox.contextStep.label}
+                            value={inbox.contextStep.value}
+                            onChange={() => writeSetting(inbox.contextStep.edit)}
                         />
                         <SettingToggleRow
                             divider
-                            label={t('settings.inboxScheduleEnabled')}
-                            value={inboxScheduleEnabled}
-                            onChange={(value) => updateInboxProcessing({ scheduleEnabled: value })}
+                            label={inbox.schedule.label}
+                            value={inbox.schedule.value}
+                            onChange={() => writeSetting(inbox.schedule.edit)}
                         />
                     </View>
                 </ScrollView>
@@ -952,38 +686,22 @@ export function GtdSettingsScreen({
     }
 
     if (screen === 'gtd-archive') {
-        const autoArchiveOptions = [0, 1, 3, 7, 14, 30, 60];
-        const formatAutoArchiveLabel = (days: number) => {
-            if (days <= 0) return t('settings.autoArchiveNever');
-            return `${days} ${tr('common.days')}`;
-        };
-
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={t('settings.autoArchive')} />
+                <SettingsTopBar title={archive.title} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                    <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.autoArchiveDesc')}</Text>
+                    <Text style={[styles.description, { color: tc.secondaryText }]}>{archive.description}</Text>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                        {autoArchiveOptions.map((days, idx) => {
-                            const selected = autoArchiveDays === days;
-                            return (
-                                <TouchableOpacity
-                                    key={days}
-                                    style={[styles.settingRow, idx > 0 && { borderTopWidth: 1, borderTopColor: tc.border }]}
-                                    onPress={() => {
-                                        updateSettings({
-                                            gtd: {
-                                                ...(settings.gtd ?? {}),
-                                                autoArchiveDays: days,
-                                            },
-                                        }).catch(logSettingsError);
-                                    }}
-                                >
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{formatAutoArchiveLabel(days)}</Text>
-                                    {selected && <Check size={20} color="#3B82F6" strokeWidth={2.5} />}
-                                </TouchableOpacity>
-                            );
-                        })}
+                        {archive.options.map((option, idx) => (
+                            <TouchableOpacity
+                                key={option.value}
+                                style={[styles.settingRow, idx > 0 && { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                onPress={() => writeSetting(option.edit)}
+                            >
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{option.label}</Text>
+                                {option.selected && <Check size={20} color="#3B82F6" strokeWidth={2.5} />}
+                            </TouchableOpacity>
+                        ))}
                     </View>
                 </ScrollView>
             </SafeAreaView>
@@ -994,212 +712,20 @@ export function GtdSettingsScreen({
         throw new Error(`Unhandled GTD settings screen: ${screen}`);
     }
 
-    const featureHiddenFields = new Set<TaskEditorFieldId>();
-    if (!prioritiesEnabled) featureHiddenFields.add('priority');
-    if (!timeEstimatesEnabled) featureHiddenFields.add('timeEstimate');
-
-    const defaultTaskEditorOrder = DEFAULT_TASK_EDITOR_ORDER;
-    const defaultVisibleFields = DEFAULT_TASK_EDITOR_VISIBLE;
-    const defaultTaskEditorHidden = defaultTaskEditorOrder.filter(
-        (id) => !defaultVisibleFields.includes(id) || featureHiddenFields.has(id)
-    );
-    const known = new Set(defaultTaskEditorOrder);
-    const savedOrder = (settings.gtd?.taskEditor?.order ?? []).filter((id) => known.has(id));
-    const taskEditorOrder = [...savedOrder, ...defaultTaskEditorOrder.filter((id) => !savedOrder.includes(id))];
-    const savedHidden = settings.gtd?.taskEditor?.hidden ?? defaultTaskEditorHidden;
-    const hiddenSet = new Set(savedHidden.filter((id) => known.has(id)));
-    const taskEditorSections = getTaskEditorSectionAssignments(settings.gtd?.taskEditor);
-    const taskEditorSectionOpen = getTaskEditorSectionOpenDefaults(settings.gtd?.taskEditor);
-    const taskEditorDefaultOpenLabel = t('settings.taskEditorDefaultOpen');
-    const resolvedTaskEditorDefaultOpenLabel = taskEditorDefaultOpenLabel === 'settings.taskEditorDefaultOpen'
-        ? 'Open sections by default'
-        : taskEditorDefaultOpenLabel;
-    const taskEditorPresetOptions: { id: Exclude<TaskEditorPresetId, 'custom'>; label: string }[] = [
-        { id: 'simple', label: tr('settings.gtdMobile.simple') },
-        { id: 'standard', label: tr('settings.gtdMobile.standard') },
-        { id: 'full', label: tr('settings.gtdMobile.full') },
-    ];
-    const activeTaskEditorPreset = resolveTaskEditorPresetId({
-        order: taskEditorOrder,
-        hidden: hiddenSet,
-        sections: settings.gtd?.taskEditor?.sections,
-        sectionOpen: settings.gtd?.taskEditor?.sectionOpen,
-        featureHiddenFields,
-    });
-    const taskEditorHelperText = tr('settings.gtdMobile.chooseAPresetThenOpenASectionToFineTune');
-    const taskEditorCustomLabel = tr('settings.gtdMobile.currentLayoutCustom');
-    const taskEditorPresetLabel = tr('settings.gtdMobile.presets');
-    const taskEditorMoveSectionLabel = tr('settings.gtdMobile.moveToSection');
-    const taskEditorOrderLabel = tr('settings.gtdMobile.orderWithinSection');
-    const taskEditorKeepOpenLabel = tr('settings.gtdMobile.startTaskEditingWithThisSectionExpanded');
-    const showInEditorLabel = tr('settings.gtdMobile.showInEditor');
-    const hideInEditorLabel = tr('settings.gtdMobile.hideFromEditor');
-    const moveUpLabel = tr('projects.moveUp');
-    const moveDownLabel = tr('projects.moveDown');
-    const doneLabel = tFallback(t, 'common.done', tr('nav.done'));
-    const taskOpenModeLabel = tr('settings.gtdMobile.openTasksIn');
-    const taskOpenModeDescription = tr('settings.gtdMobile.openTasksInDesc');
-    const taskOpenModeLabels: Record<TaskOpenMode, string> = {
-        automatic: tr('settings.gtdMobile.taskOpenAutomatic'),
-        preview: tr('settings.gtdMobile.taskOpenPreview'),
-        edit: tr('settings.gtdMobile.taskOpenEdit'),
-    };
-
-    const fieldLabel = (fieldId: TaskEditorFieldId) => {
-        switch (fieldId) {
-            case 'status':
-                return t('taskEdit.statusLabel');
-            case 'project':
-                return t('taskEdit.projectLabel');
-            case 'section':
-                return t('taskEdit.sectionLabel');
-            case 'area':
-                return t('taskEdit.areaLabel');
-            case 'priority':
-                return t('taskEdit.priorityLabel');
-            case 'energyLevel':
-                return t('taskEdit.energyLevel');
-            case 'assignedTo':
-                return t('taskEdit.assignedTo');
-            case 'contexts':
-                return t('taskEdit.contextsLabel');
-            case 'description':
-                return t('taskEdit.descriptionLabel');
-            case 'location':
-                return t('taskEdit.locationLabel');
-            case 'tags':
-                return t('taskEdit.tagsLabel');
-            case 'timeEstimate':
-                return t('taskEdit.timeEstimateLabel');
-            case 'recurrence':
-                return t('taskEdit.recurrenceLabel');
-            case 'startTime':
-                return t('taskEdit.startDateLabel');
-            case 'dueDate':
-                return t('taskEdit.dueDateLabel');
-            case 'reviewAt':
-                return t('taskEdit.reviewDateLabel');
-            case 'attachments':
-                return t('attachments.title');
-            case 'checklist':
-                return t('taskEdit.checklist');
-            default:
-                return fieldId;
-        }
-    };
-
-    const sectionLabel = (sectionId: TaskEditorSectionId) => {
-        switch (sectionId) {
-            case 'basic':
-                return t('taskEdit.basic');
-            case 'scheduling':
-                return t('taskEdit.scheduling');
-            case 'organization':
-                return t('taskEdit.organization');
-            case 'details':
-                return t('taskEdit.details');
-            default:
-                return sectionId;
-        }
-    };
-
-    const saveTaskEditor = (
-        next: {
-            order?: TaskEditorFieldId[];
-            hidden?: TaskEditorFieldId[];
-            sections?: Partial<Record<TaskEditorFieldId, TaskEditorSectionId>>;
-            sectionOpen?: Partial<Record<TaskEditorSectionId, boolean>>;
-        },
-        nextFeatures?: FeatureSettings
-    ) => {
-        updateSettings({
-            ...(nextFeatures ? { features: nextFeatures } : null),
-            gtd: {
-                ...(settings.gtd ?? {}),
-                taskEditor: {
-                    ...(settings.gtd?.taskEditor ?? {}),
-                    ...next,
-                },
-            },
-        }).catch(logSettingsError);
-    };
-
-    const toggleFieldVisibility = (fieldId: TaskEditorFieldId) => {
-        const nextHidden = new Set(hiddenSet);
-        if (nextHidden.has(fieldId)) nextHidden.delete(fieldId);
-        else nextHidden.add(fieldId);
-        const nextFeatures = { ...(settings.features ?? {}) };
-        if (fieldId === 'priority') nextFeatures.priorities = !nextHidden.has('priority');
-        if (fieldId === 'timeEstimate') nextFeatures.timeEstimates = !nextHidden.has('timeEstimate');
-        saveTaskEditor({ order: taskEditorOrder, hidden: Array.from(nextHidden) }, nextFeatures);
-    };
-
-    const moveOrderInGroup = (fieldId: TaskEditorFieldId, delta: number, groupFields: TaskEditorFieldId[]) => {
-        const groupOrder = taskEditorOrder.filter((id) => groupFields.includes(id));
-        const fromIndex = groupOrder.indexOf(fieldId);
-        if (fromIndex < 0) return;
-        const toIndex = Math.max(0, Math.min(groupOrder.length - 1, fromIndex + delta));
-        if (fromIndex === toIndex) return;
-        const nextGroupOrder = [...groupOrder];
-        const [item] = nextGroupOrder.splice(fromIndex, 1);
-        nextGroupOrder.splice(toIndex, 0, item);
-        let groupIndex = 0;
-        const nextOrder = taskEditorOrder.map((id) =>
-            groupFields.includes(id) ? nextGroupOrder[groupIndex++] : id
-        );
-        saveTaskEditor({ order: nextOrder, hidden: Array.from(hiddenSet) });
-    };
-
-    const updateFieldSection = (fieldId: TaskEditorFieldId, sectionId: TaskEditorSectionId) => {
-        if (!isTaskEditorSectionableField(fieldId)) return;
-        const nextSections = { ...(settings.gtd?.taskEditor?.sections ?? {}) };
-        if (sectionId === DEFAULT_TASK_EDITOR_SECTION_BY_FIELD[fieldId]) {
-            delete nextSections[fieldId];
-        } else {
-            nextSections[fieldId] = sectionId;
-        }
-        saveTaskEditor({ order: taskEditorOrder, hidden: Array.from(hiddenSet), sections: nextSections });
-    };
-
-    const updateSectionOpenDefault = (sectionId: Exclude<TaskEditorSectionId, 'basic'>, isOpen: boolean) => {
-        const nextSectionOpen = { ...(settings.gtd?.taskEditor?.sectionOpen ?? {}) };
-        if (isOpen === DEFAULT_TASK_EDITOR_SECTION_OPEN[sectionId]) {
-            delete nextSectionOpen[sectionId];
-        } else {
-            nextSectionOpen[sectionId] = isOpen;
-        }
-        saveTaskEditor({ sectionOpen: nextSectionOpen });
-    };
-
-    const fieldGroups: { id: TaskEditorSectionId; title: string; fields: TaskEditorFieldId[] }[] = TASK_EDITOR_SECTION_ORDER.map((sectionId) => ({
-        id: sectionId,
-        title: sectionLabel(sectionId),
-        fields: taskEditorOrder.filter((fieldId) => {
-            if (sectionId === 'basic' && TASK_EDITOR_FIXED_FIELDS.includes(fieldId)) return true;
-            return isTaskEditorSectionableField(fieldId) && taskEditorSections[fieldId] === sectionId;
-        }),
-    }));
-
-    const selectedFieldId = taskEditorSelectedField;
-    const selectedFieldGroup = selectedFieldId
-        ? fieldGroups.find((group) => group.fields.includes(selectedFieldId)) ?? null
-        : null;
-    const selectedFieldGroupFields = selectedFieldGroup?.fields ?? [];
-    const selectedFieldGroupOrder = taskEditorOrder.filter((id) => selectedFieldGroupFields.includes(id));
-    const selectedFieldIndex = selectedFieldId ? selectedFieldGroupOrder.indexOf(selectedFieldId) : -1;
-    const selectedFieldSectionable = selectedFieldId ? isTaskEditorSectionableField(selectedFieldId) : false;
-    const selectedFieldVisible = selectedFieldId ? !hiddenSet.has(selectedFieldId) : false;
+    const taskEditor = model.taskEditor;
+    const fieldGroups = taskEditor.groups;
+    const selectedField = fieldGroups.flatMap((group) => group.fields).find((field) => field.id === taskEditorSelectedField) ?? null;
 
     function TaskEditorFieldRow({
-        fieldId,
+        field,
         isFirst,
         showTopBorder = false,
     }: {
-        fieldId: TaskEditorFieldId;
+        field: GtdTaskEditorField;
         isFirst: boolean;
         showTopBorder?: boolean;
     }) {
-        const visible = !hiddenSet.has(fieldId);
+        const visible = field.visible;
 
         return (
             <View
@@ -1210,12 +736,12 @@ export function GtdSettingsScreen({
                 ]}
             >
                 <TouchableOpacity
-                    testID={`task-editor-visibility-${fieldId}`}
+                    testID={`task-editor-visibility-${field.id}`}
                     accessibilityRole="button"
-                    accessibilityLabel={`${visible ? hideInEditorLabel : showInEditorLabel}: ${fieldLabel(fieldId)}`}
+                    accessibilityLabel={field.visibility.accessibilityLabel}
                     accessibilityState={{ selected: visible }}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    onPress={() => toggleFieldVisibility(fieldId)}
+                    onPress={() => writeSetting(field.visibility.edit)}
                     activeOpacity={0.8}
                 >
                     <View
@@ -1235,15 +761,15 @@ export function GtdSettingsScreen({
                     </View>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    testID={`task-editor-row-${fieldId}`}
+                    testID={`task-editor-row-${field.id}`}
                     style={styles.taskEditorCompactRowMain}
-                    onPress={() => setTaskEditorSelectedField(fieldId)}
+                    onPress={() => setTaskEditorSelectedField(field.id)}
                     activeOpacity={0.8}
                 >
                     <View style={styles.settingInfo}>
-                        <Text style={[styles.settingLabel, { color: tc.text }]}>{fieldLabel(fieldId)}</Text>
+                        <Text style={[styles.settingLabel, { color: tc.text }]}>{field.label}</Text>
                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                            {visible ? t('settings.visible') : t('settings.hidden')}
+                            {field.status}
                         </Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={tc.secondaryText} />
@@ -1252,40 +778,43 @@ export function GtdSettingsScreen({
         );
     }
 
+    const moveUp = selectedField?.sheet.order.moveUp;
+    const moveDown = selectedField?.sheet.order.moveDown;
+
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-            <SettingsTopBar title={t('settings.taskEditorLayout')} />
+            <SettingsTopBar title={taskEditor.title} />
             <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.taskEditorLayoutDesc')}</Text>
-                <Text style={[styles.description, { color: tc.secondaryText, marginTop: -6 }]}>{taskEditorHelperText}</Text>
+                <Text style={[styles.description, { color: tc.secondaryText }]}>{taskEditor.description}</Text>
+                <Text style={[styles.description, { color: tc.secondaryText, marginTop: -6 }]}>{taskEditor.helper}</Text>
 
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                     <View style={[styles.settingRowColumn, { gap: 12 }]}>
                         <View>
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>{taskOpenModeLabel}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{taskOpenModeDescription}</Text>
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>{taskEditor.openMode.label}</Text>
+                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{taskEditor.openMode.description}</Text>
                         </View>
                         <View style={[styles.gtdSegmentedControl, { backgroundColor: tc.bg, borderColor: tc.border }]}>
-                            {TASK_OPEN_MODES.map((mode) => {
-                                const selected = taskOpenMode === mode;
+                            {taskEditor.openMode.options.map((option) => {
+                                const selected = option.selected;
                                 return (
                                     <TouchableOpacity
-                                        key={mode}
-                                        testID={`task-open-mode-${mode}`}
+                                        key={option.value}
+                                        testID={`task-open-mode-${option.value}`}
                                         accessibilityRole="radio"
                                         accessibilityState={{ selected }}
                                         style={[
                                             styles.gtdSegmentedOption,
                                             { backgroundColor: selected ? tc.filterBg : 'transparent' },
                                         ]}
-                                        onPress={() => setTaskOpenMode(mode)}
+                                        onPress={() => setTaskOpenMode(option.value)}
                                         activeOpacity={0.8}
                                     >
                                         <CompactText
                                             style={[styles.gtdSegmentedOptionText, { color: selected ? tc.tint : tc.secondaryText }]}
                                             numberOfLines={2}
                                         >
-                                            {taskOpenModeLabels[mode]}
+                                            {option.label}
                                         </CompactText>
                                     </TouchableOpacity>
                                 );
@@ -1295,13 +824,13 @@ export function GtdSettingsScreen({
                 </View>
 
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg, overflow: 'visible' }]}>
-                    <Text style={[styles.sectionHeaderText, { color: tc.secondaryText }]}>{taskEditorPresetLabel}</Text>
+                    <Text style={[styles.sectionHeaderText, { color: tc.secondaryText }]}>{taskEditor.presets.label}</Text>
                     <View style={styles.taskEditorPresetRow}>
-                        {taskEditorPresetOptions.map((option) => {
-                            const selected = activeTaskEditorPreset === option.id;
+                        {taskEditor.presets.options.map((option) => {
+                            const selected = option.selected;
                             return (
                                 <TouchableOpacity
-                                    key={option.id}
+                                    key={option.value}
                                     style={[
                                         styles.taskEditorPresetButton,
                                         {
@@ -1309,10 +838,7 @@ export function GtdSettingsScreen({
                                             borderColor: selected ? tc.tint : tc.border,
                                         },
                                     ]}
-                                    onPress={() => {
-                                        const preset = buildTaskEditorPresetConfig(option.id, featureHiddenFields);
-                                        saveTaskEditor(preset);
-                                    }}
+                                    onPress={() => writeSetting(option.edit)}
                                 >
                                     <CompactText
                                         style={[styles.taskEditorPresetButtonText, { color: selected ? tc.tint : tc.secondaryText }]}
@@ -1324,16 +850,14 @@ export function GtdSettingsScreen({
                             );
                         })}
                     </View>
-                    {activeTaskEditorPreset === 'custom' && (
+                    {taskEditor.presets.custom !== null && (
                         <Text style={[styles.settingDescription, { color: tc.secondaryText, paddingHorizontal: 16, paddingBottom: 16 }]}>
-                            {taskEditorCustomLabel}
+                            {taskEditor.presets.custom}
                         </Text>
                     )}
                 </View>
 
                 {fieldGroups.map((group) => {
-                    const groupOrder = taskEditorOrder.filter((id) => group.fields.includes(id));
-                    if (groupOrder.length === 0) return null;
                     const expanded = taskEditorExpandedSections[group.id];
                     return (
                         <View key={group.id} style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
@@ -1350,26 +874,26 @@ export function GtdSettingsScreen({
                                         {group.title}
                                     </CompactText>
                                     <View style={[styles.taskEditorSectionCountBadge, { backgroundColor: tc.filterBg }]}>
-                                        <Text style={[styles.taskEditorSectionCountText, { color: tc.tint }]}>{groupOrder.length}</Text>
+                                        <Text style={[styles.taskEditorSectionCountText, { color: tc.tint }]}>{group.count}</Text>
                                     </View>
                                 </View>
                                 <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={tc.secondaryText} />
                             </TouchableOpacity>
                             {expanded && (
                                 <>
-                                    {group.id !== 'basic' && (
+                                    {group.defaultOpen && (
                                         <SettingToggleRow
                                             divider
-                                            label={resolvedTaskEditorDefaultOpenLabel}
-                                            description={taskEditorKeepOpenLabel}
-                                            value={taskEditorSectionOpen[group.id]}
-                                            onChange={(value) => updateSectionOpenDefault(group.id as Exclude<TaskEditorSectionId, 'basic'>, value)}
+                                            label={group.defaultOpen.label}
+                                            description={group.defaultOpen.description ?? undefined}
+                                            value={group.defaultOpen.value}
+                                            onChange={() => writeSetting(group.defaultOpen!.edit)}
                                         />
                                     )}
-                                    {groupOrder.map((fieldId, index) => (
+                                    {group.fields.map((field, index) => (
                                         <TaskEditorFieldRow
-                                            key={fieldId}
-                                            fieldId={fieldId}
+                                            key={field.id}
+                                            field={field}
                                             isFirst={index === 0}
                                             showTopBorder={group.id !== 'basic' && index === 0}
                                         />
@@ -1382,34 +906,21 @@ export function GtdSettingsScreen({
 
                 <TouchableOpacity
                     style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}
-                    onPress={() => {
-                        const nextFeatures = { ...(settings.features ?? {}) };
-                        nextFeatures.priorities = !defaultTaskEditorHidden.includes('priority');
-                        nextFeatures.timeEstimates = !defaultTaskEditorHidden.includes('timeEstimate');
-                        saveTaskEditor(
-                            {
-                                order: [...defaultTaskEditorOrder],
-                                hidden: [...defaultTaskEditorHidden],
-                                sections: {},
-                                sectionOpen: {},
-                            },
-                            nextFeatures
-                        );
-                    }}
+                    onPress={() => writeSetting(taskEditor.reset.edit)}
                 >
                     <View style={styles.settingRow}>
                         <CompactText
                             style={[styles.settingLabel, { color: tc.text }]}
                             numberOfLines={2}
                         >
-                            {t('settings.resetToDefault')}
+                            {taskEditor.reset.label}
                         </CompactText>
                     </View>
                 </TouchableOpacity>
             </ScrollView>
 
             <Modal
-                visible={Boolean(selectedFieldId)}
+                visible={Boolean(taskEditorSelectedField)}
                 transparent
                 animationType="slide"
                 onRequestClose={() => setTaskEditorSelectedField(null)}
@@ -1427,31 +938,31 @@ export function GtdSettingsScreen({
                         ]}
                     >
                         <View style={[styles.taskEditorSheetHandle, { backgroundColor: tc.border }]} />
-                        {selectedFieldId && (
+                        {selectedField && moveUp && moveDown && (
                             <>
                                 <View style={styles.settingRowColumn}>
-                                    <Text style={[styles.pickerTitle, { color: tc.text, marginBottom: 4 }]}>{fieldLabel(selectedFieldId)}</Text>
-                                    {selectedFieldGroup && (
-                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{selectedFieldGroup.title}</Text>
+                                    <Text style={[styles.pickerTitle, { color: tc.text, marginBottom: 4 }]}>{selectedField.sheet.title}</Text>
+                                    {selectedField.sheet.section !== null && (
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{selectedField.sheet.section}</Text>
                                     )}
                                 </View>
 
                                 <SettingToggleRow
                                     divider
-                                    label={showInEditorLabel}
-                                    value={selectedFieldVisible}
-                                    onChange={() => toggleFieldVisibility(selectedFieldId)}
+                                    label={selectedField.sheet.visible.label}
+                                    value={selectedField.sheet.visible.value}
+                                    onChange={() => writeSetting(selectedField.sheet.visible.edit)}
                                 />
 
-                                {selectedFieldSectionable && (
+                                {selectedField.sheet.sections && (
                                     <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                        <Text style={[styles.settingLabel, { color: tc.text }]}>{taskEditorMoveSectionLabel}</Text>
+                                        <Text style={[styles.settingLabel, { color: tc.text }]}>{selectedField.sheet.sections.label}</Text>
                                         <View style={styles.taskEditorSectionChips}>
-                                            {TASK_EDITOR_SECTION_ORDER.map((sectionId) => {
-                                                const selected = taskEditorSections[selectedFieldId] === sectionId;
+                                            {selectedField.sheet.sections.options.map((option) => {
+                                                const selected = option.selected;
                                                 return (
                                                     <TouchableOpacity
-                                                        key={sectionId}
+                                                        key={option.value}
                                                         style={[
                                                             styles.taskEditorSectionChip,
                                                             {
@@ -1459,10 +970,10 @@ export function GtdSettingsScreen({
                                                                 backgroundColor: selected ? tc.filterBg : 'transparent',
                                                             },
                                                         ]}
-                                                        onPress={() => updateFieldSection(selectedFieldId, sectionId)}
+                                                        onPress={() => writeSetting(option.edit)}
                                                     >
                                                         <Text style={[styles.taskEditorSectionChipText, { color: selected ? tc.tint : tc.secondaryText }]}>
-                                                            {sectionLabel(sectionId)}
+                                                            {option.label}
                                                         </Text>
                                                     </TouchableOpacity>
                                                 );
@@ -1472,43 +983,43 @@ export function GtdSettingsScreen({
                                 )}
 
                                 <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{taskEditorOrderLabel}</Text>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{selectedField.sheet.order.label}</Text>
                                     <View style={styles.taskEditorSheetActions}>
                                         <TouchableOpacity
                                             style={[
                                                 styles.taskEditorSheetActionButton,
                                                 { borderColor: tc.border, backgroundColor: tc.filterBg },
-                                                selectedFieldIndex <= 0 && styles.taskEditorSheetActionDisabled,
+                                                moveUp.disabled && styles.taskEditorSheetActionDisabled,
                                             ]}
-                                            onPress={() => moveOrderInGroup(selectedFieldId, -1, selectedFieldGroupFields)}
-                                            disabled={selectedFieldIndex <= 0}
+                                            onPress={() => { if (moveUp.edit) writeSetting(moveUp.edit); }}
+                                            disabled={moveUp.disabled}
                                         >
-                                            <Ionicons name="arrow-up" size={16} color={selectedFieldIndex <= 0 ? tc.secondaryText : tc.text} />
-                                            <Text style={[styles.taskEditorSheetActionText, { color: selectedFieldIndex <= 0 ? tc.secondaryText : tc.text }]}>
-                                                {moveUpLabel}
+                                            <Ionicons name="arrow-up" size={16} color={moveUp.disabled ? tc.secondaryText : tc.text} />
+                                            <Text style={[styles.taskEditorSheetActionText, { color: moveUp.disabled ? tc.secondaryText : tc.text }]}>
+                                                {moveUp.label}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={[
                                                 styles.taskEditorSheetActionButton,
                                                 { borderColor: tc.border, backgroundColor: tc.filterBg },
-                                                selectedFieldIndex >= selectedFieldGroupOrder.length - 1 && styles.taskEditorSheetActionDisabled,
+                                                moveDown.disabled && styles.taskEditorSheetActionDisabled,
                                             ]}
-                                            onPress={() => moveOrderInGroup(selectedFieldId, 1, selectedFieldGroupFields)}
-                                            disabled={selectedFieldIndex >= selectedFieldGroupOrder.length - 1}
+                                            onPress={() => { if (moveDown.edit) writeSetting(moveDown.edit); }}
+                                            disabled={moveDown.disabled}
                                         >
                                             <Ionicons
                                                 name="arrow-down"
                                                 size={16}
-                                                color={selectedFieldIndex >= selectedFieldGroupOrder.length - 1 ? tc.secondaryText : tc.text}
+                                                color={moveDown.disabled ? tc.secondaryText : tc.text}
                                             />
                                             <Text
                                                 style={[
                                                     styles.taskEditorSheetActionText,
-                                                    { color: selectedFieldIndex >= selectedFieldGroupOrder.length - 1 ? tc.secondaryText : tc.text },
+                                                    { color: moveDown.disabled ? tc.secondaryText : tc.text },
                                                 ]}
                                             >
-                                                {moveDownLabel}
+                                                {moveDown.label}
                                             </Text>
                                         </TouchableOpacity>
                                     </View>
@@ -1518,7 +1029,7 @@ export function GtdSettingsScreen({
                                     style={[styles.taskEditorSheetDoneButton, { backgroundColor: filledButton.backgroundColor }]}
                                     onPress={() => setTaskEditorSelectedField(null)}
                                 >
-                                    <Text style={[styles.taskEditorSheetDoneButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{doneLabel}</Text>
+                                    <Text style={[styles.taskEditorSheetDoneButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{selectedField.sheet.doneLabel}</Text>
                                 </TouchableOpacity>
                             </>
                         )}

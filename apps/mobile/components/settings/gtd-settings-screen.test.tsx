@@ -2,7 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { Modal, Switch, Text, TextInput, TouchableOpacity } from 'react-native';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { AppData } from '@mindwtr/core';
+import { DEFAULT_TASK_EDITOR_ORDER, type AppData } from '@mindwtr/core';
 
 import { GtdSettingsScreen } from './gtd-settings-screen';
 import { ExactAlarmNoticeRow } from './exact-alarm-notice';
@@ -64,61 +64,10 @@ const storeState: MockStoreState = {
   updateSettings,
 };
 
+// Core's GTD model runs for real; only the store is the test's.
 vi.mock('@mindwtr/core', async (importOriginal) => ({
-  compareAreasByOrder: (await importOriginal<typeof import('@mindwtr/core')>()).compareAreasByOrder,
-  createFeedbackDiagnosticsBuffer: () => ({
-    record: vi.fn(),
-    read: () => '',
-    clear: vi.fn(),
-  }),
-  DEFAULT_TASK_EDITOR_ORDER: ['status', 'project'],
-  DEFAULT_TASK_EDITOR_SECTION_BY_FIELD: { status: 'basic', project: 'basic' },
-  DEFAULT_TASK_EDITOR_SECTION_OPEN: { basic: true, scheduling: false, organization: false, details: false },
-  DEFAULT_TASK_EDITOR_VISIBLE: ['status', 'project'],
-  TASK_EDITOR_FIXED_FIELDS: ['status', 'project'],
-  TASK_EDITOR_SECTION_ORDER: ['basic', 'scheduling', 'organization', 'details'],
-  getTaskEditorSectionAssignments: () => ({ status: 'basic', project: 'basic' }),
-  getTaskEditorSectionOpenDefaults: () => ({ basic: true, scheduling: false, organization: false, details: false }),
-  isTaskEditorSectionableField: () => false,
-  FOCUS_TASK_LIMIT_OPTIONS: [1, 3, 5, 10],
-  getDefaultTaskAreaMode: (settings: AppData['settings']) => {
-    const mode = settings?.gtd?.defaultAreaMode;
-    if (mode === 'none' || mode === 'fixed' || mode === 'active') return mode;
-    return settings?.gtd?.defaultAreaId ? 'fixed' : 'none';
-  },
-  normalizeClockTimeInput: (value?: string | null) => {
-    const trimmed = String(value ?? '').trim();
-    if (!trimmed) return '';
-    const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
-    if (!match) return null;
-    const hour = Number(match[1]);
-    const minute = Number(match[2]);
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  },
-  normalizeFocusTaskLimit: (value?: number) => value ?? 3,
-  resolveFeatureFlags: (settings: AppData['settings']) => ({
-    priorities: settings?.features?.priorities !== false,
-    timeEstimates: settings?.features?.timeEstimates !== false,
-    pomodoro: settings?.features?.pomodoro === true,
-  }),
-  resolveDefaultNewTaskAreaId: (settings: AppData['settings'], areas: AppData['areas']) => {
-    const mode = settings?.gtd?.defaultAreaMode ?? (settings?.gtd?.defaultAreaId ? 'fixed' : 'none');
-    if (mode !== 'fixed') return undefined;
-    const areaId = settings?.gtd?.defaultAreaId;
-    return typeof areaId === 'string' && areas.some((area) => area.id === areaId && !area.deletedAt)
-      ? areaId
-      : undefined;
-  },
-  sanitizePomodoroDurations: (value?: { focusMinutes?: number; breakMinutes?: number }) => ({
-    focusMinutes: Number.isFinite(value?.focusMinutes) ? Math.round(value!.focusMinutes!) : 25,
-    breakMinutes: Number.isFinite(value?.breakMinutes) ? Math.round(value!.breakMinutes!) : 5,
-  }),
+  ...(await importOriginal<typeof import('@mindwtr/core')>()),
   shallow: Object.is,
-  tFallback: (t: (key: string) => string, key: string, fallback: string) => {
-    const translated = t(key);
-    return translated && translated !== key ? translated : fallback;
-  },
   useTaskStore: () => storeState,
 }));
 
@@ -195,11 +144,6 @@ vi.mock('./android-capture-intent-section', () => ({
   AndroidCaptureIntentSection: () => React.createElement('AndroidCaptureIntentSection'),
 }));
 
-vi.mock('@/components/task-edit/task-edit-modal.utils', () => ({
-  buildTaskEditorPresetConfig: () => ({ order: ['status', 'project'], hidden: [], sections: {}, sectionOpen: {} }),
-  resolveTaskEditorPresetId: () => 'custom',
-}));
-
 describe('GtdSettingsScreen task editor layout', () => {
   beforeEach(() => {
     updateSettings.mockClear();
@@ -236,8 +180,8 @@ describe('GtdSettingsScreen task editor layout', () => {
     expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
       gtd: expect.objectContaining({
         taskEditor: expect.objectContaining({
-          order: ['status', 'project'],
-          hidden: ['status'],
+          order: DEFAULT_TASK_EDITOR_ORDER,
+          hidden: ['section', 'priority', 'energyLevel', 'timeEstimate', 'assignedTo', 'location', 'status'],
         }),
       }),
     }));
@@ -429,6 +373,42 @@ describe('GtdSettingsScreen task editor layout', () => {
         focusTaskLimit: 1,
       }),
     }));
+  });
+
+  it('writes nothing when a choice re-picks the stored value', async () => {
+    storeState.settings = {
+      features: { pomodoro: true },
+      gtd: {
+        focusTaskLimit: 5,
+        defaultProjectFlowMode: 'sequential',
+        autoArchiveDays: 14,
+        pomodoro: { customDurations: { focusMinutes: 50, breakMinutes: 10 } },
+      },
+    };
+    const pressText = (tree: renderer.ReactTestRenderer, text: string | number) => {
+      const button = tree.root.findAllByType(TouchableOpacity).find((candidate) => (
+        candidate.findAllByType(Text).some((node) => node.props.children === text)
+      ));
+      expect(button).toBeTruthy();
+      renderer.act(() => { button!.props.onPress(); });
+    };
+
+    let hub!: renderer.ReactTestRenderer;
+    renderer.act(() => { hub = renderer.create(<GtdSettingsScreen onNavigate={vi.fn()} screen="gtd" />); });
+    pressText(hub, 5);
+    pressText(hub, 'Sequential');
+
+    let archive!: renderer.ReactTestRenderer;
+    renderer.act(() => { archive = renderer.create(<GtdSettingsScreen onNavigate={vi.fn()} screen="gtd-archive" />); });
+    pressText(archive, '14 days');
+
+    let pomodoro!: renderer.ReactTestRenderer;
+    await renderer.act(async () => { pomodoro = renderer.create(<GtdSettingsScreen onNavigate={vi.fn()} screen="gtd-pomodoro" />); });
+    renderer.act(() => { pomodoro.root.findAllByType(TextInput)[0].props.onBlur(); });
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    pressText(hub, 3);
+    expect(updateSettings).toHaveBeenCalledTimes(1);
   });
 
   it('saves the default project flow mode from GTD settings', () => {

@@ -1,7 +1,7 @@
 /**
  * The native host contract for Settings: the menu (settings-menu-model.ts), the
- * General screen (general-settings-model.ts) and the Manage screen
- * (manage-settings-model.ts). Kept in its own file and spread into
+ * General screen (general-settings-model.ts), the Manage screen
+ * (manage-settings-model.ts) and the GTD screens (gtd-settings-model.ts). Kept in its own file and spread into
  * createNativeHostContract. Someday sections on Manage use the Someday methods
  * (getSomedaySections, createSomedaySection, renameSomedaySection,
  * reorderSomedaySections, deleteSomedaySection in native-host-contract-menu-views.ts).
@@ -29,6 +29,18 @@
  *   that opens or closes it.
  * - The About row's update dot: `mindwtr-update-available` is 'true' when an
  *   update was found. Send it as `updateAvailable` to getSettingsMenu.
+ * - GTD › Task editor layout › Open tasks in: `mindwtr:view:taskOpenMode:v1`
+ *   holds 'automatic', 'preview' or 'edit' (anything else reads as automatic;
+ *   the sandbox keeps its own in memory). Send the stored text as `taskOpenMode`
+ *   to getGtdSettings; setGtdSetting's deviceWrites store a new choice.
+ * - GTD › Pomodoro's alert notice: the host checks Android's exact-alarm
+ *   permission (Android 12+) and shows `pomodoro.controls.alarmNotice` only
+ *   while it is denied; its action opens the system's Alarms & reminders page.
+ * - GTD › Capture's Android capture intent panel is platform wiring (a native
+ *   module and its token); its texts are the `settings.automationCapture*` keys.
+ * - GTD screen state, reset on every visit: the text fields' drafts, the open
+ *   task editor groups (see `taskEditor.expandedResetKey`), the field sheet, the
+ *   default-area picker, and whether the auto-start notice showed.
  *
  * Every write takes a request UUID: while its save is owed a retry only saves
  * (native-request-receipts.ts). Each write is target-state, so a replay after a
@@ -40,7 +52,7 @@
  * import cycle between the two files is safe.
  */
 import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
-import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, type DateFormattingConfig } from './date';
+import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
 import {
     buildGeneralSettingsModel,
     buildGeneralSettingsUpdate,
@@ -53,6 +65,19 @@ import {
     type GeneralSettingsModel,
     type SettingsDeviceWrite,
 } from './general-settings-model';
+import { FOCUS_TASK_LIMIT_OPTIONS } from './focus-utils';
+import {
+    buildGtdSettingsModel,
+    buildGtdSettingsUpdate,
+    getGtdSettingsDeviceWrites,
+    GTD_AUTO_ARCHIVE_DAY_OPTIONS,
+    GTD_DEFAULT_AREA_ACTIVE_OPTION,
+    GTD_TASK_OPEN_MODES,
+    isGtdSettingStored,
+    readGtdTaskOpenMode,
+    type GtdSettingsEdit,
+    type GtdSettingsModel,
+} from './gtd-settings-model';
 import { formatLocalDate } from './import-source-reader';
 import { tFallback } from './i18n';
 import type { Language } from './i18n/i18n-types';
@@ -91,6 +116,8 @@ import {
 import { useTaskStore } from './store';
 import { normalizeTagId } from './store-helpers';
 import { formatTagIdPreservingCase } from './store-projects/shared';
+import { DEFAULT_TASK_EDITOR_ORDER, isTaskEditorSectionableField, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
+import type { TaskEditorFieldId } from './types';
 import { sortViewSectionDefinitions } from './view-sections';
 
 type Translate = (key: string) => string;
@@ -109,7 +136,7 @@ export type SettingsDeps = {
 };
 
 /** Settings screens the native host draws so far; draw the other rows disabled. */
-export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'manage'];
+export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage'];
 
 type NativeMenuRow<Id extends string = string> = SettingsMenuRow<Id> & { enabled: boolean };
 
@@ -126,6 +153,8 @@ export type NativeSettingsMenu = {
 };
 
 export type NativeGeneralSettings = GeneralSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
+
+export type NativeGtdSettings = GtdSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
 
 /** A write's answer: whether the store changed, and what the host stores on the device. */
 export type NativeSettingsWriteResult = { changed: boolean; deviceWrites: SettingsDeviceWrite[] };
@@ -221,6 +250,54 @@ function readGeneralEdit(value: unknown, calendarSystemShown: boolean): GeneralS
         }
     })();
     return ok ? value as GeneralSettingsEdit : null;
+}
+
+const GTD_BOOLEAN_EDITS = new Set<string>([
+    'pomodoro', 'pomodoroLinkTask', 'pomodoroAutoStartBreaks', 'pomodoroAutoStartFocus', 'pomodoroCompletionAlert',
+    'saveAudioAttachments', 'quickAddAutoClean', 'naturalLanguageDates', 'markdownEditorAssist',
+    'dailyReviewFocusStep', 'weeklyReviewContextStep',
+    'inboxTwoMinute', 'inboxProjectFirst', 'inboxContextStep', 'inboxSchedule',
+]);
+const OPENABLE_SECTIONS = new Set<string>(['scheduling', 'organization', 'details']);
+const isTaskEditorField = (value: unknown): value is TaskEditorFieldId => DEFAULT_TASK_EDITOR_ORDER.includes(value as TaskEditorFieldId);
+
+/**
+ * A GTD edit as a host sends it back; null when it is not one the screens offer.
+ * A schedule time comes back normalized; one that is not blank or a time is refused.
+ */
+function readGtdEdit(value: unknown, liveAreaIds: Set<string>): GtdSettingsEdit | null {
+    if (!isObjectRecord(value)) return null;
+    const { type, value: v } = value;
+    const only = (...keys: string[]) => Object.keys(value).every((key) => key === 'type' || keys.includes(key));
+    if (type === 'defaultScheduleTime') {
+        const normalized = only('value') && isText(v, 50) ? normalizeClockTimeInput(v) : null;
+        return normalized === null ? null : { type, value: normalized };
+    }
+    const ok = (() => {
+        if (GTD_BOOLEAN_EDITS.has(type as string)) return only('value') && typeof v === 'boolean';
+        switch (type) {
+            case 'focusTaskLimit': return only('value') && FOCUS_TASK_LIMIT_OPTIONS.includes(v as never);
+            case 'defaultProjectFlowMode': return only('value') && (v === 'parallel' || v === 'sequential');
+            case 'autoArchiveDays': return only('value') && GTD_AUTO_ARCHIVE_DAY_OPTIONS.includes(v as number);
+            case 'pomodoroDurations': return only('focusMinutes', 'breakMinutes') && isText(value.focusMinutes, 20) && isText(value.breakMinutes, 20);
+            case 'captureMethod': return only('value') && (v === 'text' || v === 'audio');
+            case 'defaultArea': return only('value') && (v === '' || v === GTD_DEFAULT_AREA_ACTIVE_OPTION || liveAreaIds.has(v as string));
+            case 'taskOpenMode': return only('value') && GTD_TASK_OPEN_MODES.includes(v as never);
+            case 'taskEditorPreset': return only('value') && (v === 'simple' || v === 'standard' || v === 'full');
+            case 'taskEditorFieldVisible': return only('field', 'value') && isTaskEditorField(value.field) && typeof v === 'boolean';
+            // Any order of every field (a move offers one).
+            case 'taskEditorOrder':
+                return only('value') && Array.isArray(v) && v.length === DEFAULT_TASK_EDITOR_ORDER.length
+                    && new Set(v).size === v.length && v.every(isTaskEditorField);
+            case 'taskEditorFieldSection':
+                return only('field', 'value') && isTaskEditorField(value.field) && isTaskEditorSectionableField(value.field)
+                    && TASK_EDITOR_SECTION_ORDER.includes(v as never);
+            case 'taskEditorSectionOpen': return only('section', 'value') && OPENABLE_SECTIONS.has(value.section as string) && typeof v === 'boolean';
+            case 'taskEditorReset': return only();
+            default: return false;
+        }
+    })();
+    return ok ? value as GtdSettingsEdit : null;
 }
 
 const isName = (value: unknown): value is string => isText(value, 500) && value.trim().length > 0;
@@ -549,6 +626,54 @@ export function createSettingsMethods(deps: SettingsDeps) {
                 const settings = useTaskStore.getState().settings;
                 const update = buildGeneralSettingsUpdate(settings, edit);
                 if (!update || isGeneralSettingStored(settings, edit)) return { ok: true, value: { changed: false, deviceWrites } };
+                const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(update));
+                return settleWrite(written, { changed: true, deviceWrites });
+            });
+        },
+
+        /**
+         * Settings › GTD: the hub and its six sub-screens in one view (draw the one
+         * the host is on; a link's `screen` opens a sub-screen). `taskOpenMode` is
+         * the stored `mindwtr:view:taskOpenMode:v1` text. Each control's `edit`
+         * goes to setGtdSetting.
+         */
+        getGtdSettings(input: { taskOpenMode?: string | null } = {}): NativeHostResult<NativeGtdSettings> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || (input.taskOpenMode !== undefined && input.taskOpenMode !== null && !isText(input.taskOpenMode, 100))) {
+                return fail('INVALID_INPUT', 'taskOpenMode must be the stored text or null');
+            }
+            const state = useTaskStore.getState();
+            const model = buildGtdSettingsModel({
+                settings: state.settings,
+                areas: state.areas,
+                taskOpenMode: readGtdTaskOpenMode(input.taskOpenMode),
+                t: deps.t(),
+            });
+            return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
+        },
+
+        /**
+         * One GTD control's `edit`: writes only the setting it changes, and returns
+         * the device-local writes the host stores (`deviceWrites`). A setting that
+         * already holds the value is not written again. The two text fields commit
+         * on blur, sending the typed text: a schedule time that is not blank or a
+         * time answers INVALID_INPUT (show `hub.defaultScheduleTime.invalidMessage`),
+         * and after a commit each field shows the view's value again.
+         */
+        async setGtdSetting(input: { requestId: string; edit: GtdSettingsEdit }): Promise<NativeHostResult<NativeSettingsWriteResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const liveAreaIds = new Set(useTaskStore.getState().areas.filter((area) => !area.deletedAt).map((area) => area.id));
+            const edit = isObjectRecord(input) ? readGtdEdit(input.edit, liveAreaIds) : null;
+            if (!edit || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'A request UUID and an edit the GTD screens offer are required');
+            }
+            return receipts.run<NativeSettingsWriteResult>(input.requestId, JSON.stringify(['gtd', edit]), async () => {
+                const deviceWrites = getGtdSettingsDeviceWrites(edit);
+                const settings = useTaskStore.getState().settings;
+                const update = buildGtdSettingsUpdate(settings, edit);
+                if (!update || isGtdSettingStored(settings, edit)) return { ok: true, value: { changed: false, deviceWrites } };
                 const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(update));
                 return settleWrite(written, { changed: true, deviceWrites });
             });
