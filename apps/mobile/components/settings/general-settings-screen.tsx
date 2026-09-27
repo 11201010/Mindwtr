@@ -260,6 +260,8 @@ export function GeneralSettingsScreen() {
                                     return (
                                         <TouchableOpacity
                                             key={option.value}
+                                            accessibilityRole="radio"
+                                            accessibilityState={{ selected }}
                                             style={[
                                                 styles.pickerOption,
                                                 { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
@@ -310,6 +312,8 @@ export function GeneralSettingsScreen() {
                                     return (
                                         <TouchableOpacity
                                             key={option.value}
+                                            accessibilityRole="radio"
+                                            accessibilityState={{ selected }}
                                             style={[
                                                 styles.pickerOption,
                                                 { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
@@ -404,6 +408,8 @@ export function GeneralSettingsScreen() {
                                     return (
                                         <TouchableOpacity
                                             key={option.value}
+                                            accessibilityRole="radio"
+                                            accessibilityState={{ selected }}
                                             style={[
                                                 styles.pickerOption,
                                                 { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
@@ -443,6 +449,8 @@ export function GeneralSettingsScreen() {
                                     return (
                                         <TouchableOpacity
                                             key={option.value}
+                                            accessibilityRole="radio"
+                                            accessibilityState={{ selected }}
                                             style={[
                                                 styles.pickerOption,
                                                 { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
@@ -483,6 +491,8 @@ export function GeneralSettingsScreen() {
                                         return (
                                             <TouchableOpacity
                                                 key={option.value}
+                                                accessibilityRole="radio"
+                                                accessibilityState={{ selected }}
                                                 style={[
                                                     styles.pickerOption,
                                                     { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
@@ -523,6 +533,8 @@ export function GeneralSettingsScreen() {
                                     return (
                                         <TouchableOpacity
                                             key={option.value}
+                                            accessibilityRole="radio"
+                                            accessibilityState={{ selected }}
                                             style={[
                                                 styles.pickerOption,
                                                 { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },

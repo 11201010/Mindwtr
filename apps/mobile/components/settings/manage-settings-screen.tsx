@@ -62,6 +62,8 @@ function CollapsibleSection({
         <View style={{ marginBottom: 16 }}>
             <TouchableOpacity
                 testID={testID}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: open }}
                 onPress={onToggle}
                 style={[
                     styles.settingCard,
@@ -262,15 +264,19 @@ export function ManageSettingsScreen() {
         closeEditor();
     };
 
+    // Icon buttons name the item they act on, as the Someday section rows do.
+    const editLabel = (name: string) => `${t('common.edit')}: ${name}`;
+    const deleteLabel = (name: string) => `${t('common.delete')}: ${name}`;
+
     const ManageRow = ({ label, onRename, onDelete }: { label: string; onRename?: () => void; onDelete: () => void }) => (
         <View style={[styles.settingRow, { borderBottomWidth: 1, borderBottomColor: tc.border }]}>
             <Text style={[styles.settingLabel, { color: tc.text, flex: 1 }]} numberOfLines={1}>{label}</Text>
             {onRename && (
-                <TouchableOpacity onPress={onRename} style={{ padding: 8 }}>
+                <TouchableOpacity accessibilityLabel={editLabel(label)} accessibilityRole="button" onPress={onRename} style={{ padding: 8 }}>
                     <Ionicons name="pencil-outline" size={18} color={tc.secondaryText} />
                 </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={onDelete} style={{ padding: 8 }}>
+            <TouchableOpacity accessibilityLabel={deleteLabel(label)} accessibilityRole="button" onPress={onDelete} style={{ padding: 8 }}>
                 <Ionicons name="trash-outline" size={18} color="#ef4444" />
             </TouchableOpacity>
         </View>
@@ -373,6 +379,8 @@ export function ManageSettingsScreen() {
                 </Text>
             </View>
             <TouchableOpacity
+                accessibilityLabel={editLabel(text.areas.unassignedLabel)}
+                accessibilityRole="button"
                 onPress={openUnassignedAreaEditor}
                 style={{ padding: 8 }}
             >
@@ -386,12 +394,16 @@ export function ManageSettingsScreen() {
             <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: area.color || DEFAULT_AREA_COLOR, marginRight: 12 }} />
             <Text style={[styles.settingLabel, { color: tc.text, flex: 1 }]} numberOfLines={1}>{area.name}</Text>
             <TouchableOpacity
+                accessibilityLabel={editLabel(area.name)}
+                accessibilityRole="button"
                 onPress={() => openAreaEditor(area)}
                 style={{ padding: 8 }}
             >
                 <Ionicons name="pencil-outline" size={18} color={tc.secondaryText} />
             </TouchableOpacity>
             <TouchableOpacity
+                accessibilityLabel={deleteLabel(area.name)}
+                accessibilityRole="button"
                 onPress={() => confirmDelete(area.name, () => void deleteArea(area.id), 'areas.deleteConfirm')}
                 style={{ padding: 8 }}
             >

@@ -4,7 +4,7 @@ import { buildGeneralSettingsModel, resolveGeneralThemeMode, type GeneralSetting
 import { getSystemWeekStart, createDateFormatter } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
 import { getTranslator } from './i18n';
-import { buildManagePersonRow, isManageEditorSaveDisabled, sortManageAreas, sortManagePeople } from './manage-settings-model';
+import { buildManagePersonRow, isManageAreaNameTaken, isManageEditorSaveDisabled, sortManageAreas, sortManagePeople } from './manage-settings-model';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
 import type { NativeManageEditorTarget, NativeManageSettings } from './native-host-contract-settings';
 import { getPersonTaskCounts } from './people';
@@ -307,7 +307,11 @@ function manageDriver(host: Host, scenario: Scenario) {
     let renaming: { id: string; title: string } | null = null;
     let pending: { confirm: Confirm; run: () => Promise<unknown> } | null = null;
     let restored = false;
-    const back = value(host.getStrings({ keys: ['common.back'] })).strings['common.back'];
+    const strings = value(host.getStrings({ keys: ['common.back', 'common.edit', 'common.delete'] })).strings;
+    const back = strings['common.back'];
+    // A row's pencil and trash name the item they act on, as React Native's do.
+    const named = (key: 'common.edit' | 'common.delete', name: string): unknown[] => [`${strings[key]}: ${name}`, false];
+    const rowButtons = (name: string) => [named('common.edit', name), named('common.delete', name)];
     const read = (): NativeManageSettings => {
         const view = value(host.getManageSettings({ openSections: raw }));
         if (!restored) {
@@ -340,7 +344,7 @@ function manageDriver(host: Host, scenario: Scenario) {
                 if (section.key === 'areas') {
                     const { unassigned, rows, empty, newArea } = view.areas;
                     texts.push(unassigned.label, unassigned.description, ...(empty ? [empty] : []), ...rows.items.map((row) => row.name), newArea.label, newArea.hint, newArea.addLabel);
-                    labels.push([newArea.label, false]);
+                    labels.push(named('common.edit', unassigned.label), ...rows.items.flatMap((row) => rowButtons(row.name)), [newArea.label, false]);
                 } else if (section.key === 'somedaySections') {
                     if (view.somedaySections.emptyHint) texts.push(view.somedaySections.emptyHint);
                     for (const row of sections.rows) {
@@ -360,6 +364,7 @@ function manageDriver(host: Host, scenario: Scenario) {
                 } else {
                     const list = view[section.key];
                     texts.push(...(list.empty ? [list.empty] : list.rows.items.map((row) => row.value)));
+                    labels.push(...list.rows.items.flatMap((row) => rowButtons(row.value)));
                 }
             }
             let editorView: unknown = null;
@@ -377,7 +382,7 @@ function manageDriver(host: Host, scenario: Scenario) {
                         ] : []),
                     ],
                     colors: text.changeColor ? view.editor.colors.map((entry) => [entry.color, entry.color === editor!.draft.color]) : [],
-                    buttons: [[text.cancelLabel, text.saveLabel], isManageEditorSaveDisabled(editor.type as never, editor.draft.name, view.areas.rows.items)],
+                    buttons: [[text.cancelLabel, text.saveLabel], value(host.checkManageEditor({ target: editor.target, name: editor.draft.name })).saveDisabled],
                 };
             }
             return normalize({
@@ -589,6 +594,36 @@ describe('native host contract: Settings', () => {
         expect(useTaskStore.getState()._allAreas).toBe(areas);
     });
 
+    it('checks the editor\'s name with core\'s own rule, so a host never copies it', async () => {
+        freezeClock();
+        await seed({ data: 'manage', settings: 'manage' });
+        const host = await openHost();
+        const { areas } = useTaskStore.getState();
+        const text = value(host.getManageSettings()).editor.text;
+        const targets: NativeManageEditorTarget[] = [
+            { type: 'newArea' }, { type: 'area', id: 'a-work' }, { type: 'unassignedArea' }, { type: 'newPerson' },
+            { type: 'person', id: 'pe-alex' }, { type: 'context', name: '@home' }, { type: 'tag', name: '#web' },
+        ];
+        for (const target of targets) {
+            for (const name of ['', '   ', 'Garden', ' home ', 'WORK', 'gone']) {
+                const nameTaken = isManageAreaNameTaken(target.type, name, areas);
+                expect(value(host.checkManageEditor({ target, name }))).toEqual({
+                    nameTaken,
+                    saveDisabled: isManageEditorSaveDisabled(target.type, name, areas),
+                    message: nameTaken ? text[target.type].nameTaken : null,
+                });
+            }
+        }
+        expect(value(host.checkManageEditor({ target: { type: 'newArea' }, name: ' home ' })))
+            .toEqual({ nameTaken: true, saveDisabled: true, message: 'An area with this name already exists.' });
+        // A deleted area's name is free; the unassigned color needs no name.
+        expect(value(host.checkManageEditor({ target: { type: 'newArea' }, name: 'Gone' })))
+            .toEqual({ nameTaken: false, saveDisabled: false, message: null });
+        expect(value(host.checkManageEditor({ target: { type: 'unassignedArea' }, name: '' })))
+            .toEqual({ nameTaken: false, saveDisabled: false, message: null });
+        expect(writes).toEqual([]);
+    });
+
     it('writes nothing again for a target already reached, even after a restart', async () => {
         freezeClock();
         await seed({ data: 'manage', settings: 'manage' });
@@ -757,6 +792,12 @@ describe('native host contract: Settings', () => {
         expect(await host.saveManageEditor({ requestId: id(), target: { type: 'area', id: 'a-gone' }, name: 'Back' })).toMatchObject(invalid);
         expect(await host.saveManageEditor({ requestId: id(), target: { type: 'project', id: 'p-site' } as never, name: 'x' })).toMatchObject(invalid);
         expect(await host.deleteManageItem({ requestId: id(), target: { type: 'newArea' } as never })).toMatchObject(invalid);
+        expect(host.checkManageEditor({ target: { type: 'project', id: 'p-site' } as never, name: 'x' })).toMatchObject(invalid);
+        expect(host.checkManageEditor({ target: { type: 'area' } as never, name: 'x' })).toMatchObject(invalid);
+        expect(host.checkManageEditor({ target: { type: 'newArea' }, name: 5 as never })).toMatchObject(invalid);
+        expect(host.checkManageEditor({ target: { type: 'newArea' }, name: 'x'.repeat(501) })).toMatchObject(invalid);
+        expect(host.checkManageEditor({ target: { type: 'newArea' } } as never)).toMatchObject(invalid);
+        expect(host.checkManageEditor(null as never)).toMatchObject(invalid);
         expect(writes).toEqual([]);
     });
 
@@ -771,6 +812,7 @@ describe('native host contract: Settings', () => {
         expect(host.getManageSettingsList({ list: 'areas', offset: 0, limit: 1, revision: 'r' })).toMatchObject(notReady);
         expect(await host.setGeneralSetting({ requestId, edit: { type: 'showTaskAge', value: true } })).toMatchObject(notReady);
         expect(await host.saveManageEditor({ requestId, target: { type: 'newArea' }, name: 'Garden' })).toMatchObject(notReady);
+        expect(host.checkManageEditor({ target: { type: 'newArea' }, name: 'Garden' })).toMatchObject(notReady);
         expect(await host.deleteManageItem({ requestId, target: { type: 'context', name: '@home' } })).toMatchObject(notReady);
     });
 });

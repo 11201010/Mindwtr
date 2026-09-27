@@ -13,6 +13,14 @@
      "manage: every people row: a count of one reads '1 task' ('1 Aufgabe' in German), and a person with no note or link shows the count once, beside the row.",
      "manage: unassigned color and new areas, the new area 'home' while 'Home' exists: Save is off, so the editor stays open and nothing is written (it used to add nothing and recolor 'Home' grey)."
     ]
+   },
+   {
+    "base": "470c46e39",
+    "command": "cd apps/mobile && MINDWTR_DUMP_SETTINGS_SCREENS=<file> TZ=UTC bunx vitest run components/settings/settings.parity.test.tsx, with the React Native accessibility fixes in place; only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "manage: every scenario that shows Areas, Contexts or Tags open (stored open sections, unreadable stored sections, toggling sections, unassigned color and new areas, editing areas, deleting an area, contexts and tags, empty lists, in German): only the accessibility labels changed. The pencil and trash buttons now name their item, 'Edit: <name>' and 'Delete: <name>' ('Bearbeiten: …' and 'Löschen: …' in German), and the unassigned row's pencil reads 'Edit: Unassigned'. Texts, writes, device writes and alerts are unchanged.",
+     "The section headers now carry a button role and their open state, and the General pickers' options a radio role and their chosen state; this fixture records neither, so no other observation changed."
+    ]
    }
   ]
  },
@@ -6651,6 +6659,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -6761,6 +6797,70 @@
      [
       "New Person",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -6833,6 +6933,30 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -6908,6 +7032,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ]
@@ -6969,6 +7121,34 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
       false
      ],
      [
@@ -7221,6 +7401,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -7330,6 +7538,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -7404,6 +7676,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -7513,6 +7813,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -7641,6 +8005,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -7750,6 +8142,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -7878,6 +8334,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -7987,6 +8471,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -8065,6 +8613,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -8174,6 +8750,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -8308,6 +8948,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -8417,6 +9085,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -8551,6 +9283,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -8660,6 +9420,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -8794,6 +9618,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -8903,6 +9755,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -9038,6 +9954,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -9147,6 +10099,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -9224,6 +10240,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -9333,6 +10385,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -9468,6 +10584,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -9577,6 +10729,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -9712,6 +10928,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -9821,6 +11073,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -9890,6 +11206,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -9999,6 +11351,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -10134,6 +11550,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -10243,6 +11695,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -10378,6 +11894,42 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
+      "Edit: Garden",
+      false
+     ],
+     [
+      "Delete: Garden",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -10487,6 +12039,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -10623,6 +12239,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -10732,6 +12376,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -10806,6 +12514,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -10915,6 +12651,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -11049,6 +12849,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -11158,6 +12986,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -11292,6 +13184,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -11401,6 +13321,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -11535,6 +13519,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -11644,6 +13656,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -11721,6 +13797,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -11830,6 +13934,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -11964,6 +14132,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -12073,6 +14269,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -12141,6 +14401,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -12250,6 +14538,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -12384,6 +14736,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -12493,6 +14873,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -12627,6 +15071,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -12736,6 +15208,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -12812,6 +15348,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -12921,6 +15485,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -13055,6 +15683,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Office",
+      false
+     ],
+     [
+      "Delete: Office",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -13164,6 +15820,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -13297,6 +16017,26 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: office",
+      false
+     ],
+     [
+      "Delete: office",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -13406,6 +16146,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -13484,6 +16288,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -13593,6 +16425,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -13667,6 +16563,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -13776,6 +16700,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -13859,6 +16847,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -13968,6 +16984,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -14036,6 +17116,34 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Work",
+      false
+     ],
+     [
+      "Delete: Work",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -14145,6 +17253,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -14227,6 +17399,26 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
+      "Edit: Home",
+      false
+     ],
+     [
+      "Delete: Home",
+      false
+     ],
+     [
+      "Edit: Errands",
+      false
+     ],
+     [
+      "Delete: Errands",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -14336,6 +17528,70 @@
      ],
      [
       "New Person",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -17614,6 +20870,70 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -17655,6 +20975,70 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -17709,6 +21093,70 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @phone",
+      false
+     ],
+     [
+      "Delete: @phone",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -17761,6 +21209,62 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -17801,6 +21305,62 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -17854,6 +21414,62 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -17888,6 +21504,62 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -17941,6 +21613,62 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #urgent",
+      false
+     ],
+     [
+      "Delete: #urgent",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -17993,6 +21721,62 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -18033,6 +21817,62 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -18086,57 +21926,61 @@
      [
       "Back",
       false
-     ]
-    ],
-    "fields": [],
-    "editor": {
-     "title": "Rename",
-     "inputs": [
-      [
-       null,
-       "Name",
-       ""
-      ]
      ],
-     "colors": [],
-     "buttons": [
-      [
-       "Cancel",
-       "Save"
-      ],
-      true
-     ]
-    },
-    "writes": [],
-    "device": [],
-    "alerts": [],
-    "navigations": [],
-    "links": []
-   },
-   {
-    "texts": [
-     "Manage",
-     "Areas",
-     "3",
-     "Someday sections",
-     "3",
-     "People",
-     "4",
-     "Contexts",
-     "4",
-     "@Alex",
-     "@home",
-     "@office",
-     "@town",
-     "Tags",
-     "3",
-     "#garden",
-     "#Later",
-     "#web"
-    ],
-    "labels": [
      [
-      "Back",
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -18189,6 +22033,170 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
+     ]
+    ],
+    "fields": [],
+    "editor": {
+     "title": "Rename",
+     "inputs": [
+      [
+       null,
+       "Name",
+       ""
+      ]
+     ],
+     "colors": [],
+     "buttons": [
+      [
+       "Cancel",
+       "Save"
+      ],
+      true
+     ]
+    },
+    "writes": [],
+    "device": [],
+    "alerts": [],
+    "navigations": [],
+    "links": []
+   },
+   {
+    "texts": [
+     "Manage",
+     "Areas",
+     "3",
+     "Someday sections",
+     "3",
+     "People",
+     "4",
+     "Contexts",
+     "4",
+     "@Alex",
+     "@home",
+     "@office",
+     "@town",
+     "Tags",
+     "3",
+     "#garden",
+     "#Later",
+     "#web"
+    ],
+    "labels": [
+     [
+      "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -18224,6 +22232,62 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @office",
+      false
+     ],
+     [
+      "Delete: @office",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -18274,6 +22338,54 @@
      [
       "Back",
       false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
+      false
      ]
     ],
     "fields": [],
@@ -18312,6 +22424,54 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
+      false
+     ],
+     [
+      "Edit: #web",
+      false
+     ],
+     [
+      "Delete: #web",
       false
      ]
     ],
@@ -18360,6 +22520,46 @@
     "labels": [
      [
       "Back",
+      false
+     ],
+     [
+      "Edit: @Alex",
+      false
+     ],
+     [
+      "Delete: @Alex",
+      false
+     ],
+     [
+      "Edit: @home",
+      false
+     ],
+     [
+      "Delete: @home",
+      false
+     ],
+     [
+      "Edit: @town",
+      false
+     ],
+     [
+      "Delete: @town",
+      false
+     ],
+     [
+      "Edit: #garden",
+      false
+     ],
+     [
+      "Delete: #garden",
+      false
+     ],
+     [
+      "Edit: #Later",
+      false
+     ],
+     [
+      "Delete: #Later",
       false
      ]
     ],
@@ -19090,6 +23290,10 @@
       false
      ],
      [
+      "Edit: Unassigned",
+      false
+     ],
+     [
       "New Area",
       false
      ],
@@ -19171,6 +23375,34 @@
       false
      ],
      [
+      "Bearbeiten: Unassigned",
+      false
+     ],
+     [
+      "Bearbeiten: Home",
+      false
+     ],
+     [
+      "Löschen: Home",
+      false
+     ],
+     [
+      "Bearbeiten: Work",
+      false
+     ],
+     [
+      "Löschen: Work",
+      false
+     ],
+     [
+      "Bearbeiten: Errands",
+      false
+     ],
+     [
+      "Löschen: Errands",
+      false
+     ],
+     [
       "Neuer Bereich",
       false
      ],
@@ -19280,6 +23512,70 @@
      ],
      [
       "Neue Person",
+      false
+     ],
+     [
+      "Bearbeiten: @Alex",
+      false
+     ],
+     [
+      "Löschen: @Alex",
+      false
+     ],
+     [
+      "Bearbeiten: @home",
+      false
+     ],
+     [
+      "Löschen: @home",
+      false
+     ],
+     [
+      "Bearbeiten: @office",
+      false
+     ],
+     [
+      "Löschen: @office",
+      false
+     ],
+     [
+      "Bearbeiten: @phone",
+      false
+     ],
+     [
+      "Löschen: @phone",
+      false
+     ],
+     [
+      "Bearbeiten: @town",
+      false
+     ],
+     [
+      "Löschen: @town",
+      false
+     ],
+     [
+      "Bearbeiten: #garden",
+      false
+     ],
+     [
+      "Löschen: #garden",
+      false
+     ],
+     [
+      "Bearbeiten: #urgent",
+      false
+     ],
+     [
+      "Löschen: #urgent",
+      false
+     ],
+     [
+      "Bearbeiten: #web",
+      false
+     ],
+     [
+      "Löschen: #web",
       false
      ]
     ],
@@ -19354,6 +23650,34 @@
       false
      ],
      [
+      "Bearbeiten: Unassigned",
+      false
+     ],
+     [
+      "Bearbeiten: Home",
+      false
+     ],
+     [
+      "Löschen: Home",
+      false
+     ],
+     [
+      "Bearbeiten: Work",
+      false
+     ],
+     [
+      "Löschen: Work",
+      false
+     ],
+     [
+      "Bearbeiten: Errands",
+      false
+     ],
+     [
+      "Löschen: Errands",
+      false
+     ],
+     [
       "Neuer Bereich",
       false
      ],
@@ -19463,6 +23787,70 @@
      ],
      [
       "Neue Person",
+      false
+     ],
+     [
+      "Bearbeiten: @Alex",
+      false
+     ],
+     [
+      "Löschen: @Alex",
+      false
+     ],
+     [
+      "Bearbeiten: @home",
+      false
+     ],
+     [
+      "Löschen: @home",
+      false
+     ],
+     [
+      "Bearbeiten: @office",
+      false
+     ],
+     [
+      "Löschen: @office",
+      false
+     ],
+     [
+      "Bearbeiten: @phone",
+      false
+     ],
+     [
+      "Löschen: @phone",
+      false
+     ],
+     [
+      "Bearbeiten: @town",
+      false
+     ],
+     [
+      "Löschen: @town",
+      false
+     ],
+     [
+      "Bearbeiten: #garden",
+      false
+     ],
+     [
+      "Löschen: #garden",
+      false
+     ],
+     [
+      "Bearbeiten: #urgent",
+      false
+     ],
+     [
+      "Löschen: #urgent",
+      false
+     ],
+     [
+      "Bearbeiten: #web",
+      false
+     ],
+     [
+      "Löschen: #web",
       false
      ]
     ],
@@ -19546,6 +23934,34 @@
       false
      ],
      [
+      "Bearbeiten: Unassigned",
+      false
+     ],
+     [
+      "Bearbeiten: Home",
+      false
+     ],
+     [
+      "Löschen: Home",
+      false
+     ],
+     [
+      "Bearbeiten: Work",
+      false
+     ],
+     [
+      "Löschen: Work",
+      false
+     ],
+     [
+      "Bearbeiten: Errands",
+      false
+     ],
+     [
+      "Löschen: Errands",
+      false
+     ],
+     [
       "Neuer Bereich",
       false
      ],
@@ -19655,6 +24071,70 @@
      ],
      [
       "Neue Person",
+      false
+     ],
+     [
+      "Bearbeiten: @Alex",
+      false
+     ],
+     [
+      "Löschen: @Alex",
+      false
+     ],
+     [
+      "Bearbeiten: @home",
+      false
+     ],
+     [
+      "Löschen: @home",
+      false
+     ],
+     [
+      "Bearbeiten: @office",
+      false
+     ],
+     [
+      "Löschen: @office",
+      false
+     ],
+     [
+      "Bearbeiten: @phone",
+      false
+     ],
+     [
+      "Löschen: @phone",
+      false
+     ],
+     [
+      "Bearbeiten: @town",
+      false
+     ],
+     [
+      "Löschen: @town",
+      false
+     ],
+     [
+      "Bearbeiten: #garden",
+      false
+     ],
+     [
+      "Löschen: #garden",
+      false
+     ],
+     [
+      "Bearbeiten: #urgent",
+      false
+     ],
+     [
+      "Löschen: #urgent",
+      false
+     ],
+     [
+      "Bearbeiten: #web",
+      false
+     ],
+     [
+      "Löschen: #web",
       false
      ]
     ],
@@ -19723,6 +24203,34 @@
       false
      ],
      [
+      "Bearbeiten: Unassigned",
+      false
+     ],
+     [
+      "Bearbeiten: Home",
+      false
+     ],
+     [
+      "Löschen: Home",
+      false
+     ],
+     [
+      "Bearbeiten: Work",
+      false
+     ],
+     [
+      "Löschen: Work",
+      false
+     ],
+     [
+      "Bearbeiten: Errands",
+      false
+     ],
+     [
+      "Löschen: Errands",
+      false
+     ],
+     [
       "Neuer Bereich",
       false
      ],
@@ -19832,6 +24340,70 @@
      ],
      [
       "Neue Person",
+      false
+     ],
+     [
+      "Bearbeiten: @Alex",
+      false
+     ],
+     [
+      "Löschen: @Alex",
+      false
+     ],
+     [
+      "Bearbeiten: @home",
+      false
+     ],
+     [
+      "Löschen: @home",
+      false
+     ],
+     [
+      "Bearbeiten: @office",
+      false
+     ],
+     [
+      "Löschen: @office",
+      false
+     ],
+     [
+      "Bearbeiten: @phone",
+      false
+     ],
+     [
+      "Löschen: @phone",
+      false
+     ],
+     [
+      "Bearbeiten: @town",
+      false
+     ],
+     [
+      "Löschen: @town",
+      false
+     ],
+     [
+      "Bearbeiten: #garden",
+      false
+     ],
+     [
+      "Löschen: #garden",
+      false
+     ],
+     [
+      "Bearbeiten: #urgent",
+      false
+     ],
+     [
+      "Löschen: #urgent",
+      false
+     ],
+     [
+      "Bearbeiten: #web",
+      false
+     ],
+     [
+      "Löschen: #web",
       false
      ]
     ],
@@ -19927,6 +24499,34 @@
       false
      ],
      [
+      "Bearbeiten: Unassigned",
+      false
+     ],
+     [
+      "Bearbeiten: Home",
+      false
+     ],
+     [
+      "Löschen: Home",
+      false
+     ],
+     [
+      "Bearbeiten: Work",
+      false
+     ],
+     [
+      "Löschen: Work",
+      false
+     ],
+     [
+      "Bearbeiten: Errands",
+      false
+     ],
+     [
+      "Löschen: Errands",
+      false
+     ],
+     [
       "Neuer Bereich",
       false
      ],
@@ -20036,6 +24636,70 @@
      ],
      [
       "Neue Person",
+      false
+     ],
+     [
+      "Bearbeiten: @Alex",
+      false
+     ],
+     [
+      "Löschen: @Alex",
+      false
+     ],
+     [
+      "Bearbeiten: @home",
+      false
+     ],
+     [
+      "Löschen: @home",
+      false
+     ],
+     [
+      "Bearbeiten: @office",
+      false
+     ],
+     [
+      "Löschen: @office",
+      false
+     ],
+     [
+      "Bearbeiten: @phone",
+      false
+     ],
+     [
+      "Löschen: @phone",
+      false
+     ],
+     [
+      "Bearbeiten: @town",
+      false
+     ],
+     [
+      "Löschen: @town",
+      false
+     ],
+     [
+      "Bearbeiten: #garden",
+      false
+     ],
+     [
+      "Löschen: #garden",
+      false
+     ],
+     [
+      "Bearbeiten: #urgent",
+      false
+     ],
+     [
+      "Löschen: #urgent",
+      false
+     ],
+     [
+      "Bearbeiten: #web",
+      false
+     ],
+     [
+      "Löschen: #web",
       false
      ]
     ],
@@ -20104,6 +24768,34 @@
       false
      ],
      [
+      "Bearbeiten: Unassigned",
+      false
+     ],
+     [
+      "Bearbeiten: Home",
+      false
+     ],
+     [
+      "Löschen: Home",
+      false
+     ],
+     [
+      "Bearbeiten: Work",
+      false
+     ],
+     [
+      "Löschen: Work",
+      false
+     ],
+     [
+      "Bearbeiten: Errands",
+      false
+     ],
+     [
+      "Löschen: Errands",
+      false
+     ],
+     [
       "Neuer Bereich",
       false
      ],
@@ -20213,6 +24905,70 @@
      ],
      [
       "Neue Person",
+      false
+     ],
+     [
+      "Bearbeiten: @Alex",
+      false
+     ],
+     [
+      "Löschen: @Alex",
+      false
+     ],
+     [
+      "Bearbeiten: @home",
+      false
+     ],
+     [
+      "Löschen: @home",
+      false
+     ],
+     [
+      "Bearbeiten: @office",
+      false
+     ],
+     [
+      "Löschen: @office",
+      false
+     ],
+     [
+      "Bearbeiten: @phone",
+      false
+     ],
+     [
+      "Löschen: @phone",
+      false
+     ],
+     [
+      "Bearbeiten: @town",
+      false
+     ],
+     [
+      "Löschen: @town",
+      false
+     ],
+     [
+      "Bearbeiten: #garden",
+      false
+     ],
+     [
+      "Löschen: #garden",
+      false
+     ],
+     [
+      "Bearbeiten: #urgent",
+      false
+     ],
+     [
+      "Löschen: #urgent",
+      false
+     ],
+     [
+      "Bearbeiten: #web",
+      false
+     ],
+     [
+      "Löschen: #web",
       false
      ]
     ],

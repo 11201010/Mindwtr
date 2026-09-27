@@ -411,6 +411,32 @@ describe('GtdSettingsScreen task editor layout', () => {
     expect(updateSettings).toHaveBeenCalledTimes(1);
   });
 
+  it('tells a screen reader which Auto-archive choice and task editor preset is chosen', () => {
+    storeState.settings = { ...storeState.settings, gtd: { autoArchiveDays: 14, taskEditor: {} } };
+    const textOf = (node: renderer.ReactTestInstance) => node.findAllByType(Text).map((text) => [text.props.children].flat().join('')).join('');
+
+    let archive!: renderer.ReactTestRenderer;
+    renderer.act(() => { archive = renderer.create(<GtdSettingsScreen onNavigate={vi.fn()} screen="gtd-archive" />); });
+    const days = archive.root.findAllByType(TouchableOpacity);
+    expect(days.length).toBeGreaterThan(2);
+    for (const option of days) {
+      expect(option.props.accessibilityRole).toBe('radio');
+      expect(option.props.accessibilityState).toEqual({ selected: textOf(option) === '14 days' });
+    }
+
+    let editor!: renderer.ReactTestRenderer;
+    renderer.act(() => { editor = renderer.create(<GtdSettingsScreen onNavigate={vi.fn()} screen="gtd-task-editor" />); });
+    const presets = editor.root.findAllByType(TouchableOpacity).filter((node) => ['Simple', 'Standard', 'Full'].includes(textOf(node)));
+    expect(presets.map(textOf)).toEqual(['Simple', 'Standard', 'Full']);
+    for (const option of presets) {
+      expect(option.props.accessibilityRole).toBe('radio');
+      // Chosen is what the eye sees: the tinted label.
+      const tinted = flattenStyle(option.findAllByType(Text)[0].props.style).color === '#3b82f6';
+      expect(option.props.accessibilityState).toEqual({ selected: tinted });
+    }
+    expect(presets.filter((option) => option.props.accessibilityState?.selected)).toHaveLength(1);
+  });
+
   it('saves the default project flow mode from GTD settings', () => {
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {

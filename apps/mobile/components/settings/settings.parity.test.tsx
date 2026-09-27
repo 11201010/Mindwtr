@@ -6,7 +6,9 @@
  * To recapture, keep every file under apps/ at HEAD except this one, then run
  *   MINDWTR_CAPTURE_SETTINGS_SCREENS=1 TZ=UTC bunx vitest run components/settings/settings.parity.test.tsx
  * The capture refuses to run while any other file under apps/ differs from HEAD,
- * so the provenance always names the React Native code that ran.
+ * so the provenance always names the React Native code that ran. After a
+ * recorded React Native fix, MINDWTR_DUMP_SETTINGS_SCREENS=<file> writes this
+ * run's observations, to replace only the ones the fix changes (see provenance.recaptured).
  *
  * Each scenario renders the real screen with the real core store, drives it
  * through its own controls, and records what a user sees, what the store is
@@ -861,6 +863,8 @@ describe('React Native settings screens parity fixture', () => {
     for (const scenario of menuScenarios) captured[scenario.name] = await runScenario(scenario, 'menu');
     for (const scenario of generalScenarios) captured[scenario.name] = await runScenario(scenario, 'general');
     for (const scenario of manageScenarios) captured[scenario.name] = await runScenario(scenario, 'manage');
+    // Writes this run's observations to a file, to replace only the ones a fix changes.
+    if (process.env.MINDWTR_DUMP_SETTINGS_SCREENS) writeFileSync(process.env.MINDWTR_DUMP_SETTINGS_SCREENS, JSON.stringify(captured));
     if (CAPTURE) {
       writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance: captureProvenance(), ...inputs(), observations: captured }, null, 1)}\n`);
     }

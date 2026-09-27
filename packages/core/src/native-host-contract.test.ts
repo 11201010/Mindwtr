@@ -34,7 +34,7 @@ import { getTranslationsSync } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import { zhHans } from './i18n/locales/zh-Hans';
 import type { Language } from './i18n/i18n-types';
-import type { AppSettings, Area, Project, Section, Task } from './types';
+import type { AppSettings, Area, ChecklistItem, Project, Section, Task } from './types';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
 const projectParity = JSON.parse(
@@ -1787,6 +1787,46 @@ describe('native host contract', () => {
                         .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
                 }
                 expect(host.editTaskDraft({ id: 'missing', draft })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+                for (const checklist of [
+                    'items',
+                    [{ id: 'c-1', title: 'Pack', isCompleted: false, secret: 'x' }],
+                    [{ id: 'c-1', title: 'Pack', isCompleted: 'no' }],
+                    Array.from({ length: 1001 }, (_, index) => ({ id: `c-${index}`, title: '', isCompleted: false })),
+                ]) {
+                    expect(host.editTaskDraft({ id: 'edit', draft, checklist: checklist as never }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                }
+            });
+
+            it('lays out the editor for the host\'s edited checklist, as React Native does before a save', async () => {
+                freezeClock();
+                const saved = [{ id: 'c-saved', title: 'Saved', isCompleted: false }];
+                const host = await activateEditor([
+                    editTask(),
+                    task('listed', '2026-09-01T00:00:00.000Z', { status: 'next', checklist: saved }),
+                    task('reference', '2026-09-01T00:00:00.000Z', { status: 'reference' }),
+                ], { gtd: { taskEditor: { hidden: ['checklist'] } } });
+                const details = (value: NativeTaskEditorModel) => value.layout.sections.find(({ id }) => id === 'details');
+                const layout = (id: string, checklist?: ChecklistItem[]) => {
+                    const result = host.editTaskDraft({ id, draft: openDraft(host, id), checklist });
+                    if (!result.ok) throw new Error(result.error.message);
+                    return details(result.value);
+                };
+                const unsaved = [{ id: 'c-new', title: '', isCompleted: false }];
+
+                // The field is hidden and the task has no items: no Checklist field.
+                expect(layout('edit')?.fields).not.toContain('checklist');
+                // An item added in the editor shows it, counts it and opens its section.
+                expect(layout('edit', unsaved)).toMatchObject({ fields: expect.arrayContaining(['checklist']), filledCount: 1, open: true });
+                // Items removed in the editor hide it again, though the task still has some saved.
+                expect(layout('listed')?.fields).toContain('checklist');
+                expect(layout('listed', [])?.fields).not.toContain('checklist');
+                // A reference shows its checklist only while it has items.
+                expect(layout('reference')?.fields ?? []).not.toContain('checklist');
+                expect(layout('reference', unsaved)?.fields).toContain('checklist');
+                // Nothing is written.
+                expect(storedTask()?.checklist).toBeUndefined();
+                expect(storedTask('listed')?.checklist).toEqual(saved);
             });
         });
     });

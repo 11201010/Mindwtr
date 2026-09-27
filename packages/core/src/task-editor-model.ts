@@ -597,6 +597,8 @@ export type TaskEditorModelInput = {
     /** Known tokens (the store's derived allContexts and allTags). */
     contexts: readonly string[];
     tags: readonly string[];
+    /** The checklist as edited, unsaved items included; the task's saved checklist when omitted. */
+    checklist?: Task['checklist'];
     t: (key: string) => string;
     now?: Date;
     /** Formats labels; hosts pass createDateFormatter with the user's settings. */
@@ -611,10 +613,11 @@ export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorMod
     const flags = resolveFeatureFlags(input.settings);
     const taskEditor = input.settings.gtd?.taskEditor;
     const projectSections = getTaskEditorProjectSections(input.sections, draft.projectId);
+    const checklist = input.checklist ?? task.checklist;
     const { sections, showStatusField } = getTaskEditorFieldLayout({
         task,
         draft,
-        checklist: task.checklist,
+        checklist,
         taskEditor,
         hasProjectSections: projectSections.length > 0,
         prioritiesEnabled: flags.priorities,
@@ -641,7 +644,7 @@ export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorMod
             sections: TASK_EDITOR_SECTION_ORDER.filter((id) => sections[id].length > 0).map((id) => {
                 const filledCount = countTaskEditorFilledFields(sections[id], {
                     draft,
-                    checklist: task.checklist,
+                    checklist,
                     attachments: task.attachments,
                 });
                 return {

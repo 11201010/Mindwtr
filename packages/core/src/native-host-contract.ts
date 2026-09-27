@@ -990,7 +990,7 @@ export function createNativeHostContract() {
 
     // The editor model reads the task, its containers, people, settings and language; the
     // day and minute ride along in the revision as in the other views.
-    const taskEditorModel = (task: Task, draft: TaskDraft, now: Date): NativeTaskEditorModel => {
+    const taskEditorModel = (task: Task, draft: TaskDraft, now: Date, checklist?: ChecklistItem[]): NativeTaskEditorModel => {
         const state = useTaskStore.getState();
         const { allContexts, allTags } = state.getDerivedState();
         return {
@@ -1010,6 +1010,7 @@ export function createNativeHostContract() {
                 people: state.people,
                 contexts: allContexts,
                 tags: allTags,
+                checklist,
                 t: translate,
                 now,
                 formatDate: createDateFormatter(dateFormatting()),
@@ -1949,17 +1950,23 @@ export function createNativeHostContract() {
          * layout, options and field states, exactly as the React Native editor shows them while
          * the user edits. Without `edit`, the model for `draft` as it is. Nothing is written;
          * save the result with saveTaskDraft. An edit that changes nothing returns the draft as is.
+         * `checklist` is the host's edited checklist, unsaved items included: the layout follows
+         * it as React Native's does (a hidden Checklist field shows while it has items), else
+         * the saved one.
          */
         editTaskDraft(input: {
             id: string;
             draft: TaskDraft;
             edit?: NativeTaskDraftEdit;
+            checklist?: ChecklistItem[];
         }): NativeHostResult<NativeTaskEditorModel> {
             const ready = readiness();
             if (!ready.ok) return ready;
             if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
             const draft = readTaskDraft(input.draft);
             if (!draft) return fail('INVALID_INPUT', 'draft must hold every task draft field with a valid value');
+            const checklist = input.checklist === undefined ? undefined : readChecklist(input.checklist);
+            if (checklist === null) return fail('INVALID_INPUT', 'checklist must be a checklist of at most 1,000 items');
             const state = useTaskStore.getState();
             const task = state._tasksById.get(input.id);
             if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
@@ -1971,7 +1978,7 @@ export function createNativeHostContract() {
                 defaultScheduleTime: normalizeClockTimeInput(state.settings.gtd?.defaultScheduleTime) || '',
             });
             if (!edited) return fail('INVALID_INPUT', 'edit is not a valid editor edit');
-            return { ok: true, value: taskEditorModel(task, edited, now) };
+            return { ok: true, value: taskEditorModel(task, edited, now, checklist) };
         },
 
         /** Reuse captureId for retries so a failed save cannot create a duplicate. */

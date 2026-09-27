@@ -695,6 +695,8 @@ export function GtdSettingsScreen({
                         {archive.options.map((option, idx) => (
                             <TouchableOpacity
                                 key={option.value}
+                                accessibilityRole="radio"
+                                accessibilityState={{ selected: option.selected }}
                                 style={[styles.settingRow, idx > 0 && { borderTopWidth: 1, borderTopColor: tc.border }]}
                                 onPress={() => writeSetting(option.edit)}
                             >
@@ -831,6 +833,8 @@ export function GtdSettingsScreen({
                             return (
                                 <TouchableOpacity
                                     key={option.value}
+                                    accessibilityRole="radio"
+                                    accessibilityState={{ selected }}
                                     style={[
                                         styles.taskEditorPresetButton,
                                         {

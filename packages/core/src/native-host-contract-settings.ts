@@ -88,6 +88,7 @@ import {
     getManageEditorText,
     getManageSettingsText,
     isManageAreaNameTaken,
+    isManageEditorSaveDisabled,
     MANAGE_OPEN_SECTIONS_STORAGE_KEY,
     MANAGE_SECTION_ORDER,
     parseManageOpenSections,
@@ -432,12 +433,10 @@ export function createSettingsMethods(deps: SettingsDeps) {
         }
     };
 
-    const buildManage = (openSectionsRaw: string | null) => {
-        const state = useTaskStore.getState();
-        const t = deps.t();
+    // Keys not in en.ts yet; mobile resolves the same fallbacks (manage-settings-screen.tsx).
+    const manageUntranslated = (t: Translate): ManageUntranslatedText => {
         const tf = (key: string, fallback: string) => tFallback(t, key, fallback);
-        // Keys not in en.ts yet; mobile resolves the same fallbacks (manage-settings-screen.tsx).
-        const untranslated: ManageUntranslatedText = {
+        return {
             newAreaHint: tf('areas.newHint', 'Create an area for related projects and tasks.'),
             peopleEmpty: tf('people.empty', 'No people yet'),
             newPersonHint: tf('people.newHint', 'Add someone you delegate or wait on.'),
@@ -448,6 +447,12 @@ export function createSettingsMethods(deps: SettingsDeps) {
             openReference: tf('people.openReference', 'Open reference link'),
             openReferenceFailed: tf('people.openReferenceFailed', 'Could not open this reference link.'),
         };
+    };
+
+    const buildManage = (openSectionsRaw: string | null) => {
+        const state = useTaskStore.getState();
+        const t = deps.t();
+        const untranslated = manageUntranslated(t);
         const text = getManageSettingsText(t, untranslated);
         const open = parseManageOpenSections(openSectionsRaw);
         const areas = sortManageAreas(state.areas);
@@ -717,13 +722,41 @@ export function createSettingsMethods(deps: SettingsDeps) {
         },
 
         /**
+         * The editor's name as typed, checked for a `target` (a row's `edit.target`):
+         * `saveDisabled` turns Save off (a blank name, or a new area named like a
+         * live area), and `message` is the line shown under the name while
+         * `nameTaken`, else null. Core's own rule (isManageEditorSaveDisabled), so a
+         * host asks on each keystroke instead of copying it. Nothing is written.
+         */
+        checkManageEditor(input: { target: NativeManageEditorTarget; name: string }): NativeHostResult<{
+            nameTaken: boolean;
+            saveDisabled: boolean;
+            message: string | null;
+        }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const target = isObjectRecord(input) ? readEditorTarget(input.target) : null;
+            if (!target || !isText(input.name, 500)) return fail('INVALID_INPUT', 'An editor target and the name as typed are required');
+            const { areas } = useTaskStore.getState();
+            const t = deps.t();
+            const nameTaken = isManageAreaNameTaken(target.type, input.name, areas);
+            return {
+                ok: true,
+                value: {
+                    nameTaken,
+                    saveDisabled: isManageEditorSaveDisabled(target.type, input.name, areas),
+                    message: nameTaken ? getManageEditorText(t, target.type, manageUntranslated(t)).nameTaken : null,
+                },
+            };
+        },
+
+        /**
          * The editor's Save for a `target` (a row's `edit.target`) with the dialog's
          * fields. Writes what changed against the values stored now: a new area or
          * person, a rename, a color, a note or link, the unassigned color. A blank
          * name is refused; nothing to change answers `changed: false`. A new area
          * named like a live area writes nothing: the editor keeps Save off for it
-         * and shows `editor.text.newArea.nameTaken` (isManageEditorSaveDisabled with
-         * the area rows' names).
+         * and shows `editor.text.newArea.nameTaken` (checkManageEditor).
          */
         async saveManageEditor(input: {
             requestId: string;

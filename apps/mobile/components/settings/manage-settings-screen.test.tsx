@@ -146,6 +146,7 @@ vi.mock('./settings.hooks', () => ({
         'common.add': 'Add',
         'common.cancel': 'Cancel',
         'common.delete': 'Delete',
+        'common.edit': 'Edit',
         'contexts.title': 'Contexts',
         'common.tasks': 'tasks',
         'search.title': 'Search',
@@ -229,6 +230,51 @@ describe('ManageSettingsScreen', () => {
       'mindwtr:settings:manage:openSections',
       JSON.stringify({ areas: true, people: false, somedaySections: false, contexts: false, tags: false }),
     );
+  });
+
+  it('tells a screen reader each section header is a button and whether it is open', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(null);
+
+    let tree!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+      tree = renderer.create(<ManageSettingsScreen />);
+      await flushEffects();
+    });
+    const header = () => tree.root.find(
+      (node) => node.props.testID === 'manage-section-toggle-areas' && typeof node.props.onPress === 'function',
+    );
+    expect(header().props.accessibilityRole).toBe('button');
+    expect(header().props.accessibilityState).toEqual({ expanded: false });
+
+    await renderer.act(async () => {
+      header().props.onPress();
+      await flushEffects();
+    });
+    expect(header().props.accessibilityState).toEqual({ expanded: true });
+  });
+
+  it('names the item on each row\'s edit and delete buttons', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ areas: true, contexts: true, tags: true }));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+
+    let tree!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+      tree = renderer.create(<ManageSettingsScreen />);
+      await flushEffects();
+    });
+
+    for (const label of [
+      'Edit: Unassigned', 'Edit: Design', 'Delete: Design',
+      'Edit: @office', 'Delete: @office', 'Edit: #design', 'Delete: #design',
+    ]) {
+      expect(tree.root.findByProps({ accessibilityLabel: label }).props.accessibilityRole).toBe('button');
+    }
+    // A labelled button acts on its own item.
+    renderer.act(() => {
+      tree.root.findByProps({ accessibilityLabel: 'Delete: @office' }).props.onPress();
+    });
+    expect(alertSpy.mock.calls[0]?.[1]).toBe('Delete "@office"?');
+    alertSpy.mockRestore();
   });
 
   it('renders Someday sections collapsed by default and confirms deletion', async () => {
