@@ -414,10 +414,13 @@ export const styles = StyleSheet.create({
   allDayPressable: {
     borderRadius: 6,
   },
+  // 9 above and below the grid (half the 18-high hour row), so the first and
+  // last hour labels show whole.
   timelineCard: {
     borderWidth: 1,
     borderRadius: 12,
     overflow: 'hidden',
+    paddingVertical: 9,
   },
   timelineArea: {
     position: 'relative',
@@ -436,6 +439,7 @@ export const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
   },
+  // Raised by half its height, so the rule lies on the current minute.
   nowLine: {
     position: 'absolute',
     left: 50,
@@ -444,6 +448,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     zIndex: 20,
+    transform: [{ translateY: -5 }],
   },
   nowDot: {
     width: 8,
@@ -456,6 +461,8 @@ export const styles = StyleSheet.create({
     height: 2,
     backgroundColor: '#EF4444',
   },
+  // Raised by half its height, so the divider lies on its hour, where blocks
+  // starting at that hour begin.
   hourLine: {
     position: 'absolute',
     left: 0,
@@ -464,6 +471,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     height: 18,
     paddingRight: 12,
+    transform: [{ translateY: -9 }],
   },
   hourLabel: {
     width: 56,
@@ -606,7 +614,9 @@ export const styles = StyleSheet.create({
   weekVertical: {
     flex: 1,
   },
+  // Room for the first hour label, which rises 7 to center on its rule.
   weekVerticalContent: {
+    paddingTop: 7,
     paddingBottom: 24,
   },
   weekGridRow: {
@@ -630,6 +640,7 @@ export const styles = StyleSheet.create({
     height: 1,
     opacity: 0.7,
   },
+  // Raised by half its height, so the rule lies on the current minute.
   weekNowLine: {
     position: 'absolute',
     left: 0,
@@ -638,6 +649,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     zIndex: 30,
+    transform: [{ translateY: -5 }],
   },
   weekTimedItemsLayer: {
     position: 'absolute',

@@ -35,7 +35,23 @@
   "correctionRecapturedCases": [
    "week: daylight saving week and navigation",
    "week: Monday start, seven days"
-  ]
+  ],
+  "visualFixRecapturedCases": [
+   "month: search and schedule from the details",
+   "month: add a task on a day",
+   "month: add a task to a new project and an existing task",
+   "week: density, column, header and item taps",
+   "day: timeline, all-day items and navigation",
+   "day: across the year",
+   "day: timeline tap, drag and blocks",
+   "day: search and schedule",
+   "day: day-first dates and a 24-hour clock",
+   "day: time estimates off",
+   "schedule: sections, planning and scheduling",
+   "modes: every mode and the completed toggle"
+  ],
+  "visualFixNote": "Recaptured from the React Native screen for rn-calendar-visual-20260927-01 (base 251f307a0): the Day timeline card gained 9 of vertical padding so its first and last hour labels show whole. Only the `styles` hash changed, and only in observations that show the Day timeline. The other fixes in that task (hour rows and now lines raised by half their height, 7 of top padding in the week timeline) use transform and paddingTop, which the hash does not record.",
+  "visualFixRecaptureCommand": "cd apps/mobile && TZ=UTC TMPDIR=/home/dd/tmp/rn-calendar-visual MINDWTR_CAPTURE_CALENDAR_VIEWS=1 bunx vitest run components/views/calendar-view.parity.test.tsx"
  },
  "timeZone": "America/New_York",
  "now": "2026-10-28T14:00:00.000Z",
@@ -4938,7 +4954,7 @@
       ""
      ]
     ],
-    "styles": "1cf0caea43067077",
+    "styles": "eb3a1da7f45ce825",
     "editor": null,
     "writes": [
      [
@@ -6538,7 +6554,7 @@
       ""
      ]
     ],
-    "styles": "96cf29219387a1c9",
+    "styles": "d238b5c91382de5c",
     "editor": null,
     "writes": [
      [
@@ -7002,7 +7018,7 @@
       ""
      ]
     ],
-    "styles": "3e2294e40384eedb",
+    "styles": "da499798c5a57f4e",
     "editor": null,
     "writes": [
      [
@@ -8002,7 +8018,7 @@
       ""
      ]
     ],
-    "styles": "81e9c2ef727a58e5",
+    "styles": "1937da8316e03aa0",
     "editor": null,
     "writes": [
      [
@@ -12341,7 +12357,7 @@
       ""
      ]
     ],
-    "styles": "89cdfb510262b652",
+    "styles": "24df3be9217000b6",
     "editor": null,
     "writes": [
      [
@@ -12595,7 +12611,7 @@
       ""
      ]
     ],
-    "styles": "36c35df2b82dc4f7",
+    "styles": "13d27536ed602fe0",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -12664,7 +12680,7 @@
       ""
      ]
     ],
-    "styles": "4ee2bd6d767b16f6",
+    "styles": "e0924c97e22baf9d",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -12725,7 +12741,7 @@
       ""
      ]
     ],
-    "styles": "50c1d89d457a83f3",
+    "styles": "fa397f780cefbec7",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -12780,7 +12796,7 @@
       ""
      ]
     ],
-    "styles": "349df792ffd1478e",
+    "styles": "7ddbbf650e6df856",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -12835,7 +12851,7 @@
       ""
      ]
     ],
-    "styles": "349df792ffd1478e",
+    "styles": "7ddbbf650e6df856",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -12901,7 +12917,7 @@
       ""
      ]
     ],
-    "styles": "349df792ffd1478e",
+    "styles": "7ddbbf650e6df856",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -12962,7 +12978,7 @@
       ""
      ]
     ],
-    "styles": "50c1d89d457a83f3",
+    "styles": "fa397f780cefbec7",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13026,7 +13042,7 @@
       ""
      ]
     ],
-    "styles": "4ee2bd6d767b16f6",
+    "styles": "e0924c97e22baf9d",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13091,7 +13107,7 @@
       ""
      ]
     ],
-    "styles": "36c35df2b82dc4f7",
+    "styles": "13d27536ed602fe0",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13436,7 +13452,7 @@
       ""
      ]
     ],
-    "styles": "1272322b74b5401e",
+    "styles": "a519ffd23680b4d6",
     "editor": null,
     "writes": [
      [
@@ -13498,7 +13514,7 @@
       ""
      ]
     ],
-    "styles": "5b613910c42b52e1",
+    "styles": "5b838d6912dd2fee",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13656,7 +13672,7 @@
       ""
      ]
     ],
-    "styles": "36c35df2b82dc4f7",
+    "styles": "13d27536ed602fe0",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13759,7 +13775,7 @@
       "5:30 AM"
      ]
     ],
-    "styles": "fa2012cd03c3a5da",
+    "styles": "b3da0285b960d417",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13857,7 +13873,7 @@
       "5:30 AM"
      ]
     ],
-    "styles": "f4d08e53f38310f1",
+    "styles": "15ba115126c7f149",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -13923,7 +13939,7 @@
       ""
      ]
     ],
-    "styles": "fdeb63e5666ad2da",
+    "styles": "4b54b4cbd71b5ce8",
     "editor": null,
     "writes": [
      [
@@ -14007,7 +14023,7 @@
       ""
      ]
     ],
-    "styles": "b9192d51a6e4d087",
+    "styles": "a2fb0221f515c458",
     "editor": null,
     "writes": [
      [
@@ -14081,7 +14097,7 @@
       ""
      ]
     ],
-    "styles": "b9192d51a6e4d087",
+    "styles": "a2fb0221f515c458",
     "editor": null,
     "writes": [],
     "toasts": [
@@ -14154,7 +14170,7 @@
       ""
      ]
     ],
-    "styles": "b9192d51a6e4d087",
+    "styles": "a2fb0221f515c458",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14245,7 +14261,7 @@
       ""
      ]
     ],
-    "styles": "a52010c137e0cc85",
+    "styles": "10efbd609666fac7",
     "editor": null,
     "writes": [
      [
@@ -14318,7 +14334,7 @@
       ""
      ]
     ],
-    "styles": "a52010c137e0cc85",
+    "styles": "10efbd609666fac7",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14405,7 +14421,7 @@
       ""
      ]
     ],
-    "styles": "a52010c137e0cc85",
+    "styles": "10efbd609666fac7",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14472,7 +14488,7 @@
       ""
      ]
     ],
-    "styles": "36c35df2b82dc4f7",
+    "styles": "13d27536ed602fe0",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14545,7 +14561,7 @@
       "chapter"
      ]
     ],
-    "styles": "8465fb6423767f84",
+    "styles": "fb77370bd133e6ca",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14647,7 +14663,7 @@
       "6:00 PM"
      ]
     ],
-    "styles": "339735ae4c0a8e61",
+    "styles": "084cd4d553eab58e",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14748,7 +14764,7 @@
       "6:00 PM"
      ]
     ],
-    "styles": "0ccbdb943c87cc29",
+    "styles": "d19f7d7c9085ad07",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14849,7 +14865,7 @@
       "6:00 PM"
      ]
     ],
-    "styles": "71f21abd75df6478",
+    "styles": "4a9a6dd776001e65",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -14916,7 +14932,7 @@
       ""
      ]
     ],
-    "styles": "eb22012e1e7d895b",
+    "styles": "76b3f40f98dbf48f",
     "editor": null,
     "writes": [
      [
@@ -15001,7 +15017,7 @@
       ""
      ]
     ],
-    "styles": "36c35df2b82dc4f7",
+    "styles": "13d27536ed602fe0",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -15070,7 +15086,7 @@
       ""
      ]
     ],
-    "styles": "4ee2bd6d767b16f6",
+    "styles": "e0924c97e22baf9d",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -15349,7 +15365,7 @@
       ""
      ]
     ],
-    "styles": "ac47ba4058d30f34",
+    "styles": "4e4af7df18562a0b",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -15450,7 +15466,7 @@
       "8:50 AM"
      ]
     ],
-    "styles": "a006e80daac5cd5c",
+    "styles": "46fd0953691ef9d8",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -15546,7 +15562,7 @@
       "10:20 AM"
      ]
     ],
-    "styles": "7dc47335f886e79c",
+    "styles": "1c465f95f05806f1",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -15609,7 +15625,7 @@
       ""
      ]
     ],
-    "styles": "ac47ba4058d30f34",
+    "styles": "4e4af7df18562a0b",
     "editor": null,
     "writes": [],
     "toasts": [],
@@ -16067,7 +16083,7 @@
       ""
      ]
     ],
-    "styles": "6b7b55bead1455d8",
+    "styles": "bb24d2f10631a498",
     "editor": null,
     "writes": [
      [
@@ -16792,7 +16808,7 @@
       ""
      ]
     ],
-    "styles": "36c35df2b82dc4f7",
+    "styles": "13d27536ed602fe0",
     "editor": null,
     "writes": [
      [

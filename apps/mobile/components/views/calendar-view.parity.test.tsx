@@ -470,6 +470,24 @@ const flattenStyle = (style: unknown): Record<string, unknown> => (
   Array.isArray(style) ? Object.assign({}, ...style.map(flattenStyle)) : style && typeof style === 'object' ? style as Record<string, unknown> : {}
 );
 const firstStyle = (style: unknown): unknown => (Array.isArray(style) ? firstStyle(style[0]) : style);
+const usesStyle = (style: unknown, target: unknown): boolean => (
+  style === target || (Array.isArray(style) && style.some((entry) => usesStyle(entry, target)))
+);
+const hostsStyled = (root: ReactTestInstance, target: unknown) => (
+  visibleNodes(root).filter((node) => typeof node.type === 'string' && usesStyle(node.props.style, target))
+);
+/** Where a box is drawn from: its top, moved by a margin or a vertical translate. */
+const drawnTop = (style: unknown): number => {
+  const flat = flattenStyle(style);
+  const translateY = ((flat.transform ?? []) as { translateY?: number }[]).reduce((sum, step) => sum + (step.translateY ?? 0), 0);
+  return Number(flat.top ?? 0) + Number(flat.marginTop ?? 0) + translateY;
+};
+/** Where a line centered in its box is drawn. */
+const drawnCenter = (style: unknown): number => drawnTop(style) + Number(flattenStyle(style).height) / 2;
+const edgePadding = (style: unknown, edge: 'Top' | 'Bottom'): number => {
+  const flat = flattenStyle(style);
+  return Number(flat[`padding${edge}`] ?? flat.paddingVertical ?? flat.padding ?? 0);
+};
 
 const STYLE_KEYS = [
   'backgroundColor', 'borderLeftColor', 'borderColor', 'borderStyle', 'opacity', 'color', 'textDecorationLine',
@@ -720,6 +738,43 @@ describe('React Native Calendar screen parity fixture', () => {
   it('shows a task due and scheduled on one day once in month details', async () => {
     const observations = await runScenario({ name: 'duplicate details', settings: 'month', actions: [['day', '2026-10-29']] });
     expect((observations[1].texts as string[]).filter((text) => text === 'Dentist form')).toHaveLength(1);
+  });
+
+  // PIXELS_PER_MINUTE is 1.4; NOW is 10:00 in New York.
+  it('draws each Day hour line on its hour, with room for the first and last labels', async () => {
+    await runScenario({ name: 'day hour lines', settings: 'day', actions: [] }, (root) => {
+      const rows = hostsStyled(root, styles.hourLine);
+      expect(rows).toHaveLength(25);
+      rows.forEach((row, hour) => expect(drawnCenter(row.props.style)).toBeCloseTo(hour * 60 * 1.4));
+      // A block at 9:00 starts on the 9 AM line.
+      const standup = hostsStyled(root, styles.taskBlock).find((node) => textsIn(node)[0] === 'Standup prep')!;
+      expect(drawnTop(standup.props.style)).toBeCloseTo(drawnCenter(rows[9].props.style));
+      const card = hostsStyled(root, styles.timelineCard)[0];
+      const gridHeight = Number(flattenStyle(hostsStyled(root, styles.timelineArea)[0].props.style).height);
+      expect(drawnTop(rows[0].props.style)).toBeGreaterThanOrEqual(-edgePadding(card.props.style, 'Top'));
+      const lastBottom = drawnTop(rows[24].props.style) + Number(flattenStyle(rows[24].props.style).height);
+      expect(lastBottom).toBeLessThanOrEqual(gridHeight + edgePadding(card.props.style, 'Bottom'));
+    });
+  });
+
+  it('draws the now line on the current minute in Day and Week', async () => {
+    await runScenario({ name: 'day now line', settings: 'day', actions: [] }, (root) => {
+      const [line] = hostsStyled(root, styles.nowLine);
+      expect(drawnCenter(line.props.style)).toBeCloseTo(600 * 1.4);
+    });
+    await runScenario({ name: 'week now line', settings: 'week', actions: [] }, (root) => {
+      const [line] = hostsStyled(root, styles.weekNowLine);
+      expect(drawnCenter(line.props.style)).toBeCloseTo(600 * 1.4);
+    });
+  });
+
+  it('shows the week timeline first hour label whole', async () => {
+    await runScenario({ name: 'week first label', settings: 'week', actions: [] }, (root) => {
+      const [first] = hostsStyled(root, styles.weekHourLabel);
+      expect(textsIn(first)).toEqual(['12 AM']);
+      const timeline = visibleNodes(root).find((node) => node.props.contentContainerStyle === styles.weekVerticalContent)!;
+      expect(drawnTop(first.props.style)).toBeGreaterThanOrEqual(-edgePadding(timeline.props.contentContainerStyle, 'Top'));
+    });
   });
 
   it('replays every scenario exactly as frozen', async () => {

@@ -5,7 +5,7 @@ import type { Area, Project, Section, Task } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
 import { useUiStore } from '../../store/ui-store';
 import { CalendarView } from './CalendarView';
-import { combineDateAndTime } from './calendar/calendar-primitives';
+import { combineDateAndTime, DESKTOP_HOUR_HEIGHT } from './calendar/calendar-primitives';
 import { useDesktopCalendarController } from './calendar/useDesktopCalendarController';
 import { fetchExternalCalendarEvents } from '../../lib/external-calendar-events';
 import { setCalendarTaskDragData } from '../../lib/calendar-task-drag';
@@ -274,6 +274,20 @@ describe('CalendarView', () => {
             offsetWidth.mockRestore();
             clientWidth.mockRestore();
         }
+    });
+
+    it('draws the now line on the current minute', async () => {
+        window.history.replaceState(null, '', '/?calendarView=day&calendarDate=2026-04-03');
+
+        renderCalendar();
+        await flushCalendarEffects();
+
+        const nowLine = document.querySelector('[data-calendar-timed-drop-date] .bg-destructive.rounded-full')?.parentElement;
+        const now = new Date();
+        const minutes = now.getHours() * 60 + now.getMinutes();
+        expect(nowLine).toHaveStyle({ top: `${minutes / 60 * DESKTOP_HOUR_HEIGHT}px` });
+        // Its row is as tall as the dot; raised by half, the rule lies on the minute.
+        expect(nowLine).toHaveClass('-translate-y-1/2');
     });
 
     it('lets the week timeline use the whole window height on a tall monitor', async () => {
