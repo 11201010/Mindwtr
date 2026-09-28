@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { NativeHostResult } from './native-host-contract';
-import { loadNativeRequestReceipts, pruneNativeRequestReceipts, requestRowId, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
+import { loadNativeRequestReceipts, NATIVE_UNJOURNALED_COMMANDS, pruneNativeRequestReceipts, requestRowId, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
 import { openScratchSqlite, openSqliteHost, requestId as newRequestId, value, type ScreenHost } from './screen-parity.replay';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
 import { flushPendingSave, getSaveSnapshotGeneration, getStorageAdapter, setStorageAdapter, useTaskStore } from './store';
@@ -420,6 +420,33 @@ describe('durable request receipts: the native host over SQLite', () => {
             resetNativeRequestReceipts();
             scratch.close();
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps a fingerprint of the request on disk, never its text: the command and a 128-bit hash', async () => {
+        const env = await open({});
+        const input = { title: 'Launch plan for Mira', areaId: null, requestId: newRequestId() };
+        const first = await env.host.createProject(input);
+        const rows = await env.sql<{ method: string; reply: string }>('SELECT method, reply FROM native_request_receipts');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].method).toMatch(/^createProject:[0-9a-f]{32}$/);
+        expect(rows[0].method).not.toContain('Mira');
+        // The fingerprint still tells the same request from another under its ID.
+        expect(await env.replay((restarted) => restarted.createProject(input))).toEqual({ result: first, wrote: false, receipts: false });
+        expect(await env.host.createProject({ ...input, title: 'Other' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('keeps no receipt on disk for a command the journal never keeps', async () => {
+        const unjournaled = NATIVE_UNJOURNALED_COMMANDS as Set<string>;
+        unjournaled.add('createProject');
+        try {
+            const env = await open({});
+            const input = { title: 'Launch', areaId: null, requestId: newRequestId() };
+            expect(await env.host.createProject(input)).toEqual({ ok: true, value: { id: input.requestId } });
+            expect(await env.receiptIds()).toEqual([]);
+            expect(getStorageAdapter().saveTask).toEqual(expect.any(Function));
+        } finally {
+            unjournaled.delete('createProject');
         }
     });
 

@@ -156,8 +156,9 @@ export const taskRevisionsOf = (ids: readonly string[]): NativeRevisions => {
  * a 128-bit hash of their `id@revision` entries. Deterministic, so a token a view gave
  * before a restart still matches after it while those rows are unchanged.
  */
-export const revisionsToken = (entries: readonly string[]): string => `${entries.length}:${
-    deterministicHash128(JSON.stringify(entries)).map((part) => part.toString(16).padStart(8, '0')).join('')}`;
+export const revisionsToken = (entries: readonly string[]): string => `${entries.length}:${hash128Hex(JSON.stringify(entries))}`;
+
+const hash128Hex = (text: string): string => deterministicHash128(text).map((part) => part.toString(16).padStart(8, '0')).join('');
 
 /**
  * The ID of a row a request creates beside its main row (a capture's new project),
@@ -200,9 +201,20 @@ export const withRequestProject = (projects: readonly Project[], id: string, tit
     return [{ ...own, title }, ...projects.filter((project) => project.id !== id && project.title.trim().toLowerCase() !== key)];
 };
 
+/**
+ * Commands (a receipt payload's command name, its first element) the native journal never keeps,
+ * such as one that carries a secret: their receipts stay in memory and never reach the disk.
+ * Empty today; the Sync settings pass fills it.
+ */
+export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>();
+
+const commandOf = (payload: string): string => /^\["([^"\\]{1,64})"/.exec(payload)?.[1] ?? '';
+/** What the disk keeps of a request: its command name and a 128-bit hash of its payload, never the payload's text. */
+const fingerprintOf = (payload: string): string => `${commandOf(payload)}:${hash128Hex(payload)}`;
+
 // Durable receipts: the native host only (loadNativeRequestReceipts turns them on).
-type StoredReceipt = { payload: string; reply: unknown; savedAt: string };
-type PendingReceipt = { payload: string; reply: unknown; generation: number };
+type StoredReceipt = { fingerprint: string; reply: unknown; savedAt: string };
+type PendingReceipt = { fingerprint: string; reply: unknown; generation: number };
 let durableReceipts: Map<string, StoredReceipt> | null = null;
 /** Every request ID a receipts instance holds, and its payload: one ID belongs to one action across the contract's modules. */
 const requestPayloads = new Map<string, string>();
@@ -219,20 +231,21 @@ const RECEIPTS_TABLE = `CREATE TABLE IF NOT EXISTS native_request_receipts (
 const RECEIPT_DAYS = 30;
 
 const recordPendingReceipt = (requestId: string, payload: string, reply: unknown) => {
-    pendingReceipts.set(requestId, { payload, reply, generation: getPersistenceStatus().generation });
+    pendingReceipts.set(requestId, { fingerprint: fingerprintOf(payload), reply, generation: getPersistenceStatus().generation });
 };
 
 /**
  * Native host boot, before the journal's replay: creates the receipts table (`method` is the
- * request's command and input as its receipt compares them, `reply` its first reply as JSON)
- * and loads it. From then on every landed request's receipt is kept on disk.
+ * request's fingerprint, fingerprintOf: its command and a hash of its payload; `reply` its first
+ * reply as JSON) and loads it. From then on every landed request's receipt is kept on disk,
+ * except for NATIVE_UNJOURNALED_COMMANDS.
  */
 export async function loadNativeRequestReceipts(client: SqliteClient): Promise<number> {
     await client.run(RECEIPTS_TABLE);
     const rows = await client.all<{ request_id: string; method: string; reply: string; saved_at: string }>(
         'SELECT request_id, method, reply, saved_at FROM native_request_receipts',
     );
-    durableReceipts = new Map(rows.map((row) => [row.request_id, { payload: row.method, reply: JSON.parse(row.reply), savedAt: row.saved_at }]));
+    durableReceipts = new Map(rows.map((row) => [row.request_id, { fingerprint: row.method, reply: JSON.parse(row.reply), savedAt: row.saved_at }]));
     pendingReceipts.clear();
     requestPayloads.clear();
     receiptedWritesRunning = 0;
@@ -297,7 +310,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             if (receipt.generation > generation) continue;
             await this.receiptClient.run(
                 'INSERT INTO native_request_receipts (request_id, method, reply, saved_at) VALUES (?, ?, ?, ?) ON CONFLICT(request_id) DO NOTHING',
-                [id, receipt.payload, JSON.stringify(receipt.reply ?? null), savedAt],
+                [id, receipt.fingerprint, JSON.stringify(receipt.reply ?? null), savedAt],
             );
             ids.push(id);
         }
@@ -313,7 +326,7 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             const receipt = pendingReceipts.get(id);
             if (!receipt) continue;
             pendingReceipts.delete(id);
-            durableReceipts?.set(id, { payload: receipt.payload, reply: receipt.reply, savedAt: carried!.savedAt });
+            durableReceipts?.set(id, { fingerprint: receipt.fingerprint, reply: receipt.reply, savedAt: carried!.savedAt });
         }
     }
 }
@@ -388,13 +401,14 @@ export function createNativeRequestReceipts(options: {
             // Landed and saved before a restart (or evicted since): its first reply, and nothing runs.
             const stored = durableReceipts?.get(requestId);
             if (stored) {
-                return Promise.resolve(stored.payload === payload
+                return Promise.resolve(stored.fingerprint === fingerprintOf(payload)
                     ? { ok: true, value: stored.reply as T }
                     : { ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
             }
             // Held by another module's action (landed, pending or running): refused.
-            const owner = requestPayloads.get(requestId) ?? pendingReceipts.get(requestId)?.payload;
-            if (owner !== undefined && owner !== payload) {
+            const owner = requestPayloads.get(requestId);
+            const pending = pendingReceipts.get(requestId);
+            if ((owner !== undefined && owner !== payload) || (pending && pending.fingerprint !== fingerprintOf(payload))) {
                 return Promise.resolve({ ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
             }
             if (!makeRoom()) {
@@ -408,7 +422,7 @@ export function createNativeRequestReceipts(options: {
             requestPayloads.set(requestId, payload);
             receipt.running = (async (): Promise<NativeHostResult<unknown>> => {
                 let outcome: NativeHostResult<T> | NativeUnsavedWrite<T>;
-                const durable = durableReceipts !== null;
+                const durable = durableReceipts !== null && !NATIVE_UNJOURNALED_COMMANDS.has(commandOf(payload));
                 if (durable) receiptedWritesRunning += 1;
                 try {
                     try {
