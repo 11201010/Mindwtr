@@ -1,4 +1,5 @@
-import { safeParseDate, type Project } from '@mindwtr/core';
+import { type Project } from '@mindwtr/core';
+export { formatProjectDate } from '@mindwtr/core';
 
 export type ProjectStatusPalette = Record<Project['status'], { text: string; bg: string; border: string }>;
 
@@ -26,16 +27,6 @@ export function resolveAttachmentValidationMessage(
         return t('attachments.invalidFileType');
     }
     return t('attachments.fileNotSupported');
-}
-
-export function formatProjectDate(dateStr: string | undefined, notSetLabel: string) {
-    if (!dateStr) return notSetLabel;
-    try {
-        const parsed = safeParseDate(dateStr);
-        return parsed ? parsed.toLocaleDateString() : dateStr;
-    } catch {
-        return dateStr;
-    }
 }
 
 export function normalizeProjectTag(value: string) {

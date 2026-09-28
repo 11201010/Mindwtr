@@ -1,34 +1,7 @@
-/**
- * The native host contract for the Mind Sweep screen (the Inbox's Mind Sweep
- * button), from core's mind-sweep-view-model.ts. Kept in its own file and spread
- * into createNativeHostContract.
- *
- * The screen's state stays with the host while the screen is open, as it stays in
- * React state on mobile:
- *
- * - Send it as `state` ({ scope, step, captured }); the first read sends none.
- *   A scope chip's `value` becomes `state.scope`; Start, Back and Next carry the
- *   `step` to go to. Close and Finish leave the screen, which forgets the state.
- *   The view echoes only the scope and the step: the captures stay with the host,
- *   and the view carries their counts and the requested window.
- * - The capture box's text goes in as `draft` (Add is disabled while it is blank).
- *   After an add that failed, send `addFailed: true` until the next add lands.
- * - Add is addMindSweepItem with the draft and a request UUID. Once it answers,
- *   append its `title` to `state.captured[group.id]`, clear the draft and send
- *   `addFailed: false`.
- *
- * The current cue list's captures come in windows of at most 100 (`offset`,
- * `limit`); a later window sends the first one's `revision`.
- *
- * Add takes a request UUID and retries exactly (native-request-receipts.ts): the
- * new Inbox task takes that UUID as its ID, so a retry, or a replay after a
- * restart, never adds it twice. A replay whose title differs from the task that
- * UUID made is another capture: it is refused (INVALID_INPUT).
- *
- * Only functions read this module's imports from native-host-contract.ts, so the
- * import cycle between the two files is safe.
- */
-import { MIND_SWEEP_GROUPS, getMindSweepGroups } from './mind-sweep';
+/** The native Mind Sweep reads and their durable Inbox writes. */
+import { resolveDefaultNewTaskAreaId } from './area-utils';
+import { logInfo } from './logger';
+import { MIND_SWEEP_GROUPS, getMindSweepGroups, type MindSweepScope } from './mind-sweep';
 import {
     buildMindSweepView,
     INITIAL_MIND_SWEEP_STATE,
@@ -41,6 +14,11 @@ import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostRe
 import { fail, isObjectRecord, isPaging, isText, page, paramsKey } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
 import { useTaskStore } from './store';
+import { ensureDeviceId } from './store-helpers';
+import { toStableSyncJson } from './sync-helpers';
+import { buildNewTask } from './task-creation';
+import { taskToSqliteRow } from './task-sync-schema';
+import type { AppSettings, Area, Task } from './types';
 
 export type NativeMindSweepView = Omit<MindSweepView, 'group'> & {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
@@ -54,18 +32,59 @@ export type NativeMindSweepView = Omit<MindSweepView, 'group'> & {
     }) | null;
 };
 
+type Translate = (key: string) => string;
 type MindSweepDeps = {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
-    t: () => (key: string) => string;
+    t: () => Translate;
     /** Data plus display revision: the language and the minute. */
     revision: (now: Date) => string;
 };
 
+export type NativeMindSweepRequest = { requestId: string; title: string };
+export type NativeMindSweepResult = { taskId: string; title: string };
+export type NativePreparedMindSweepAdd = {
+    version: 1;
+    request: NativeMindSweepRequest;
+    task: Task;
+    preparedAt: string;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    effectiveDefaultAreaId: string | null;
+    result: NativeMindSweepResult;
+};
+export type NativeMindSweepGuide = {
+    scope: MindSweepScope;
+    scopes: { value: MindSweepScope; label: string }[];
+    groups: { id: string; title: string; prompts: string[] }[];
+    text: {
+        title: string; intro: string; scopeLabel: string; start: string; close: string;
+        inputPlaceholder: string; add: string; back: string; next: string; progressTemplate: string;
+        groupCaptured: string; summaryTitle: string; summaryCountTemplate: string;
+        summaryEmpty: string; summaryHint: string; finish: string; addFailed: string;
+    };
+};
+
 const TITLE_LIMIT = 10_000;
+const MAX_PREPARED_TITLE = 100_000;
 const CAPTURE_LIMIT = 10_000;
+const MAX_JOURNAL = 2_000_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const STATE_KEYS = new Set(['scope', 'step', 'captured']);
 const GROUP_IDS = new Set(MIND_SWEEP_GROUPS.map((group) => group.id));
+const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const exact = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).length === keys.length
+    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+const same = (left: unknown, right: unknown) => toStableSyncJson(left) === toStableSyncJson(right);
+const instant = (value: unknown): value is string => typeof value === 'string' && INSTANT.test(value)
+    && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
+const optionalId = (value: unknown): value is string | null => value === null
+    || (typeof value === 'string' && value.length > 0 && value.length <= 500 && value.trim() === value);
+const request = (value: unknown): NativeMindSweepRequest | null => record(value)
+    && exact(value, ['requestId', 'title']) && typeof value.requestId === 'string' && UUID.test(value.requestId)
+    && typeof value.title === 'string' && value.title.length <= MAX_PREPARED_TITLE && Boolean(value.title.trim())
+    ? { requestId: value.requestId, title: value.title } : null;
 
 /** The host's screen state, completed from the first screen's; null when the screen cannot be in it. */
 function readState(value: unknown): MindSweepState | null {
@@ -87,6 +106,49 @@ function readState(value: unknown): MindSweepState | null {
     return { scope: scope as MindSweepState['scope'], step: step as number, captured: captured as Record<string, string[]> };
 }
 
+/** Only these factory dependencies influence an unstarred, unprojected Inbox row. */
+const derive = (input: NativeMindSweepRequest, preparedAt: string, deviceId: string, defaultAreaId: string | null) => {
+    const settings = { gtd: defaultAreaId ? { defaultAreaMode: 'fixed', defaultAreaId } : { defaultAreaMode: 'none' } } as AppSettings;
+    const areas = defaultAreaId ? [{ id: defaultAreaId }] as Area[] : [];
+    return buildNewTask({
+        title: input.title.trim(), initialTaskProps: { status: 'inbox' }, id: input.requestId,
+        now: preparedAt, deviceId,
+        state: { settings, _allProjects: [], _allSections: [], _allAreas: areas },
+        tasks: [], focusedCount: 0, focusTaskLimit: 1, projectOrderReserver: () => undefined,
+    });
+};
+
+/** Pure journal authority, including terminal-success cleanup before SQLite opens. */
+export const validatePreparedMindSweepAdd = (input: unknown): NativeHostResult<NativeMindSweepResult> => {
+    try {
+        if (!record(input) || !exact(input, ['request', 'prepared']) || !record(input.prepared)) {
+            return fail('INVALID_INPUT', 'Malformed prepared Mind Sweep add');
+        }
+        const bound = request(input.request);
+        const prepared = input.prepared as NativePreparedMindSweepAdd;
+        if (!bound || !exact(input.prepared, ['version', 'request', 'task', 'preparedAt', 'deviceIdBefore',
+            'deviceIdToInitialize', 'effectiveDefaultAreaId', 'result']) || prepared.version !== 1
+            || !same(bound, prepared.request) || !instant(prepared.preparedAt)
+            || !optionalId(prepared.deviceIdBefore) || !optionalId(prepared.deviceIdToInitialize)
+            || !optionalId(prepared.effectiveDefaultAreaId)
+            || (prepared.deviceIdBefore === null ? !prepared.deviceIdToInitialize || !UUID.test(prepared.deviceIdToInitialize)
+                : prepared.deviceIdToInitialize !== null)
+            || !record(prepared.task) || !record(prepared.result)
+            || !exact(prepared.result, ['taskId', 'title'])
+            || prepared.result.taskId !== bound.requestId || prepared.result.title !== bound.title.trim()
+            || JSON.stringify(input).length > MAX_JOURNAL) return fail('INVALID_INPUT', 'Malformed prepared Mind Sweep add');
+        const built = derive(bound, prepared.preparedAt, prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!,
+            prepared.effectiveDefaultAreaId);
+        if (!built.ok || !same(built.task, prepared.task)
+            || !same(taskToSqliteRow(built.task), taskToSqliteRow(prepared.task))) {
+            return fail('INVALID_INPUT', 'Prepared Mind Sweep task does not match the literal request');
+        }
+        return { ok: true, value: prepared.result };
+    } catch {
+        return fail('INVALID_INPUT', 'Malformed prepared Mind Sweep add');
+    }
+};
+
 export function createMindSweepMethods(deps: MindSweepDeps) {
     const receipts = createNativeRequestReceipts({
         save: async () => {
@@ -102,7 +164,7 @@ export function createMindSweepMethods(deps: MindSweepDeps) {
     });
 
     return {
-        /** The Mind Sweep screen for the host's state, draft and last add. */
+        /** The Android Mind Sweep screen for the host's state, draft and last add. */
         getMindSweep(input: {
             state?: Partial<MindSweepState>;
             draft?: string;
@@ -127,29 +189,23 @@ export function createMindSweepMethods(deps: MindSweepDeps) {
                 return fail('STALE_REVISION', 'The screen changed; read it again from offset zero');
             }
             const view = buildMindSweepView({ state, draft, addFailed, t: deps.t() });
-            return {
-                ok: true,
-                value: {
-                    ...view,
-                    version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision,
-                    state: { scope: state.scope, step: state.step },
-                    group: view.group && {
-                        ...view.group,
-                        captured: view.group.captured && {
-                            label: view.group.captured.label,
-                            total: view.group.captured.items.length,
-                            items: page(view.group.captured.items, window),
-                        },
+            return { ok: true, value: {
+                ...view,
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision,
+                state: { scope: state.scope, step: state.step },
+                group: view.group && {
+                    ...view.group,
+                    captured: view.group.captured && {
+                        label: view.group.captured.label,
+                        total: view.group.captured.items.length,
+                        items: page(view.group.captured.items, window),
                     },
                 },
-            };
+            } };
         },
 
-        /**
-         * Add: the trimmed draft as a new Inbox task, as mobile adds it. Reuse
-         * `requestId` to retry; the task takes it as its ID.
-         */
+        /** Android's receipt-based add; the request UUID is also the created task ID. */
         async addMindSweepItem(input: { requestId: string; title: string }): Promise<NativeHostResult<{ id: string; title: string }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
@@ -159,7 +215,6 @@ export function createMindSweepMethods(deps: MindSweepDeps) {
             const title = input.title.trim();
             const requestId = input.requestId;
             return receipts.run(requestId, JSON.stringify(['mindSweepAdd', title]), async () => {
-                // A replay after a restart: the task this UUID made answers it; another title is another capture.
                 const existing = useTaskStore.getState()._tasksById.get(requestId.toLowerCase());
                 if (existing) {
                     return existing.title === title
@@ -174,6 +229,93 @@ export function createMindSweepMethods(deps: MindSweepDeps) {
                 });
                 return settleWrite(written, { id: added.id, title });
             });
+        },
+
+        /** iOS's static guide; Swift owns the open screen state. */
+        getMindSweepGuide(input: { scope: MindSweepScope }): NativeHostResult<NativeMindSweepGuide> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!record(input) || !exact(input, ['scope']) || !['all', 'personal', 'work'].includes(input.scope)) {
+                return fail('INVALID_INPUT', 'A Mind Sweep scope is required');
+            }
+            const t = deps.t();
+            const scopes: MindSweepScope[] = ['all', 'personal', 'work'];
+            const labels = ['mindSweep.scopeAll', 'mindSweep.scopePersonal', 'mindSweep.scopeWork'];
+            return { ok: true, value: {
+                scope: input.scope,
+                scopes: scopes.map((value, index) => ({ value, label: t(labels[index]) })),
+                groups: getMindSweepGroups(input.scope).map((group) => ({ id: group.id,
+                    title: t(group.titleKey), prompts: group.promptKeys.map(t) })),
+                text: {
+                    title: t('mindSweep.title'), intro: t('mindSweep.intro'), scopeLabel: t('mindSweep.scopeLabel'),
+                    start: t('mindSweep.start'), close: t('mindSweep.close'), inputPlaceholder: t('mindSweep.inputPlaceholder'),
+                    add: t('mindSweep.add'), back: t('mindSweep.back'), next: t('mindSweep.next'),
+                    progressTemplate: t('mindSweep.progress'), groupCaptured: t('mindSweep.groupCaptured'),
+                    summaryTitle: t('mindSweep.summaryTitle'), summaryCountTemplate: t('mindSweep.summaryCount'),
+                    summaryEmpty: t('mindSweep.summaryEmpty'), summaryHint: t('mindSweep.summaryHint'),
+                    finish: t('mindSweep.finish'), addFailed: t('task.addFailed'),
+                },
+            } };
+        },
+
+        prepareMindSweepAdd(input: NativeMindSweepRequest): NativeHostResult<{ kind: 'prepared'; prepared: NativePreparedMindSweepAdd }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const bound = request(input);
+            if (!bound) return fail('INVALID_INPUT', 'A literal title and lowercase request UUID are required');
+            const state = useTaskStore.getState();
+            const preparedAt = new Date().toISOString();
+            const deviceIdBefore = state.settings.deviceId || null;
+            const device = ensureDeviceId(state.settings);
+            const effectiveDefaultAreaId = resolveDefaultNewTaskAreaId(state.settings, state._allAreas) ?? null;
+            const built = buildNewTask({
+                title: bound.title.trim(), initialTaskProps: { status: 'inbox' }, id: bound.requestId,
+                now: preparedAt, deviceId: device.deviceId, state,
+                tasks: [], focusedCount: 0, focusTaskLimit: 1, projectOrderReserver: () => undefined,
+            });
+            if (!built.ok) return fail('INVALID_INPUT', built.error);
+            const prepared: NativePreparedMindSweepAdd = {
+                version: 1, request: bound, task: built.task, preparedAt, deviceIdBefore,
+                deviceIdToInitialize: device.updated ? device.deviceId : null,
+                effectiveDefaultAreaId,
+                result: { taskId: bound.requestId, title: bound.title.trim() },
+            };
+            const detached = JSON.parse(JSON.stringify(prepared)) as NativePreparedMindSweepAdd;
+            return validatePreparedMindSweepAdd({ request: bound, prepared: detached }).ok
+                ? { ok: true, value: { kind: 'prepared', prepared: detached } }
+                : fail('INVALID_INPUT', 'Mind Sweep could not produce a valid prepared journal');
+        },
+
+        validatePreparedMindSweepAdd,
+
+        async commitPreparedMindSweepAdd(input: { request: NativeMindSweepRequest; prepared: NativePreparedMindSweepAdd }): Promise<NativeHostResult<NativeMindSweepResult>> {
+            const authority = validatePreparedMindSweepAdd(input);
+            if (!authority.ok) return authority;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const { prepared } = input;
+            const state = useTaskStore.getState();
+            const existing = state._allTasks.find((task) => task.id === prepared.task.id);
+            const receipt = existing && !existing.deletedAt && !existing.purgedAt
+                && same(taskToSqliteRow(existing), taskToSqliteRow(prepared.task));
+            if (existing && !receipt) return fail('STALE_REVISION', 'Mind Sweep request ID is occupied by another task');
+            if (!receipt && ((state.settings.deviceId || null) !== prepared.deviceIdBefore
+                || (resolveDefaultNewTaskAreaId(state.settings, state._allAreas) ?? null) !== prepared.effectiveDefaultAreaId)) {
+                return fail('STALE_REVISION', 'Mind Sweep creation defaults changed before publication');
+            }
+            const applied = await state.commitPreparedCapture({ task: prepared.task, project: null,
+                deviceIdToInitialize: prepared.deviceIdToInitialize });
+            if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Mind Sweep creation conflicts with current data');
+            if (useTaskStore.getState().persistenceFailure) {
+                try { await useTaskStore.getState().retryPersistence(); }
+                catch { return fail('SAVE_FAILED', 'Pending Mind Sweep task is not saved'); }
+            }
+            const saved = await deps.save();
+            if (!saved.ok) return saved;
+            try { logInfo('Native iOS Mind Sweep task saved', { scope: 'native-host', category: 'storage',
+                context: { releaseCheck: 'v1.3.3/native-ios-mind-sweep', outcome: receipt ? 'replayed' : 'applied' } }); }
+            catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return authority;
         },
     };
 }

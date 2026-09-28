@@ -11,6 +11,7 @@ import { safeFormatDate } from './date';
 import { buildQuickAddParseOptions } from './quick-add';
 import {
     applyQuickCaptureEdit,
+    buildQuickCaptureContextPicker,
     buildQuickCaptureView,
     createQuickCaptureOptions,
     getQuickCaptureContextPicker,
@@ -101,6 +102,15 @@ describe('capture popup model', () => {
         // "Add" keeps a choice's spelling and skips what is already chosen.
         expect(edit({ ...options, contexts: ['@home'] }, { type: 'addContexts', query: 'phone, HOME, desk' }).contexts)
             .toEqual(['@home', '@Phone', '@desk']);
+    });
+
+    it('offers keyboard submit for an already-selected context without duplicating it', () => {
+        const selected = { ...options, contexts: ['@Phone'] };
+        const picker = buildQuickCaptureContextPicker(selected, context, ' phone ', ['@Phone']);
+        expect(picker.add).toBeNull();
+        expect(picker.submit).toEqual({ type: 'addContexts', query: ' phone ' });
+        expect(edit(selected, picker.submit!).contexts).toEqual(['@Phone']);
+        expect(buildQuickCaptureContextPicker(selected, context, ' @@, ', ['@Phone']).submit).toBeNull();
     });
 
     it('keeps a chosen time when the day changes, and clears it to local midnight', () => {

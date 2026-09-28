@@ -1,8 +1,62 @@
-import { ensureDeviceId, getNextDataChangeAt, nextRevision, persist } from '../store-helpers';
+import { ensureDeviceId, getNextDataChangeAt, nextRevision, persist, replaceEntitiesInArray } from '../store-helpers';
 import { logWarn } from '../logger';
 import { generateUUID as uuidv4 } from '../uuid';
-import type { ProjectActionContext, Section, SectionActions } from './shared';
+import { sectionToSqliteRow } from '../section-sync-schema';
+import { taskToSqliteRow } from '../task-sync-schema';
+import { toStableSyncJson } from '../sync-helpers';
+import { sameProjectSqliteRow } from './project-actions';
+import type { PreparedProjectSectionCreate, PreparedProjectSectionDelete, PreparedProjectSectionRename, PreparedTaskEditResult } from '../store-types';
+import type { ProjectActionContext, Section, SectionActions, Task } from './shared';
 import { actionFail, actionOk, mutateEntities } from './shared';
+
+export const projectSectionOrderMax = (sections: readonly Section[], projectId: string): number =>
+    sections.filter((section) => section.projectId === projectId && !section.deletedAt)
+        .reduce((max, section) => Math.max(max, Number.isFinite(section.order) ? section.order : -1), -1);
+
+/** Shared RN/native Section defaults; the caller supplies the ID and clock. */
+export const buildNewSection = (input: { id: string; projectId: string; title: string;
+    initialProps?: Partial<Section>; orderMax: number; deviceId: string; now: string }): Section => ({
+    id: input.id,
+    projectId: input.projectId,
+    title: input.title.trim(),
+    description: input.initialProps?.description,
+    order: Number.isFinite(input.initialProps?.order) ? input.initialProps!.order! : input.orderMax + 1,
+    isCollapsed: input.initialProps?.isCollapsed ?? false,
+    rev: 1,
+    revBy: input.deviceId,
+    createdAt: input.initialProps?.createdAt ?? input.now,
+    updatedAt: input.now,
+});
+
+export const sameSectionSqliteRow = (left: Section, right: Section): boolean =>
+    JSON.stringify(sectionToSqliteRow(left)) === JSON.stringify(sectionToSqliteRow(right));
+
+export const sameTaskSqliteRow = (left: Task, right: Task): boolean =>
+    JSON.stringify(taskToSqliteRow(left)) === JSON.stringify(taskToSqliteRow(right));
+
+/** Compare raw JSON without reordering arrays or equating null with an absent field. */
+export const sameSectionDeleteJson = (left: unknown, right: unknown): boolean => {
+    const sorted = (_key: string, value: unknown) => value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+        : value;
+    return JSON.stringify(left, sorted) === JSON.stringify(right, sorted);
+};
+
+/** RN updateSection's title-only row, preserving every unrelated raw field. */
+export const sectionRenameEffect = (before: Section, title: string, deviceId: string,
+    now: string): PreparedProjectSectionRename['effect'] => ({
+    section: { before, after: { ...before, title: title.trim(), updatedAt: now,
+        rev: nextRevision(before.rev), revBy: deviceId } },
+});
+
+/** The existing deleteSection tombstone and every sectionId-linked Task detach. */
+export const sectionDeleteEffect = (section: Section, tasks: readonly Task[], deviceId: string,
+    now: string): PreparedProjectSectionDelete['effect'] => ({
+    section: { before: section, after: { ...section, deletedAt: now, updatedAt: now,
+        rev: nextRevision(section.rev), revBy: deviceId } },
+    tasks: tasks.map((before) => ({ before, after: { ...before, sectionId: undefined,
+        updatedAt: now, rev: nextRevision(before.rev), revBy: deviceId } })),
+});
 
 export const createSectionActions = ({
     set,
@@ -19,22 +73,8 @@ export const createSectionActions = ({
             if (!projectExists) return state;
             const deviceState = ensureDeviceId(state.settings);
             const allSections = state._allSections;
-            const maxOrder = allSections
-                .filter((section) => section.projectId === projectId && !section.deletedAt)
-                .reduce((max, section) => Math.max(max, Number.isFinite(section.order) ? section.order : -1), -1);
-            const baseOrder = Number.isFinite(initialProps?.order) ? (initialProps?.order as number) : maxOrder + 1;
-            const newSection: Section = {
-                id: uuidv4(),
-                projectId,
-                title: trimmedTitle,
-                description: initialProps?.description,
-                order: baseOrder,
-                isCollapsed: initialProps?.isCollapsed ?? false,
-                rev: 1,
-                revBy: deviceState.deviceId,
-                createdAt: initialProps?.createdAt ?? now,
-                updatedAt: now,
-            };
+            const newSection = buildNewSection({ id: uuidv4(), projectId, title: trimmedTitle, initialProps,
+                orderMax: projectSectionOrderMax(allSections, projectId), deviceId: deviceState.deviceId, now });
             createdSection = newSection;
             const newAllSections = [...allSections, newSection];
             persist(set, debouncedSave, state, {
@@ -48,6 +88,138 @@ export const createSectionActions = ({
             };
         });
         return createdSection;
+    },
+
+    commitPreparedProjectSectionCreate: async (input: PreparedProjectSectionCreate): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Section creation conflicts with current data' };
+        set((state) => {
+            const existing = state._allSections.find((section) => section.id === input.section.id);
+            // A complete Section receipt and initialized device precede mutable parent/order checks.
+            if (existing && !existing.deletedAt && !('purgedAt' in existing)
+                && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && JSON.stringify(sectionToSqliteRow(existing)) === JSON.stringify(sectionToSqliteRow(input.section))) {
+                result = { success: true, id: existing.id, outcome: 'replayed' };
+                return state;
+            }
+            const current = state._projectsById.get(input.scope.project.id);
+            if (existing || !current || current.deletedAt || current.purgedAt || current.status === 'archived'
+                || !sameProjectSqliteRow(current, input.scope.project)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || projectSectionOrderMax(state._allSections, current.id) !== input.scope.orderMax) return state;
+            const planned = buildNewSection({ id: input.section.id, projectId: current.id,
+                title: input.request.title, orderMax: input.scope.orderMax,
+                deviceId: input.deviceIdBefore ?? input.deviceIdToInitialize!, now: input.preparedAt });
+            if (JSON.stringify(sectionToSqliteRow(planned)) !== JSON.stringify(sectionToSqliteRow(input.section))) return state;
+            const sections = [...state._allSections, planned];
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { sections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: planned.id, outcome: 'applied' };
+            return { _allSections: sections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedProjectSectionRename: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Section rename conflicts with current data' };
+        set((state) => {
+            const current = state._allSections.find((section) => section.id === input.request.sectionId);
+            // The complete Section receipt precedes mutable parent, title, and device guards.
+            if (current && !current.deletedAt && !('purgedAt' in current)
+                && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && sameSectionSqliteRow(current, input.effect.section.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            const parent = state._projectsById.get(input.request.projectId);
+            if (!current || current.projectId !== input.request.projectId || current.deletedAt
+                || 'purgedAt' in current || !parent || parent.deletedAt || parent.purgedAt
+                || parent.status === 'archived' || !sameProjectSqliteRow(parent, input.scope.project)
+                || !sameSectionSqliteRow(current, input.effect.section.before)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null))
+                return state;
+            const title = input.request.title.trim();
+            if (!title || title === current.title) return state;
+            const planned = sectionRenameEffect(current, title,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.preparedAt);
+            if (toStableSyncJson(planned) !== toStableSyncJson(input.effect)) return state;
+            const sections = replaceEntitiesInArray(state._allSections, [planned.section.after]);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { sections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allSections: sections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedProjectSectionDelete: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Section delete conflicts with current data' };
+        set((state) => {
+            const sectionsAtId = state._allSections.filter((row) => row.id === input.request.sectionId);
+            const current = sectionsAtId.length === 1 ? sectionsAtId[0] : null;
+            const tasksById = new Map<string, Task>();
+            const duplicateTaskIds = new Set<string>();
+            for (const task of state._allTasks) {
+                if (tasksById.has(task.id)) duplicateTaskIds.add(task.id);
+                tasksById.set(task.id, task);
+            }
+            const frozenTasks = input.effect.tasks;
+            // The full durable receipt precedes mutable parent and linked-task scope checks.
+            if (current && !('purgedAt' in current)
+                && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && sameSectionSqliteRow(current, input.effect.section.after)
+                && frozenTasks.every(({ after }) => {
+                    const stored = tasksById.get(after.id);
+                    return stored && !duplicateTaskIds.has(after.id) && sameTaskSqliteRow(stored, after);
+                })) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            const parent = state._projectsById.get(input.request.projectId);
+            if (!current || current.projectId !== input.request.projectId || current.deletedAt
+                || 'purgedAt' in current || !parent || parent.deletedAt || parent.purgedAt
+                || parent.status === 'archived' || !sameProjectSqliteRow(parent, input.scope.project)
+                || !sameSectionDeleteJson(parent, input.scope.project)
+                || !sameSectionSqliteRow(current, input.scope.section)
+                || !sameSectionDeleteJson(current, input.scope.section)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null))
+                return state;
+            const linked = state._allTasks.filter((task) => task.sectionId === current.id);
+            if (linked.length !== input.scope.tasks.length) return state;
+            const scopedById = new Map(input.scope.tasks.map((task) => [task.id, task]));
+            if (scopedById.size !== input.scope.tasks.length || linked.some((task) => {
+                const before = scopedById.get(task.id);
+                return !before || duplicateTaskIds.has(task.id)
+                    || !sameTaskSqliteRow(task, before) || !sameSectionDeleteJson(task, before);
+            })) return state;
+            const effect = sectionDeleteEffect(current,
+                input.scope.tasks.map((task) => tasksById.get(task.id)!),
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.preparedAt);
+            if (!sameSectionDeleteJson(effect, input.effect)) return state;
+            const replacements = new Map(effect.tasks.map(({ after }) => [after.id, after]));
+            const tasks = state._allTasks.map((task) => replacements.get(task.id) ?? task);
+            const sections = state._allSections.map((section) => section.id === current.id
+                ? effect.section.after : section);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { sections, tasks,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allSections: sections, _allTasks: tasks, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     updateSection: async (id: string, updates: Partial<Section>) => {
@@ -97,27 +269,13 @@ export const createSectionActions = ({
             }
             if (section.deletedAt) return state;
             const deviceState = ensureDeviceId(state.settings);
-            const newAllSections = allSections.map((item) =>
-                item.id === id
-                    ? {
-                        ...item,
-                        deletedAt: now,
-                        updatedAt: now,
-                        rev: nextRevision(item.rev),
-                        revBy: deviceState.deviceId,
-                    }
-                    : item
-            );
-            const newAllTasks = state._allTasks.map((task) => {
-                if (task.sectionId !== id) return task;
-                return {
-                    ...task,
-                    sectionId: undefined,
-                    updatedAt: now,
-                    rev: nextRevision(task.rev),
-                    revBy: deviceState.deviceId,
-                };
-            });
+            const effect = sectionDeleteEffect(section,
+                state._allTasks.filter((task) => task.sectionId === id), deviceState.deviceId, now);
+            const newAllSections = allSections.map((item) => item.id === id
+                ? sectionDeleteEffect(item, [], deviceState.deviceId, now).section.after : item);
+            let linkedIndex = 0;
+            const newAllTasks = state._allTasks.map((task) => task.sectionId === id
+                ? effect.tasks[linkedIndex++].after : task);
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
                 sections: newAllSections,

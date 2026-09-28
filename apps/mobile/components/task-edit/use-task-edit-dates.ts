@@ -12,7 +12,7 @@ import {
     setTaskDraftTime,
     type TaskEditorDateField,
 } from '@mindwtr/core';
-import type { TaskDraft, TaskDraftSetter } from '@mindwtr/core/task-draft';
+import type { TaskDraft, TaskDraftField, TaskDraftSetter } from '@mindwtr/core/task-draft';
 
 
 type TaskEditDatePickerMode = 'start' | 'start-time' | 'due' | 'due-time' | 'review' | 'recurrence-end';
@@ -34,7 +34,7 @@ type UseTaskEditDatesParams = {
 // through the draft's cascade.
 const applyDateEdit = (setDraftField: TaskDraftSetter, field: TaskEditorDateField, value: string) => {
     for (const [key, fieldValue] of Object.entries(getTaskDraftDateEdit(field, value))) {
-        setDraftField(key as keyof TaskDraft, fieldValue as never);
+        setDraftField(key as TaskDraftField, fieldValue as never);
     }
 };
 

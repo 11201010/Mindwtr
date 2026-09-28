@@ -116,6 +116,46 @@ describe('SQLite row codec round-trip', () => {
         expect(fromRow(zipRow(columns, row))).toEqual(sparseFixture);
     });
 
+    it('task: writes a Swift-sorted checklist in the same form it reads back', () => {
+        const task: Task = {
+            ...sparseTask,
+            rev: 7,
+            checklist: [
+                { id: 'first', isCompleted: false, title: 'First' },
+                { id: 'second', isCompleted: true, title: 'Second' },
+            ],
+        };
+        const checklistIndex = TASK_SQLITE_COLUMNS.indexOf('checklist');
+        const firstRow = taskToSqliteRow(task);
+        const reloaded = mapSqliteTaskRow(zipRow(TASK_SQLITE_COLUMNS, firstRow));
+        const secondRow = taskToSqliteRow(reloaded);
+
+        expect(firstRow[checklistIndex]).toBe(JSON.stringify([
+            { id: 'first', title: 'First', isCompleted: false },
+            { id: 'second', title: 'Second', isCompleted: true },
+        ]));
+        expect(reloaded.checklist).toEqual(task.checklist);
+        expect(reloaded).toMatchObject({ rev: task.rev, createdAt: task.createdAt, updatedAt: task.updatedAt });
+        expect(secondRow).toEqual(firstRow);
+    });
+
+    it('task: writes empty and malformed checklists as the existing reader interprets them', () => {
+        const checklistIndex = TASK_SQLITE_COLUMNS.indexOf('checklist');
+        const cases: unknown[][] = [
+            [],
+            [{ id: 1, title: 'Invalid', isCompleted: false }],
+            [{ id: 'valid', isCompleted: false, title: 'Valid' }, { id: 1, title: 'Invalid' }],
+        ];
+        for (const checklist of cases) {
+            const task = { ...sparseTask, checklist: checklist as Task['checklist'] };
+            const written = taskToSqliteRow(task);
+            const read = mapSqliteTaskRow(zipRow(TASK_SQLITE_COLUMNS, [
+                ...written.slice(0, checklistIndex), JSON.stringify(checklist), ...written.slice(checklistIndex + 1),
+            ]));
+            expect(written[checklistIndex]).toBe(taskToSqliteRow(read)[checklistIndex]);
+        }
+    });
+
     it.each([
         {
             name: 'task',

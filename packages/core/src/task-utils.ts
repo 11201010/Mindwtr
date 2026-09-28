@@ -96,6 +96,8 @@ export const FOCUS_NEXT_DUE_SOON_WINDOW_DAYS = 30;
 
 type TaskStartVisibilityOptions = {
     now?: Date;
+    /** Frozen local-day boundary for a prepared native write; normal callers omit it. */
+    endOfTodayIso?: string;
     showFutureStarts?: boolean;
     /**
      * 'day' (default): a start today is visible all day — right for planning
@@ -124,6 +126,7 @@ export type TaskFocusEligibilityOptions = {
     tasks: readonly Task[];
     projects: readonly Project[] | Map<string, Project>;
     now?: Date;
+    endOfTodayIso?: string;
     sequentialProjectIds?: ReadonlySet<string>;
     sectionScopedProjectIds?: ReadonlySet<string>;
     sections?: readonly SequentialSection[];
@@ -537,6 +540,31 @@ export function isTaskFutureStart(
     return deferUntil > endOfToday;
 }
 
+/** The same future-start check with a frozen local-day boundary for prepared native replay. */
+export function isTaskFutureStartBeforeBoundary(
+    task: Pick<Task, 'startTime'> & Partial<Pick<Task, 'dueDate' | 'recurrence' | 'reviewAt'>>,
+    endOfTodayIso: string,
+): boolean {
+    const deferUntil = getTaskDeferUntil(task);
+    const boundary = safeParseDate(endOfTodayIso);
+    return Boolean(deferUntil && boundary && deferUntil > boundary);
+}
+
+export function isTaskFutureFocusCandidateBeforeBoundary(task: Task, endOfTodayIso: string): boolean {
+    return task.status === 'next' && Boolean(task.startTime) && isTaskFutureStartBeforeBoundary(task, endOfTodayIso);
+}
+
+/** The store's visible Focus cap evaluated at a frozen local-day boundary for a prepared native write. */
+export function countFocusedTasksBeforeBoundary(tasks: readonly Task[], endOfTodayIso: string): number {
+    let count = 0;
+    for (const task of tasks) {
+        if (!task.deletedAt && task.isFocusedToday === true
+            && task.status !== 'done' && task.status !== 'reference' && task.status !== 'archived'
+            && !isTaskFutureStartBeforeBoundary(task, endOfTodayIso)) count += 1;
+    }
+    return count;
+}
+
 export function isTaskFutureFocusCandidate(task: Task, now: Date = new Date()): boolean {
     return task.status === 'next' && Boolean(task.startTime) && isTaskFutureStart(task, now);
 }
@@ -600,7 +628,7 @@ export function shouldShowTaskForStart(
 ): boolean {
     if (options.showFutureStarts === true) return true;
     const now = options.now ?? new Date();
-    if (isTaskFutureStart(task, now)) return false;
+    if (options.endOfTodayIso ? isTaskFutureStartBeforeBoundary(task, options.endOfTodayIso) : isTaskFutureStart(task, now)) return false;
     if (options.granularity !== 'time') return true;
     // A date-only start stays visible all day. The unstar-on-defer rule
     // (store-helpers) deliberately keeps day granularity via
@@ -881,7 +909,7 @@ export function getTaskFocusEligibility(
         && sequentialProjectIds.has(task.projectId)
         && !sequentialFirstTaskIds.has(task.id),
     );
-    const isVisibleForStart = options.allowFutureStart === true || shouldShowTaskForStart(task, { now });
+    const isVisibleForStart = options.allowFutureStart === true || shouldShowTaskForStart(task, { now, endOfTodayIso: options.endOfTodayIso });
     const isVisibleActiveTask = isTaskInActiveProject(task, projectMap) && isVisibleForStart;
     const isReviewDueEligible = task.status !== 'inbox' && isDueForReview(task.reviewAt, now);
     const eligible = isVisibleActiveTask

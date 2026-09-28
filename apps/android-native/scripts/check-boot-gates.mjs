@@ -1920,6 +1920,7 @@ export function planLegacyJsonImport(state, current, sqliteHasData) {
   return globalThis.plan;
 }
 export async function sqliteHasAnyData() { return globalThis.sqliteHasData; }
+export function assertNativeLegacyBackupSafe() { globalThis.events.push('legacyCheck'); }
 // Core compares every persisted field; the fake compares the whole snapshot.
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
@@ -2047,6 +2048,7 @@ export const TASK_PRIORITY_COLORS = { urgent: '#dc2626', low: '#3b82f6' };
 export function themeDescriptor(theme) {
   return { nord: { scheme: 'dark', statusPreset: 'nord' }, 'material3-light': { scheme: 'light', statusPreset: null } }[theme];
 }
+export function resolveThemeStatusPreset(theme) { return themeDescriptor(theme)?.statusPreset ?? null; }
 export const useTaskStore = { getState: () => ({
   settings: globalThis.settings,
   _allTasks: globalThis.lastLoaded ? globalThis.lastLoaded.tasks : [],
@@ -2202,12 +2204,12 @@ assert.deepEqual(ready.languageInputs, ['{"storedLanguage":null,"systemLocale":"
 // Theme: the synced setting wins over RN's device-local choice, then the system; core classifies it and sends its hues.
 {
     const theme = async (stored) => (await poll(ready, ready.MindwtrHost.theme(stored))).value;
-    assert.deepEqual(await theme(''), { mode: 'system', preset: 'default', material: false, scheme: null,
+    assert.deepEqual(await theme(''), { mode: 'system', preset: 'default', presets: { light: 'default', dark: 'default' }, material: false, scheme: null,
         status: { light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
-    assert.deepEqual(await theme('material3-light'), { mode: 'material3-light', preset: 'default', material: true, scheme: 'light',
+    assert.deepEqual(await theme('material3-light'), { mode: 'material3-light', preset: 'default', presets: { light: 'default', dark: 'default' }, material: true, scheme: 'light',
         status: { light: { done: { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' } }, dark: { done: { bg: '#4ADE8026', text: '#4ADE80', border: '#4ADE80' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
     ready.settings = { theme: 'nord' };
-    assert.deepEqual(await theme('material3-light'), { mode: 'nord', preset: 'nord', material: false, scheme: 'dark',
+    assert.deepEqual(await theme('material3-light'), { mode: 'nord', preset: 'nord', presets: { light: 'nord', dark: 'nord' }, material: false, scheme: 'dark',
         status: { light: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } }, dark: { done: { bg: '#A3BE8C26', text: '#A3BE8C', border: '#A3BE8C' } } }, priority: { urgent: '#dc2626', low: '#3b82f6' } });
     ready.settings = undefined;
 }
@@ -2358,9 +2360,10 @@ assert.equal((await poll(ready, ready.MindwtrHost.language('', 'zh-CN'))).ok, tr
 assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok, true);
 // The RN legacy import runs after the validated load and before activation. RN state changes only
 // after the saved import is read back, and a failed RN state change never fails the boot.
-const bootBody = hostEntry.slice(hostEntry.indexOf('boot(legacyState: string, legacyBackup: string): string {'), hostEntry.indexOf('    window('));
-const bootOrder = ['await adapter.getData();', 'await importLegacyJson(adapter,', 'contract.activate('].map((text) => bootBody.indexOf(text));
+const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
+const bootOrder = ['await adapter.getData();', 'await importLegacyJson(adapter,', 'await activateAndVerify(adapter, recoveryLoad)'].map((text) => bootBody.indexOf(text));
 assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `boot order ${bootOrder}`);
+assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string\): string \{\s*return boot\(legacyState, legacyBackup\);/);
 const importBody = hostEntry.slice(hostEntry.indexOf('const importLegacyJson'), hostEntry.indexOf('// After a failed save'));
 const importOrder = ['adapter.latestData', 'planLegacyJsonImport(', 'legacyImportMismatch(plan.merged, loaded)', 'await adapter.saveData(plan.merged)',
     'legacyImportMismatch(plan.merged, await adapter.getData())', 'Legacy import not confirmed', 'native().rnStateCommit(',
@@ -2372,7 +2375,7 @@ assert.equal(importBody.match(/rnState = 'failed'/g).length, 1);
 assert.equal(hostEntry.match(/saveData\(/g).length, 1, 'the import is the host\'s only direct save');
 assert.equal(hostEntry.match(/rnStateCommit\(/g).length, 2, 'bridge type and one call');
 const legacyLine = /extra: Record<string, string> = \{([\s\S]*?)\};/.exec(importBody)?.[1] ?? '';
-assert(legacyLine.includes("releaseCheck: 'v1.3.3/native-android-legacy-json-import'"));
+assert(legacyLine.includes("releaseCheck: ios ? 'v1.3.3/native-ios-legacy-json-import' : 'v1.3.3/native-android-legacy-json-import'"));
 // Field names (the counts come from core's plan) are listed in packages/core/src/release-diagnostics-fields.test.ts.
 for (const [, name] of legacyLine.matchAll(/(\w+):/g)) assert.doesNotMatch(name, /key|pass|user/i);
 

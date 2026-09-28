@@ -26,6 +26,7 @@ import {
     getTaskEditorMonthlyCustom,
     getTaskEditorRecurrenceDefaultUntil,
     getTaskEditorRecurrenceDetails,
+    getTaskEditorRecurrenceCalendarPreviewHint,
     getTaskEditorRelativeStart,
     getTaskEditorReminders,
     getTaskEditorTimeEstimate,
@@ -558,5 +559,44 @@ describe('task editor schedule rules', () => {
         expect(parseRecurrenceIntervalInput('4')).toBe(4);
         expect(parseRecurrenceIntervalInput('x')).toBeNull();
         expect(WEEKDAY_ORDER).toHaveLength(7);
+    });
+});
+
+// Literal output oracle captured from the unmodified RN caller at 2d62a09a.
+// Existing schedule/model fixture JSON remains byte-for-byte unchanged.
+describe('task editor recurrence calendar preview parity', () => {
+    const originalTZ = process.env.TZ;
+    beforeAll(() => { process.env.TZ = 'America/New_York'; });
+    afterAll(() => { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ; });
+    const now = new Date('2026-09-27T12:00:00.000Z');
+    const formatDate = createDateFormatter({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
+    const t = (key: string) => key;
+    const base: Task = { id: 'preview', title: 'Preview', status: 'next', tags: ['#stored'], contexts: ['@stored'],
+        dueDate: '2026-10-01', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' };
+    const cases: Array<{ name: string; stored: Partial<Task>; edited?: Partial<TaskDraft>; hint: string }> = [
+    { name: 'scheduled daily', stored: { recurrence: { rule: 'daily', strategy: 'strict' } }, hint: 'Next calendar preview: Oct 2, 2026.' },
+    { name: 'custom monthly', stored: { dueDate: '2026-10-13', recurrence: { rule: 'monthly', strategy: 'strict', rrule: 'FREQ=MONTHLY;BYDAY=2TU' } }, hint: 'Next calendar preview: Nov 10, 2026.' },
+    { name: 'no recurrence', stored: {}, hint: '' },
+    { name: 'exhausted count', stored: { recurrence: { rule: 'daily', strategy: 'strict', count: 3, completedOccurrences: 2 } }, hint: '' },
+    { name: 'exhausted until', stored: { recurrence: { rule: 'daily', strategy: 'strict', until: '2026-10-01' } }, hint: '' },
+    { name: 'preview toggle off', stored: { recurrence: { rule: 'daily', strategy: 'strict' }, showFutureRecurrence: false }, hint: 'Next calendar preview: Oct 2, 2026.' },
+    { name: 'cleared draft date', stored: { recurrence: { rule: 'daily', strategy: 'strict' } }, edited: { dueDate: '' }, hint: '' },
+    { name: 'stored completion progress', stored: { recurrence: { rule: 'daily', strategy: 'strict', count: 3, completedOccurrences: 1 } }, hint: 'Next calendar preview: Oct 2, 2026.' },
+    { name: 'after completion', stored: { dueDate: '2026-09-25', recurrence: { rule: 'daily', strategy: 'fluid' } }, hint: 'Next calendar preview: Sep 28, 2026.' },
+    { name: 'draft status done', stored: { recurrence: { rule: 'daily', strategy: 'strict' } }, edited: { status: 'done' }, hint: '' },
+];
+    it.each(cases)('matches frozen RN output for $name without changing task or draft', ({ stored, edited, hint }) => {
+        const task = { ...base, ...stored };
+        const draft = { ...createTaskDraft(task), ...edited };
+        const before = JSON.stringify({ task, draft });
+        expect(getTaskEditorRecurrenceCalendarPreviewHint({ task, draft, t, formatDate, now })).toBe(hint);
+        expect(JSON.stringify({ task, draft })).toBe(before);
+    });
+    it('uses the supplied translation and PP formatter, including a new unsaved task', () => {
+        const format = vi.fn(() => 'localized date');
+        const draft = createTaskDraft({ ...base, recurrence: { rule: 'daily', strategy: 'strict' } });
+        expect(getTaskEditorRecurrenceCalendarPreviewHint({ task: null, draft, t: () => 'Localized preview', formatDate: format, now }))
+            .toBe('Localized preview: localized date.');
+        expect(format).toHaveBeenCalledWith('2026-10-02', 'PP');
     });
 });

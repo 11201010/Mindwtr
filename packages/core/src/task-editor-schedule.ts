@@ -16,7 +16,7 @@ import {
     type QuickDatePreset,
 } from './date';
 import { tFallback } from './i18n';
-import { buildRRuleString, editRRuleString, isMonthlyWeekdaySet, MONTHLY_WEEKDAYS, parseRRuleString, RECURRENCE_INTERVAL_MAX, type RRuleEditOverrides } from './recurrence';
+import { buildRRuleString, editRRuleString, getProjectedRecurringTaskCalendarDate, isMonthlyWeekdaySet, MONTHLY_WEEKDAYS, parseRRuleString, RECURRENCE_INTERVAL_MAX, type RRuleEditOverrides } from './recurrence';
 import { getLocalizedWeekdayButtons, getLocalizedWeekdayLabels, WEEKDAY_ORDER } from './recurrence-constants';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { REPEAT_REMINDER_INTERVAL_OPTIONS } from './schedule-utils';
@@ -331,6 +331,50 @@ export const parseTaskEditorTimeSpent = (text: string): number | undefined => {
 // Recurrence
 
 export type TaskDraftRecurrence = Pick<TaskDraft, 'recurrence' | 'recurrenceStrategy' | 'recurrenceRRule'>;
+
+/** RN's draft-backed Calendar hint, shown even when the preview toggle is off. */
+export function getTaskEditorRecurrenceCalendarPreviewHint(input: {
+    draft: TaskDraft;
+    task: Task | null;
+    t: Translate;
+    formatDate: DateFormatter;
+    now?: Date;
+}): string {
+    const { draft, task, t, formatDate } = input;
+    if (!draft.recurrence) return '';
+    const parsed = parseRRuleString(draft.recurrenceRRule);
+    const completedOccurrences = task?.recurrence && typeof task.recurrence === 'object'
+        ? task.recurrence.completedOccurrences : undefined;
+    const recurrence = {
+        rule: draft.recurrence,
+        strategy: draft.recurrenceStrategy,
+        ...(parsed.byDay?.length ? { byDay: parsed.byDay } : {}),
+        ...(parsed.byMonthDay?.length ? { byMonthDay: parsed.byMonthDay } : {}),
+        ...(parsed.count ? { count: parsed.count } : {}),
+        ...(parsed.until ? { until: parsed.until } : {}),
+        ...(typeof completedOccurrences === 'number' ? { completedOccurrences } : {}),
+        rrule: editRRuleString(draft.recurrenceRRule, draft.recurrence, {}),
+    };
+    const nowIso = (input.now ?? new Date()).toISOString();
+    const splitTokens = (value: string) => value.split(',').map((token) => token.trim()).filter(Boolean);
+    const previewTask: Task = {
+        ...(task ?? {}),
+        id: task?.id ?? 'draft-recurrence-preview',
+        title: draft.title,
+        status: draft.status,
+        tags: splitTokens(draft.tags),
+        contexts: splitTokens(draft.contexts),
+        createdAt: task?.createdAt ?? nowIso,
+        updatedAt: task?.updatedAt ?? nowIso,
+        startTime: draft.startTime || undefined,
+        dueDate: draft.dueDate || undefined,
+        reviewAt: draft.reviewAt || undefined,
+        recurrence,
+        showFutureRecurrence: true,
+    };
+    const label = formatDate(getProjectedRecurringTaskCalendarDate(previewTask, nowIso), 'PP');
+    return label ? `${tFallback(t, 'recurrence.nextCalendarPreview', 'Next calendar preview')}: ${label}.` : '';
+}
 
 export type TaskEditorMonthlyCustom = {
     interval: number;

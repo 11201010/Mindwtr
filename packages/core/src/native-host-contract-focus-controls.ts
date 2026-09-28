@@ -58,6 +58,7 @@ import type { ListFilterEdit, ListFilterState } from './list-filter-state';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
 import { fail, firstWindow, isFilterEdit, isObjectRecord, isText, matchesPickerQuery, readFilterState, type NativeWindow } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import { isSavedFilterSortField } from './saved-filters';
 import { useTaskStore } from './store';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
 import { TASK_EDITOR_ENERGY_LEVEL_OPTIONS, TASK_EDITOR_PRIORITY_OPTIONS } from './task-editor-model';
@@ -83,7 +84,9 @@ export function readNativeFocusControls(value: unknown): FocusControlState | nul
     // Focus has no search box.
     if (!filters || filters.searchQuery !== '') return null;
     if (value.savedFilterId !== undefined && value.savedFilterId !== null && !isId(value.savedFilterId)) return null;
-    if (value.sortBy !== undefined && !FOCUS_SORT_OPTIONS.includes(value.sortBy as SortField)) return null;
+    // Applying a saved filter can retain a sort that Focus's menu does not offer.
+    // A later picker edit keeps that sort after detaching the saved filter.
+    if (value.sortBy !== undefined && !isSavedFilterSortField(value.sortBy)) return null;
     return {
         filters,
         savedFilterId: (value.savedFilterId as string | null | undefined) ?? null,
@@ -589,7 +592,7 @@ export function createFocusControlMethods(deps: FocusControlDeps) {
                 || !Number.isSafeInteger(input.offset) || input.offset < 0
                 || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
                 || typeof input.revision !== 'string'
-                || (input.query !== undefined && (!isText(input.query) || input.list === 'savedFilters'))) {
+                || (input.query !== undefined && (!isText(input.query, 2000) || input.list === 'savedFilters'))) {
                 return fail('INVALID_INPUT', 'The Focus controls, a list, a valid window, the Focus revision and a picker query only for tokens or projects are required');
             }
             const { model, revision } = deps.focusModel(input.controls === undefined ? null : state, new Date());

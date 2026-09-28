@@ -6,11 +6,12 @@ import {
 import { normalizeClockTimeInput, safeFormatDate, safeParseDate, type DateFormatter } from './date';
 import { tFallback } from './i18n';
 import { getPersonOptionNames, getPersonSuggestionNames } from './people';
-import { filterProjectsBySelectedArea } from './project-utils';
+import { filterProjectsBySelectedArea, getProjectChoiceState } from './project-utils';
 import { parseRRuleString } from './recurrence';
 import { REFERENCE_HIDDEN_TASK_FIELDS } from './reference';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { getTaskEditorDateIssueLabel } from './task-date-coherence';
+import { buildTaskMovePatch, type TaskMoveDestination } from './task-container-rules';
 import {
     areDraftAttachmentsDirty,
     createTaskDraft,
@@ -36,6 +37,7 @@ import {
     getTaskDraftRecurrenceWeekdays,
     getTaskEditorDatePart,
     getTaskEditorMonthlyCustom,
+    getTaskEditorRecurrenceCalendarPreviewHint,
     getTaskEditorRecurrenceDetails,
     getTaskEditorRelativeStart,
     getTaskEditorReminders,
@@ -578,6 +580,7 @@ export type TaskEditorModel = {
         relativeStart: TaskEditorRelativeStart | null;
         /** `weekdays` are the weekly day buttons; `monthlyCustom` is the custom monthly dialog's starting state. */
         recurrence: TaskEditorRecurrenceDetails & {
+            calendarPreviewHint: string;
             weekdays: ReturnType<typeof getTaskEditorWeekdayButtons>;
             monthlyCustom: TaskEditorMonthlyCustom;
         };
@@ -609,6 +612,100 @@ export type TaskEditorModelInput = {
     /** The app language, for weekday names. */
     language?: string;
 };
+
+export type TaskDraftDestinationPicker = {
+    query: string;
+    destination: {
+        /** Render one combined row at this visible field; null when both are hidden. */
+        fieldId: 'project' | 'area' | null;
+        label: string;
+        value: string;
+        emptyLabel: string | null;
+        groups: Array<{
+            kind: TaskMoveDestination['kind'];
+            label: string | null;
+            choices: Array<{
+                id: string;
+                label: string;
+                selected: boolean;
+                patch: Pick<TaskDraft, 'projectId' | 'areaId' | 'sectionId'>;
+            }>;
+        }>;
+    };
+    section: {
+        visible: boolean;
+        label: string;
+        value: string;
+        emptyLabel: string | null;
+        choices: Array<{ id: string; label: string; selected: boolean; patch: Pick<TaskDraft, 'sectionId'> }>;
+    };
+};
+
+/** Existing destinations only, with RN's ordering, labels and exact draft move patches. */
+export function buildTaskDraftDestinationPicker(input: {
+    draft: TaskDraft;
+    layout: TaskEditorModel['layout'];
+    projects: Project[];
+    sections: readonly Section[];
+    areas: readonly Area[];
+    query: string;
+    t: (key: string) => string;
+}): TaskDraftDestinationPicker {
+    const { draft, query, t } = input;
+    const basicFields = input.layout.sections.find((section) => section.id === 'basic')?.fields ?? [];
+    const destinationFields = basicFields.filter((field): field is 'project' | 'area' => field === 'project' || field === 'area');
+    const normalizedQuery = query.trim().toLowerCase();
+    const choice = (destination: TaskMoveDestination, label: string) => {
+        const patch = buildTaskMovePatch(destination, { projectId: draft.projectId, sectionId: draft.sectionId });
+        return {
+            id: destination.kind === 'none' ? '' : destination.id,
+            label,
+            selected: destination.kind === 'none' ? !draft.projectId && !draft.areaId
+                : destination.kind === 'project' ? draft.projectId === destination.id : draft.areaId === destination.id,
+            patch: { projectId: patch.projectId ?? '', areaId: patch.areaId ?? '', sectionId: patch.sectionId ?? '' },
+        };
+    };
+    const groups: TaskDraftDestinationPicker['destination']['groups'] = [
+        { kind: 'none', label: null, choices: [choice({ kind: 'none' }, t('common.none'))] },
+    ];
+    if (destinationFields.includes('project')) {
+        const { filteredProjects } = getProjectChoiceState(filterProjectsBySelectedArea(input.projects, draft.areaId), query, input.projects);
+        groups.push({ kind: 'project', label: t('nav.projects'), choices: filteredProjects.map((project) => choice({ kind: 'project', id: project.id }, project.title)) });
+    }
+    if (destinationFields.includes('area')) {
+        const areas = input.areas.filter((area) => !area.deletedAt && (!normalizedQuery || area.name.toLowerCase().includes(normalizedQuery)))
+            .sort(compareAreasByOrder);
+        groups.push({ kind: 'area', label: t('taskEdit.areaLabel'), choices: areas.map((area) => choice({ kind: 'area', id: area.id }, area.name)) });
+    }
+    const sections = getTaskEditorProjectSections(input.sections, draft.projectId);
+    const filteredSections = sections.filter((section) => !normalizedQuery || section.title.toLowerCase().includes(normalizedQuery));
+    const sectionVisible = Boolean(draft.projectId) && basicFields.includes('section');
+    const noSection = t('taskEdit.noSectionOption');
+    return {
+        query,
+        destination: {
+            fieldId: destinationFields[0] ?? null,
+            label: t('task.destination'),
+            value: draft.projectId
+                ? input.projects.find((project) => project.id === draft.projectId && !project.deletedAt)?.title || t('taskEdit.noProjectOption')
+                : draft.areaId
+                    ? input.areas.find((area) => area.id === draft.areaId && !area.deletedAt)?.name || t('taskEdit.noAreaOption')
+                    : t('common.none'),
+            emptyLabel: groups.every((group) => group.kind === 'none' || group.choices.length === 0) ? t('common.noMatches') : null,
+            groups,
+        },
+        section: {
+            visible: sectionVisible,
+            label: t('taskEdit.sectionLabel'),
+            value: sections.find((section) => section.id === draft.sectionId)?.title || noSection,
+            emptyLabel: normalizedQuery && filteredSections.length === 0 ? t('common.noMatches') : null,
+            choices: sectionVisible ? [
+                { id: '', label: noSection, selected: !draft.sectionId, patch: { sectionId: '' } },
+                ...filteredSections.map((section) => ({ id: section.id, label: section.title, selected: draft.sectionId === section.id, patch: { sectionId: section.id } })),
+            ] : [],
+        },
+    };
+}
 
 /** The editor for one draft, as the React Native editor shows it. */
 export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorModel {
@@ -699,6 +796,7 @@ export function buildTaskEditorModel(input: TaskEditorModelInput): TaskEditorMod
             relativeStart: getTaskEditorRelativeStart(draft, t),
             recurrence: {
                 ...getTaskEditorRecurrenceDetails({ draft, task, dailyInterval, t, formatDate, now }),
+                calendarPreviewHint: getTaskEditorRecurrenceCalendarPreviewHint({ draft, task, t, formatDate, now }),
                 weekdays: getTaskEditorWeekdayButtons(
                     input.language,
                     getTaskDraftRecurrenceWeekdays(draft.recurrence, draft.recurrenceRRule),

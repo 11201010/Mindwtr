@@ -22,6 +22,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import {
     type Attachment,
     getAttachmentDisplayTitle,
+    getProjectDetailsPresentation,
     type Project,
     type ProjectSequenceTaskCue,
     type Section,
@@ -801,27 +802,11 @@ export function ProjectDetailModal({
         'Completing a project files it in Archived — reactivate it anytime.'
     );
     const projectDisplayStatus = isArchivedProject ? 'archived' : selectedProject?.status;
-    const projectStatusLabel = selectedProject
-        ? (selectedProject.cancelledAt
-            ? tFallback(t, 'projects.cancelled', 'Cancelled')
-            : projectDisplayStatus === 'active'
-            ? t('status.active')
-            : projectDisplayStatus === 'waiting'
-                ? t('status.waiting')
-                : projectDisplayStatus === 'someday'
-                    ? t('status.someday')
-                    : tFallback(t, 'status.archived', 'Archived'))
-        : '';
-    const projectTypeValueLabel = selectedProject?.isSequential
-        ? tFallback(t, 'projects.sequential', 'Sequential')
-        : tFallback(t, 'projects.parallel', 'Parallel');
-    const noAreaLabel = tFallback(t, 'projects.noArea', 'No Area');
-    const projectDetailsSummary = [
-        projectStatusLabel,
-        projectTypeValueLabel,
-        areaName && areaName !== noAreaLabel ? areaName : '',
-        selectedProjectSections.length > 0 ? `${selectedProjectSections.length} ${projectSectionsLabel}` : '',
-    ].filter(Boolean).join(' · ');
+    const projectDetails = selectedProject ? getProjectDetailsPresentation(selectedProject, {
+        isArchivedProject, areaName, sections: selectedProjectSections, t,
+    }) : null;
+    const projectStatusLabel = projectDetails?.statusLabel ?? '';
+    const projectDetailsSummary = projectDetails?.summary ?? '';
     const sortIsActive = projectTaskSortBy !== 'default';
     const projectViewOptionsActive = sortIsActive || showCompletedTasks || projectTaskReorderMode;
     const projectTaskPinnedToolbar = selectedProject ? (
@@ -1643,7 +1628,7 @@ export function ProjectDetailModal({
                                             </View>
                                             {showReviewPicker ? (
                                                 <DateTimePicker
-                                                    value={new Date(selectedProject.reviewAt || Date.now())}
+                                                    value={safeParseDate(selectedProject.reviewAt) ?? new Date()}
                                                     mode="date"
                                                     display="default"
                                                     onChange={(_, date) => {

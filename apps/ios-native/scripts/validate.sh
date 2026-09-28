@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/../../.." && pwd)"
+app="$repo/apps/ios-native"
+export TMPDIR="$app/.build/tmp"
+mkdir -p "$TMPDIR"
+cd "$repo"
+node apps/ios-native/scripts/build-bundle.mjs
+export MINDWTR_CORE_BUNDLE="$app/Resources/core-host.js"
+swift test --package-path "$app" --jobs 2
+xcodebuild -project "$app/MindwtrNative.xcodeproj" -scheme MindwtrNative \
+  -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath "$app/.build/DerivedData" -jobs 2 CODE_SIGNING_ALLOWED=NO build

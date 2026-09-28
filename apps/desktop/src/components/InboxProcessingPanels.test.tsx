@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
-import { createTaskDraft, setTaskDraftField, type Project, type Task, type TaskDraft } from '@mindwtr/core';
+import { createTaskDraft, setTaskDraftField, type Project, type Task, type TaskDraft, type TaskDraftField } from '@mindwtr/core';
 
 import { LanguageProvider } from '../contexts/language-context';
 import { InboxProcessingQuickPanel, type InboxProcessingQuickPanelProps } from './InboxProcessingQuickPanel';
@@ -95,7 +95,7 @@ const useLiveDraft = (initial: Partial<TaskDraft> = {}) => {
     const [draft, setDraft] = useState<TaskDraft>(() => ({ ...createTaskDraft(processingTask), ...initial }));
     return {
         draft,
-        setField: <K extends keyof TaskDraft>(field: K, value: TaskDraft[K]) => {
+        setField: <K extends TaskDraftField>(field: K, value: TaskDraft[K]) => {
             setDraft((current) => setTaskDraftField(current, field, value));
         },
     };

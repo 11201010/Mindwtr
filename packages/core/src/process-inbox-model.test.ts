@@ -15,12 +15,14 @@ import {
     applyProcessInboxDraftEdit,
     createProcessInboxDraft,
     getProcessInboxNotePreview,
+    getProcessInboxProgress,
     normalizeProcessInboxPickedDate,
     backProcessInboxStep,
     buildProcessInboxStepView,
     buildProcessInboxDecisionRequest,
     buildProcessInboxScheduleUpdates,
     prepareProcessInboxCommit,
+    prepareProcessInboxDraftDecision,
     formatProcessInboxScheduleValue,
     getProcessInboxStepPrompt,
     INITIAL_PROCESS_INBOX_ANSWERS,
@@ -32,6 +34,24 @@ import { resetForTests } from './store';
 import type { Task } from './types';
 
 const fixture = loadProcessInboxFixture();
+
+
+it('retains progress when new work arrives and resets for a fresh session', () => {
+    const session = { currentTaskId: 'c', visitedTaskIds: new Set(['a', 'b', 'c']),
+        skippedTaskIds: new Set(['a']), currentStep: null, stepHistory: [] };
+    const converted = getProcessInboxProgress({ total: 3, processed: 1 }, 3, session);
+    expect(converted).toEqual({ total: 5, processed: 2 });
+    const grown = getProcessInboxProgress(converted, 5, session);
+    expect(grown).toEqual({ total: 7, processed: 2 });
+    expect(getProcessInboxProgress(grown, 5, session)).toEqual(grown);
+    // Work removed by another writer counted as progress under the RN policy;
+    // a later capture must not erase that count either.
+    const removed = getProcessInboxProgress(grown, 3, session);
+    expect(removed).toEqual({ total: 7, processed: 4 });
+    expect(getProcessInboxProgress(removed, 5, session)).toEqual({ total: 9, processed: 4 });
+    expect(getProcessInboxProgress({ total: 0, processed: 0 }, 5,
+        { ...session, visitedTaskIds: new Set(['c']), skippedTaskIds: new Set() })).toEqual({ total: 5, processed: 0 });
+});
 
 describe('Process Inbox model parity with the mobile modal', () => {
     const originalTz = process.env.TZ;
@@ -138,6 +158,44 @@ describe('Process Inbox steps', () => {
             startDate: dates.startTime, reviewDate: dates.reviewAt, followUpDate: dates.reviewAt,
             delegateWho: '', assignedTo: '', projectId: null });
         expect(later.ok && later.options.fields?.startTime).toBe('2026-10-05T09:00');
+    });
+
+    it('prepares a Skip from the edited draft without replacing untouched timed dates', () => {
+        const task = { id: 'inbox', title: 'Original', description: 'Old note', status: 'inbox',
+            startTime: '2026-10-05T15:45', dueDate: '2026-10-07T11:30', reviewAt: '2026-10-08T08:15' } as Task;
+        const draft = { ...createProcessInboxDraft(task), title: 'Edited title', description: 'Edited note' };
+        const parseTitle = vi.fn((title: string) => ({ title, props: {} }));
+        const prepared = prepareProcessInboxDraftDecision({ task, draft, plan: plan({ scheduleEnabled: true }),
+            settings: { gtd: { defaultScheduleTime: '09:00' } } as never, parseTitle }, { type: 'skip' });
+        expect(parseTitle).toHaveBeenCalledExactlyOnceWith('Edited title');
+        expect(prepared).toMatchObject({ ok: true, event: { type: 'skip', fields: {
+            startTime: task.startTime, dueDate: task.dueDate, reviewAt: task.reviewAt,
+        } }, taskUpdates: { title: 'Edited title', description: 'Edited note' } });
+    });
+
+    it('keeps an explicit date-only picker over a parsed date token while merging title tokens', () => {
+        const task = { id: 'inbox', title: 'Original', status: 'inbox', dueDate: '2026-10-07T11:30' } as Task;
+        const draft = { ...createProcessInboxDraft(task), title: 'Renew /due:2026-11-01 @phone',
+            contexts: ['@desk'], dueDate: { date: '2026-11-02', dateOnly: true },
+            dirtyScheduleFields: ['dueDate' as const] };
+        const prepared = prepareProcessInboxDraftDecision({ task, draft, plan: plan({ scheduleEnabled: true }),
+            settings: { gtd: { defaultScheduleTime: '09:00' } } as never,
+            parseTitle: () => ({ title: 'Renew', props: { dueDate: '2026-11-01', contexts: ['@phone'] } }),
+        }, { type: 'next' });
+        expect(prepared).toMatchObject({ ok: true, event: { type: 'next', fields: {
+            contexts: ['@desk', '@phone'], dueDate: '2026-11-02',
+        } }, taskUpdates: { title: 'Renew' } });
+    });
+
+    it('returns the existing invalid-date notice data before any decision action', () => {
+        const task = { id: 'inbox', title: 'Original', status: 'inbox' } as Task;
+        const draft = { ...createProcessInboxDraft(task), title: 'Renew /due:impossible' };
+        const prepared = prepareProcessInboxDraftDecision({ task, draft, plan: plan({}), settings: undefined,
+            parseTitle: () => ({ title: 'Renew', props: {}, invalidDateCommands: ['/due:impossible'] }),
+        }, { type: 'next' });
+        expect(prepared).toEqual({ ok: false, reason: 'invalid-date-command', invalidDateCommands: ['/due:impossible'] });
+        expect(prepared).not.toHaveProperty('event');
+        expect(prepared).not.toHaveProperty('taskUpdates');
     });
 
     it('asks the incubate question with its own translation key', () => {

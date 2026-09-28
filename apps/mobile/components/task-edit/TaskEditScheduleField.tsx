@@ -2,25 +2,21 @@ import React from 'react';
 import { Keyboard, Platform, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
-    editRRuleString,
     editTaskDraftRecurrence,
     formatTaskEditorDate,
-    getProjectedRecurringTaskCalendarDate,
     getTaskDraftDateOnly,
     getTaskDraftRelativeStartEdit,
     getTaskEditorDateIssueLabel,
     getTaskEditorRecurrenceDefaultUntil,
     getTaskEditorRecurrenceDetails,
+    getTaskEditorRecurrenceCalendarPreviewHint,
     getTaskEditorRelativeStart,
     getTaskEditorReminders,
     hasTimeComponent,
-    parseRRuleString,
     safeFormatDate,
     safeParseDate,
     tFallback,
-    type RecurrenceRule,
     type RelativeStartOffsetUnit,
-    type Task,
     type TaskDraftRecurrenceEdit,
 } from '@mindwtr/core';
 import {
@@ -36,7 +32,6 @@ import { QuickDateChips } from '../QuickDateChips';
 import { CompactText } from '@/components/compact-text';
 import { FieldHeading } from './FieldHeading';
 import { RecurrenceIntervalInput } from './RecurrenceIntervalInput';
-import { buildRecurrenceValue } from './recurrence-utils';
 import type {
     ShowDatePickerMode,
     TaskEditFieldRendererProps,
@@ -86,7 +81,6 @@ export function TaskEditScheduleField({
         styles.statusText,
         { color: active ? tc.onTint : tc.secondaryText },
     ]);
-    const parsedRecurrenceRRule = parseRRuleString(recurrenceRRuleValue);
     const recurrenceDraft = {
         ...draft,
         recurrence: recurrenceRuleValue,
@@ -110,20 +104,6 @@ export function TaskEditScheduleField({
         setDraftField('recurrence', next.recurrence);
         setDraftField('recurrenceStrategy', next.recurrenceStrategy);
         setDraftField('recurrenceRRule', next.recurrenceRRule);
-    };
-    // The next-occurrence preview reads the draft's rule as a stored recurrence.
-    const buildPreviewRecurrence = (rule: RecurrenceRule) => {
-        const completedOccurrences = task?.recurrence && typeof task.recurrence === 'object'
-            ? task.recurrence.completedOccurrences
-            : undefined;
-        return buildRecurrenceValue(rule, recurrenceStrategyValue, {
-            byDay: parsedRecurrenceRRule.byDay,
-            byMonthDay: parsedRecurrenceRRule.byMonthDay,
-            count: parsedRecurrenceRRule.count,
-            until: parsedRecurrenceRRule.until,
-            completedOccurrences,
-            rrule: editRRuleString(recurrenceRRuleValue, rule, {}),
-        });
     };
     const openDatePicker = (mode: NonNullable<ShowDatePickerMode>) => {
         Keyboard.dismiss();
@@ -191,31 +171,7 @@ export function TaskEditScheduleField({
         ) : null
     );
     const clearTimePart = (value?: string): string => getTaskDraftDateOnly(value, safeFormatDate);
-    const projectedRecurrenceDateLabel = (() => {
-        const recurrence = draft.recurrence ? buildPreviewRecurrence(draft.recurrence) : undefined;
-        if (!recurrenceRuleValue || !recurrence) return '';
-        const nowIso = new Date().toISOString();
-        const splitTokens = (value: string) => value.split(',').map((token) => token.trim()).filter(Boolean);
-        const previewTask = {
-            ...(task ?? {}),
-            id: task?.id ?? 'draft-recurrence-preview',
-            title: draft.title,
-            status: draft.status,
-            tags: splitTokens(draft.tags),
-            contexts: splitTokens(draft.contexts),
-            createdAt: task?.createdAt ?? nowIso,
-            updatedAt: task?.updatedAt ?? nowIso,
-            startTime: draft.startTime || undefined,
-            dueDate: draft.dueDate || undefined,
-            reviewAt: draft.reviewAt || undefined,
-            recurrence,
-            showFutureRecurrence: true,
-        } as Task;
-        return safeFormatDate(getProjectedRecurringTaskCalendarDate(previewTask, nowIso), 'PP');
-    })();
-    const projectedRecurrenceDateHint = projectedRecurrenceDateLabel
-        ? `${tFallback(t, 'recurrence.nextCalendarPreview', 'Next calendar preview')}: ${projectedRecurrenceDateLabel}.`
-        : '';
+    const projectedRecurrenceDateHint = getTaskEditorRecurrenceCalendarPreviewHint({ draft, task, t, formatDate: safeFormatDate });
     const reminders = getTaskEditorReminders(draft, t);
     const renderReminderHandoffControl = () => {
         if (fieldId !== 'dueDate' || !reminders.showSkip) return null;

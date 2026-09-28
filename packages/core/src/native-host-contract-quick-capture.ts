@@ -15,7 +15,7 @@
  * the import cycle between the two files is safe.
  */
 import { serializeBackupData } from './backup-transfer';
-import { resolveCaptureAreaQuery, resolveCaptureProjectQuery, type CaptureTaskPlan } from './capture';
+import { applyCapturedProject, resolveCaptureAreaQuery, resolveCaptureProjectQuery, type CaptureTaskPlan } from './capture';
 import { safeParseDate, type DateFormatter } from './date';
 import type { TranslateFn } from './i18n';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
@@ -45,11 +45,22 @@ import {
     type QuickCaptureSaved,
     type QuickCaptureView,
 } from './quick-capture-model';
-import { isSelectableProjectForTaskAssignment } from './project-utils';
+import { findSelectableProjectByTitleAndArea, isSelectableProjectForTaskAssignment } from './project-utils';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isSandboxMode } from './sandbox';
 import { flushPendingSave, getStorageAdapter, useTaskStore } from './store';
-import type { Task, TaskPriority } from './types';
+import type { Project, Task, TaskPriority } from './types';
+import { buildNewTask } from './task-creation';
+import { buildNewProject } from './store-projects/project-actions';
+import { createProjectOrderReserver, ensureDeviceId, getReferenceTaskFieldClears } from './store-helpers';
+import { normalizeFocusTaskLimit } from './focus-utils';
+import { normalizeRecurrenceForLoad } from './recurrence';
+import { normalizeTaskLifecycleFields, normalizeTaskStatus } from './task-status';
+import { taskFromSqliteRow, taskToSqliteRow, TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA } from './task-sync-schema';
+import { projectToSqliteRow, PROJECT_SYNC_FIELD_SCHEMA } from './project-sync-schema';
+import { toStableSyncJson } from './sync-helpers';
+import { generateUUID } from './uuid';
+import { logInfo } from './logger';
 
 type NativeHostErrorCode = Extract<NativeHostResult<never>, { ok: false }>['error']['code'];
 
@@ -99,6 +110,27 @@ export type NativeQuickCaptureSubmitResult =
     | { kind: 'confirmLines'; confirm: ReturnType<typeof getQuickCaptureBulkConfirm>; lineCount: number };
 
 export type NativeQuickCaptureLinesResult = { kind: 'saved'; taskIds: string[] } | { kind: 'refused'; notice: QuickCaptureNotice };
+
+export type NativeQuickCaptureInput = {
+    text: string;
+    options: QuickCaptureOptions;
+    captureId: string;
+    openAfterSave?: boolean;
+};
+
+/** Private host journal payload, produced by prepareQuickCapture before any write. */
+export type NativePreparedQuickCapture = {
+    version: 1;
+    request: NativeQuickCaptureInput;
+    task: Task;
+    project: Project | null;
+    result: Extract<NativeQuickCaptureSubmitResult, { kind: 'saved' }>;
+    deviceIdToInitialize: string | null;
+};
+
+export type NativeQuickCapturePrepareResult =
+    | { kind: 'prepared'; prepared: NativePreparedQuickCapture }
+    | Extract<NativeQuickCaptureSubmitResult, { kind: 'refused' | 'confirmLines' }>;
 
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({ ok: false, error: { code, message } });
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
@@ -152,6 +184,132 @@ const readOptions = (value: unknown): QuickCaptureOptions | null => {
         contexts: [...(value.contexts as string[])],
     } as QuickCaptureOptions;
     return resolveFeatureFlags(useTaskStore.getState().settings).priorities ? options : { ...options, priority: null };
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const hasKeys = (value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []) => (
+    required.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    && Object.keys(value).every((key) => required.includes(key) || optional.includes(key))
+);
+const isInstant = (value: unknown): value is string => isText(value, 64) && INSTANT_PATTERN.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const isCaptureDate = (value: unknown): value is string => isInstant(value) || (
+    isText(value, 10) && DAY_PATTERN.test(value)
+    && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`))
+    && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value
+);
+const isNonemptyText = (value: unknown): value is string => isText(value, TEXT_LIMIT) && value.trim().length > 0;
+
+/** Identity never consults current feature flags or interprets a day in the current timezone. */
+const readOriginalOptions = (value: unknown): QuickCaptureOptions | null => {
+    if (!isObjectRecord(value)) return null;
+    const keys = Object.keys(OPTION_CHECKS) as (keyof QuickCaptureOptions)[];
+    if (!hasKeys(value, keys) || !keys.every((key) => key === 'dueDate' || key === 'startTime'
+        ? value[key] === null || isCaptureDate(value[key]) : OPTION_CHECKS[key](value[key]))) return null;
+    if (value.dueDateHasTime === true && typeof value.dueDate === 'string' && DAY_PATTERN.test(value.dueDate)) return null;
+    return Object.fromEntries(keys.map((key) => [key, key === 'contexts' ? [...value.contexts as string[]] : value[key]])) as QuickCaptureOptions;
+};
+
+const readCaptureRequest = (value: unknown): NativeQuickCaptureInput | null => {
+    if (!isObjectRecord(value) || !hasKeys(value, ['text', 'options', 'captureId'], ['openAfterSave'])
+        || !isText(value.text, TEXT_LIMIT) || !isText(value.captureId, 36) || !UUID_PATTERN.test(value.captureId)
+        || (value.openAfterSave !== undefined && typeof value.openAfterSave !== 'boolean')) return null;
+    const options = readOriginalOptions(value.options);
+    return options ? { text: value.text, options, captureId: value.captureId.toLowerCase(), openAfterSave: value.openAfterSave === true } : null;
+};
+
+const sameJson = (left: unknown, right: unknown) => toStableSyncJson(left) === toStableSyncJson(right);
+const canonicalMetadata = (row: Record<string, unknown>) => isText(row.id, 36) && UUID_PATTERN.test(row.id)
+    && row.id === row.id.toLowerCase() && row.rev === 1 && isNonemptyText(row.revBy)
+    && isInstant(row.createdAt) && row.updatedAt === row.createdAt
+    && row.deletedAt === undefined && row.purgedAt === undefined;
+const isStrings = (value: unknown) => Array.isArray(value) && value.length <= 1000 && value.every(isNonemptyText);
+const isLinkAttachment = (value: unknown) => isObjectRecord(value)
+    && hasKeys(value, ['id', 'kind', 'title', 'uri', 'createdAt', 'updatedAt'])
+    && isText(value.id, 36) && UUID_PATTERN.test(value.id) && value.kind === 'link'
+    && isNonemptyText(value.title) && isNonemptyText(value.uri)
+    && isInstant(value.createdAt) && value.updatedAt === value.createdAt;
+
+// Capture has a deliberately narrower transport than Task/import: no arbitrary
+// attachments, archive history, checklist, or editor-only fields can be inserted.
+const CAPTURE_TASK_CHECKS: Partial<Record<keyof Task, (value: unknown) => boolean>> = {
+    id: isNonemptyText, title: (v) => isNonemptyText(v) && v.trim() === v,
+    status: (v) => typeof v === 'string' && normalizeTaskStatus(v) === v,
+    taskMode: (v) => v === 'task', tags: isStrings, contexts: isStrings,
+    pushCount: (v) => v === 0, rev: (v) => v === 1, revBy: isNonemptyText,
+    createdAt: isInstant, updatedAt: isInstant, completedAt: isInstant,
+    isFocusedToday: (v) => typeof v === 'boolean', suppressMindwtrReminders: (v) => v === false,
+    priority: (v) => QUICK_CAPTURE_PRIORITY_OPTIONS.includes(v as TaskPriority),
+    energyLevel: (v) => ['low', 'medium', 'high'].includes(v as string),
+    assignedTo: isNonemptyText, description: (v) => isText(v, NOTE_LIMIT + TEXT_LIMIT),
+    startTime: isCaptureDate, dueDate: isCaptureDate, reviewAt: isCaptureDate,
+    projectId: isNonemptyText, sectionId: isNonemptyText, areaId: isNonemptyText,
+    order: (v) => typeof v === 'number' && Number.isFinite(v),
+    orderNum: (v) => typeof v === 'number' && Number.isFinite(v),
+    recurrence: (v) => isObjectRecord(v) && sameJson(v, normalizeRecurrenceForLoad(v))
+        && (v.until === undefined || isCaptureDate(v.until)),
+    attachments: (v) => Array.isArray(v) && v.length <= 1000 && v.every(isLinkAttachment),
+};
+const readPreparedTask = (value: unknown): Task | null => {
+    if (!isObjectRecord(value) || !canonicalMetadata(value)
+        || !['id', 'title', 'status', 'taskMode', 'tags', 'contexts', 'pushCount', 'isFocusedToday'].every((key) => key in value)
+        || !Object.keys(value).every((key) => TASK_SYNC_FIELD_SCHEMA.some((field) => field.name === key)
+            && (value[key] === undefined || CAPTURE_TASK_CHECKS[key as keyof Task]?.(value[key]) === true))) return null;
+    const task = value as unknown as Task;
+    if (task.order !== task.orderNum || (task.projectId && task.areaId) || (task.sectionId && !task.projectId)) return null;
+    if (task.projectId ? !Number.isFinite(task.order) : task.order !== undefined) return null;
+    if (!sameJson(taskToSqliteRow(task), taskToSqliteRow(normalizeTaskLifecycleFields(task)))) return null;
+    if (task.status === 'reference' && !sameJson(taskToSqliteRow(task), taskToSqliteRow({ ...task, ...getReferenceTaskFieldClears() }))) return null;
+    // Creation promotes a starred Inbox row; lifecycle/reference checks above
+    // cover terminal states. Review-due Someday can also receive a valid star.
+    if (task.isFocusedToday && task.status === 'inbox') return null;
+    // JSON object key order is not stable across the native journal. Decode the
+    // persisted representation once so attachment/recurrence JSON uses the same
+    // field order as SQLite loads, while preserving array order and every value.
+    const row = taskToSqliteRow(task);
+    const decoded = taskFromSqliteRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, row[index]])));
+    return { ...decoded, recurrence: normalizeRecurrenceForLoad(decoded.recurrence) };
+};
+
+const readPreparedProject = (value: unknown): Project | null => {
+    if (!isObjectRecord(value) || !canonicalMetadata(value) || !isNonemptyText(value.title)
+        || !isText(value.color) || typeof value.order !== 'number' || !Number.isFinite(value.order)
+        || typeof value.isSequential !== 'boolean' || !Array.isArray(value.tagIds) || value.tagIds.length !== 0
+        || (value.areaId !== undefined && !isNonemptyText(value.areaId))
+        || (value.areaTitle !== undefined && !isNonemptyText(value.areaTitle))
+        || !Object.keys(value).every((key) => PROJECT_SYNC_FIELD_SCHEMA.some((field) => field.name === key))) return null;
+    const project = value as unknown as Project;
+    const canonical = buildNewProject({
+        id: project.id, title: project.title, color: project.color,
+        initialProps: { order: project.order, isSequential: project.isSequential, areaId: project.areaId },
+        existingProjects: [],
+        existingAreas: project.areaId && project.areaTitle ? [{ id: project.areaId, name: project.areaTitle, order: 0, createdAt: project.createdAt, updatedAt: project.createdAt }] : [],
+        settings: {}, deviceId: project.revBy!, now: project.createdAt,
+    });
+    return sameJson(project, canonical) && sameJson(projectToSqliteRow(project), projectToSqliteRow(canonical)) ? project : null;
+};
+
+const readPreparedCapture = (value: unknown): NativePreparedQuickCapture | null => {
+    if (!isObjectRecord(value) || !hasKeys(value, ['version', 'request', 'task', 'project', 'result', 'deviceIdToInitialize']) || value.version !== 1) return null;
+    const request = readCaptureRequest(value.request);
+    const task = readPreparedTask(value.task);
+    const project = value.project === null ? null : readPreparedProject(value.project);
+    if (!request || !task || (value.project !== null && !project) || request.captureId !== task.id
+        || (project && (task.projectId !== project.id || project.createdAt !== task.createdAt || project.revBy !== task.revBy))
+        || (value.deviceIdToInitialize !== null && (value.deviceIdToInitialize !== task.revBy || !isText(value.deviceIdToInitialize, 36) || !UUID_PATTERN.test(value.deviceIdToInitialize)))) return null;
+    const next = request.openAfterSave ? 'open' : request.options.addAnother ? 'addAnother' : 'close';
+    const result = value.result;
+    if (!isObjectRecord(result) || !hasKeys(result, ['kind', 'taskId', 'next', 'reset'], ['projectId'])
+        || result.kind !== 'saved' || result.taskId !== task.id || result.projectId !== task.projectId || result.next !== next) return null;
+    let reset: NativePreparedQuickCapture['result']['reset'] = null;
+    if (next === 'addAnother') {
+        if (!isObjectRecord(result.reset) || !hasKeys(result.reset, ['text', 'options']) || result.reset.text !== '') return null;
+        const options = readOriginalOptions(result.reset.options);
+        if (!options || !sameJson(options, createQuickCaptureOptions({ projects: [], defaultAreaId: options.areaId, addAnother: true }))) return null;
+        reset = { text: '', options };
+    } else if (result.reset !== null) return null;
+    return { version: 1, request, task, project, deviceIdToInitialize: value.deviceIdToInitialize as string | null,
+        result: { kind: 'saved', taskId: task.id, ...(task.projectId ? { projectId: task.projectId } : { projectId: undefined }), next, reset } };
 };
 
 const sameTokens = (left: readonly string[] | undefined, right: readonly string[] | undefined) => (
@@ -342,6 +500,86 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
     };
 
     return {
+        /** Read-only. The serial native owner must journal this result before commit. */
+        prepareQuickCapture(input: NativeQuickCaptureInput): NativeHostResult<NativeQuickCapturePrepareResult> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readCaptureRequest(input);
+            if (!request) return fail('INVALID_INPUT', 'A complete capture request and UUID are required');
+            const options = readOptions(request.options)!;
+            const plan = planQuickCaptureSave(request.text);
+            if (plan.kind === 'empty') return fail('INVALID_INPUT', 'Type something to capture');
+            if (plan.kind === 'bulk') return { ok: true, value: { kind: 'confirmLines', confirm: getQuickCaptureBulkConfirm(plan.lines, deps.t()), lineCount: plan.lines.length } };
+            const ctx = context();
+            const planned = planQuickCaptureTask({ text: plan.text, options }, ctx);
+            if (!planned.success) return planned.reason === 'invalid-date-command'
+                ? { ok: true, value: { kind: 'refused', notice: getQuickCaptureInvalidDateNotice(deps.t(), planned.invalidDateCommands) } }
+                : fail('INVALID_INPUT', 'Type something to capture');
+            const state = useTaskStore.getState();
+            if (state._allTasks.some((task) => task.id === request.captureId)) return fail('INVALID_INPUT', 'Capture ID already exists; replay its prepared journal');
+            const device = ensureDeviceId(state.settings);
+            const now = ctx.now.toISOString();
+            let project: Project | null = null;
+            let props = planned.props;
+            if (planned.projectToCreate) {
+                const create = planned.projectToCreate;
+                const duplicate = findSelectableProjectByTitleAndArea(state._allProjects, create.title, create.initialProps?.areaId);
+                project = duplicate ? null : buildNewProject({
+                    ...create, id: generateUUID(), existingProjects: state._allProjects, existingAreas: state._allAreas,
+                    settings: state.settings, deviceId: device.deviceId, now,
+                });
+                props = applyCapturedProject(props, duplicate?.id ?? project!.id);
+            }
+            const projects = project ? [...state._allProjects, project] : state._allProjects;
+            if (props.projectId && !projects.some((entry) => entry.id === props.projectId && isSelectableProjectForTaskAssignment(entry))) return fail('INVALID_INPUT', 'Project is not available for capture');
+            if (project?.areaId && !state._allAreas.some((entry) => entry.id === project.areaId && !entry.deletedAt)) return fail('INVALID_INPUT', 'Area is not available for capture');
+            const built = buildNewTask({
+                title: planned.title.trim(), initialTaskProps: props, id: request.captureId, now, deviceId: device.deviceId,
+                state: { ...state, _allProjects: projects }, tasks: state._allTasks,
+                focusedCount: state.getFocusedCount(), focusTaskLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
+                projectOrderReserver: createProjectOrderReserver(state._allTasks),
+            });
+            if (!built.ok) return fail('INVALID_INPUT', built.error);
+            const next = request.openAfterSave ? 'open' : request.options.addAnother ? 'addAnother' : 'close';
+            const prepared: NativePreparedQuickCapture = {
+                version: 1, request, task: built.task, project, deviceIdToInitialize: device.updated ? device.deviceId : null,
+                result: { kind: 'saved', taskId: built.task.id, projectId: built.task.projectId, next,
+                    reset: next === 'addAnother' ? { text: '', options: freshOptions(true) } : null },
+            };
+            // Detach every nested row/option from live state, and exercise the same
+            // decoder used after a journal JSON round-trip before handing it out.
+            const decoded = readPreparedCapture(JSON.parse(JSON.stringify(prepared)));
+            return decoded ? { ok: true, value: { kind: 'prepared', prepared: decoded } }
+                : fail('INVALID_INPUT', 'Capture could not produce a valid prepared journal');
+        },
+
+        /** Replay only the journaled rows; no parsing, clock, settings or focus policy runs here. */
+        async commitPreparedQuickCapture(input: { request: NativeQuickCaptureInput; prepared: NativePreparedQuickCapture }): Promise<NativeHostResult<Extract<NativeQuickCaptureSubmitResult, { kind: 'saved' }>>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !hasKeys(input, ['request', 'prepared'])) return fail('INVALID_INPUT', 'A prepared capture command is required');
+            let prepared: NativePreparedQuickCapture | null;
+            try {
+                const request = readCaptureRequest(input.request);
+                prepared = readPreparedCapture(JSON.parse(JSON.stringify(input.prepared)));
+                if (!request || !prepared || !sameJson(request, prepared.request)) return fail('INVALID_INPUT', 'Prepared capture request or journal does not match');
+            } catch {
+                return fail('INVALID_INPUT', 'Prepared capture journal is malformed');
+            }
+            const result = await useTaskStore.getState().commitPreparedCapture(prepared);
+            if (!result.success) return fail('INVALID_INPUT', result.error ?? 'Prepared capture conflicts with current data');
+            const saved = await durableSave();
+            if (!saved.ok) return saved;
+            rebuildParseOptions();
+            try {
+                logInfo('Prepared native capture saved', {
+                    scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.3/native-prepared-capture', operation: 'captureCommit', count: 1 },
+                });
+            } catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return { ok: true, value: prepared.result };
+        },
+
         /**
          * Open the popup: rebuilds the known-token bag and returns an empty draft
          * with the starting options (the default area). Apply the stored "Add

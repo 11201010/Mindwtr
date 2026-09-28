@@ -63,6 +63,11 @@ const SORT_FIELD_VALUES = new Set<SortField>([
     'project',
     'updated',
 ]);
+
+/** Sort values retained by saved filters, including values outside a screen's sort menu. */
+export const isSavedFilterSortField = (value: unknown): value is SortField =>
+    typeof value === 'string' && SORT_FIELD_VALUES.has(value as SortField);
+
 const DATE_PRESET_VALUES = new Set(['today', 'this_week', 'this_month', 'overdue', 'no_date']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -494,8 +499,8 @@ export function normalizeSavedFilter(value: unknown): SavedFilter | null {
     // A missing timestamp reads as empty here and is never written back.
     const createdAt = typeof value.createdAt === 'string' ? value.createdAt : '';
     const updatedAt = typeof value.updatedAt === 'string' && value.updatedAt.trim() ? value.updatedAt : createdAt;
-    const sortBy = typeof value.sortBy === 'string' && SORT_FIELD_VALUES.has(value.sortBy as SortField)
-        ? value.sortBy as SortField
+    const sortBy = isSavedFilterSortField(value.sortBy)
+        ? value.sortBy
         : undefined;
     const sortOrder = value.sortOrder === 'asc' || value.sortOrder === 'desc' ? value.sortOrder : undefined;
     const groupBy = typeof value.groupBy === 'string' && FOCUS_GROUP_BY_VALUES.has(value.groupBy as FocusGroupBy)

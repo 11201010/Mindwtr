@@ -21,6 +21,7 @@ import {
   createTaskSimilarityIndex,
   formatAIErrorAlertBody,
   formatProcessInboxProgressLabel,
+  getProcessInboxProgress,
   getProcessInboxCurrentCandidate,
   getProcessInboxDefaultScheduleTime,
   getProcessInboxPersonSuggestions,
@@ -262,6 +263,9 @@ export function useInboxProcessingController({
   const isReturningItem = Boolean(currentTask && isProcessInboxReturningTask(currentTask));
   const totalCount = inboxTasks.length;
   const processedCount = totalCount - processingQueue.length;
+  const progressRef = useRef({ total: 0, processed: 0 });
+  const progress = getProcessInboxProgress(progressRef.current, processingQueue.length, processingSession);
+  progressRef.current = visible ? progress : { total: 0, processed: 0 };
   const formatProgressLabel = useCallback(
     (current: number, total: number) => formatProcessInboxProgressLabel(t, current, total),
     [t],
@@ -484,6 +488,7 @@ export function useInboxProcessingController({
   }, [inboxTasks, primeTaskState, scrollProcessingToTop]);
 
   const resetProcessingState = useCallback(() => {
+    progressRef.current = { total: 0, processed: 0 };
     setProcessingSession(createProcessInboxSession());
     setAiModal(null);
     primeTaskState(null);
@@ -531,6 +536,7 @@ export function useInboxProcessingController({
     }
     if (hasInitialized.current) return;
     hasInitialized.current = true;
+    progressRef.current = { total: 0, processed: 0 };
     if (inboxTasks.length === 0) {
       handleClose();
       return;
@@ -1290,5 +1296,6 @@ export function useInboxProcessingController({
     ENERGY_LEVEL_OPTIONS: PROCESS_INBOX_ENERGY_LEVEL_OPTIONS,
     PRIORITY_OPTIONS: PROCESS_INBOX_PRIORITY_OPTIONS,
     processedCount,
+    progress,
   };
 }

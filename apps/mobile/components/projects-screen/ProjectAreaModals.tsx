@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ban } from 'lucide-react-native';
-import { isManageAreaNameTaken, tFallback, type Area, type Project } from '@mindwtr/core';
+import { areaOrderIdsForIntent, isManageAreaNameTaken, tFallback, type Area, type Project } from '@mindwtr/core';
 
 import { projectsScreenStyles as styles } from './projects-screen.styles';
 import { applyLiveProjectUpdate, getLiveMutableProject } from './project-meta-pickers';
@@ -217,9 +217,9 @@ export function ProjectAreaModals({
                                                         accessibilityState={{ disabled: index === 0 }}
                                                         disabled={index === 0}
                                                         onPress={() => {
-                                                            const ids = sortedAreas.map((item) => item.id);
-                                                            [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
-                                                            void reorderAreas(ids);
+                                                            const ids = areaOrderIdsForIntent(sortedAreas,
+                                                                { kind: 'moveUp', areaId: area.id });
+                                                            if (ids) void reorderAreas(ids);
                                                         }}
                                                         style={[styles.areaOrderButton, index === 0 && styles.areaOrderButtonDisabled]}
                                                     >

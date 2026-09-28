@@ -11,14 +11,11 @@
  * to. External calendars are platform I/O: the host fetches the view's `range`
  * and sends what it has as `calendar` (loading, ready or error).
  *
- * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision. Writes go
- * through runCalendarAction with a request UUID: a request the receipts hold
- * (running, or owing its save) goes to them before any other check, and a retry
- * only saves (native-request-receipts.ts); every write is target-state, so a
- * replay after a restart writes nothing, and a task a request made answers its
- * replay only while it is exactly what the request writes. Success means the
- * change is saved. A refusal the screen shows (a time conflict, a composer
- * error) writes nothing and leaves the request ID free.
+ * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision. The legacy
+ * runCalendarAction keeps in-process receipts for RN parity, but its raw
+ * existing-composer replay can overwrite a newer task edit after restart. The
+ * iOS host therefore exposes only the prepared existing-composer write below.
+ * Its complete stamped target row is the durable receipt.
  *
  * Headings (month and week titles, day titles, weekday labels) come from
  * date-fns patterns through the user's date formatter: the host's engine has no
@@ -29,7 +26,8 @@
  */
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import { filterCalendarEventsForAreas } from './external-calendar-ingestion';
-import { formatCalendarTimeInputValue } from './calendar-scheduling';
+import { formatCalendarTimeInputValue, minutesToTimeEstimate } from './calendar-scheduling';
+import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import {
     applyComposerCreatedProject,
     openComposerAt,
@@ -50,6 +48,7 @@ import type { CalendarDayItem, CalendarTimedLayout } from './calendar-day-items'
 import { CALENDAR_TIME_ESTIMATE_OPTIONS, timeEstimateToMinutes } from './calendar-scheduling';
 import {
     CALENDAR_DONE_UPDATES,
+    CALENDAR_DAY_MINUTES,
     CALENDAR_UNSCHEDULE_UPDATES,
     CALENDAR_VIEW_MODES,
     CALENDAR_WEEK_DENSITY_VALUES,
@@ -85,6 +84,7 @@ import {
     getCalendarModeOptions,
     getCalendarMonthCell,
     getCalendarMovedStart,
+    snapCalendarTimelineMinutes,
     getCalendarWallMinutes,
     getCalendarMonthDates,
     getCalendarMonthGrid,
@@ -136,6 +136,7 @@ import {
 import { createDateFormatter, getCalendarDayOfMonth, getWeekStartsOnIndex, safeParseDate, startOfCalendarMonth, type DateFormatter, type DateFormattingConfig } from './date';
 import type { ExternalCalendarEvent, ExternalCalendarSubscription } from './ics';
 import { formatLocalDate } from './import-source-reader';
+import { logInfo } from './logger';
 import {
     NATIVE_HOST_CONTRACT_VERSION,
     NATIVE_HOST_MAX_WINDOW,
@@ -148,8 +149,20 @@ import { buildQuickAddParseOptions } from './quick-add';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
+import { TASK_SQLITE_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
+import { isTaskDateCoherent } from './task-date-coherence';
+import { prepareTaskUpdatesForStore } from './store-tasks';
+import { applyTaskUpdates, ensureDeviceId, findTaskProjectReactivationTarget, getNextProjectOrder, nextRevision } from './store-helpers';
+import { buildNewTask } from './task-creation';
+import { buildNewProject } from './store-projects/project-actions';
+import { findSelectableProjectByTitleAndArea } from './project-utils';
+import { normalizeFocusTaskLimit } from './focus-utils';
+import { projectToSqliteRow } from './project-sync-schema';
+import { generateUUID } from './uuid';
+import { countFocusedTasksBeforeBoundary } from './task-utils';
+import { isStatusListTaskReadOnly } from './menu-views-model';
 import { themeDescriptor } from './theme-scheme';
-import type { Task } from './types';
+import type { Area, Project, Section, Task } from './types';
 
 type NativeHostErrorCode = Extract<NativeHostResult<never>, { ok: false }>['error']['code'];
 type Translate = (key: string) => string;
@@ -367,11 +380,31 @@ export type NativeCalendarActionResult = {
     taskId: string | null;
 };
 
+/** Canonical stored preferences, independent of the Calendar's transient period. */
+export type NativeCalendarPreferences = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    values: { viewMode: CalendarViewMode; showCompleted: boolean; weekVisibleDays: number };
+};
+
+export type NativeCalendarPreferenceRequest = {
+    [Field in keyof NativeCalendarPreferences['values']]: {
+        requestId: string;
+        field: Field;
+        before: NativeCalendarPreferences['values'][Field];
+        value: NativeCalendarPreferences['values'][Field];
+    }
+}[keyof NativeCalendarPreferences['values']];
+
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({ ok: false, error: { code, message } });
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => (
     typeof value === 'object' && value !== null && !Array.isArray(value)
 );
 const isText = (value: unknown, max = 500): value is string => typeof value === 'string' && value.length <= max;
+const isPreferenceValue = (field: unknown, value: unknown): boolean => (
+    field === 'viewMode' ? CALENDAR_VIEW_MODES.includes(value as CalendarViewMode)
+        : field === 'showCompleted' ? typeof value === 'boolean'
+            : field === 'weekVisibleDays' && CALENDAR_WEEK_DENSITY_VALUES.includes(value as number)
+);
 const isPaging = (input: Record<string, unknown>) => (
     Number.isSafeInteger(input.offset) && (input.offset as number) >= 0
     && Number.isSafeInteger(input.limit) && (input.limit as number) >= 1 && (input.limit as number) <= NATIVE_HOST_MAX_WINDOW
@@ -485,6 +518,376 @@ const readComposer = (value: unknown, formatDate: DateFormatter): CalendarViewCo
     };
 };
 
+export type NativeCalendarScheduleRequest = { requestId: string; composer: NativeCalendarComposer };
+type ResolverProject = { id: string; status: Project['status']; deletedAt: string | null; purgedAt: string | null };
+type ResolverSection = { id: string; projectId: string; deletedAt: string | null };
+type ResolverArea = { id: string; deletedAt: string | null };
+type CalendarSchedulePolicy = {
+    preparedAt: string;
+    preparedOffsetMinutes: number;
+    preparedLocalDay: string;
+    endOfLocalTodayUTC: string;
+    endOffsetMinutes: number;
+    container: { project: ResolverProject | null; section: ResolverSection | null; area: ResolverArea | null };
+    normalizedUpdates: Record<string, unknown>;
+};
+export type NativePreparedCalendarSchedule = {
+    version: 1;
+    request: NativeCalendarScheduleRequest;
+    kind: 'existing';
+    before: Task;
+    after: Task;
+    requested: { startTime: string; timeEstimate: NonNullable<Task['timeEstimate']> };
+    policy: CalendarSchedulePolicy;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    projection: { offsetMinutes: number; localDay: string; localMinute: number };
+    result: NativeCalendarActionResult;
+};
+export type NativeCalendarSchedulePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarSchedule }
+    | { kind: 'refused' | 'noop'; result: NativeCalendarActionResult };
+
+export type NativeCalendarCreateRequest = { requestId: string; composer: NativeCalendarComposer };
+type CalendarCreateIntent = {
+    sourceTitle: string;
+    title: string;
+    props: Partial<Task>;
+    projectToCreate: { name: string; color: string; areaId: string | null } | null;
+};
+type CalendarCreationWitness = {
+    selectedProject: Project | null;
+    areas: Area[];
+    projectOrderMax: number | null;
+    taskOrderMax: number | null;
+    defaultAreaMode: string | null;
+    defaultAreaId: string | null;
+    defaultProjectFlowMode: string | null;
+    focusCount: number;
+    focusLimit: number;
+    focusRequested: boolean;
+    sequentialEmpty: boolean;
+    focusEndOfTodayIso: string | null;
+    focusEndOffsetMinutes: number | null;
+    preparedOffsetMinutes: number;
+    preparedLocalDay: string;
+};
+export type NativePreparedCalendarCreate = {
+    version: 1;
+    kind: 'new';
+    request: NativeCalendarCreateRequest;
+    intent: CalendarCreateIntent;
+    task: Task;
+    project: Project | null;
+    generatedLinkIds: string[];
+    preparedAt: string;
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    creation: CalendarCreationWitness;
+    projection: { offsetMinutes: number; localDay: string; localMinute: number };
+    result: NativeCalendarActionResult;
+};
+export type NativeCalendarCreatePreparation = { kind: 'prepared'; prepared: NativePreparedCalendarCreate }
+    | { kind: 'refused'; result: NativeCalendarActionResult };
+
+const CALENDAR_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CALENDAR_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const calendarRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const calendarKeys = (value: Record<string, unknown>, expected: readonly string[]) => (
+    Object.keys(value).length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+);
+const calendarSame = (left: unknown, right: unknown): boolean => {
+    const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+        : calendarRecord(value) ? Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)
+            .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)])) : value;
+    return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+};
+const calendarStoredRow = (task: Task): Task => {
+    const values = taskToSqliteRow(task);
+    return taskFromSqliteRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]])));
+};
+const calendarRowEqual = (left: Task, right: Task) => calendarSame(calendarStoredRow(left), calendarStoredRow(right));
+const localProjection = (instant: string, offsetMinutes: number) => {
+    const projected = new Date(Date.parse(instant) + offsetMinutes * 60_000);
+    return { day: projected.toISOString().slice(0, 10), minute: projected.getUTCHours() * 60 + projected.getUTCMinutes() };
+};
+const offsetValid = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= -840 && (value as number) <= 840;
+const instantValid = (value: unknown): value is string => typeof value === 'string' && CALENDAR_INSTANT.test(value)
+    && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
+const storedCalendarDateValid = (value: unknown): value is string => instantValid(value)
+    || (typeof value === 'string' && DAY_KEY_PATTERN.test(value)
+        && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`))
+        && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value);
+const calendarUpdates = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item === undefined ? null : item]));
+const projectProjection = (project: Project | undefined): ResolverProject | null => project ? {
+    id: project.id, status: project.status, deletedAt: project.deletedAt ?? null, purgedAt: project.purgedAt ?? null,
+} : null;
+const sectionProjection = (section: Section | undefined): ResolverSection | null => section ? {
+    id: section.id, projectId: section.projectId, deletedAt: section.deletedAt ?? null,
+} : null;
+const areaProjection = (area: Area | undefined): ResolverArea | null => area ? { id: area.id, deletedAt: area.deletedAt ?? null } : null;
+const resolverLists = (container: CalendarSchedulePolicy['container']) => ({
+    projects: container.project ? [{ ...container.project, deletedAt: container.project.deletedAt ?? undefined,
+        purgedAt: container.project.purgedAt ?? undefined }] as Project[] : [],
+    sections: container.section ? [{ ...container.section, deletedAt: container.section.deletedAt ?? undefined }] as Section[] : [],
+    areas: container.area ? [{ ...container.area, deletedAt: container.area.deletedAt ?? undefined }] as Area[] : [],
+});
+
+const CREATE_PROPS = new Set(['status', 'description', 'contexts', 'tags', 'assignedTo', 'priority', 'energyLevel',
+    'startTime', 'dueDate', 'reviewAt', 'timeEstimate', 'projectId', 'areaId', 'isFocusedToday', 'attachments']);
+const validCreateTokens = (value: unknown) => Array.isArray(value) && value.length <= 100
+    && value.every((item) => typeof item === 'string' && item.length <= 500)
+    && new Set(value).size === value.length;
+const createIntentValid = (intent: CalendarCreateIntent, request: NativeCalendarCreateRequest) => {
+    if (!calendarRecord(intent) || !calendarKeys(intent, ['sourceTitle', 'title', 'props', 'projectToCreate'])
+        || intent.sourceTitle !== request.composer.title || typeof intent.title !== 'string' || !intent.title.trim()
+        || intent.title.length > 10_000 || !calendarRecord(intent.props)
+        || Object.keys(intent.props).some((key) => !CREATE_PROPS.has(key))
+        || intent.props.startTime !== request.composer.startAt
+        || intent.props.timeEstimate !== minutesToTimeEstimate(request.composer.durationMinutes)
+        || (intent.props.status !== undefined && !['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'].includes(intent.props.status))
+        || (intent.props.description !== undefined && (typeof intent.props.description !== 'string' || intent.props.description.length > 20_000))
+        || (intent.props.contexts !== undefined && !validCreateTokens(intent.props.contexts))
+        || (intent.props.tags !== undefined && !validCreateTokens(intent.props.tags))
+        || (intent.props.assignedTo !== undefined && (typeof intent.props.assignedTo !== 'string' || intent.props.assignedTo.length > 500))
+        || (intent.props.priority !== undefined && !['low', 'medium', 'high', 'urgent'].includes(intent.props.priority))
+        || (intent.props.energyLevel !== undefined && !['low', 'medium', 'high'].includes(intent.props.energyLevel))
+        || (intent.props.dueDate !== undefined && !storedCalendarDateValid(intent.props.dueDate))
+        || (intent.props.reviewAt !== undefined && !storedCalendarDateValid(intent.props.reviewAt))
+        || (intent.props.projectId !== undefined && (typeof intent.props.projectId !== 'string' || intent.props.projectId.length > 500))
+        || (intent.props.areaId !== undefined && (typeof intent.props.areaId !== 'string' || intent.props.areaId.length > 500))
+        || (intent.props.isFocusedToday !== undefined && intent.props.isFocusedToday !== true)
+        || (intent.props.attachments !== undefined && (!Array.isArray(intent.props.attachments) || intent.props.attachments.length > 64
+            || intent.props.attachments.some((attachment) => !calendarRecord(attachment)
+                || !calendarKeys(attachment, ['id', 'kind', 'title', 'uri', 'createdAt', 'updatedAt'])
+                || attachment.kind !== 'link' || typeof attachment.title !== 'string' || typeof attachment.uri !== 'string'
+                || attachment.title.length > 2_000 || attachment.uri.length > 10_000)))) return false;
+    const project = intent.projectToCreate;
+    return project === null || (calendarRecord(project) && calendarKeys(project, ['name', 'color', 'areaId'])
+        && typeof project.name === 'string' && Boolean(project.name.trim()) && project.name.length <= 10_000
+        && project.color === DEFAULT_PROJECT_COLOR
+        && (project.areaId === null || typeof project.areaId === 'string'));
+};
+
+/** Re-run the existing factories over only the inputs they read; never parse the user's title again. */
+const calendarCreatedRows = (prepared: NativePreparedCalendarCreate): { task: Task; project: Project | null } | null => {
+    const { creation, intent, project, preparedAt } = prepared;
+    const settings = { gtd: {
+        defaultAreaMode: creation.defaultAreaMode, defaultAreaId: creation.defaultAreaId,
+        defaultProjectFlowMode: creation.defaultProjectFlowMode,
+    } } as unknown as ReturnType<typeof useTaskStore.getState>['settings'];
+    const deviceId = prepared.deviceIdBefore ?? prepared.deviceIdToInitialize;
+    if (!deviceId) return null;
+    let createdProject: Project | null = null;
+    if (project) {
+        if (!intent.projectToCreate || creation.selectedProject) return null;
+        const orderWitness = creation.projectOrderMax === null ? [] : [{
+            id: 'calendar-order-witness', areaId: intent.projectToCreate.areaId ?? undefined,
+            order: creation.projectOrderMax,
+        } as Project];
+        createdProject = buildNewProject({
+            title: intent.projectToCreate.name, color: intent.projectToCreate.color,
+            initialProps: intent.projectToCreate.areaId === null ? undefined : { areaId: intent.projectToCreate.areaId },
+            existingProjects: orderWitness, existingAreas: creation.areas, settings, deviceId,
+            now: preparedAt, id: project.id,
+        });
+    }
+    const selectedProject = createdProject ?? creation.selectedProject;
+    const draft = intent.projectToCreate && selectedProject
+        ? applyComposerCreatedProject({ title: intent.title, props: intent.props }, selectedProject.id)
+        : { title: intent.title, props: intent.props };
+    const order = creation.taskOrderMax;
+    const built = buildNewTask({
+        title: draft.title, initialTaskProps: draft.props, id: prepared.request.requestId.toLowerCase(),
+        now: preparedAt, deviceId,
+        state: { settings, _allProjects: selectedProject ? [selectedProject] : [], _allSections: [], _allAreas: creation.areas },
+        tasks: [], focusedCount: creation.focusCount, focusTaskLimit: creation.focusLimit,
+        projectOrderReserver: (projectId) => projectId ? (order ?? -1) + 1 : undefined,
+        endOfTodayIso: creation.focusEndOfTodayIso ?? undefined,
+    });
+    return built.ok ? { task: built.task, project: createdProject } : null;
+};
+
+/** No store, parser, current clock, or timezone access: also runs before terminal journal cleanup. */
+export const validatePreparedCalendarCreate = (input: unknown): NativeHostResult<NativeCalendarActionResult> => {
+    try {
+        if (!calendarRecord(input) || !calendarKeys(input, ['request', 'prepared'])
+            || !calendarRecord(input.request) || !calendarRecord(input.prepared)) return fail('INVALID_INPUT', 'Malformed prepared Calendar creation');
+        const request = input.request as NativeCalendarCreateRequest;
+        const prepared = input.prepared as NativePreparedCalendarCreate;
+        const composer = request.composer;
+        const creation = prepared.creation;
+        const projection = prepared.projection;
+        if (!calendarKeys(input.request, ['requestId', 'composer']) || !CALENDAR_UUID.test(request.requestId)
+            || request.requestId !== request.requestId.toLowerCase()
+            || !calendarRecord(composer)
+            || !calendarKeys(composer, ['date', 'startTimeValue', 'startAt', 'endTimeValue', 'durationMinutes', 'mode', 'title', 'query', 'selectedTaskId', 'error'])
+            || composer.mode !== 'new' || !instantValid(composer.date) || !instantValid(composer.startAt)
+            || typeof composer.startTimeValue !== 'string' || composer.startTimeValue.length > 64
+            || typeof composer.endTimeValue !== 'string' || composer.endTimeValue.length > 64
+            || !Number.isSafeInteger(composer.durationMinutes) || composer.durationMinutes < 1 || composer.durationMinutes > 1440
+            || typeof composer.title !== 'string' || composer.title.length > 10_000
+            || typeof composer.query !== 'string' || composer.query.length > 2000
+            || (composer.selectedTaskId !== null && (typeof composer.selectedTaskId !== 'string' || composer.selectedTaskId.length > 500))
+            || composer.error !== null
+            || !calendarKeys(input.prepared, ['version', 'kind', 'request', 'intent', 'task', 'project', 'generatedLinkIds', 'preparedAt', 'deviceIdBefore', 'deviceIdToInitialize', 'creation', 'projection', 'result'])
+            || prepared.version !== 1 || prepared.kind !== 'new' || !calendarSame(request, prepared.request)
+            || !createIntentValid(prepared.intent, request) || !instantValid(prepared.preparedAt)
+            || !calendarRecord(prepared.task) || prepared.task.id !== request.requestId
+            || (prepared.project !== null && (!calendarRecord(prepared.project) || !CALENDAR_UUID.test(prepared.project.id) || prepared.project.id === request.requestId))
+            || !Array.isArray(prepared.generatedLinkIds) || prepared.generatedLinkIds.length > 64
+            || !prepared.generatedLinkIds.every((id) => typeof id === 'string' && CALENDAR_UUID.test(id))
+            || new Set(prepared.generatedLinkIds).size !== prepared.generatedLinkIds.length
+            || !calendarRecord(creation)
+            || !calendarKeys(creation, ['selectedProject', 'areas', 'projectOrderMax', 'taskOrderMax', 'defaultAreaMode', 'defaultAreaId', 'defaultProjectFlowMode', 'focusCount', 'focusLimit', 'focusRequested', 'sequentialEmpty', 'focusEndOfTodayIso', 'focusEndOffsetMinutes', 'preparedOffsetMinutes', 'preparedLocalDay'])
+            || (creation.selectedProject !== null && !calendarRecord(creation.selectedProject))
+            || !Array.isArray(creation.areas) || creation.areas.length > 2 || !creation.areas.every(calendarRecord)
+            || !Number.isSafeInteger(creation.focusCount) || creation.focusCount < 0
+            || !Number.isSafeInteger(creation.focusLimit) || creation.focusLimit < 1
+            || creation.focusRequested !== (prepared.intent.props.isFocusedToday === true)
+            || typeof creation.sequentialEmpty !== 'boolean'
+            || !offsetValid(creation.preparedOffsetMinutes)
+            || localProjection(prepared.preparedAt, creation.preparedOffsetMinutes).day !== creation.preparedLocalDay
+            || (creation.focusRequested ? (!instantValid(creation.focusEndOfTodayIso)
+                || !offsetValid(creation.focusEndOffsetMinutes)
+                || localProjection(creation.focusEndOfTodayIso, creation.focusEndOffsetMinutes).day !== creation.preparedLocalDay
+                || new Date(Date.parse(creation.focusEndOfTodayIso) + creation.focusEndOffsetMinutes * 60_000).toISOString().slice(11) !== '23:59:59.999Z'
+                || Date.parse(creation.focusEndOfTodayIso) < Date.parse(prepared.preparedAt)
+                || Date.parse(creation.focusEndOfTodayIso) - Date.parse(prepared.preparedAt) > 27 * 60 * 60_000)
+                : creation.focusEndOfTodayIso !== null || creation.focusEndOffsetMinutes !== null)
+            || (creation.projectOrderMax !== null && !Number.isSafeInteger(creation.projectOrderMax))
+            || (creation.taskOrderMax !== null && !Number.isSafeInteger(creation.taskOrderMax))
+            || (prepared.project === null ? creation.projectOrderMax !== null : creation.projectOrderMax === null)
+            || (prepared.task.projectId ? creation.taskOrderMax === null : creation.taskOrderMax !== null)
+            || !(creation.defaultAreaMode === null || ['none', 'fixed', 'active'].includes(creation.defaultAreaMode))
+            || !(creation.defaultAreaId === null || typeof creation.defaultAreaId === 'string')
+            || !(creation.defaultProjectFlowMode === null || ['parallel', 'sequential'].includes(creation.defaultProjectFlowMode))
+            || !(prepared.deviceIdBefore === null || typeof prepared.deviceIdBefore === 'string')
+            || !(prepared.deviceIdToInitialize === null || typeof prepared.deviceIdToInitialize === 'string')
+            || (prepared.deviceIdBefore === null ? !prepared.deviceIdToInitialize : prepared.deviceIdToInitialize !== null)
+            || !calendarRecord(projection) || !calendarKeys(projection, ['offsetMinutes', 'localDay', 'localMinute'])
+            || !offsetValid(projection.offsetMinutes)
+            || localProjection(composer.startAt, projection.offsetMinutes).day !== projection.localDay
+            || localProjection(composer.startAt, projection.offsetMinutes).minute !== projection.localMinute
+            || JSON.stringify(input).length > 2_000_000) return fail('INVALID_INPUT', 'Malformed prepared Calendar creation');
+        if (!isTaskDateCoherent({ startTime: composer.startAt, dueDate: prepared.intent.props.dueDate },
+            { startLocalDay: projection.localDay })) return fail('INVALID_INPUT', 'Prepared Calendar creation has incoherent dates');
+        const linkIds = (prepared.intent.props.attachments ?? []).map((attachment) => attachment.id);
+        if (!calendarSame(linkIds, prepared.generatedLinkIds)
+            || (prepared.intent.props.attachments ?? []).some((attachment) => attachment.kind !== 'link')
+            || (prepared.intent.props.attachments ?? []).some((attachment) => attachment.createdAt !== prepared.preparedAt
+                || attachment.updatedAt !== prepared.preparedAt)
+            || (prepared.intent.projectToCreate && !prepared.project && !creation.selectedProject)
+            || (!prepared.intent.projectToCreate && prepared.project)
+            || (prepared.intent.projectToCreate && prepared.intent.props.projectId)
+            || (creation.selectedProject && prepared.intent.projectToCreate
+                && findSelectableProjectByTitleAndArea([creation.selectedProject], prepared.intent.projectToCreate.name,
+                    prepared.intent.projectToCreate.areaId ?? undefined)?.id !== creation.selectedProject.id)
+            || (creation.selectedProject && (!prepared.intent.projectToCreate && creation.selectedProject.id !== prepared.intent.props.projectId))
+            || (prepared.project && prepared.intent.projectToCreate?.areaId !== (prepared.project.areaId ?? null))) {
+            return fail('INVALID_INPUT', 'Prepared Calendar creation intent does not match');
+        }
+        const derived = calendarCreatedRows(prepared);
+        if (!derived || !calendarSame(derived.task, prepared.task) || !calendarRowEqual(derived.task, prepared.task)
+            || (creation.focusRequested && (derived.project ?? creation.selectedProject)?.isSequential === true && !creation.sequentialEmpty)
+            || (creation.sequentialEmpty && !(creation.focusRequested && (derived.project ?? creation.selectedProject)?.isSequential === true))
+            || !calendarSame(derived.project, prepared.project)
+            || (derived.project && !calendarSame(projectToSqliteRow(derived.project), projectToSqliteRow(prepared.project!)))) {
+            return fail('INVALID_INPUT', 'Prepared Calendar creation row does not match');
+        }
+        const expected: NativeCalendarActionResult = { changed: true, toast: null, composer: null,
+            next: { viewMode: 'day', selectedDate: projection.localDay, visibleMonth: projection.localDay },
+            scrollToMinutes: projection.localMinute, taskId: request.requestId };
+        if (!calendarSame(prepared.result, expected)) return fail('INVALID_INPUT', 'Prepared Calendar creation result does not match');
+        return { ok: true, value: prepared.result };
+    } catch {
+        return fail('INVALID_INPUT', 'Malformed prepared Calendar creation');
+    }
+};
+
+/** Pure journal authority: no store, clock, locale, or ambient timezone reads. */
+export const validatePreparedCalendarSchedule = (input: unknown): NativeHostResult<NativeCalendarActionResult> => {
+    try {
+        if (!calendarRecord(input) || !calendarKeys(input, ['request', 'prepared']) || !calendarRecord(input.request)
+            || !calendarRecord(input.prepared)) return fail('INVALID_INPUT', 'Malformed prepared Calendar schedule');
+        const prepared = input.prepared as NativePreparedCalendarSchedule;
+        const request = input.request as NativeCalendarScheduleRequest;
+        const composer = request.composer;
+        const before = prepared.before;
+        const after = prepared.after;
+        const policy = prepared.policy;
+        const projection = prepared.projection;
+        if (!calendarKeys(input.request, ['requestId', 'composer']) || typeof request.requestId !== 'string'
+            || !CALENDAR_UUID.test(request.requestId) || !calendarRecord(composer)
+            || !calendarKeys(composer, ['date', 'startTimeValue', 'startAt', 'endTimeValue', 'durationMinutes', 'mode', 'title', 'query', 'selectedTaskId', 'error'])
+            || composer.mode !== 'existing' || typeof composer.selectedTaskId !== 'string' || !composer.selectedTaskId
+            || !instantValid(composer.startAt) || !instantValid(composer.date)
+            || typeof composer.startTimeValue !== 'string' || composer.startTimeValue.length > 64
+            || typeof composer.endTimeValue !== 'string' || composer.endTimeValue.length > 64
+            || !Number.isSafeInteger(composer.durationMinutes) || composer.durationMinutes < 1 || composer.durationMinutes > 1440
+            || typeof composer.title !== 'string' || composer.title.length > 10_000
+            || typeof composer.query !== 'string' || composer.query.length > 2000 || composer.error !== null
+            || !calendarKeys(input.prepared, ['version', 'request', 'kind', 'before', 'after', 'requested', 'policy', 'deviceIdBefore', 'deviceIdToInitialize', 'projection', 'result'])
+            || prepared.version !== 1 || prepared.kind !== 'existing' || !calendarSame(request, prepared.request)
+            || !calendarRecord(before) || !calendarRecord(after) || before.id !== composer.selectedTaskId || after.id !== before.id
+            || before.deletedAt || before.purgedAt || before.status === 'reference'
+            || !calendarRecord(prepared.requested) || !calendarKeys(prepared.requested, ['startTime', 'timeEstimate'])
+            || prepared.requested.startTime !== composer.startAt
+            || prepared.requested.timeEstimate !== minutesToTimeEstimate(composer.durationMinutes)
+            || !calendarRecord(policy) || !calendarKeys(policy, ['preparedAt', 'preparedOffsetMinutes', 'preparedLocalDay', 'endOfLocalTodayUTC', 'endOffsetMinutes', 'container', 'normalizedUpdates'])
+            || !instantValid(policy.preparedAt) || !instantValid(policy.endOfLocalTodayUTC)
+            || !offsetValid(policy.preparedOffsetMinutes) || !offsetValid(policy.endOffsetMinutes)
+            || localProjection(policy.preparedAt, policy.preparedOffsetMinutes).day !== policy.preparedLocalDay
+            || localProjection(policy.endOfLocalTodayUTC, policy.endOffsetMinutes).day !== policy.preparedLocalDay
+            || localProjection(policy.endOfLocalTodayUTC, policy.endOffsetMinutes).minute !== 1439
+            || new Date(Date.parse(policy.endOfLocalTodayUTC) + policy.endOffsetMinutes * 60_000).toISOString().slice(11) !== '23:59:59.999Z'
+            || Date.parse(policy.endOfLocalTodayUTC) < Date.parse(policy.preparedAt)
+            || Date.parse(policy.endOfLocalTodayUTC) - Date.parse(policy.preparedAt) > 27 * 60 * 60_000
+            || !calendarRecord(policy.container) || !calendarKeys(policy.container, ['project', 'section', 'area'])
+            || !calendarRecord(policy.normalizedUpdates)
+            || !calendarRecord(projection) || !calendarKeys(projection, ['offsetMinutes', 'localDay', 'localMinute'])
+            || !offsetValid(projection.offsetMinutes)
+            || localProjection(composer.startAt, projection.offsetMinutes).day !== projection.localDay
+            || localProjection(composer.startAt, projection.offsetMinutes).minute !== projection.localMinute
+            || !(prepared.deviceIdBefore === null || typeof prepared.deviceIdBefore === 'string')
+            || !(prepared.deviceIdToInitialize === null || typeof prepared.deviceIdToInitialize === 'string')
+            || (prepared.deviceIdBefore === null ? prepared.deviceIdToInitialize !== after.revBy
+                : prepared.deviceIdBefore !== after.revBy || prepared.deviceIdToInitialize !== null)
+            || after.rev !== nextRevision(before.rev) || after.updatedAt !== policy.preparedAt) {
+            return fail('INVALID_INPUT', 'Malformed prepared Calendar schedule');
+        }
+        const container = policy.container;
+        if ((container.project !== null && (!calendarRecord(container.project) || !calendarKeys(container.project, ['id', 'status', 'deletedAt', 'purgedAt']) || container.project.id !== before.projectId))
+            || (container.section !== null && (!calendarRecord(container.section) || !calendarKeys(container.section, ['id', 'projectId', 'deletedAt']) || container.section.id !== before.sectionId))
+            || (container.area !== null && (!calendarRecord(container.area) || !calendarKeys(container.area, ['id', 'deletedAt']) || container.area.id !== before.areaId))
+            || (before.projectId && !container.project) || (before.sectionId && !container.section) || (before.areaId && !container.area)) {
+            return fail('INVALID_INPUT', 'Malformed Calendar container witness');
+        }
+        const lists = resolverLists(container);
+        const updates = prepareTaskUpdatesForStore({ task: before, updates: prepared.requested,
+            allProjects: lists.projects, allSections: lists.sections, allAreas: lists.areas,
+            futureBoundary: policy.endOfLocalTodayUTC });
+        if (!updates.ok || findTaskProjectReactivationTarget(before, updates.updates, lists.projects)
+            || !calendarSame(calendarUpdates(updates.updates), policy.normalizedUpdates)) {
+            return fail('INVALID_INPUT', 'Prepared Calendar update policy does not match');
+        }
+        const applied = applyTaskUpdates(before, { ...updates.updates, rev: after.rev, revBy: after.revBy }, policy.preparedAt);
+        if (applied.nextRecurringTask || !calendarSame(applied.updatedTask, after) || !calendarRowEqual(applied.updatedTask, after)) {
+            return fail('INVALID_INPUT', 'Prepared Calendar target does not match');
+        }
+        const result = prepared.result;
+        if (!calendarRecord(result) || !calendarKeys(result, ['changed', 'toast', 'next', 'scrollToMinutes', 'composer', 'taskId'])
+            || result.changed !== true || result.toast !== null || result.composer !== null || result.taskId !== before.id
+            || !calendarRecord(result.next) || !calendarKeys(result.next, ['viewMode', 'selectedDate', 'visibleMonth'])
+            || result.next.viewMode !== 'day' || result.next.selectedDate !== projection.localDay
+            || result.next.visibleMonth !== projection.localDay || result.scrollToMinutes !== projection.localMinute) {
+            return fail('INVALID_INPUT', 'Prepared Calendar result does not match');
+        }
+        return { ok: true, value: result };
+    } catch {
+        return fail('INVALID_INPUT', 'Malformed prepared Calendar schedule');
+    }
+};
+
 export function createCalendarViewMethods(deps: CalendarViewDeps) {
     // Exact retries through the shared helper: a retry finishes a failed save and never writes twice.
     const receipts = createNativeRequestReceipts({
@@ -507,6 +910,15 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     // Request IDs that entered the receipts, and their payloads, so a retry reaches its
     // receipt before any check. ponytail: the last 200; the receipts keep 50 anyway.
     const entered = new Map<string, string>();
+
+    const preferences = (): NativeCalendarPreferences['values'] => {
+        const calendar = useTaskStore.getState().settings.calendar;
+        return {
+            viewMode: coerceCalendarViewMode(calendar?.viewMode),
+            showCompleted: calendar?.showCompleted === true,
+            weekVisibleDays: coerceCalendarWeekVisibleDays(calendar?.weekVisibleDays),
+        };
+    };
 
     /** The tasks the screen may show (mobile's visible-task projection), per data and settings revision. */
     let visible: { key: string; value: ReturnType<typeof buildVisible> } | null = null;
@@ -955,6 +1367,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     const saveContext = (ctx: Context, events: (date: Date) => readonly ExternalCalendarEvent[], excludeCreatedId?: string): CalendarComposerSaveContext => ({
         areas: ctx.store.areas,
         projects: ctx.store.projects,
+        now: ctx.now,
         parseOptions: buildQuickAddParseOptions(ctx.settings, { tasks: ctx.store.tasks, people: ctx.store.people }),
         // A retry of a create finds the task it made in the slot; that task is not in the way.
         isSlotFree: (start, durationMinutes, excludeTaskId) => isCalendarSlotFree(start, start, durationMinutes, slotOptions(ctx, events(start), excludeTaskId ?? excludeCreatedId)),
@@ -1167,6 +1580,43 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     };
 
     return {
+        getCalendarPreferences(): NativeHostResult<NativeCalendarPreferences> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, values: preferences() } };
+        },
+
+        /** A stored preference edit, safe to replay after receipt loss or restart. */
+        async setCalendarPreference(input: NativeCalendarPreferenceRequest): Promise<NativeHostResult<NativeCalendarActionResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).length !== 4
+                || !Object.keys(input).every((key) => ['requestId', 'field', 'before', 'value'].includes(key))
+                || !isPreferenceValue(input.field, input.before) || !isPreferenceValue(input.field, input.value)) {
+                return fail('INVALID_INPUT', 'A request UUID, preference field, and canonical before/value are required');
+            }
+            const { requestId, field, before, value } = input;
+            const outcome = await receipts.run(requestId, JSON.stringify(['calendarPreference', field, before, value]), async () => {
+                // Receipts precede mutable checks: an owed save must never reapply
+                // the edit over a newer value. A receipt-free replay checks only this field.
+                const current = preferences()[field];
+                if (current === value) return unchanged();
+                if (current !== before) return fail('STALE_REVISION', 'Calendar preference changed while editing');
+                const store = useTaskStore.getState();
+                return written(() => store.updateSettings({ calendar: { ...store.settings.calendar, [field]: value } }));
+            });
+            if (outcome.ok) {
+                try {
+                    logInfo('Native Calendar preference result', {
+                        scope: 'native-host', category: 'storage', context: {
+                            releaseCheck: 'v1.3.3/native-calendar-preference', outcome: outcome.value.changed ? 'applied' : 'replayed',
+                        },
+                    });
+                } catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            }
+            return outcome;
+        },
+
         /**
          * The Calendar in `state` (absent: the screen as it opens, in the saved
          * view mode on today), windowed. Fetch external events for `range` and send
@@ -1236,6 +1686,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         openCalendarComposer(input: {
             at?: string;
             day?: string;
+            rawMinutes?: number;
             scheduleTaskId?: string;
             mode?: CalendarComposerMode;
             calendar?: NativeCalendarFeed;
@@ -1252,6 +1703,15 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             const openDeps = composerDeps(ctx, events);
             const at = isText(input.at, ISO_INSTANT_LIMIT) ? safeParseDate(input.at) : null;
             const day = parseDayKey(input.day);
+            if (input.rawMinutes !== undefined) {
+                if (input.mode !== 'new' || !day || input.at !== undefined || input.scheduleTaskId !== undefined
+                    || !Number.isFinite(input.rawMinutes) || input.rawMinutes < 0 || input.rawMinutes > CALENDAR_DAY_MINUTES
+                    || Object.keys(input).some((key) => !['day', 'rawMinutes', 'mode', 'calendar'].includes(key))) {
+                    return fail('INVALID_INPUT', 'A New composer day and bounded timeline minute are required');
+                }
+                const start = getCalendarMovedStart(day.getTime(), snapCalendarTimelineMinutes(input.rawMinutes));
+                return { ok: true, value: { composer: composerView(ctx, toCalendarViewComposer(openComposerAt(start, { mode: 'new' }, openDeps), start)), toast: null } };
+            }
             if (input.scheduleTaskId !== undefined) {
                 const task = ctx.schedulableTasks.find((candidate) => candidate.id === input.scheduleTaskId);
                 if (!task || !day) return fail('INVALID_INPUT', 'A task the planning list offers and the selected day are required');
@@ -1306,6 +1766,212 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             }
             if (!next) return fail('INVALID_INPUT', 'That composer edit is not valid');
             return { ok: true, value: composerView(ctx, next) };
+        },
+
+        /** Pure Calendar choice and RN task-update plan; the host journals its frozen row before commit. */
+        async prepareCalendarComposerSave(input: { requestId: string; composer: NativeCalendarComposer; calendar?: NativeCalendarFeed }): Promise<NativeHostResult<NativeCalendarSchedulePreparation>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!calendarRecord(input) || !Object.keys(input).every((key) => ['requestId', 'composer', 'calendar'].includes(key))
+                || !Object.prototype.hasOwnProperty.call(input, 'composer') || !Object.prototype.hasOwnProperty.call(input, 'requestId')
+                || typeof input.requestId !== 'string' || !CALENDAR_UUID.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'An existing composer and request UUID are required');
+            }
+            const now = new Date();
+            const ctx = context(now);
+            const composer = readComposer(input.composer, ctx.formatDate);
+            const feed = readFeed(input.calendar);
+            if (!composer || !feed || composer.mode !== 'existing' || !composer.selectedTaskId
+                || !ctx.schedulableTasks.some((task) => task.id === composer.selectedTaskId)) {
+                return fail('INVALID_INPUT', 'An offered existing task and composer are required');
+            }
+            const request: NativeCalendarScheduleRequest = { requestId: input.requestId, composer: input.composer };
+            const intent = prepareComposerSave(composer, saveContext(ctx, eventsByDay(feed)));
+            if (intent.kind === 'error') return { ok: true, value: { kind: 'refused', result: result({ composer: composerView(ctx, { ...composer, error: intent.error }) }) } };
+            if (intent.kind !== 'update' || intent.taskId !== composer.selectedTaskId
+                || typeof intent.updates.startTime !== 'string' || typeof intent.updates.timeEstimate !== 'string') {
+                return fail('INVALID_INPUT', 'Calendar composer did not produce an existing task schedule');
+            }
+            const store = useTaskStore.getState();
+            const task = store._tasksById.get(intent.taskId);
+            if (!task || task.deletedAt || task.purgedAt || task.status === 'reference'
+                || isStatusListTaskReadOnly(task, store._allProjects)) return fail('TASK_NOT_FOUND', 'Task is not schedulable');
+            const navigation = { ...dayView(composer.startAt!), taskId: task.id };
+            if (task.startTime === intent.updates.startTime && task.timeEstimate === intent.updates.timeEstimate) {
+                if (store.persistenceFailure) {
+                    try { await store.retryPersistence(); }
+                    catch { return fail('SAVE_FAILED', 'Pending Calendar changes are not saved'); }
+                }
+                const saved = await deps.save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: { kind: 'noop', result: result(navigation) } };
+            }
+            const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+            const start = composer.startAt!;
+            const policy: CalendarSchedulePolicy = {
+                preparedAt: now.toISOString(), preparedOffsetMinutes: -now.getTimezoneOffset(),
+                preparedLocalDay: dayKey(now), endOfLocalTodayUTC: end.toISOString(), endOffsetMinutes: -end.getTimezoneOffset(),
+                container: {
+                    project: projectProjection(store._allProjects.find((item) => item.id === task.projectId)),
+                    section: sectionProjection(store._allSections.find((item) => item.id === task.sectionId)),
+                    area: areaProjection(store._allAreas.find((item) => item.id === task.areaId)),
+                }, normalizedUpdates: {},
+            };
+            const lists = resolverLists(policy.container);
+            const planned = prepareTaskUpdatesForStore({ task, updates: intent.updates,
+                allProjects: lists.projects, allSections: lists.sections, allAreas: lists.areas,
+                futureBoundary: policy.endOfLocalTodayUTC });
+            if (!planned.ok || findTaskProjectReactivationTarget(task, planned.updates, store._allProjects)) {
+                return fail('INVALID_INPUT', 'This task needs a wider Calendar update');
+            }
+            policy.normalizedUpdates = calendarUpdates(planned.updates);
+            const device = ensureDeviceId(store.settings);
+            const applied = applyTaskUpdates(task, { ...planned.updates, rev: nextRevision(task.rev), revBy: device.deviceId }, policy.preparedAt);
+            if (applied.nextRecurringTask) return fail('INVALID_INPUT', 'Recurring follow-up is outside this Calendar save');
+            const prepared: NativePreparedCalendarSchedule = {
+                version: 1, request, kind: 'existing', before: JSON.parse(JSON.stringify(task)) as Task,
+                after: JSON.parse(JSON.stringify(applied.updatedTask)) as Task,
+                requested: { startTime: intent.updates.startTime, timeEstimate: intent.updates.timeEstimate as NonNullable<Task['timeEstimate']> }, policy,
+                deviceIdBefore: store.settings.deviceId ?? null, deviceIdToInitialize: device.updated ? device.deviceId : null,
+                projection: { offsetMinutes: -start.getTimezoneOffset(), localDay: dayKey(start), localMinute: start.getHours() * 60 + start.getMinutes() },
+                result: result({ ...navigation, changed: true }),
+            };
+            const decoded = validatePreparedCalendarSchedule({ request, prepared });
+            return decoded.ok ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Calendar schedule could not produce a valid prepared journal');
+        },
+
+        /** The host calls this before SQLite open and terminal cleanup as well as before commit. */
+        validatePreparedCalendarComposerSave: validatePreparedCalendarSchedule,
+
+        async commitPreparedCalendarComposerSave(input: { request: NativeCalendarScheduleRequest; prepared: NativePreparedCalendarSchedule }): Promise<NativeHostResult<NativeCalendarActionResult>> {
+            const authority = validatePreparedCalendarSchedule(input);
+            if (!authority.ok) return authority;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const prepared = input.prepared;
+            const applied = await useTaskStore.getState().commitPreparedCalendarTask(prepared);
+            if (!applied.success) return fail(applied.reason === 'missing' ? 'TASK_NOT_FOUND' : 'STALE_REVISION', applied.error ?? 'Prepared Calendar schedule conflicts with current data');
+            if (useTaskStore.getState().persistenceFailure) {
+                try { await useTaskStore.getState().retryPersistence(); }
+                catch { return fail('SAVE_FAILED', 'Pending Calendar schedule is not saved'); }
+            }
+            const saved = await deps.save();
+            if (!saved.ok) return saved;
+            try { logInfo('Native iOS Calendar schedule saved', { scope: 'native-host', category: 'storage',
+                context: { releaseCheck: 'v1.3.3/native-ios-calendar-schedule', outcome: applied.outcome } }); }
+            catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return authority;
+        },
+
+        /** Resolve RN New composer policy once, then freeze its complete atomic task/project publication. */
+        async prepareCalendarComposerCreate(input: { requestId: string; composer: NativeCalendarComposer; calendar?: NativeCalendarFeed }): Promise<NativeHostResult<NativeCalendarCreatePreparation>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!calendarRecord(input) || !Object.keys(input).every((key) => ['requestId', 'composer', 'calendar'].includes(key))
+                || !Object.prototype.hasOwnProperty.call(input, 'requestId') || !Object.prototype.hasOwnProperty.call(input, 'composer')
+                || typeof input.requestId !== 'string' || !CALENDAR_UUID.test(input.requestId)
+                || input.requestId !== input.requestId.toLowerCase()) return fail('INVALID_INPUT', 'A New composer and request UUID are required');
+            const now = new Date();
+            const ctx = context(now);
+            const composer = readComposer(input.composer, ctx.formatDate);
+            const feed = readFeed(input.calendar);
+            if (!composer || composer.mode !== 'new' || !feed) return fail('INVALID_INPUT', 'A valid New composer and calendar are required');
+            const resolved = prepareComposerSave(composer, saveContext(ctx, eventsByDay(feed)));
+            if (resolved.kind === 'error') return { ok: true, value: { kind: 'refused', result: result({ composer: composerView(ctx, { ...composer, error: resolved.error }) }) } };
+            if (resolved.kind !== 'create' || !composer.startAt) return fail('INVALID_INPUT', 'Calendar composer did not produce a new task');
+            const store = useTaskStore.getState();
+            const projectChoice = resolved.projectToCreate;
+            const areaId = projectChoice?.initialProps?.areaId;
+            const selectedProject = projectChoice
+                ? findSelectableProjectByTitleAndArea(store._allProjects, projectChoice.name, areaId)
+                : resolved.draft.props.projectId
+                    ? store._allProjects.find((item) => item.id === resolved.draft.props.projectId)
+                    : undefined;
+            const projectId = selectedProject?.id ?? (projectChoice ? generateUUID() : resolved.draft.props.projectId);
+            const usesDefaultArea = !projectChoice && !resolved.draft.props.projectId
+                && !Object.prototype.hasOwnProperty.call(resolved.draft.props, 'areaId');
+            const areaIds = new Set([areaId, resolved.draft.props.areaId, selectedProject?.areaId,
+                usesDefaultArea ? store.settings.gtd?.defaultAreaId : undefined]
+                .filter((id): id is string => typeof id === 'string' && Boolean(id)));
+            const areas = store._allAreas.filter((area) => areaIds.has(area.id));
+            if (areas.length > 2) return fail('INVALID_INPUT', 'Calendar creation needs too many area inputs');
+            const sequentialEmpty = resolved.draft.props.isFocusedToday === true && selectedProject?.isSequential === true
+                && !store._allTasks.some((task) => task.projectId === selectedProject.id);
+            if (resolved.draft.props.isFocusedToday === true && selectedProject?.isSequential && !sequentialEmpty) {
+                return fail('INVALID_INPUT', 'Cannot add this task to Today’s Focus in a sequential project');
+            }
+            const focusEnd = resolved.draft.props.isFocusedToday === true
+                ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999) : null;
+            const focusedCount = focusEnd ? countFocusedTasksBeforeBoundary(store.tasks, focusEnd.toISOString()) : 0;
+            if (focusEnd && focusedCount !== store.getFocusedCount()) {
+                return fail('INVALID_INPUT', 'Calendar Focus count changed; reopen the composer');
+            }
+            const projectOrderMax = projectChoice && !selectedProject
+                ? store._allProjects.filter((item) => (item.areaId ?? null) === (areaId ?? null))
+                    .reduce((max, item) => Math.max(max, Number.isFinite(item.order) ? item.order : -1), -1)
+                : null;
+            const taskOrderMax = projectId ? (getNextProjectOrder(projectId, store._allTasks) ?? 0) - 1 : null;
+            const device = ensureDeviceId(store.settings);
+            const request: NativeCalendarCreateRequest = { requestId: input.requestId, composer: input.composer };
+            const start = composer.startAt;
+            const prepared: NativePreparedCalendarCreate = {
+                version: 1, kind: 'new', request,
+                intent: {
+                    sourceTitle: input.composer.title, title: resolved.draft.title,
+                    props: JSON.parse(JSON.stringify(resolved.draft.props)) as Partial<Task>,
+                    projectToCreate: projectChoice ? { name: projectChoice.name, color: projectChoice.color, areaId: areaId ?? null } : null,
+                }, task: {} as Task, project: projectChoice && !selectedProject ? { id: projectId } as Project : null,
+                generatedLinkIds: (resolved.draft.props.attachments ?? []).map((attachment) => attachment.id),
+                preparedAt: now.toISOString(), deviceIdBefore: store.settings.deviceId ?? null,
+                deviceIdToInitialize: device.updated ? device.deviceId : null,
+                creation: {
+                    selectedProject: selectedProject ?? null, areas, projectOrderMax, taskOrderMax,
+                    defaultAreaMode: store.settings.gtd?.defaultAreaMode ?? null,
+                    defaultAreaId: store.settings.gtd?.defaultAreaId ?? null,
+                    defaultProjectFlowMode: store.settings.gtd?.defaultProjectFlowMode ?? null,
+                    focusCount: focusedCount, focusLimit: normalizeFocusTaskLimit(store.settings.gtd?.focusTaskLimit),
+                    focusRequested: resolved.draft.props.isFocusedToday === true,
+                    sequentialEmpty: Boolean(sequentialEmpty),
+                    focusEndOfTodayIso: focusEnd?.toISOString() ?? null,
+                    focusEndOffsetMinutes: focusEnd ? -focusEnd.getTimezoneOffset() : null,
+                    preparedOffsetMinutes: -now.getTimezoneOffset(), preparedLocalDay: dayKey(now),
+                },
+                projection: { offsetMinutes: -start.getTimezoneOffset(), localDay: dayKey(start), localMinute: start.getHours() * 60 + start.getMinutes() },
+                result: result({ ...dayView(start), changed: true, taskId: input.requestId }),
+            };
+            const rows = calendarCreatedRows(prepared);
+            if (!rows) return fail('INVALID_INPUT', 'Calendar creation cannot resolve its container');
+            if (prepared.creation.focusRequested && rows.project?.isSequential === true) prepared.creation.sequentialEmpty = true;
+            if (prepared.creation.focusRequested && (rows.project ?? prepared.creation.selectedProject)?.isSequential === true
+                && !prepared.creation.sequentialEmpty) {
+                return fail('INVALID_INPUT', 'Cannot add this task to Today’s Focus in a sequential project');
+            }
+            prepared.task = rows.task;
+            prepared.project = rows.project;
+            if (!validatePreparedCalendarCreate({ request, prepared }).ok) return fail('INVALID_INPUT', 'Calendar creation could not produce a valid prepared journal');
+            return { ok: true, value: { kind: 'prepared', prepared } };
+        },
+
+        validatePreparedCalendarComposerCreate: validatePreparedCalendarCreate,
+
+        async commitPreparedCalendarComposerCreate(input: { request: NativeCalendarCreateRequest; prepared: NativePreparedCalendarCreate }): Promise<NativeHostResult<NativeCalendarActionResult>> {
+            const authority = validatePreparedCalendarCreate(input);
+            if (!authority.ok) return authority;
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const applied = await useTaskStore.getState().commitPreparedCalendarCreate(input.prepared);
+            if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Calendar creation conflicts with current data');
+            if (useTaskStore.getState().persistenceFailure) {
+                try { await useTaskStore.getState().retryPersistence(); }
+                catch { return fail('SAVE_FAILED', 'Pending Calendar creation is not saved'); }
+            }
+            const saved = await deps.save();
+            if (!saved.ok) return saved;
+            try { logInfo('Native iOS Calendar task created', { scope: 'native-host', category: 'storage',
+                context: { releaseCheck: 'v1.3.3/native-ios-calendar-create', outcome: applied.outcome } }); }
+            catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return authority;
         },
 
         /**

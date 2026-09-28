@@ -16,14 +16,18 @@ export type TaskDateCoherenceResult = {
 };
 
 type TaskDateCoherenceInput = Pick<Task, 'dueDate' | 'startTime'>;
+type TaskDateCoherenceContext = { startLocalDay?: string };
 
-const compareStartAfterDue = (task: TaskDateCoherenceInput): boolean => {
+const compareStartAfterDue = (task: TaskDateCoherenceInput, context?: TaskDateCoherenceContext): boolean => {
     const start = safeParseDate(task.startTime);
     const due = safeParseDueDate(task.dueDate);
     if (!start || !due) return false;
 
     // Date-only due dates represent the whole due day, so same-day starts stay coherent.
     if (!hasTimeComponent(task.dueDate)) {
+        // Prepared native writes carry the start's local day from preparation. Using it
+        // here keeps a date-only due stable when a journal replays in another timezone.
+        if (context?.startLocalDay) return context.startLocalDay > task.dueDate!;
         due.setHours(23, 59, 59, 999);
     }
     return start.getTime() > due.getTime();
@@ -31,9 +35,10 @@ const compareStartAfterDue = (task: TaskDateCoherenceInput): boolean => {
 
 export const getTaskDateCoherenceIssues = (
     task: TaskDateCoherenceInput,
+    context?: TaskDateCoherenceContext,
 ): TaskDateCoherenceIssue[] => {
     const issues: TaskDateCoherenceIssue[] = [];
-    if (compareStartAfterDue(task)) {
+    if (compareStartAfterDue(task, context)) {
         issues.push({
             code: 'start_after_due',
             field: 'startTime',
@@ -45,16 +50,17 @@ export const getTaskDateCoherenceIssues = (
 
 export const getTaskDateCoherence = (
     task: TaskDateCoherenceInput,
+    context?: TaskDateCoherenceContext,
 ): TaskDateCoherenceResult => {
-    const issues = getTaskDateCoherenceIssues(task);
+    const issues = getTaskDateCoherenceIssues(task, context);
     return {
         coherent: issues.length === 0,
         issues,
     };
 };
 
-export const isTaskDateCoherent = (task: TaskDateCoherenceInput): boolean => (
-    getTaskDateCoherenceIssues(task).length === 0
+export const isTaskDateCoherent = (task: TaskDateCoherenceInput, context?: TaskDateCoherenceContext): boolean => (
+    getTaskDateCoherenceIssues(task, context).length === 0
 );
 
 /** The editor's warning under the start and due fields, or '' when the dates are coherent. */

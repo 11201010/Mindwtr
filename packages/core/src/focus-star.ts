@@ -3,6 +3,7 @@ import {
     FOCUS_ELIGIBILITY_ACTIVE_STATUSES,
     getTaskFocusEligibility,
     isTaskFutureFocusCandidate,
+    isTaskFutureFocusCandidateBeforeBoundary,
 } from './task-utils';
 import { formatFocusTaskLimitText } from './focus-utils';
 import { tFallback } from './i18n';
@@ -139,7 +140,8 @@ export function resolveTaskEditorFocusStar(
  */
 export function resolveTaskFocusCreation(
     task: Task,
-    context: Pick<FocusStarContext, 'tasks' | 'projects' | 'sections' | 'focusedCount' | 'focusTaskLimit'>,
+    context: Pick<FocusStarContext, 'tasks' | 'projects' | 'sections' | 'focusedCount' | 'focusTaskLimit' | 'now'>
+        & { endOfTodayIso?: string },
 ): TaskFocusCreationDecision {
     if (task.isFocusedToday !== true) {
         return {
@@ -155,11 +157,15 @@ export function resolveTaskFocusCreation(
         status: promotedStatus,
         isFocusedToday: false,
     };
-    const queued = isTaskFutureFocusCandidate(candidate);
+    const queued = context.endOfTodayIso
+        ? isTaskFutureFocusCandidateBeforeBoundary(candidate, context.endOfTodayIso)
+        : isTaskFutureFocusCandidate(candidate, context.now);
     const eligibility = getTaskFocusEligibility(candidate, {
         tasks: [...context.tasks, candidate],
         projects: context.projects,
         sections: context.sections,
+        now: context.now,
+        endOfTodayIso: context.endOfTodayIso,
         allowFutureStart: queued,
     });
 

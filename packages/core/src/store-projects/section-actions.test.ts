@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from '../store';
 import type { StorageAdapter } from '../storage';
-import type { AppData } from '../types';
+import type { AppData, Section, Task } from '../types';
+import { buildNewSection, projectSectionOrderMax, sectionDeleteEffect } from './section-actions';
 
 const NOW = '2026-07-24T12:00:00.000Z';
 
@@ -83,5 +84,38 @@ describe('section actions', () => {
         const saved = saveData.mock.calls.at(-1)?.[0] as AppData;
         expect(saved.sections.find((item) => item.id === section.id)?.deletedAt).toBe(NOW);
         expect(saved.tasks.find((item) => item.id === task.id)?.sectionId).toBeUndefined();
+    });
+
+    it('uses the shared Section factory for RN initial props and finite order fallback', async () => {
+        const project = await useTaskStore.getState().addProject('Launch', '#3b82f6');
+        if (!project) throw new Error('project creation failed');
+        const existing = await useTaskStore.getState().addSection(project.id, 'Earlier');
+        if (!existing) throw new Error('section creation failed');
+        const initialProps = { description: 'Keep details', isCollapsed: true,
+            order: Number.POSITIVE_INFINITY, createdAt: '2025-01-01T00:00:00.000Z' };
+        const created = await useTaskStore.getState().addSection(project.id, '  Planned  ', initialProps);
+        if (!created) throw new Error('section creation failed');
+        const expected = buildNewSection({ id: created.id, projectId: project.id, title: '  Planned  ',
+            initialProps, orderMax: projectSectionOrderMax([existing], project.id),
+            deviceId: created.revBy!, now: NOW });
+        expect(created).toEqual(expected);
+        expect(created).toMatchObject({ title: 'Planned', order: 1, isCollapsed: true,
+            description: 'Keep details', createdAt: initialProps.createdAt });
+    });
+
+    it('plans the tombstone and every linked Task detach without changing raw fields', () => {
+        const before: Section = { id: 'target', projectId: 'parent', title: 'Keep', order: 3,
+            description: null as never, rev: 4, revBy: 'old', createdAt: NOW, updatedAt: NOW };
+        const tasks: Task[] = [
+            { id: 'live', title: 'Live', status: 'next', projectId: 'parent', sectionId: 'target',
+                tags: [], contexts: [], rev: 2, createdAt: NOW, updatedAt: NOW },
+            { id: 'deleted', title: 'Deleted', status: 'next', projectId: 'other', sectionId: 'target',
+                deletedAt: NOW, tags: [], contexts: [], rev: 7, createdAt: NOW, updatedAt: NOW },
+        ];
+        const effect = sectionDeleteEffect(before, tasks, 'new-device', NOW);
+        expect(effect.section.after).toEqual({ ...before, deletedAt: NOW, updatedAt: NOW,
+            rev: 5, revBy: 'new-device' });
+        expect(effect.tasks.map((pair) => pair.after)).toEqual(tasks.map((task) => ({ ...task,
+            sectionId: undefined, updatedAt: NOW, rev: task.rev! + 1, revBy: 'new-device' })));
     });
 });

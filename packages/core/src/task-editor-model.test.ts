@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
+import { createDateFormatter } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
 import { filterProjectsBySelectedArea } from './project-utils';
 import { WEEKDAY_ORDER } from './recurrence-constants';
@@ -395,5 +396,20 @@ describe('task editor model rules', () => {
         expect(clearInvalidTaskDraftSection(draft, sections)).toBe(draft);
         expect(clearInvalidTaskDraftSection({ ...draft, projectId: 'other' }, sections).sectionId).toBe('');
         expect(clearInvalidTaskDraftSection({ ...draft, sectionId: 'gone' }, sections).sectionId).toBe('');
+    });
+});
+
+
+describe('task editor model calendar preview hint', () => {
+    it('adds the original RN daily hint and clears it with the draft recurrence', () => {
+        const task: Task = { id: 'preview', title: 'Preview', status: 'next', tags: [], contexts: [],
+            dueDate: '2026-10-01', recurrence: { rule: 'daily', strategy: 'strict' },
+            createdAt: CREATED, updatedAt: CREATED };
+        const input = { task, draft: createTaskDraft(task), settings: {}, projects: [], sections: [], areas: [], tasks: [task],
+            people: [], contexts: [], tags: [], t: (key: string) => key, now: new Date('2026-09-27T12:00:00.000Z'),
+            formatDate: createDateFormatter({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' }) };
+        expect(buildTaskEditorModel(input).fields.recurrence.calendarPreviewHint).toBe('Next calendar preview: Oct 2, 2026.');
+        expect(buildTaskEditorModel({ ...input, draft: { ...input.draft, recurrence: '', recurrenceRRule: '' } })
+            .fields.recurrence.calendarPreviewHint).toBe('');
     });
 });

@@ -40,7 +40,10 @@ import {
     type BoardStatus,
 } from './board-view-model';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
-import { matchesDuplicateSource } from './store-helpers';
+import { createProjectOrderReserver, ensureDeviceId, matchesDuplicateSource, nextRevision } from './store-helpers';
+import { buildDuplicateTask, taskEditValuesEqual } from './store-tasks';
+import { TASK_SYNC_FIELD_SCHEMA } from './task-sync-schema';
+import { boardOrderForDuplicate } from './task-utils';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import {
     NATIVE_HOST_CONTRACT_VERSION,
@@ -136,6 +139,25 @@ export type NativeBoardAction =
     | { type: 'moveCard'; taskId: string; status: BoardStatus; afterId?: string | null; filters?: NativeBoardFilters }
     | { type: 'duplicateTask'; taskId: string }
     | { type: 'trashTask'; taskId: string };
+
+/** Durable native stage: Move needs a separate frozen lifecycle/order planner. */
+export type NativeBoardWriteRequest = {
+    requestId: string;
+    action: Extract<NativeBoardAction, { type: 'duplicateTask' | 'trashTask' }>;
+};
+export type NativePreparedBoardAction = {
+    version: 1;
+    request: NativeBoardWriteRequest;
+    /** Duplicate: a before-only source guard. Trash: the target preimage. */
+    before: Task;
+    /** The sole row written and checked before mutable source/container guards. */
+    after: Task;
+    deviceIdToInitialize: string | null;
+    result: NativeBoardActionResult;
+};
+export type NativeBoardPrepareResult =
+    | { kind: 'prepared'; prepared: NativePreparedBoardAction }
+    | { kind: 'noop'; result: NativeBoardActionResult };
 
 export type NativeBoardActionResult = {
     /** False when the action had nothing to write. */
@@ -307,6 +329,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         const read = readFilters(input.filters);
         if (!read || (input.filterEdit !== undefined && !isFilterEdit(input.filterEdit))) return null;
         const edited = input.filterEdit === undefined ? read : applyBoardFilterEdit(read, input.filterEdit as BoardFilterEdit);
+        if (!readFilters(edited)) return null;
         const now = new Date();
         const base = deps.revision(now);
         const key = `${base}:${paramsKey(edited)}`;
@@ -412,6 +435,72 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 return refuse('INVALID_INPUT', 'The Board does not offer that action');
         }
     };
+    const exactKeys = (value: Record<string, unknown>, keys: string[]) =>
+        Object.keys(value).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+    const detach = (input: unknown): unknown => {
+        try {
+            const json = JSON.stringify(input);
+            return json.length <= 2_000_000 ? JSON.parse(json) : null;
+        } catch { return null; }
+    };
+    const readWriteRequest = (input: unknown): NativeBoardWriteRequest | null => {
+        if (!isObjectRecord(input) || !exactKeys(input, ['requestId', 'action'])
+            || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+            || !isObjectRecord(input.action) || !exactKeys(input.action, ['type', 'taskId'])
+            || !['duplicateTask', 'trashTask'].includes(input.action.type as string)
+            || !isText(input.action.taskId) || !input.action.taskId) return null;
+        return input as unknown as NativeBoardWriteRequest;
+    };
+    const taskRecord = (input: unknown): input is Task => isObjectRecord(input)
+        && isText(input.id) && Boolean(input.id) && typeof input.title === 'string'
+        && ['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'].includes(input.status as string)
+        && typeof input.createdAt === 'string' && typeof input.updatedAt === 'string'
+        && Object.keys(input).every((name) => TASK_SYNC_FIELD_SCHEMA.some((field) => field.name === name));
+    const readPrepared = (input: unknown): NativePreparedBoardAction | null => {
+        const detached = detach(input);
+        if (!isObjectRecord(detached) || !exactKeys(detached, ['version', 'request', 'before', 'after', 'deviceIdToInitialize', 'result'])
+            || detached.version !== 1 || !taskRecord(detached.before) || !taskRecord(detached.after)) return null;
+        const request = readWriteRequest(detached.request);
+        if (!request) return null;
+        const prepared = detached as unknown as NativePreparedBoardAction;
+        const { before, after, deviceIdToInitialize } = prepared;
+        try {
+            if (before.id !== request.action.taskId || before.deletedAt || before.purgedAt
+                || !isText(after.revBy) || !after.revBy || new Date(after.updatedAt).toISOString() !== after.updatedAt
+                || (deviceIdToInitialize !== null && (deviceIdToInitialize !== after.revBy || !deps.requestIdPattern.test(deviceIdToInitialize)))) return null;
+            let expected: Task;
+            let result: NativeBoardActionResult;
+            if (request.action.type === 'trashTask') {
+                expected = { ...before, deletedAt: after.updatedAt, updatedAt: after.updatedAt, rev: nextRevision(before.rev), revBy: after.revBy };
+                result = { changed: true, open: null };
+            } else {
+                if (after.id !== request.requestId || after.id === before.id || after.order !== after.orderNum
+                    || (before.projectId ? typeof after.order !== 'number' || !Number.isFinite(after.order) : after.order !== undefined)
+                    || (after.boardOrder !== undefined && (!Number.isSafeInteger(after.boardOrder)
+                        || !Number.isSafeInteger(before.boardOrder) || after.boardOrder <= before.boardOrder!))) return null;
+                const ids = [...(after.checklist ?? []).map((item) => item.id), ...(after.attachments ?? []).map((item) => item.id)];
+                const sourceIds = new Set([before.id, ...(before.checklist ?? []).map((item) => item.id), ...(before.attachments ?? []).map((item) => item.id)]);
+                if (!ids.every((id) => typeof id === 'string' && deps.requestIdPattern.test(id) && !sourceIds.has(id))
+                    || new Set([after.id, ...ids]).size !== ids.length + 1) return null;
+                let index = 0;
+                expected = buildDuplicateTask({ sourceTask: before, copyId: request.requestId, now: after.createdAt, deviceId: after.revBy,
+                    projectOrder: after.order, boardOrder: after.boardOrder, generateId: () => ids[index++] });
+                if (index !== ids.length) return null;
+                result = { changed: true, open: { taskId: after.id, projectId: after.projectId ?? null, tab: 'task' } };
+            }
+            return taskEditValuesEqual(after, expected) && taskEditValuesEqual(prepared.result, result) ? prepared : null;
+        } catch { return null; }
+    };
+    const readPreparedCommand = (input: unknown): NativePreparedBoardAction | null => {
+        if (!isObjectRecord(input) || !exactKeys(input, ['request', 'prepared'])) return null;
+        const request = readWriteRequest(detach(input.request));
+        const prepared = readPrepared(input.prepared);
+        return request && prepared && taskEditValuesEqual(request, prepared.request) ? prepared : null;
+    };
+    // Object order changes when a native host encodes its journal; array order never does.
+    const canonicalJSON = (input: unknown): string => JSON.stringify(input, (_name, value) =>
+        isObjectRecord(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
+
     // Request IDs that entered the receipts, with their payloads, so a retry reaches its receipt first.
     const entered = new Map<string, string>();
 
@@ -482,6 +571,60 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 items = list.page(input.offset, input.limit);
             }
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: read.revision, list: input.list, total, items } };
+        },
+
+        /** Pure planning for the bounded native Trash/Duplicate journal. */
+        prepareBoardAction(input: NativeBoardWriteRequest): NativeHostResult<NativeBoardPrepareResult> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const request = readWriteRequest(detach(input));
+            if (!request) return fail('INVALID_INPUT', 'A request UUID and a supported Board action are required');
+            const state = useTaskStore.getState();
+            const source = state._tasksById.get(request.action.taskId);
+            if (!source || source.purgedAt || (source.deletedAt && request.action.type === 'duplicateTask')) return fail('TASK_NOT_FOUND', 'Task not found');
+            if (source.deletedAt) return { ok: true, value: { kind: 'noop', result: { changed: false, open: null } } };
+            if (request.action.type === 'duplicateTask' && state._tasksById.has(request.requestId)) {
+                return fail('INVALID_INPUT', 'The duplicate request ID is already in use; retry its prepared command');
+            }
+            const before = detach(source);
+            if (!taskRecord(before)) return fail('INVALID_INPUT', 'Task cannot fit a valid bounded Board journal');
+            const device = ensureDeviceId(state.settings);
+            const now = new Date().toISOString();
+            const after = request.action.type === 'trashTask'
+                ? { ...before, deletedAt: now, updatedAt: now, rev: nextRevision(before.rev), revBy: device.deviceId }
+                : buildDuplicateTask({ sourceTask: before, copyId: request.requestId, now, deviceId: device.deviceId,
+                    projectOrder: before.projectId ? createProjectOrderReserver(state._allTasks)(before.projectId) : undefined,
+                    boardOrder: boardOrderForDuplicate(before.boardOrder, state._allTasks.filter((task) => task.status === before.status && !task.deletedAt)) });
+            const result: NativeBoardActionResult = { changed: true, open: request.action.type === 'duplicateTask'
+                ? { taskId: after.id, projectId: after.projectId ?? null, tab: 'task' } : null };
+            const prepared = readPrepared({ version: 1, request, before, after, deviceIdToInitialize: device.updated ? device.deviceId : null, result });
+            return prepared ? { ok: true, value: { kind: 'prepared', prepared } }
+                : fail('INVALID_INPUT', 'Board action cannot produce a valid bounded journal');
+        },
+
+        /** Pure immutable authority check, including before activation/SQLite open.
+         * Terminal cleanup must never rerun a mutation or mutable source checks. */
+        validatePreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction }): NativeHostResult<NativeBoardActionResult> {
+            const prepared = readPreparedCommand(input);
+            return prepared ? { ok: true, value: prepared.result } : fail('INVALID_INPUT', 'Prepared Board request or journal does not match');
+        },
+
+        async commitPreparedBoardAction(input: { request: NativeBoardWriteRequest; prepared: NativePreparedBoardAction }): Promise<NativeHostResult<NativeBoardActionResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const prepared = readPreparedCommand(input);
+            if (!prepared) return fail('INVALID_INPUT', 'Prepared Board request or journal does not match');
+            const request = prepared.request;
+            // Immutable authority is checked before receipt lookup; mutable source
+            // checks only run when no known receipt already owes its save.
+            return receipts.run(request.requestId, canonicalJSON(['preparedBoard', prepared]), async () => {
+                const result = await useTaskStore.getState().commitPreparedBoardTask({
+                    kind: request.action.type, before: prepared.before, after: prepared.after,
+                    deviceIdToInitialize: prepared.deviceIdToInitialize,
+                });
+                if (!result.success) return fail(result.reason === 'conflict' ? 'STALE_REVISION' : 'INVALID_INPUT', result.error ?? 'Prepared Board action refused');
+                return { ok: true, value: prepared.result };
+            });
         },
 
         /**

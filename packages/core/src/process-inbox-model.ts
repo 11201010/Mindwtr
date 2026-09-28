@@ -872,12 +872,18 @@ export function formatProcessInboxProgressLabel(t: Translate, current: number, t
 }
 
 /**
- * Both counts shrink as items leave the Inbox, so progress latches the
- * session's largest remaining count and counts up against it: filed and
- * skipped items are both progress.
+ * Filed and skipped tasks stay counted when conversion or another capture
+ * grows the queue. Visited tasks also count a conversion whose new actions
+ * arrive in the same publication as the original task leaves the Inbox.
  */
-export function getProcessInboxProgress(latchedTotal: number, remaining: number): { total: number; processed: number } {
-    const total = Math.max(latchedTotal, remaining);
+export function getProcessInboxProgress(
+    previous: { total: number; processed: number },
+    remaining: number,
+    session: ProcessInboxSession,
+): { total: number; processed: number } {
+    const completed = session.visitedTaskIds.size
+        - (session.currentTaskId && session.visitedTaskIds.has(session.currentTaskId) ? 1 : 0);
+    const total = Math.max(previous.total, remaining + Math.max(previous.processed, completed));
     return { total, processed: Math.max(0, total - remaining) };
 }
 
@@ -1212,14 +1218,14 @@ const thrownMessage = (error: unknown): string | undefined => {
     return undefined;
 };
 
-async function writeProcessInboxDecision<Candidate extends ProcessInboxCandidate>(
-    ctx: ProcessInboxCommitContext<Candidate>,
+/** Apply RN's draft selections and touched-date rules before preparing a decision. */
+export function prepareProcessInboxDraftDecision(
+    ctx: Pick<ProcessInboxCommitContext<ProcessInboxCandidate>, 'task' | 'draft' | 'plan' | 'settings' | 'parseTitle'>,
     decision: ProcessInboxDecision,
-    options: ProcessInboxCommitOptions,
-    advance: boolean,
-): Promise<{ ok: true; session: ProcessInboxSession } | { ok: false; reason: ProcessInboxNoticeReason; notice: ProcessInboxNotice }> {
+    options: ProcessInboxCommitOptions = {},
+): PreparedProcessInboxCommit {
     const { draft } = ctx;
-    const prepared = prepareProcessInboxCommit({
+    return prepareProcessInboxCommit({
         task: ctx.task,
         plan: ctx.plan,
         decision,
@@ -1244,6 +1250,15 @@ async function writeProcessInboxDecision<Candidate extends ProcessInboxCandidate
         dirtyScheduleFields: new Set(draft.dirtyScheduleFields),
         options,
     });
+}
+
+async function writeProcessInboxDecision<Candidate extends ProcessInboxCandidate>(
+    ctx: ProcessInboxCommitContext<Candidate>,
+    decision: ProcessInboxDecision,
+    options: ProcessInboxCommitOptions,
+    advance: boolean,
+): Promise<{ ok: true; session: ProcessInboxSession } | { ok: false; reason: ProcessInboxNoticeReason; notice: ProcessInboxNotice }> {
+    const prepared = prepareProcessInboxDraftDecision(ctx, decision, options);
     if (!prepared.ok) {
         return {
             ok: false,

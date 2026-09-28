@@ -677,6 +677,38 @@ describe('ProjectDetailModal metadata pickers', () => {
         });
         expect(storeActions.updateProject).toHaveBeenLastCalledWith('project-1', { startDate: undefined });
     });
+
+    it('opens a date-only Review Date on its local day without changing timed saves or invalid fallback', () => {
+        process.env.TZ = 'America/New_York';
+        const openReviewPicker = (reviewAt: string) => {
+            let tree!: ReturnType<typeof create>;
+            act(() => {
+                tree = create(<ProjectDetailModal {...createProjectDetailModalProps({
+                    project: { ...project('active'), reviewAt },
+                })} />);
+            });
+            expandProjectDetails(tree);
+            act(() => {
+                tree.root.findByProps({ testID: 'project-review-date-picker' }).props.onPress();
+            });
+            return tree.root.findByType(DateTimePicker).props;
+        };
+
+        const dateOnly = openReviewPicker('2026-09-28').value as Date;
+        expect([dateOnly.getFullYear(), dateOnly.getMonth(), dateOnly.getDate()]).toEqual([2026, 8, 28]);
+
+        const timed = openReviewPicker('2026-09-28T15:30:00.000Z');
+        expect((timed.value as Date).toISOString()).toBe('2026-09-28T15:30:00.000Z');
+        act(() => timed.onChange({}, new Date('2026-10-02T01:30:00.000Z')));
+        expect(storeActions.updateProject).toHaveBeenLastCalledWith('project-1', {
+            reviewAt: '2026-10-02T01:30:00.000Z',
+        });
+
+        const before = Date.now();
+        const invalid = openReviewPicker('invalid-review-date').value as Date;
+        expect(invalid.getTime()).toBeGreaterThanOrEqual(before);
+        expect(invalid.getTime()).toBeLessThanOrEqual(Date.now());
+    });
 });
 
 describe('ProjectDetailModal task sorting', () => {

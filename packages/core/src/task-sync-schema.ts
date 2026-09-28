@@ -182,7 +182,7 @@ const taskColumnValues = (task: Task): Record<string, unknown> => {
         repeatReminderMinutes: task.repeatReminderMinutes ?? null,
         tags: toJson(task.tags ?? []),
         contexts: toJson(task.contexts ?? []),
-        checklist: toJson(task.checklist),
+        checklist: toJson(toChecklist(task.checklist)),
         description: task.description ?? null,
         textDirection: task.textDirection ?? null,
         attachments: toJson(task.attachments),

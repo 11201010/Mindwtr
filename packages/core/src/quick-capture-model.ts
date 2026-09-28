@@ -826,6 +826,8 @@ export function buildQuickCaptureContextPicker(options: QuickCaptureOptions, con
         title: t('taskEdit.contextsLabel'),
         placeholder: t('taskEdit.contextsPlaceholder'),
         clear: { label: t('common.clear'), edit: { type: 'clearContexts' } as QuickCaptureEdit },
+        // Keyboard submit also clears a valid query whose tokens are already selected, as RN does.
+        submit: parseQuickCaptureContextQuery(query).length > 0 ? { type: 'addContexts', query } as QuickCaptureEdit : null,
         add: addable && trimmed
             ? { label: trimmed, accessibilityLabel: `${t('common.add')}: ${trimmed}`, edit: { type: 'addContexts', query } as QuickCaptureEdit }
             : null,

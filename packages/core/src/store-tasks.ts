@@ -1,25 +1,30 @@
+import { buildNewTask } from './task-creation';
+import { TASK_SQLITE_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
+import { taskEditValuesEqual } from './json-value-equality';
+export { taskEditValuesEqual } from './json-value-equality';
+import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from './project-sync-schema';
+import { sectionToSqliteRow } from './section-sync-schema';
 import {
     collectFocusEligibilityTasks,
     resolveFocusStarAction,
-    resolveTaskFocusCreation,
     type FocusStarAction,
 } from './focus-star';
 import type { AppData, PendingRemoteAttachmentDelete, Section, Task, TaskStatus } from './types';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
-import type { StoreActionResult, TaskStore } from './store-types';
+import type { PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, StoreActionResult, TaskStore } from './store-types';
 import {
     applyTaskProjectReactivationTransition,
     applyTaskUpdates,
     buildSaveSnapshot,
     createProjectOrderReserver,
     ensureDeviceId,
+    findExistingRecurringFollowUp,
     findTaskProjectReactivationTarget,
     getNextDataChangeAt,
     getNextProjectOrder,
     getTaskOrder,
     isTaskCountedAsFocused,
-    getReferenceTaskFieldClears,
     matchesDuplicateSource,
     isRestorableProjectArchiveSection,
     nextRevision,
@@ -27,7 +32,7 @@ import {
     persist,
     replaceEntitiesInArray,
     replaceEntityInArray,
-    resolveCaptureStatusForStart,
+    stampNewRecurringFollowUp,
     type ProjectOrderReserver,
 } from './store-helpers';
 import { logInfo, logWarn } from './logger';
@@ -36,14 +41,13 @@ import {
     isTaskCancelled,
     isTaskFinished,
     normalizeCancellationTimestamp,
-    normalizeTaskLifecycleFields,
 } from './task-status';
 import { beginNotifyProfile, endNotifyProfile, type NotifyProfile } from './store-notify-profiler';
 import { generateUUID as uuidv4 } from './uuid';
-import { canSkipRecurringTaskOccurrence, canonicalRecurringFollowUp, createNextRecurringTask, normalizeRecurrenceForLoad } from './recurrence';
-import { normalizeRepeatReminderMinutes } from './schedule-utils';
+import { canSkipRecurringTaskOccurrence, createNextRecurringTask, normalizeRecurrenceForLoad, type RecurrenceProjection } from './recurrence';
 import { normalizeFocusTaskLimit } from './focus-utils';
-import { boardOrderForDuplicate, isTaskFutureFocusCandidate } from './task-utils';
+import { resolveProcessInboxPlan } from './process-inbox-plan';
+import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate } from './task-utils';
 import {
     buildTaskContainerMovePatch,
     normalizeOptionalContainerId,
@@ -51,8 +55,8 @@ import {
     resolveTaskContainerAssignment,
     resolveTaskContainerHierarchy,
 } from './task-container-rules';
-import { resolveDefaultNewTaskAreaId } from './area-utils';
-import { findSelectableProjectByTitleAndArea } from './project-utils';
+import { findSelectableProjectByTitleAndArea, isSelectableProjectForTaskAssignment } from './project-utils';
+import { isStatusListTaskReadOnly } from './menu-views-model';
 import { buildNewProject } from './store-projects/project-actions';
 import {
     compactPurgedTaskForLocalStorage,
@@ -114,68 +118,17 @@ const appendPendingRemoteDeletes = (
     };
 };
 
-const normalizeOptionalTaskField = (value: string | undefined): string => value ?? '';
-
-const recurrenceKeyForDuplicateCheck = (task: Task): string => (
-    JSON.stringify(normalizeRecurrenceForLoad(task.recurrence) ?? null)
-);
-
-const isExistingRecurringFollowUp = (existing: Task, candidate: Task): boolean => {
-    if (existing.id === candidate.id) return false;
-    if (existing.deletedAt) return false;
-    if (isTaskFinished(existing)) return false;
-    if (existing.status !== candidate.status) return false;
-    if (existing.title.trim() !== candidate.title.trim()) return false;
-    if (normalizeOptionalTaskField(existing.projectId) !== normalizeOptionalTaskField(candidate.projectId)) return false;
-    if (normalizeOptionalTaskField(existing.sectionId) !== normalizeOptionalTaskField(candidate.sectionId)) return false;
-    if (normalizeOptionalTaskField(existing.areaId) !== normalizeOptionalTaskField(candidate.areaId)) return false;
-    if (normalizeOptionalTaskField(existing.startTime) !== normalizeOptionalTaskField(candidate.startTime)) return false;
-    if (normalizeOptionalTaskField(existing.dueDate) !== normalizeOptionalTaskField(candidate.dueDate)) return false;
-    if (normalizeOptionalTaskField(existing.reviewAt) !== normalizeOptionalTaskField(candidate.reviewAt)) return false;
-    return recurrenceKeyForDuplicateCheck(existing) === recurrenceKeyForDuplicateCheck(candidate);
-};
-
-// excludeId is the task being completed in this same update. The snapshot being
-// scanned is taken before the update lands, so that task still reads as live and
-// would match its own follow-up: completing an occurrence and then the one it just
-// spawned, on the same day, made the second candidate look like a duplicate of the
-// first and silently ended the series (#867).
-const findExistingRecurringFollowUp = (
-    tasks: readonly Task[],
-    candidate: Task | null,
-    excludeId?: string,
-): Task | null => {
-    if (!candidate) return null;
-    return tasks.find((task) => task.id !== excludeId && isExistingRecurringFollowUp(task, candidate)) ?? null;
-};
-
-// The follow-up is a fresh task, so it needs what every other creation path
-// stamps: a project order (missing sorts as +Infinity in
-// compareTasksByProjectOrder, dumping the next occurrence below its siblings)
-// and a zeroed push count. It inherits the completed instance's place — that
-// instance leaves the active list and a series only ever has one active
-// instance, so there is nothing to collide with — and only falls back to a
-// fresh reservation when the completed task had no order to inherit.
-const stampNewRecurringFollowUp = (
-    task: Task | null,
-    deviceId: string,
-    sourceOrder: number | undefined,
-    reserveProjectOrder: ProjectOrderReserver,
-): Task | null => {
-    if (!task) return null;
-    const order = sourceOrder ?? reserveProjectOrder(task.projectId);
-    return {
-        ...canonicalRecurringFollowUp(task),
-        rev: nextRevision(undefined),
-        revBy: deviceId,
-        ...(order !== undefined ? { order, orderNum: order } : {}),
-    };
-};
-
 type TaskActions = Pick<
     TaskStore,
     | 'addTask'
     | 'addTasks'
+    | 'commitPreparedCapture'
+    | 'commitPreparedTaskEdit'
+    | 'commitPreparedBoardTask'
+    | 'commitPreparedCalendarTask'
+    | 'commitPreparedCalendarCreate'
+    | 'commitPreparedInboxEffect'
+    | 'commitPreparedChecklistEffect'
     | 'updateTask'
     | 'cancelTask'
     | 'skipRecurringTaskOccurrence'
@@ -366,13 +319,15 @@ export const sanitizeRestoredTaskContainerReferences = (
     return resolved;
 };
 
-const prepareTaskUpdatesForStore = ({
+export const prepareTaskUpdatesForStore = ({
     task,
     updates,
     allProjects,
     allSections,
     allAreas,
     settings,
+    futureBoundary,
+    nowMs,
     reserveProjectOrder,
     projectOrderReserver,
 }: {
@@ -383,6 +338,10 @@ const prepareTaskUpdatesForStore = ({
     allAreas: AppData['areas'];
     /** Enables the settings-driven update rules (auto-archive on a completion edit). */
     settings?: AppData['settings'];
+    /** Frozen end of the preparation process's local day, for prepared replay validation. */
+    futureBoundary?: string;
+    /** Frozen preparation clock; ordinary RN callers retain the ambient default. */
+    nowMs?: number;
     reserveProjectOrder?: boolean;
     projectOrderReserver?: ProjectOrderReserver;
 }): { ok: true; updates: Partial<Task> } | { ok: false; error: string } => {
@@ -405,7 +364,7 @@ const prepareTaskUpdatesForStore = ({
     const adjustedUpdates = normalizeTaskUpdate(task, {
         ...updates,
         ...containerPatch.updates,
-    }, { settings });
+    }, { settings, futureBoundary, nowMs });
 
     return {
         ok: true,
@@ -415,6 +374,230 @@ const prepareTaskUpdatesForStore = ({
         },
     };
 };
+
+/** Calculates the exact rows affected by one already-prepared task update. */
+export const planTaskUpdateEffects = ({
+    task,
+    preparedUpdates,
+    allTasks,
+    allProjects,
+    allSections,
+    now,
+    deviceId,
+    createId,
+    recurrenceProjection,
+}: {
+    task: Task;
+    preparedUpdates: Partial<Task>;
+    allTasks: Task[];
+    allProjects: AppData['projects'];
+    allSections: Section[];
+    now: string;
+    deviceId: string;
+    createId?: () => string;
+    recurrenceProjection?: RecurrenceProjection | null;
+}): {
+    updatedTask: Task;
+    recurringFollowUpTask: Task | null;
+    recurringCandidateTask: Task | null;
+    recurringDuplicateTask: Task | null;
+    tasks: Task[];
+    projects: AppData['projects'];
+    sections: Section[];
+    reactivatedProjectIds: string[];
+} => {
+    const { updatedTask, nextRecurringTask } = applyTaskUpdates(
+        task,
+        { ...preparedUpdates, rev: nextRevision(task.rev), revBy: deviceId },
+        now,
+        createId,
+        recurrenceProjection,
+    );
+    const stampedNextRecurringTask = stampNewRecurringFollowUp(
+        nextRecurringTask,
+        deviceId,
+        getTaskOrder(task),
+        // This collection scan remains lazy for updates without a follow-up.
+        (projectId) => getNextProjectOrder(projectId, allTasks),
+    );
+    const recurringDuplicateTask = findExistingRecurringFollowUp(allTasks, stampedNextRecurringTask, task.id);
+    const recurringFollowUpTask = recurringDuplicateTask
+        ? null
+        : stampedNextRecurringTask;
+    const updatedAllTasksBase = replaceEntityInArray(allTasks, task.id, updatedTask);
+    const updatedAllTasks = recurringFollowUpTask
+        ? [...updatedAllTasksBase, recurringFollowUpTask]
+        : updatedAllTasksBase;
+    const projectReactivation = applyTaskProjectReactivationTransition(
+        [{ task, updates: preparedUpdates }],
+        updatedAllTasks,
+        allProjects,
+        allSections,
+        now,
+        deviceId,
+    );
+    return { updatedTask, recurringFollowUpTask, recurringCandidateTask: stampedNextRecurringTask,
+        recurringDuplicateTask, ...projectReactivation };
+};
+
+/** RN Reset's exact one-row field change, including the already-open write. */
+export const buildResetTaskChecklistUpdates = (task: Task): Partial<Task> => {
+    const wasDone = task.status === 'done';
+    return {
+        checklist: task.checklist?.map((item) => ({ ...item, isCompleted: false })),
+        status: wasDone ? 'next' : task.status,
+        completedAt: wasDone ? undefined : task.completedAt,
+        isFocusedToday: wasDone ? false : task.isFocusedToday,
+    };
+};
+
+const TASK_EDIT_REVISION_FIELDS = new Set(['rev', 'revBy', 'updatedAt']);
+const INDEPENDENT_TASK_EDIT_FIELDS = new Set([
+    'title', 'description', 'contexts', 'tags', 'priority', 'energyLevel', 'timeEstimate',
+    'location', 'assignedTo', 'attachments', 'checklist', 'timeSpentMinutes', 'viewSectionIds', 'textDirection',
+]);
+
+type PreparedAffectedRows = Pick<PreparedInboxEffect, 'tasks' | 'projects' | 'sections'>;
+
+/** The SQLite representation, including every revision/stamp, is the durable receipt. */
+const samePreparedSqliteRow = (columns: readonly string[], jsonColumns: ReadonlySet<string>, left: unknown[], right: unknown[]) => (
+    left.length === right.length && left.every((value, index) => {
+        const other = right[index];
+        if (!jsonColumns.has(columns[index]) || typeof value !== 'string' || typeof other !== 'string') {
+            return Object.is(value, other);
+        }
+        return taskEditValuesEqual(JSON.parse(value), JSON.parse(other));
+    })
+);
+const taskJsonColumns = new Set(['relativeStartOffset', 'recurrence', 'tags', 'contexts',
+    'checklist', 'attachments', 'viewSectionIds']);
+const projectJsonColumns = new Set(['tagIds', 'attachments']);
+const samePreparedTask = (left: Task, right: Task) => samePreparedSqliteRow(TASK_SQLITE_COLUMNS, taskJsonColumns,
+    taskToSqliteRow(left), taskToSqliteRow(right));
+const samePreparedProject = (left: AppData['projects'][number], right: AppData['projects'][number]) =>
+    samePreparedSqliteRow(PROJECT_SQLITE_COLUMNS, projectJsonColumns, projectToSqliteRow(left), projectToSqliteRow(right));
+const samePreparedSection = (left: Section, right: Section) =>
+    JSON.stringify(sectionToSqliteRow(left)) === JSON.stringify(sectionToSqliteRow(right));
+
+const inspectPreparedAffectedRows = (state: TaskStore, input: PreparedAffectedRows): 'after' | 'before' | 'conflict' => {
+    const rows = [
+        ...input.tasks.map((row) => ({ ...row, current: state._tasksById.get(row.after.id), same: samePreparedTask })),
+        ...input.projects.map((row) => ({ ...row, current: state._projectsById.get(row.after.id), same: samePreparedProject })),
+        ...input.sections.map((row) => ({ ...row, current: state._sectionsById.get(row.after.id), same: samePreparedSection })),
+    ];
+    if (rows.length === 0) return 'conflict';
+    const afterMatches = rows.map(({ current, after, same }) => Boolean(current && same(current as never, after as never)));
+    if (afterMatches.every(Boolean)) return 'after';
+    if (afterMatches.some(Boolean) || rows.some(({ current, before, same }) => (
+        before ? !current || !same(current as never, before as never) : Boolean(current)
+    ))) return 'conflict';
+    return 'before';
+};
+
+const applyPreparedAffectedRows = (state: TaskStore, input: PreparedAffectedRows) => ({
+    tasks: [...replaceEntitiesInArray(state._allTasks, input.tasks.filter((row) => row.before).map((row) => row.after)),
+        ...input.tasks.filter((row) => !row.before).map((row) => row.after)],
+    projects: [...replaceEntitiesInArray(state._allProjects, input.projects.filter((row) => row.before).map((row) => row.after)),
+        ...input.projects.filter((row) => !row.before).map((row) => row.after)],
+    sections: [...replaceEntitiesInArray(state._allSections, input.sections.filter((row) => row.before).map((row) => row.after)),
+        ...input.sections.filter((row) => !row.before).map((row) => row.after)],
+});
+
+export const applyPreparedTaskEditChanges = ({ before, changes }: PreparedTaskEdit): Task => ({
+    ...before,
+    ...Object.fromEntries(Object.entries(changes).map(([field, value]) => [field, value === null ? undefined : value])),
+});
+
+export const buildPreparedTaskEditChanges = (before: Task, after: Task): PreparedTaskEdit['changes'] => Object.fromEntries(
+    [...new Set([...Object.keys(before), ...Object.keys(after)])]
+        .filter((field) => !TASK_EDIT_REVISION_FIELDS.has(field)
+            && !taskEditValuesEqual(before[field as keyof Task], after[field as keyof Task]))
+        .map((field) => [field, after[field as keyof Task] ?? null]),
+);
+
+const matchesPreparedTaskEdit = (current: Task, expected: Task, changes: PreparedTaskEdit['changes']): boolean => (
+    [...new Set([...Object.keys(current), ...Object.keys(expected)])].every((field) => (
+        TASK_EDIT_REVISION_FIELDS.has(field)
+        || (INDEPENDENT_TASK_EDIT_FIELDS.has(field) && !Object.prototype.hasOwnProperty.call(changes, field))
+        || taskEditValuesEqual(current[field as keyof Task], expected[field as keyof Task])
+    ))
+);
+
+/** The existing duplicate row construction, shared with native preparation.
+ * Generated IDs and order reservations may be supplied from an immutable journal. */
+export function buildDuplicateTask({ sourceTask, asNextAction, copyId, now, deviceId, projectOrder, boardOrder, generateId = uuidv4 }: {
+    sourceTask: Task;
+    asNextAction?: boolean;
+    copyId?: string;
+    now: string;
+    deviceId: string;
+    projectOrder?: number;
+    boardOrder?: number;
+    generateId?: () => string;
+}): Task {
+    const duplicatedChecklist = (sourceTask.checklist || []).map((item) => ({
+        ...item,
+        id: generateId(),
+        isCompleted: false,
+    }));
+    const duplicatedAttachments = (sourceTask.attachments || []).flatMap((attachment) => {
+        if (attachment.kind === 'file') {
+            return [];
+        }
+        return [{
+            ...attachment,
+            id: generateId(),
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: undefined,
+            cloudKey: undefined,
+            fileHash: undefined,
+            localStatus: undefined,
+        }];
+    });
+    const newTaskId = copyId ?? generateId();
+
+    const newTask: Task = {
+        ...sourceTask,
+        id: newTaskId,
+        title: sourceTask.title,
+        status: asNextAction
+            ? 'next'
+            : isTaskFinished(sourceTask)
+                ? 'inbox'
+                : sourceTask.status,
+        // Normalized so the rrule's series stamp names the new series too.
+        recurrence: typeof sourceTask.recurrence === 'object'
+            ? normalizeRecurrenceForLoad({ ...sourceTask.recurrence, seriesId: newTaskId })
+            : sourceTask.recurrence,
+        checklist: duplicatedChecklist.length > 0 ? duplicatedChecklist : undefined,
+        attachments: duplicatedAttachments.length > 0 ? duplicatedAttachments : undefined,
+        completedAt: undefined,
+        cancelledAt: undefined,
+        isFocusedToday: false,
+        // A copy is not in Today's Focus and was never archived with a
+        // project, so neither the focus position nor the restore
+        // metadata of the source belongs to it.
+        focusOrder: undefined,
+        boardOrder: undefined,
+        statusBeforeProjectArchive: undefined,
+        completedAtBeforeProjectArchive: undefined,
+        isFocusedTodayBeforeProjectArchive: undefined,
+        projectArchivedAt: undefined,
+        deletedAt: undefined,
+        purgedAt: undefined,
+        createdAt: now,
+        updatedAt: now,
+        rev: 1,
+        revBy: deviceId,
+        order: projectOrder,
+        orderNum: projectOrder,
+    };
+    if (newTask.status === sourceTask.status) {
+        newTask.boardOrder = boardOrder;
+    }
+    return newTask;
+}
 
 export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave }: TaskActionContext): TaskActions => ({
     /**
@@ -508,93 +691,24 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     projectOrderReserver: createProjectOrderReserver(currentState._allTasks),
                 };
             }
-            const hasExplicitAreaId = hasOwnField(initialTaskProps, 'areaId');
-            const shouldApplyDefaultArea = !hasExplicitAreaId
-                && !normalizeOptionalContainerId(initialTaskProps.projectId)
-                && !normalizeOptionalContainerId(initialTaskProps.sectionId);
-            const defaultAreaId = shouldApplyDefaultArea
-                ? resolveDefaultNewTaskAreaId(currentState.settings, currentState._allAreas)
-                : undefined;
-            const containerResolution = resolveTaskContainerAssignment({
-                projectId: initialTaskProps.projectId,
-                sectionId: initialTaskProps.sectionId,
-                areaId: defaultAreaId ?? initialTaskProps.areaId,
-                allProjects: currentState._allProjects,
-                allSections: currentState._allSections,
-                allAreas: currentState._allAreas,
-            });
-            if (!containerResolution.ok) {
-                set({ error: containerResolution.error });
-                return actionFail(containerResolution.error);
-            }
-
-            const resolvedStatus = (initialTaskProps.status ?? 'inbox') as TaskStatus;
-            // Unlike the star creation path below there is no focus cap or
-            // eligibility gate here: nothing is being starred. See
-            // resolveCaptureStatusForStart for the shared promotion rule.
-            const cancellationTimestamp = normalizeCancellationTimestamp(initialTaskProps.cancelledAt);
-            const effectiveStatus: TaskStatus = cancellationTimestamp && !hasOwnField(initialTaskProps, 'status')
-                ? 'archived'
-                : resolveCaptureStatusForStart(initialTaskProps, resolvedStatus);
-            const hasTaskOrder = hasOwnField(initialTaskProps, 'order') || hasOwnField(initialTaskProps, 'orderNum');
-            const resolvedProjectId = containerResolution.projectId;
-            const resolvedSectionId = containerResolution.sectionId;
-            const resolvedAreaId = containerResolution.areaId;
-            const referenceClears = resolvedStatus === 'reference'
-                ? getReferenceTaskFieldClears()
-                : {};
-            const explicitOrder = getTaskOrder(initialTaskProps);
-            const resolvedOrder = !hasTaskOrder && resolvedProjectId
-                ? creationContext.projectOrderReserver(resolvedProjectId)
-                : explicitOrder;
-            let newTask: Task = {
-                ...initialTaskProps,
-                id: item.captureId ?? uuidv4(),
+            const built = buildNewTask({
                 title: item.title,
-                status: effectiveStatus,
-                taskMode: initialTaskProps.taskMode ?? 'task',
-                tags: initialTaskProps.tags ?? [],
-                contexts: initialTaskProps.contexts ?? [],
-                pushCount: initialTaskProps.pushCount ?? 0,
-                recurrence: normalizeRecurrenceForLoad(initialTaskProps.recurrence),
-                repeatReminderMinutes: normalizeRepeatReminderMinutes(initialTaskProps.repeatReminderMinutes),
-                rev: 1,
-                revBy: creationContext.deviceState.deviceId,
-                createdAt: now,
-                updatedAt: now,
-                deletedAt: undefined,
-                purgedAt: undefined,
-                // Synced booleans whose canonical form is an explicit `false`
-                // (sync-normalization.ts materializes both). SQLite hides the
-                // gap by re-materializing every boolean column on read, so an
-                // omission here only shows up on a path that uploads the
-                // in-memory snapshot. Keep the creation literal canonical.
-                isFocusedToday: initialTaskProps.isFocusedToday ?? false,
-                suppressMindwtrReminders: initialTaskProps.suppressMindwtrReminders ?? false,
-                ...referenceClears,
-                areaId: resolvedAreaId,
-                projectId: resolvedProjectId,
-                sectionId: resolvedSectionId,
-                order: resolvedOrder,
-                orderNum: resolvedOrder,
-            };
-
-            if (newTask.isFocusedToday === true) {
-                const focusDecision = resolveTaskFocusCreation(newTask, {
-                    tasks: nextAllTasks,
-                    projects: currentState._allProjects,
-                    sections: currentState._allSections,
-                    focusedCount: creationContext.focusedCount,
-                    focusTaskLimit: creationContext.focusTaskLimit,
-                });
-                newTask.status = focusDecision.status;
-                newTask.isFocusedToday = focusDecision.isFocusedToday;
-                if (focusDecision.outcome === 'focused' && !isTaskFutureFocusCandidate(newTask)) {
-                    creationContext.focusedCount += 1;
-                }
+                initialTaskProps,
+                id: item.captureId ?? uuidv4(),
+                now,
+                deviceId: creationContext.deviceState.deviceId,
+                state: currentState,
+                tasks: nextAllTasks,
+                focusedCount: creationContext.focusedCount,
+                focusTaskLimit: creationContext.focusTaskLimit,
+                projectOrderReserver: creationContext.projectOrderReserver,
+            });
+            if (!built.ok) {
+                set({ error: built.error });
+                return actionFail(built.error);
             }
-
-            newTask = normalizeTaskLifecycleFields(newTask);
+            const newTask = built.task;
+            creationContext.focusedCount = built.focusedCount;
 
             newTasks.push(newTask);
             nextAllTasks.push(newTask);
@@ -648,6 +762,411 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         });
 
         return actionOk({ id: resultIds[0], ids: resultIds });
+    },
+
+    commitPreparedCapture: async ({ task, project, deviceIdToInitialize }) => {
+        let result = actionFail('Prepared capture conflicts with current data');
+        set((state) => {
+            const existingTask = state._allTasks.find((entry) => entry.id === task.id);
+            const existingProject = project && state._allProjects.find((entry) => entry.id === project.id);
+            const sameTask = existingTask && !existingTask.deletedAt && !existingTask.purgedAt
+                && JSON.stringify(taskToSqliteRow(existingTask)) === JSON.stringify(taskToSqliteRow(task));
+            const sameProject = existingProject && !existingProject.deletedAt && !existingProject.purgedAt
+                && JSON.stringify(projectToSqliteRow(existingProject)) === JSON.stringify(projectToSqliteRow(project!));
+            if ((existingTask && !sameTask) || (existingProject && !sameProject)) return state;
+            // A matching receipt precedes mutable container/creation checks. Never
+            // resurrect an operation-created project missing from an existing task.
+            if (existingTask) {
+                if (project && !sameProject) return state;
+                result = actionOk({ id: task.id });
+                return state;
+            }
+            if (project && !existingProject && findSelectableProjectByTitleAndArea(state._allProjects, project.title, project.areaId)) return state;
+            const projects = project && !existingProject ? [...state._allProjects, project] : state._allProjects;
+            if (task.projectId && !projects.some((entry) => entry.id === task.projectId && isSelectableProjectForTaskAssignment(entry))) return state;
+            if (project?.areaId && !state._allAreas.some((entry) => entry.id === project.areaId && !entry.deletedAt)) return state;
+            const container = resolveTaskContainerAssignment({
+                projectId: task.projectId, sectionId: task.sectionId, areaId: task.areaId,
+                allProjects: projects, allSections: state._allSections, allAreas: state._allAreas,
+            });
+            if (!container.ok || container.projectId !== task.projectId || container.sectionId !== task.sectionId || container.areaId !== task.areaId) return state;
+            const tasks = [...state._allTasks, task];
+            const settings = !state.settings.deviceId && deviceIdToInitialize
+                ? { ...state.settings, deviceId: deviceIdToInitialize }
+                : state.settings;
+            persist(set, debouncedSave, state, { tasks, projects, ...(settings !== state.settings ? { settings } : {}) });
+            result = actionOk({ id: task.id });
+            return {
+                _allTasks: tasks,
+                _allProjects: projects,
+                settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt),
+            };
+        });
+        return result;
+    },
+
+    // The contract validates action authority before this guarded one-row commit.
+    commitPreparedBoardTask: async ({ kind, before, after, deviceIdToInitialize }) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Board action conflicts with current data' };
+        const persisted = (task: Task) => {
+            const values = taskToSqliteRow(task);
+            return taskFromSqliteRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]])));
+        };
+        const matches = (left: Task, right: Task) => taskEditValuesEqual(persisted(left), persisted(right));
+        set((state) => {
+            const target = state._tasksById.get(after.id);
+            // An unchanged durable copy is a receipt even if its source was
+            // subsequently edited, deleted or moved to another container.
+            if (target && matches(target, after)) {
+                result = { success: true, id: after.id, outcome: 'replayed' };
+                return state;
+            }
+            const source = state._tasksById.get(before.id);
+            if (!source || !matches(source, before) || source.deletedAt || source.purgedAt
+                || (kind === 'duplicateTask' && target)) return state;
+            if (kind === 'duplicateTask') {
+                // Recheck only the scalar reservations the pure builder read.
+                // Exact target replay above deliberately precedes these guards.
+                const projectOrder = before.projectId ? createProjectOrderReserver(state._allTasks)(before.projectId) : undefined;
+                const boardOrder = after.status === before.status ? boardOrderForDuplicate(before.boardOrder,
+                    state._allTasks.filter((task) => task.status === before.status && !task.deletedAt)) : undefined;
+                if (projectOrder !== after.order || boardOrder !== after.boardOrder) return state;
+                const container = resolveTaskContainerAssignment({
+                    projectId: after.projectId, sectionId: after.sectionId, areaId: after.areaId,
+                    allProjects: state._allProjects, allSections: state._allSections, allAreas: state._allAreas,
+                });
+                if (!container.ok || container.projectId !== after.projectId || container.sectionId !== after.sectionId
+                    || container.areaId !== after.areaId || (after.projectId && !state._allProjects.some((project) =>
+                        project.id === after.projectId && isSelectableProjectForTaskAssignment(project)))) {
+                    result = { success: false, reason: 'invalid', error: 'Prepared duplicate destination is no longer available' };
+                    return state;
+                }
+            }
+            const tasks = kind === 'duplicateTask' ? [...state._allTasks, after] : replaceEntityInArray(state._allTasks, before.id, after);
+            const settings = !state.settings.deviceId && deviceIdToInitialize
+                ? { ...state.settings, deviceId: deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: after.id, outcome: 'applied' };
+            return { _allTasks: tasks, settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedCalendarTask: async ({ before, after, deviceIdBefore, deviceIdToInitialize }: PreparedCalendarTask) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Calendar schedule conflicts with current data' };
+        const persisted = (task: Task) => {
+            const values = taskToSqliteRow(task);
+            return taskFromSqliteRow(Object.fromEntries(TASK_SQLITE_COLUMNS.map((column, index) => [column, values[index]])));
+        };
+        const matches = (left: Task, right: Task) => taskEditValuesEqual(persisted(left), persisted(right));
+        set((state) => {
+            const current = state._tasksById.get(after.id);
+            if (!current) {
+                result = { success: false, reason: 'missing', error: 'Task not found' };
+                return state;
+            }
+            // The complete stamped row is the receipt. Subsequent task and
+            // container edits have no power to invalidate an already saved result.
+            if (matches(current, after)) {
+                result = { success: true, id: after.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!matches(current, before) || before.id !== after.id
+                || (state.settings.deviceId ?? null) !== deviceIdBefore
+                || (deviceIdToInitialize !== null && (deviceIdBefore !== null || after.revBy !== deviceIdToInitialize))
+                || current.deletedAt || current.purgedAt || current.status === 'reference'
+                || isStatusListTaskReadOnly(current, state._allProjects)) return state;
+            const container = resolveTaskContainerAssignment({
+                projectId: after.projectId, sectionId: after.sectionId, areaId: after.areaId,
+                allProjects: state._allProjects, allSections: state._allSections, allAreas: state._allAreas,
+            });
+            if (!container.ok || container.projectId !== after.projectId
+                || container.sectionId !== after.sectionId || container.areaId !== after.areaId) return state;
+            const tasks = replaceEntityInArray(state._allTasks, before.id, after);
+            const settings = deviceIdToInitialize && !state.settings.deviceId
+                ? { ...state.settings, deviceId: deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: after.id, outcome: 'applied' };
+            return { _allTasks: tasks, settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedCalendarCreate: async ({ task, project, intent, creation, deviceIdBefore, deviceIdToInitialize }: PreparedCalendarCreate) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Calendar creation conflicts with current data' };
+        const sameTask = (left: Task, right: Task) => JSON.stringify(taskToSqliteRow(left)) === JSON.stringify(taskToSqliteRow(right));
+        set((state) => {
+            const existingTask = state._tasksById.get(task.id);
+            // The full durable task row answers a lost reply before any mutable
+            // project, setting, area, order or Focus input is inspected.
+            if (existingTask) {
+                if (sameTask(existingTask, task)) result = { success: true, id: task.id, outcome: 'replayed' };
+                return state;
+            }
+            // This command publishes task and optional project together. An
+            // occupied generated project ID with no task is a conflict, never
+            // a partial-commit recovery or an overwrite.
+            if (project && state._projectsById.has(project.id)) return state;
+            const usesDefaultArea = !intent.projectToCreate && !intent.props.projectId
+                && !Object.prototype.hasOwnProperty.call(intent.props, 'areaId');
+            if ((state.settings.deviceId ?? null) !== deviceIdBefore
+                || (deviceIdBefore === null ? !deviceIdToInitialize : deviceIdToInitialize !== null)
+                || (usesDefaultArea && (state.settings.gtd?.defaultAreaMode !== (creation.defaultAreaMode ?? undefined)
+                    || state.settings.gtd?.defaultAreaId !== (creation.defaultAreaId ?? undefined)))
+                || (project && state.settings.gtd?.defaultProjectFlowMode !== (creation.defaultProjectFlowMode ?? undefined))) return state;
+            const currentAreas = state._allAreas.filter((area) => creation.areas.some((frozen) => frozen.id === area.id));
+            if (currentAreas.length !== creation.areas.length
+                || creation.areas.some((frozen) => {
+                    const current = currentAreas.find((area) => area.id === frozen.id);
+                    return !current || current.name !== frozen.name || current.deletedAt !== frozen.deletedAt;
+                })) return state;
+            if (creation.selectedProject) {
+                const current = state._projectsById.get(creation.selectedProject.id);
+                if (!current || current.status !== creation.selectedProject.status
+                    || current.deletedAt !== creation.selectedProject.deletedAt
+                    || current.purgedAt !== creation.selectedProject.purgedAt
+                    || current.areaId !== creation.selectedProject.areaId
+                    || current.isSequential !== creation.selectedProject.isSequential
+                    || current.sequentialScope !== creation.selectedProject.sequentialScope
+                    || !isSelectableProjectForTaskAssignment(current)) return state;
+            }
+            if (project) {
+                const targetArea = intent.projectToCreate?.areaId ?? null;
+                const currentMax = state._allProjects.filter((item) => (item.areaId ?? null) === targetArea)
+                    .reduce((max, item) => Math.max(max, Number.isFinite(item.order) ? item.order : -1), -1);
+                if (currentMax !== creation.projectOrderMax
+                    || findSelectableProjectByTitleAndArea(state._allProjects, project.title, project.areaId)) return state;
+            }
+            const projects = project ? [...state._allProjects, project] : state._allProjects;
+            const container = resolveTaskContainerAssignment({
+                projectId: task.projectId, sectionId: task.sectionId, areaId: task.areaId,
+                allProjects: projects, allSections: state._allSections, allAreas: state._allAreas,
+            });
+            if (!container.ok || container.projectId !== task.projectId || container.sectionId !== task.sectionId
+                || container.areaId !== task.areaId || (task.projectId && !projects.some((item) =>
+                    item.id === task.projectId && isSelectableProjectForTaskAssignment(item)))) return state;
+            const currentOrderMax = task.projectId ? (getNextProjectOrder(task.projectId, state._allTasks) ?? 0) - 1 : null;
+            if (currentOrderMax !== creation.taskOrderMax) return state;
+            if (creation.focusRequested) {
+                if (!creation.focusEndOfTodayIso
+                    || countFocusedTasksBeforeBoundary(state.tasks, creation.focusEndOfTodayIso) !== creation.focusCount
+                    || normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit) !== creation.focusLimit
+                    || (creation.sequentialEmpty && task.projectId
+                        && state._allTasks.some((entry) => entry.projectId === task.projectId))) return state;
+            }
+            const tasks = [...state._allTasks, task];
+            const settings = deviceIdToInitialize && !state.settings.deviceId
+                ? { ...state.settings, deviceId: deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, projects, ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: task.id, outcome: 'applied' };
+            return { _allTasks: tasks, _allProjects: projects, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    /** One guarded Process Inbox publication; the native contract proves the effect first. */
+    commitPreparedInboxEffect: async (input: PreparedInboxEffect) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared Process Inbox change conflicts with current data' };
+        set((state) => {
+            const receipt = inspectPreparedAffectedRows(state, input);
+            // Every target row is the complete durable receipt. It precedes all
+            // settings, source, membership and order guards that may later change.
+            if (receipt === 'after') {
+                result = { success: true, id: input.sourceBefore.id, outcome: 'replayed' };
+                return state;
+            }
+            if (receipt !== 'before') return state;
+            const source = state._tasksById.get(input.sourceBefore.id);
+            if (!source || !samePreparedTask(source, input.sourceBefore)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+            const { guards } = input;
+            if (guards.selectedProject && !input.projects.some((row) => row.after.id === guards.selectedProject!.id)) {
+                const selected = state._projectsById.get(guards.selectedProject.id);
+                if (!selected || !samePreparedProject(selected, guards.selectedProject)
+                    || !isSelectableProjectForTaskAssignment(selected)) return state;
+            }
+            if (guards.selectedArea) {
+                const selected = state._areasById.get(guards.selectedArea.id);
+                if (!selected || selected.deletedAt || selected.name !== guards.selectedArea.name
+                    || selected.deletedAt !== guards.selectedArea.deletedAt) return state;
+            }
+            if (guards.defaultScheduleTime !== null
+                && (state.settings.gtd?.defaultScheduleTime ?? '') !== guards.defaultScheduleTime) return state;
+            if (guards.creationSettings && ((state.settings.gtd?.defaultAreaMode ?? null) !== guards.creationSettings.defaultAreaMode
+                || (state.settings.gtd?.defaultAreaId ?? null) !== guards.creationSettings.defaultAreaId
+                || (state.settings.gtd?.defaultProjectFlowMode ?? null) !== guards.creationSettings.defaultProjectFlowMode)) return state;
+            if (!taskEditValuesEqual(resolveProcessInboxPlan(state.settings), guards.plan)
+                || (guards.defaultProjectFlowMode !== null
+                    && (state.settings.gtd?.defaultProjectFlowMode ?? null) !== guards.defaultProjectFlowMode)) return state;
+            if (guards.projectOrder) {
+                const max = state._allProjects.filter((project) => (project.areaId ?? null) === guards.projectOrder!.areaId)
+                    .reduce((highest, project) => Math.max(highest, Number.isFinite(project.order) ? project.order : -1), -1);
+                if (max !== guards.projectOrder.max) return state;
+            }
+            for (const guard of guards.taskOrders) {
+                const max = (getNextProjectOrder(guard.projectId, state._allTasks) ?? 0) - 1;
+                if (max !== guard.max) return state;
+            }
+            if (guards.reactivation) {
+                const currentTaskIds = state._allTasks.filter((task) => task.projectId === guards.reactivation!.projectId)
+                    .map((task) => task.id).sort();
+                const currentSectionIds = state._allSections.filter((section) => section.projectId === guards.reactivation!.projectId)
+                    .map((section) => section.id).sort();
+                if (JSON.stringify(currentTaskIds) !== JSON.stringify(guards.reactivation.taskIds)
+                    || JSON.stringify(currentSectionIds) !== JSON.stringify(guards.reactivation.sectionIds)) return state;
+            }
+            if (guards.recurringCandidate) {
+                const duplicate = findExistingRecurringFollowUp(state._allTasks, guards.recurringCandidate, input.sourceBefore.id);
+                if (guards.recurringDuplicate
+                    ? !duplicate || !samePreparedTask(duplicate, guards.recurringDuplicate)
+                    : Boolean(duplicate)) return state;
+            }
+            if (guards.focusCount !== null) {
+                if (!guards.focusBoundary || guards.focusLimit === null
+                    || countFocusedTasksBeforeBoundary(state.tasks, guards.focusBoundary) !== guards.focusCount
+                    || normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit) !== guards.focusLimit) return state;
+            }
+            const { tasks, projects, sections } = applyPreparedAffectedRows(state, input);
+            if (input.projects.some((row) => !row.before && findSelectableProjectByTitleAndArea(
+                state._allProjects, row.after.title, row.after.areaId,
+            ))) return state;
+            for (const row of input.tasks) {
+                if (row.after.deletedAt || row.after.purgedAt) continue;
+                const container = resolveTaskContainerAssignment({ projectId: row.after.projectId,
+                    sectionId: row.after.sectionId, areaId: row.after.areaId,
+                    allProjects: projects, allSections: sections, allAreas: state._allAreas });
+                if (!container.ok || container.projectId !== row.after.projectId
+                    || container.sectionId !== row.after.sectionId || container.areaId !== row.after.areaId) return state;
+            }
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, projects, sections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: input.sourceBefore.id, outcome: 'applied' };
+            return { _allTasks: tasks, _allProjects: projects, _allSections: sections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    /** A frozen checklist/editor Save or saved-list Reset, including induced rows. */
+    commitPreparedChecklistEffect: async (input: PreparedChecklistEffect) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared checklist change conflicts with current data' };
+        set((state) => {
+            // A complete target receipt takes precedence over every mutable
+            // setting, source, membership, and order guard on cold recovery.
+            const receipt = inspectPreparedAffectedRows(state, input);
+            if (receipt === 'after') {
+                result = { success: true, id: input.sourceBefore.id, outcome: 'replayed' };
+                return state;
+            }
+            if (receipt !== 'before') return state;
+            const source = state._tasksById.get(input.sourceBefore.id);
+            if (!source || !samePreparedTask(source, input.sourceBefore)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)) return state;
+            const { guards } = input;
+            if (guards.selectedProject && !input.projects.some((row) => row.after.id === guards.selectedProject!.id)) {
+                const selected = state._projectsById.get(guards.selectedProject.id);
+                if (!selected || !samePreparedProject(selected, guards.selectedProject)
+                    || !isSelectableProjectForTaskAssignment(selected)) return state;
+            }
+            if (guards.selectedArea) {
+                const selected = state._areasById.get(guards.selectedArea.id);
+                if (!selected || selected.deletedAt || selected.name !== guards.selectedArea.name
+                    || selected.deletedAt !== guards.selectedArea.deletedAt) return state;
+            }
+            for (const guard of guards.taskOrders) {
+                const max = (getNextProjectOrder(guard.projectId, state._allTasks) ?? 0) - 1;
+                if (max !== guard.max) return state;
+            }
+            if (guards.reactivation) {
+                const ids = state._allTasks.filter((task) => task.projectId === guards.reactivation!.projectId).map((task) => task.id).sort();
+                const sections = state._allSections.filter((section) => section.projectId === guards.reactivation!.projectId)
+                    .map((section) => section.id).sort();
+                if (JSON.stringify(ids) !== JSON.stringify(guards.reactivation.taskIds)
+                    || JSON.stringify(sections) !== JSON.stringify(guards.reactivation.sectionIds)) return state;
+            }
+            if (guards.recurringCandidate) {
+                const duplicate = findExistingRecurringFollowUp(state._allTasks, guards.recurringCandidate, input.sourceBefore.id);
+                if (guards.recurringDuplicate
+                    ? !duplicate || !samePreparedTask(duplicate, guards.recurringDuplicate)
+                    : Boolean(duplicate)) return state;
+            }
+            if (guards.focusCount !== null) {
+                if (!guards.focusBoundary || guards.focusLimit === null
+                    || countFocusedTasksBeforeBoundary(state.tasks, guards.focusBoundary) !== guards.focusCount
+                    || normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit) !== guards.focusLimit) return state;
+            }
+            if (guards.autoArchiveDays !== null && (state.settings.gtd?.autoArchiveDays ?? null) !== guards.autoArchiveDays) return state;
+            const { tasks, projects, sections } = applyPreparedAffectedRows(state, input);
+            for (const row of input.tasks) {
+                if (row.after.deletedAt || row.after.purgedAt) continue;
+                const container = resolveTaskContainerAssignment({ projectId: row.after.projectId,
+                    sectionId: row.after.sectionId, areaId: row.after.areaId,
+                    allProjects: projects, allSections: sections, allAreas: state._allAreas });
+                if (!container.ok || container.projectId !== row.after.projectId
+                    || container.sectionId !== row.after.sectionId || container.areaId !== row.after.areaId) return state;
+            }
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks, projects, sections,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: input.sourceBefore.id, outcome: 'applied' };
+            return { _allTasks: tasks, _allProjects: projects, _allSections: sections, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedTaskEdit: async ({ before, changes }) => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Prepared task edit conflicts with current data' };
+        const after = applyPreparedTaskEditChanges({ before, changes });
+        if (['id', 'createdAt', 'rev', 'revBy', 'updatedAt', 'deletedAt', 'purgedAt'].some((field) => Object.prototype.hasOwnProperty.call(changes, field))) {
+            return { success: false, reason: 'invalid', error: 'Prepared task edit changes protected fields' };
+        }
+        set((state) => {
+            const current = state._allTasks.find((entry) => entry.id === before.id);
+            if (!current) {
+                result = { success: false, reason: 'missing', error: 'Task not found' };
+                return state;
+            }
+            // The complete applied state precedes mutable container checks. A
+            // content match still needs the contract's durable-save barrier.
+            if (matchesPreparedTaskEdit(current, after, changes)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!matchesPreparedTaskEdit(current, before, changes)) return state;
+            if (current.deletedAt || current.purgedAt || current.status === 'reference'
+                || isStatusListTaskReadOnly(current, state._allProjects)) {
+                result = { success: false, reason: 'invalid', error: 'Task is not editable' };
+                return state;
+            }
+            const container = resolveTaskContainerAssignment({
+                projectId: after.projectId, sectionId: after.sectionId, areaId: after.areaId,
+                allProjects: state._allProjects, allSections: state._allSections, allAreas: state._allAreas,
+            });
+            if (!container.ok || !taskEditValuesEqual(container.projectId, after.projectId)
+                || !taskEditValuesEqual(container.sectionId, after.sectionId) || !taskEditValuesEqual(container.areaId, after.areaId)
+                || (after.projectId && !state._allProjects.some((project) => project.id === after.projectId && isSelectableProjectForTaskAssignment(project)))) {
+                result = { success: false, reason: 'invalid', error: 'Prepared task destination is no longer available' };
+                return state;
+            }
+            const device = ensureDeviceId(state.settings);
+            const updated = {
+                ...applyPreparedTaskEditChanges({ before: current, changes }),
+                rev: nextRevision(current.rev), revBy: device.deviceId, updatedAt: new Date().toISOString(),
+            };
+            const tasks = replaceEntityInArray(state._allTasks, current.id, updated);
+            persist(set, debouncedSave, state, { tasks, ...(device.updated ? { settings: device.settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allTasks: tasks, ...(device.updated ? { settings: device.settings } : {}), lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     /**
@@ -747,56 +1266,31 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     return state;
                 }
                 const deviceState = ensureDeviceId(state.settings);
-                const revisionPatch = {
-                    rev: nextRevision(oldTask.rev),
-                    revBy: deviceState.deviceId,
-                };
-
-                const { updatedTask, nextRecurringTask } = applyTaskUpdates(
-                    oldTask,
-                    { ...preparedUpdates.updates, ...revisionPatch },
-                    now
-                );
-                const stampedNextRecurringTask = stampNewRecurringFollowUp(
-                    nextRecurringTask,
-                    deviceState.deviceId,
-                    getTaskOrder(oldTask),
-                    // Scans the collection only when there is a follow-up in a
-                    // project and no order to inherit; this producer runs on
-                    // every single-task update.
-                    (projectId) => getNextProjectOrder(projectId, state._allTasks),
-                );
-                const recurringFollowUpTask = findExistingRecurringFollowUp(state._allTasks, stampedNextRecurringTask, oldTask.id)
-                    ? null
-                    : stampedNextRecurringTask;
+                const effects = planTaskUpdateEffects({
+                    task: oldTask,
+                    preparedUpdates: preparedUpdates.updates,
+                    allTasks: state._allTasks,
+                    allProjects: state._allProjects,
+                    allSections: state._allSections,
+                    now,
+                    deviceId: deviceState.deviceId,
+                });
+                const { updatedTask, recurringFollowUpTask } = effects;
                 incrementalPersistence.task = updatedTask;
                 incrementalPersistence.hasRecurringFollowUp = recurringFollowUpTask !== null;
                 incrementalPersistence.mintedDeviceId = deviceState.updated;
-
-                const updatedAllTasksBase = replaceEntityInArray(state._allTasks, id, updatedTask);
-                const updatedAllTasks = recurringFollowUpTask
-                    ? [...updatedAllTasksBase, recurringFollowUpTask]
-                    : updatedAllTasksBase;
-                const projectReactivation = applyTaskProjectReactivationTransition(
-                    [{ task: oldTask, updates: preparedUpdates.updates }],
-                    updatedAllTasks,
-                    state._allProjects,
-                    state._allSections,
-                    now,
-                    deviceState.deviceId,
-                );
-                incrementalPersistence.reactivatedProjectIds = projectReactivation.reactivatedProjectIds;
+                incrementalPersistence.reactivatedProjectIds = effects.reactivatedProjectIds;
                 snapshot = buildSaveSnapshot(state, {
-                    tasks: projectReactivation.tasks,
-                    projects: projectReactivation.projects,
-                    sections: projectReactivation.sections,
+                    tasks: effects.tasks,
+                    projects: effects.projects,
+                    sections: effects.sections,
                     ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                 });
                 setProducerMs = Date.now() - producerStartedAt;
                 return {
-                    _allTasks: projectReactivation.tasks,
-                    _allProjects: projectReactivation.projects,
-                    _allSections: projectReactivation.sections,
+                    _allTasks: effects.tasks,
+                    _allProjects: effects.projects,
+                    _allSections: effects.sections,
                     lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
                     ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                 };
@@ -1177,73 +1671,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }
             const deviceState = ensureDeviceId(state.settings);
 
-            const duplicatedChecklist = (sourceTask.checklist || []).map((item) => ({
-                ...item,
-                id: uuidv4(),
-                isCompleted: false,
-            }));
-            const duplicatedAttachments = (sourceTask.attachments || []).flatMap((attachment) => {
-                if (attachment.kind === 'file') {
-                    return [];
-                }
-                return [{
-                    ...attachment,
-                    id: uuidv4(),
-                    createdAt: now,
-                    updatedAt: now,
-                    deletedAt: undefined,
-                    cloudKey: undefined,
-                    fileHash: undefined,
-                    localStatus: undefined,
-                }];
+            const newTask = buildDuplicateTask({
+                sourceTask, asNextAction, copyId, now, deviceId: deviceState.deviceId,
+                projectOrder: sourceTask.projectId ? createProjectOrderReserver(state._allTasks)(sourceTask.projectId) : undefined,
+                boardOrder: boardOrderForDuplicate(sourceTask.boardOrder,
+                    state._allTasks.filter((task) => task.status === sourceTask.status && !task.deletedAt)),
             });
-            const projectOrderReserver = createProjectOrderReserver(state._allTasks);
-            const duplicatedOrder = sourceTask.projectId
-                ? projectOrderReserver(sourceTask.projectId)
-                : undefined;
-            const newTaskId = copyId ?? uuidv4();
-            duplicatedTaskId = newTaskId;
-
-            const newTask: Task = {
-                ...sourceTask,
-                id: newTaskId,
-                title: sourceTask.title,
-                status: asNextAction
-                    ? 'next'
-                    : isTaskFinished(sourceTask)
-                        ? 'inbox'
-                        : sourceTask.status,
-                // Normalized so the rrule's series stamp names the new series too.
-                recurrence: typeof sourceTask.recurrence === 'object'
-                    ? normalizeRecurrenceForLoad({ ...sourceTask.recurrence, seriesId: newTaskId })
-                    : sourceTask.recurrence,
-                checklist: duplicatedChecklist.length > 0 ? duplicatedChecklist : undefined,
-                attachments: duplicatedAttachments.length > 0 ? duplicatedAttachments : undefined,
-                completedAt: undefined,
-                cancelledAt: undefined,
-                isFocusedToday: false,
-                // A copy is not in Today's Focus and was never archived with a
-                // project, so neither the focus position nor the restore
-                // metadata of the source belongs to it.
-                focusOrder: undefined,
-                boardOrder: undefined,
-                statusBeforeProjectArchive: undefined,
-                completedAtBeforeProjectArchive: undefined,
-                isFocusedTodayBeforeProjectArchive: undefined,
-                projectArchivedAt: undefined,
-                deletedAt: undefined,
-                purgedAt: undefined,
-                createdAt: now,
-                updatedAt: now,
-                rev: 1,
-                revBy: deviceState.deviceId,
-                order: duplicatedOrder,
-                orderNum: duplicatedOrder,
-            };
-            if (newTask.status === sourceTask.status) {
-                newTask.boardOrder = boardOrderForDuplicate(sourceTask.boardOrder,
-                    state._allTasks.filter((task) => task.status === sourceTask.status && !task.deletedAt));
-            }
+            duplicatedTaskId = newTask.id;
             const newAllTasks = [...state._allTasks, newTask];
             persist(set, debouncedSave, state, {
                 tasks: newAllTasks,
@@ -1504,18 +1938,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 const task = state._tasksById.get(id);
                 return task && !task.deletedAt && task.checklist && task.checklist.length > 0 ? [task] : [];
             },
-            buildUpdates: (task) => {
-                const wasDone = task.status === 'done';
-                return {
-                    checklist: task.checklist?.map((item) => ({
-                        ...item,
-                        isCompleted: false,
-                    })),
-                    status: wasDone ? 'next' : task.status,
-                    completedAt: wasDone ? undefined : task.completedAt,
-                    isFocusedToday: wasDone ? false : task.isFocusedToday,
-                };
-            },
+            buildUpdates: buildResetTaskChecklistUpdates,
             missingMessage: 'Task not found',
         });
     },

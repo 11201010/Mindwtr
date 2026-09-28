@@ -3368,6 +3368,96 @@ describe('InboxProcessingModal', () => {
         await Promise.resolve();
       });
 
-      expect(progressText()).toBe('1/3 common.tasks');    });
+      expect(progressText()).toBe('1/3 common.tasks');
+    });
+
+    it('keeps processed progress when project conversion and new captures grow the queue', async () => {
+      storeState.tasks = [
+        { ...baseInboxTask, id: 'a', title: 'First capture' },
+        { ...baseInboxTask, id: 'b', title: 'Project capture', createdAt: '2025-01-02T00:00:00.000Z' },
+        { ...baseInboxTask, id: 'c', title: 'Third capture', createdAt: '2025-01-03T00:00:00.000Z' },
+      ];
+      storeState._allTasks = storeState.tasks;
+      const project = { ...workProject, id: 'project-created', title: 'Plan Launch' };
+      addProject.mockImplementation(async () => {
+        storeState.projects = [...storeState.projects, project];
+        return project;
+      });
+      let extraCount = 0;
+      addTask.mockImplementation(async (title: string, options: Record<string, unknown>) => {
+        extraCount += 1;
+        storeState.tasks = [...storeState.tasks, {
+          ...baseInboxTask, id: `extra-${extraCount}`, title, ...options,
+          createdAt: `2025-01-0${3 + extraCount}T00:00:00.000Z`,
+        }];
+        storeState._allTasks = storeState.tasks;
+        return { success: true };
+      });
+      updateTask.mockImplementation(async (id: string, updates: Record<string, unknown>) => {
+        storeState.tasks = storeState.tasks.map((task) => task.id === id ? { ...task, ...updates } : task);
+        storeState._allTasks = storeState.tasks;
+        return { success: true };
+      });
+      const onClose = vi.fn();
+      let tree: ReturnType<typeof create>;
+      act(() => { tree = create(<InboxProcessingModal visible onClose={onClose} />); });
+      await flushAsyncActions();
+      const root = tree!.root;
+      const progressText = () => root.findAll((node) => (
+        typeof node.props?.children === 'string' && /^\d+\/\d+ common\.tasks$/.test(node.props.children)
+      ))[0].props.children;
+      const currentTitle = () => findTextInputByAccessibilityLabel(root, 'taskEdit.titleLabel').props.value;
+
+      expect(progressText()).toBe('0/3 common.tasks');
+      expect(currentTitle()).toBe('First capture');
+      await act(async () => {
+        root.findByProps({ accessibilityLabel: 'Skip', accessibilityRole: 'button' }).props.onPress();
+        await Promise.resolve();
+      });
+      expect(currentTitle()).toBe('Project capture');
+      expect(progressText()).toBe('1/3 common.tasks');
+
+      walkToProjectConversion(root);
+      act(() => {
+        findTextInputByAccessibilityLabel(root, 'projects.projectName').props.onChangeText('Plan Launch');
+      });
+      act(() => { findPressableWithText(root, 'process.addAnotherAction').props.onPress(); });
+      act(() => { findPressableWithText(root, 'process.addAnotherAction').props.onPress(); });
+      const actionInputs = () => root.findAll((node) => (
+        typeof node.type === 'string'
+        && node.props.accessibilityLabel === 'process.nextAction'
+        && typeof node.props.onChangeText === 'function'
+      ));
+      expect(actionInputs()).toHaveLength(3);
+      act(() => { actionInputs()[0].props.onChangeText('Draft launch brief'); });
+      act(() => { actionInputs()[1].props.onChangeText('Book venue'); });
+      act(() => { actionInputs()[2].props.onChangeText('Reserve room'); });
+      await act(async () => {
+        findPressableWithText(root, 'process.createProject').props.onPress();
+        await Promise.resolve();
+      });
+      expect(addTask).toHaveBeenCalledTimes(2);
+      expect(currentTitle()).toBe('Third capture');
+      expect(progressText()).toBe('2/5 common.tasks');
+
+      storeState.tasks = [...storeState.tasks,
+        { ...baseInboxTask, id: 'external-1', title: 'New capture 1', createdAt: '2025-01-06T00:00:00.000Z' },
+        { ...baseInboxTask, id: 'external-2', title: 'New capture 2', createdAt: '2025-01-07T00:00:00.000Z' },
+      ];
+      storeState._allTasks = storeState.tasks;
+      act(() => { tree!.update(<InboxProcessingModal visible onClose={onClose} />); });
+      expect(currentTitle()).toBe('Third capture');
+      expect(progressText()).toBe('2/7 common.tasks');
+
+      act(() => {
+        root.findByProps({ accessibilityLabel: 'common.close', accessibilityRole: 'button' }).props.onPress();
+        tree!.update(<InboxProcessingModal visible={false} onClose={onClose} />);
+      });
+      expect(onClose).toHaveBeenCalled();
+      act(() => { tree!.update(<InboxProcessingModal visible onClose={onClose} />); });
+      await flushAsyncActions();
+      expect(currentTitle()).toBe('First capture');
+      expect(progressText()).toBe('0/6 common.tasks');
+    });
   });
 });

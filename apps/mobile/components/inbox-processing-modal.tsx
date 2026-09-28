@@ -1,7 +1,7 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { LayoutList, Layers, X } from 'lucide-react-native';
-import { getProcessInboxProgress, tFallback } from '@mindwtr/core';
+import { tFallback } from '@mindwtr/core';
 
 import { AIResponseModal } from './ai-response-modal';
 import { ThemedAlertHost } from '@/components/themed-alert';
@@ -33,19 +33,12 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     handleClose,
     handleSkipTask,
     headerStyle,
-    processedCount,
+    progress,
     t,
     tc,
-    totalCount,
   } = controller;
   const androidKeyboardInset = useAndroidKeyboardInset(visible);
 
-  // The controller's counts both shrink as items leave the Inbox, so the raw
-  // pair reads "0/3" then "0/2". Latch the session's starting size and count up
-  // against it instead: filed and skipped items are both progress.
-  const sessionTotalRef = useRef(0);
-  const progress = getProcessInboxProgress(visible ? sessionTotalRef.current : 0, totalCount - processedCount);
-  sessionTotalRef.current = visible ? progress.total : 0;
   const { total: sessionTotal, processed: sessionProcessed } = progress;
 
   const quick = processingMode === 'quick';

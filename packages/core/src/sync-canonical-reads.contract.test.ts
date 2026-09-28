@@ -38,6 +38,7 @@ import { getMergeComparableSignature, normalizeTaskForContentComparison } from '
 import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { createNativeHostContract } from './native-host-contract';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
 import { mapSqliteTaskRow } from './sqlite-adapter';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
@@ -814,11 +815,16 @@ describe('canonical local reads contract', () => {
 
         const settled = convergeThroughStorage(buildLargeDocument(150));
 
+        type MutationControl = {
+            resetBaseline: () => void;
+            expectPersisted: (verify: (written: AppData) => void) => void;
+        };
         const runMutation = async (
             label: string,
-            mutate: () => Promise<unknown>,
+            mutate: (control: MutationControl) => Promise<unknown>,
         ): Promise<{ storeFields: string[]; readFields: string[] }> => {
             let saved: AppData | null = null;
+            let verifyPersisted: ((written: AppData) => void) | null = null;
             resetForTests();
             // resetForTests only clears module timers (store.ts); the zustand
             // state itself has to be cleared or one row's writes leak into the next.
@@ -839,10 +845,14 @@ describe('canonical local reads contract', () => {
             await (useTaskStore.getState() as unknown as {
                 fetchData: (options?: { silent?: boolean }) => Promise<void>;
             }).fetchData({ silent: true });
-            await mutate();
+            await mutate({
+                resetBaseline: () => { saved = null; },
+                expectPersisted: (verify) => { verifyPersisted = verify; },
+            });
             await flushPendingSave();
             if (!saved) throw new Error(`${label}: the store never persisted a snapshot`);
             const written = saved as AppData;
+            verifyPersisted?.(written);
             const passed = runNormalizePass(written);
             const storeIdentical = remoteBytes(written) === remoteBytes(passed);
 
@@ -866,6 +876,18 @@ describe('canonical local reads contract', () => {
 
         const store = () => useTaskStore.getState() as unknown as Record<string, (...args: never[]) => Promise<unknown>>;
         const call = (name: string, ...args: unknown[]) => store()[name](...(args as never[]));
+        const nativeValue = <T,>(outcome: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
+            if (!outcome.ok) throw new Error(`${outcome.error.code}: ${outcome.error.message}`);
+            return outcome.value;
+        };
+        const nativeHost = async (control: MutationControl) => {
+            await flushPendingSave();
+            const host = createNativeHostContract();
+            nativeValue(await host.activate({ writeSafetyReady: true, recoveryLoad: true }));
+            await flushPendingSave();
+            control.resetBaseline();
+            return host;
+        };
 
         const liveTasks = settled.tasks.filter((entry) => !entry.deletedAt);
         const taskId = liveTasks[1].id;
@@ -890,7 +912,7 @@ describe('canonical local reads contract', () => {
          * restore/purge entries soft-delete first so the action under test has
          * something to act on; the persisted snapshot still covers both writes.
          */
-        const WRITE_ACTIONS: Record<string, () => Promise<unknown>> = {
+        const WRITE_ACTIONS: Record<string, (control: MutationControl) => Promise<unknown>> = {
             addArea: () => call('addArea', 'Contract area'),
             addPerson: () => call('addPerson', 'Contract person'),
             addProject: () => call('addProject', 'Contract project', '#123456'),
@@ -905,6 +927,411 @@ describe('canonical local reads contract', () => {
             }))),
             cancelProject: () => call('cancelProject', projectId),
             cancelTask: () => call('cancelTask', taskId),
+            commitPreparedAreaCreate: async (control) => {
+                const host = await nativeHost(control);
+                const request = { requestId: 'a41285b2-c665-4a18-9764-38e321191cde',
+                    name: 'Contract prepared area', color: '#3b82f6',
+                    expectedAreaId: 'a41285b2-c665-4a18-9764-38e321191cde' };
+                const planned = nativeValue(host.prepareAreaCreate(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.areas.find((entry) => entry.id === request.expectedAreaId))
+                        .toEqual(planned.prepared.effect.area.after);
+                });
+                expect(nativeValue(await host.commitPreparedAreaCreate({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._areasById.get(request.expectedAreaId))
+                    .toEqual(planned.prepared.effect.area.after);
+            },
+            commitPreparedAreaColor: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getAreaColorOptions());
+                const selected = options.areas.find((entry) => entry.id === areaId);
+                expect(selected).toBeDefined();
+                if (!selected) return;
+                const request = { requestId: '3b33c6cb-5168-4c61-94aa-297a54c88691',
+                    areaId, color: '#ef4444',
+                    expected: { name: selected.name, color: selected.color, rev: selected.rev,
+                        revBy: selected.revBy, updatedAt: selected.updatedAt } };
+                const planned = nativeValue(host.prepareAreaColor(request));
+                control.expectPersisted((written) => {
+                    expect(written.areas.find((entry) => entry.id === areaId))
+                        .toEqual(planned.prepared.effect.area.after);
+                    for (const { after } of planned.prepared.effect.projects) {
+                        expect(written.projects.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedAreaColor({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
+            commitPreparedAreaOrder: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getAreaOrderOptions());
+                const request = { requestId: 'db7ea2f4-9847-44fd-84a8-028741379fe2',
+                    intent: { kind: 'sortName' as const }, expectedAreas: options.areas };
+                const planned = nativeValue(host.prepareAreaOrder(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    for (const { after } of planned.prepared.effect.areas) {
+                        expect(written.areas.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedAreaOrder({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
+            commitPreparedAreaDelete: async (control) => {
+                const host = await nativeHost(control);
+                const added = await useTaskStore.getState().addArea('Contract deletable area');
+                expect(added).not.toBeNull();
+                if (!added) return;
+                await flushPendingSave();
+                control.resetBaseline();
+                const options = nativeValue(host.getAreaDeleteOptions());
+                const selected = options.areas.find((entry) => entry.id === added.id);
+                expect(selected).toMatchObject({ projectCount: 0, canDelete: true });
+                if (!selected) return;
+                const { id, projectCount: _projectCount, canDelete: _canDelete, ...expected } = selected;
+                const request = { requestId: '81ef3845-e5d8-4966-9a4a-95bb1096c83f',
+                    areaId: id, expected };
+                const planned = nativeValue(host.prepareAreaDelete(request));
+                control.expectPersisted((written) => {
+                    expect(written.areas.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.area.after);
+                });
+                expect(nativeValue(await host.commitPreparedAreaDelete({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
+            commitPreparedBoardTask: async (control) => {
+                const host = await nativeHost(control);
+                const planned = nativeValue(host.prepareBoardAction({ requestId: 'b4bc3331-c119-421c-965a-1fca51e5484e',
+                    action: { type: 'trashTask', taskId } }));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === taskId)).toMatchObject({
+                        deletedAt: planned.prepared.after.deletedAt,
+                        updatedAt: planned.prepared.after.updatedAt,
+                        rev: planned.prepared.after.rev,
+                    });
+                });
+                expect(nativeValue(await host.commitPreparedBoardAction({ request: planned.prepared.request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(taskId)?.deletedAt).toBe(planned.prepared.after.deletedAt);
+            },
+            commitPreparedCalendarTask: async (control) => {
+                const host = await nativeHost(control);
+                const opened = nativeValue(host.openCalendarComposer({ scheduleTaskId: taskId, day: '2030-10-03' }));
+                expect(opened.composer).not.toBeNull();
+                const planned = nativeValue(await host.prepareCalendarComposerSave({ requestId: '6ed085ea-a209-426b-b35c-23a073214b11',
+                    composer: opened.composer!.composer }));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === taskId)).toMatchObject({
+                        startTime: planned.prepared.after.startTime,
+                        timeEstimate: planned.prepared.after.timeEstimate,
+                        updatedAt: planned.prepared.after.updatedAt,
+                        rev: planned.prepared.after.rev,
+                    });
+                });
+                expect(nativeValue(await host.commitPreparedCalendarComposerSave({ request: planned.prepared.request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(taskId)?.startTime).toBe(planned.prepared.after.startTime);
+            },
+            commitPreparedCalendarCreate: async (control) => {
+                const host = await nativeHost(control);
+                const opened = nativeValue(host.openCalendarComposer({ day: '2030-10-03', mode: 'new' }));
+                expect(opened.composer).not.toBeNull();
+                const edited = nativeValue(host.editCalendarComposer({ composer: opened.composer!.composer,
+                    edit: { type: 'title', title: 'Contract calendar creation +Calendar Contract Project' } }));
+                const planned = nativeValue(await host.prepareCalendarComposerCreate({
+                    requestId: '23ff74b8-55b2-4380-8bf2-9db4be1d5bb1', composer: edited.composer,
+                }));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                expect(planned.prepared.project).not.toBeNull();
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === planned.prepared.task.id)).toMatchObject({
+                        id: planned.prepared.task.id, title: planned.prepared.task.title,
+                        startTime: planned.prepared.task.startTime, projectId: planned.prepared.project?.id, rev: 1,
+                    });
+                    expect(written.projects.find((entry) => entry.id === planned.prepared.project?.id)).toMatchObject({
+                        id: planned.prepared.project?.id, title: 'Calendar Contract Project', rev: 1,
+                    });
+                });
+                expect(nativeValue(await host.commitPreparedCalendarComposerCreate({ request: planned.prepared.request,
+                    prepared: planned.prepared }))).toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(planned.prepared.task.id)?.title).toBe('Contract calendar creation');
+            },
+            commitPreparedInboxEffect: async (control) => {
+                const host = await nativeHost(control);
+                const opening = nativeValue(host.startInboxProcessing());
+                expect(opening.view).not.toBeNull();
+                const normalized = await useTaskStore.getState().updateTask(opening.view!.taskId, {
+                    projectId: undefined, sectionId: undefined, areaId: undefined,
+                });
+                expect(normalized.success).toBe(true);
+                await flushPendingSave();
+                control.resetBaseline();
+                const started = nativeValue(host.startInboxProcessing());
+                expect(started.view).not.toBeNull();
+                const request = { sessionId: started.sessionId!, taskId: started.view!.taskId,
+                    requestId: '81127b54-36e0-4ce7-805c-9ae5f05908e5' };
+                const planned = nativeValue(host.inboxSkipPrepare(request));
+                expect(planned.kind).toBe('prepared');
+                const after = planned.prepared.effect.tasks.find((row) => row.after.id === request.taskId)?.after;
+                expect(after).toBeDefined();
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === request.taskId)).toMatchObject({
+                        id: request.taskId, title: after?.title, status: after?.status,
+                        updatedAt: after?.updatedAt, rev: after?.rev, revBy: after?.revBy,
+                    });
+                });
+                expect(nativeValue(await host.inboxPreparedCommit({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(request.taskId)?.rev).toBe(after?.rev);
+            },
+            commitPreparedChecklistEffect: async (control) => {
+                const host = await nativeHost(control);
+                const model = nativeValue(host.getTaskEditorModel({ id: taskId }));
+                const item = { id: 'e814baef-5a87-4d8a-8248-c16573ed873d', title: 'Contract checklist', isCompleted: false };
+                const request = { id: taskId, requestId: '10ee2eba-dc80-46c7-9b36-50b58662120a',
+                    base: { title: model.draft.title }, patch: { title: 'Contract checklist edit' },
+                    scheduleBase: model.scheduleBase,
+                    checklist: { base: useTaskStore.getState()._tasksById.get(taskId)?.checklist ?? [], value: [item] } };
+                const planned = nativeValue(host.prepareTaskChecklistSave(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                const after = planned.prepared.effect.tasks.find((row) => row.after.id === taskId)?.after;
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === taskId)).toMatchObject({
+                        title: 'Contract checklist edit', checklist: [item], rev: after?.rev,
+                    });
+                });
+                expect(nativeValue(await host.commitPreparedTaskChecklistWrite({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(taskId)).toMatchObject({
+                    title: 'Contract checklist edit', checklist: [item], rev: after?.rev,
+                });
+            },
+            commitPreparedProjectCreate: async (control) => {
+                const host = await nativeHost(control);
+                const request = { requestId: 'a18279a3-1920-4453-a715-c123e1595304',
+                    title: 'Contract prepared project', areaId: null };
+                const planned = nativeValue(host.prepareProjectCreate(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === request.requestId)).toEqual(planned.prepared.project);
+                });
+                expect(nativeValue(await host.commitPreparedProjectCreate({ request, prepared: planned.prepared })))
+                    .toEqual({ id: request.requestId, created: true });
+                expect(useTaskStore.getState()._projectsById.get(request.requestId)).toEqual(planned.prepared.project);
+            },
+            commitPreparedProjectFocus: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectFocusOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: '513f638c-d2c5-4693-80f3-9bdb6cfd8259', projectId: id,
+                    focused: !expected.isFocused, expected };
+                const planned = nativeValue(host.prepareProjectFocus(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectFocus({ request, prepared: planned.prepared })))
+                    .toEqual({ id, focused: request.focused });
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
+            commitPreparedProjectRename: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectRenameOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: 'b0e4f0ea-0674-438f-9d91-29c7b9c69719', projectId: id,
+                    title: '  Contract renamed project  ', expected };
+                const planned = nativeValue(host.prepareProjectRename(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectRename({ request, prepared: planned.prepared })))
+                    .toEqual({ id, title: 'Contract renamed project' });
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
+            commitPreparedProjectFlow: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectFlowOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: '39e8c6d4-d313-44d4-b1e3-80bbeb15e28a', projectId: id,
+                    action: { kind: 'toggleType' as const }, expected };
+                const planned = nativeValue(host.prepareProjectFlow(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectFlow({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
+            commitPreparedProjectNotesWrite: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectNotesEditOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: 'bf72ce5a-3b79-4479-af72-87a8bfd40228', projectId: id,
+                    text: 'Contract notes\n\n- Keep raw Markdown', expected };
+                const planned = nativeValue(host.prepareProjectNotesWrite(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectNotesWrite({ request, prepared: planned.prepared })))
+                    .toEqual({ id, supportNotes: request.text });
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
+            commitPreparedProjectStatus: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectStatusOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: 'ae568b39-8e6e-48ac-a94d-b19aa42ab5f2', projectId: id,
+                    status: 'waiting' as const, expected };
+                const planned = nativeValue(host.prepareProjectStatus(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectStatus({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
+            commitPreparedProjectDate: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectDateOptions({ projectId: settled.projects[1].id,
+                    field: 'dueDate' }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: 'b972f527-3258-4f0d-ac51-3e67fa12ad8a', projectId: id,
+                    field: 'dueDate' as const, value: '2028-02-29', expected };
+                const planned = nativeValue(host.prepareProjectDate(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectDate({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
+            commitPreparedProjectSectionCreate: async (control) => {
+                const host = await nativeHost(control);
+                const projectId = settled.projects[1].id;
+                const request = { requestId: '76b4be99-66ce-4aba-bc70-2201b98fc45c',
+                    projectId, title: 'Contract Section' };
+                const planned = nativeValue(host.prepareProjectSectionCreate(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.sections.find((entry) => entry.id === request.requestId))
+                        .toEqual(planned.prepared.section);
+                });
+                expect(nativeValue(await host.commitPreparedProjectSectionCreate({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._sectionsById.get(request.requestId))
+                    .toEqual(planned.prepared.section);
+            },
+            commitPreparedProjectSectionRename: async (control) => {
+                const host = await nativeHost(control);
+                const projectId = settled.projects[1].id;
+                const sectionId = settled.sections.find((entry) => entry.projectId === projectId && !entry.deletedAt)?.id;
+                if (!sectionId) throw new Error('fixture needs a live Section for rename');
+                const options = nativeValue(host.getProjectSectionRenameOptions({ projectId, sectionId }));
+                const request = { requestId: 'a89a720c-7a85-43a4-a4c0-8c26060ddabb', projectId,
+                    sectionId, title: 'Contract renamed Section', expected: options.token };
+                const planned = nativeValue(host.prepareProjectSectionRename(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.sections.find((entry) => entry.id === sectionId))
+                        .toEqual(planned.prepared.effect.section.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectSectionRename({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._sectionsById.get(sectionId))
+                    .toEqual(planned.prepared.effect.section.after);
+            },
+            commitPreparedProjectSectionDelete: async (control) => {
+                const host = await nativeHost(control);
+                const projectId = settled.projects[1].id;
+                const sectionId = settled.sections.find((entry) => entry.projectId === projectId && !entry.deletedAt)?.id;
+                if (!sectionId) throw new Error('fixture needs a live Section for delete');
+                const options = nativeValue(host.getProjectSectionDeleteOptions({ projectId, sectionId }));
+                const request = { requestId: '7585364e-8643-4298-97b8-c6c08793997a', projectId,
+                    sectionId, expected: options.token };
+                const planned = nativeValue(host.prepareProjectSectionDelete(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.sections.find((entry) => entry.id === sectionId))
+                        .toEqual(planned.prepared.effect.section.after);
+                    for (const { after } of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedProjectSectionDelete({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._sectionsById.get(sectionId))
+                    .toEqual(planned.prepared.effect.section.after);
+            },
+            commitPreparedCapture: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.openQuickCapture()).options;
+                const planned = nativeValue(host.prepareQuickCapture({ text: 'Contract native capture', options,
+                    captureId: '02d590b2-3689-41fc-8d72-997b1d49a3ab' }));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === planned.prepared.task.id)).toMatchObject({
+                        id: planned.prepared.task.id,
+                        title: 'Contract native capture',
+                        rev: planned.prepared.task.rev,
+                    });
+                });
+                expect(nativeValue(await host.commitPreparedQuickCapture({ request: planned.prepared.request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._tasksById.get(planned.prepared.task.id)?.title).toBe('Contract native capture');
+            },
+            commitPreparedTaskEdit: async (control) => {
+                const host = await nativeHost(control);
+                const model = nativeValue(host.getTaskEditorModel({ id: taskId }));
+                const request = { id: taskId, base: { title: model.draft.title, dueDate: model.draft.dueDate },
+                    patch: { title: 'Contract prepared edit', dueDate: '2030-10-04' }, scheduleBase: model.scheduleBase };
+                const prepared = nativeValue(host.prepareTaskDraftSave(request));
+                control.expectPersisted((written) => {
+                    const row = written.tasks.find((entry) => entry.id === taskId);
+                    expect(row).toMatchObject({ title: request.patch.title, dueDate: request.patch.dueDate });
+                    expect(row?.rev).toBeGreaterThan(prepared.before.rev ?? 0);
+                });
+                expect(nativeValue(await host.commitPreparedTaskDraftSave({ request: prepared.request, prepared })).id).toBe(taskId);
+                expect(useTaskStore.getState()._tasksById.get(taskId)?.title).toBe('Contract prepared edit');
+                expect(useTaskStore.getState()._tasksById.get(taskId)?.dueDate).toBe(request.patch.dueDate);
+            },
             convertTaskToSection: () => call('convertTaskToSection', projectTaskIds[0]),
             deleteArea: () => call('deleteArea', areaId),
             deleteContext: () => call('deleteContext', '@home'),
@@ -987,6 +1414,53 @@ describe('canonical local reads contract', () => {
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });
             }
+        }
+        const restoredArea = await runMutation('native prepared Area restore', async (control) => {
+            const host = await nativeHost(control);
+            await call('deleteArea', areaId);
+            await flushPendingSave();
+            control.resetBaseline();
+            const request = { requestId: '1a7fe74c-2403-414a-8160-9dc33458b76f',
+                name: settled.areas[0].name, color: '#ef4444', expectedAreaId: areaId };
+            const planned = nativeValue(host.prepareAreaCreate(request));
+            expect(planned.kind).toBe('prepared');
+            if (planned.kind !== 'prepared') return;
+            expect(planned.prepared.kind).toBe('restored');
+            control.expectPersisted((written) => {
+                expect(written.areas).toHaveLength(settled.areas.length);
+                expect(written.areas.find((entry) => entry.id === areaId))
+                    .toEqual(planned.prepared.effect.area.after);
+                expect(written.areas.find((entry) => entry.id === areaId)?.deletedAt).toBeUndefined();
+            });
+            expect(nativeValue(await host.commitPreparedAreaCreate({ request, prepared: planned.prepared })))
+                .toEqual(planned.prepared.result);
+            expect(useTaskStore.getState()._areasById.get(areaId))
+                .toEqual(planned.prepared.effect.area.after);
+        });
+        if (restoredArea.storeFields.length > 0 || restoredArea.readFields.length > 0) {
+            notCanonical.push({ action: 'native prepared Area restore', ...restoredArea });
+        }
+        // Mind Sweep intentionally reuses the existing prepared-capture store
+        // writer, but its literal-title preparation is a distinct native route.
+        const sweep = await runMutation('native Mind Sweep add', async (control) => {
+            const host = await nativeHost(control);
+            const planned = nativeValue(host.prepareMindSweepAdd({
+                requestId: '4ed085ea-a209-426b-b35c-23a073214b11', title: '  Contract +literal /due:tomorrow  ',
+            }));
+            control.expectPersisted((written) => {
+                expect(written.tasks.find((entry) => entry.id === planned.prepared.task.id)).toMatchObject({
+                    id: planned.prepared.task.id, title: 'Contract +literal /due:tomorrow',
+                    status: 'inbox', rev: planned.prepared.task.rev,
+                });
+                expect(written.projects).toHaveLength(settled.projects.length);
+            });
+            expect(nativeValue(await host.commitPreparedMindSweepAdd({ request: planned.prepared.request,
+                prepared: planned.prepared }))).toEqual(planned.prepared.result);
+            expect(useTaskStore.getState()._tasksById.get(planned.prepared.task.id)?.title)
+                .toBe('Contract +literal /due:tomorrow');
+        });
+        if (sweep.storeFields.length > 0 || sweep.readFields.length > 0) {
+            notCanonical.push({ action: 'native Mind Sweep add', ...sweep });
         }
 
         // THE CONTRACT. Every write action leaves a document the pass would not

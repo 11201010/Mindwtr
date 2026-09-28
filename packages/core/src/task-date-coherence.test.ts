@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     getTaskDateCoherence,
     getTaskDateCoherenceIssues,
@@ -52,5 +52,16 @@ describe('task date coherence', () => {
             startTime: '2026-04-24',
             dueDate: '2026-04-24T10:00',
         })).toBe(true);
+    });
+
+    it('uses a frozen local start day for date-only due replay across timezone changes', () => {
+        const task = { startTime: '2026-11-01T02:30:00.000Z', dueDate: '2026-10-31' };
+        // The same instant is Oct 31 locally at preparation, Nov 1 in UTC.
+        vi.stubEnv('TZ', 'UTC');
+        expect(isTaskDateCoherent(task, { startLocalDay: '2026-10-31' })).toBe(true);
+        expect(isTaskDateCoherent({ ...task, dueDate: '2026-10-30' }, { startLocalDay: '2026-10-31' })).toBe(false);
+        expect(isTaskDateCoherent({ ...task, dueDate: '2026-11-01T02:00:00.000Z' },
+            { startLocalDay: '2026-10-31' })).toBe(false);
+        vi.unstubAllEnvs();
     });
 });

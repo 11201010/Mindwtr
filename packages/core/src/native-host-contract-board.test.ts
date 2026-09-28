@@ -197,6 +197,62 @@ describe('native host contract: Board', () => {
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
+    it.each(['included tokens', 'excluded tokens', 'projects'] as const)('refuses an edit overflowing 100 %s without publishing unreadable filters or writing', async (selection) => {
+        freezeClock();
+        const bulk = Array.from({ length: 103 }, (_, index) => ({
+            id: `selection-task-${index}`, title: `Selection task ${index}`, status: 'someday' as const,
+            projectId: `selection-project-${index}`, contexts: [`@selection${index}`], tags: [],
+            createdAt: part.now, updatedAt: part.now,
+        }));
+        const projects = bulk.map((task, index) => ({
+            ...part.projects[0], id: task.projectId, title: `Selection project ${index}`, status: 'active' as const,
+        }));
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const { host, recorder } = await openHost(saveData, { ...part, tasks: bulk, projects });
+        saveData.mockClear();
+        const storeSnapshot = () => {
+            const state = useTaskStore.getState();
+            return JSON.stringify({ tasks: state._allTasks, projects: state._allProjects, settings: state.settings });
+        };
+        const before = storeSnapshot();
+        const unfiltered = value(host.getBoardView({ limit: 100 }));
+        expect(unfiltered.columns.find(column => column.status === 'someday')?.count).toBe(103);
+        expect(value(host.getBoardList({ list: 'cards', status: 'someday', offset: 100, limit: 100, revision: unfiltered.revision })).items)
+            .toHaveLength(3);
+        const tokens = bulk.slice(0, 100).map(task => task.contexts[0]);
+        const initialFilters = selection === 'included tokens' ? { tokens }
+            : selection === 'excluded tokens' ? { tokens: [bulk[100].contexts[0]], excludedTokens: tokens }
+                : { projects: projects.slice(0, 100).map(project => project.id) };
+        const previous = value(host.getBoardView({ filters: initialFilters, limit: 1 }));
+        const previousJSON = JSON.stringify(previous);
+        const pageInput = { filters: previous.filters, list: 'chips' as const, offset: 100, limit: 50, revision: previous.revision };
+        const previousPage = value(host.getBoardList(pageInput));
+        const filterEdit = selection === 'projects'
+            ? { type: 'toggleProject' as const, value: projects[100].id }
+            : { type: 'toggleToken' as const, value: bulk[100].contexts[0] };
+        expect(host.getBoardView({ filters: previous.filters, filterEdit, limit: 1 }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(JSON.stringify(previous)).toBe(previousJSON);
+        expect(value(host.getBoardView({ filters: previous.filters, limit: 1 }))).toEqual(previous);
+        expect(value(host.getBoardList(pageInput))).toEqual(previousPage);
+        // The selection ceiling does not truncate the offered picker options.
+        for (const list of ['tokens', 'projects'] as const) {
+            const first = previous.sheet[list];
+            const tail = value(host.getBoardList({ filters: previous.filters, list, offset: 100, limit: 100, revision: previous.revision }));
+            expect(first.items).toHaveLength(100);
+            expect(first.total).toBe(list === 'tokens' ? 103 : 104); // Includes No project.
+            expect(first.items.length + tail.items.length).toBe(first.total);
+            const offered = [...first.items, ...tail.items] as ({ value: string } | { id: string })[];
+            const ids = offered.map(item => 'value' in item ? item.value : item.id);
+            expect(new Set(ids).size).toBe(first.total);
+            expect(ids).toEqual(expect.arrayContaining(list === 'tokens' ? bulk.map(task => task.contexts[0]) : projects.map(project => project.id)));
+        }
+        await flushPendingSave();
+        expect(recorder.log).toEqual([]);
+        expect(saveData).not.toHaveBeenCalled();
+        expect(storeSnapshot()).toBe(before);
+    });
+
     it('retries a failed move exactly: one write, and the retry finishes the save', async () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);

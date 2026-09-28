@@ -171,6 +171,58 @@ describe('native host contract: task View tab', () => {
         expect(view.rows.find((row) => row.type === 'checklist')).toMatchObject({ tappable: false, add: null });
     });
 
+    it.each([false, true])('round-trips a stored archived draft through View and supported edits without changing its lifecycle (cancelled: %s)', async (cancelled) => {
+        const host = await openHost();
+        const archived = task({
+            id: 'history', title: 'History task', status: 'archived', rev: 7,
+            ...(cancelled ? { cancelledAt: T0 } : { completedAt: T0 }),
+        });
+        useTaskStore.setState({ _allTasks: [...useTaskStore.getState()._allTasks, archived] });
+        const editor = value(host.getTaskEditorModel({ id: archived.id }));
+        const draft = JSON.parse(JSON.stringify(editor.draft));
+        expect(editor.options.statuses).not.toContain('archived');
+        expect(value(host.getTaskView({ id: archived.id, draft, checklist: [] })).rows[0])
+            .toMatchObject({ type: 'title', value: archived.title });
+        const edited = value(host.editTaskDraft({ id: archived.id, draft, edit: { type: 'fields', patch: {
+            title: 'Renamed history', description: 'Notes', priority: 'high', energyLevel: 'low', timeEstimate: '30min',
+        } } })).draft;
+        expect(edited).toMatchObject({
+            status: 'archived', title: 'Renamed history', description: 'Notes', priority: 'high', energyLevel: 'low', timeEstimate: '30min',
+        });
+        expect(value(host.editTaskChecklist({ id: archived.id, draft, checklist: [] })).draft).toEqual(editor.draft);
+        expect(writes).toEqual([]);
+        expect(stored(archived.id)).toBe(archived);
+
+        const saved = value(await host.saveTaskDraft({ id: archived.id, base: { title: draft.title }, patch: { title: edited.title } }));
+        expect(writes).toEqual([['updateTask', archived.id, { title: 'Renamed history' }]]);
+        expect(stored(archived.id)).toMatchObject({ status: 'archived', title: 'Renamed history', rev: 8 });
+        expect(stored(archived.id).completedAt).toBe(archived.completedAt);
+        expect(stored(archived.id).cancelledAt).toBe(archived.cancelledAt);
+        expect(saved.draft.status).toBe('archived');
+    });
+
+    it('keeps archived status patches, malformed whole drafts and protected-parent writes refused', async () => {
+        const host = await openHost();
+        const archived = task({ id: 'history', title: 'History task', status: 'archived', projectId: 'p-archived', completedAt: T0 });
+        useTaskStore.setState({ _allTasks: [...useTaskStore.getState()._allTasks, archived] });
+        const draft = value(host.getTaskEditorModel({ id: archived.id })).draft;
+        expect(value(host.getTaskView({ id: archived.id, draft: { ...draft, title: 'Ignored' } })))
+            .toMatchObject({ readOnly: true, rows: expect.arrayContaining([{ type: 'title', label: 'Title', value: archived.title }]) });
+        expect(host.editTaskChecklist({ id: archived.id, draft, checklist: [] })).toMatchObject(invalid);
+        expect(await host.saveTaskDraft({ id: archived.id, base: { title: archived.title }, patch: { title: 'Ignored' } })).toMatchObject(invalid);
+        const activeDraft = draftOf('t-open');
+        expect(host.editTaskDraft({ id: 't-open', draft: activeDraft, edit: { type: 'fields', patch: { status: 'archived' } } })).toMatchObject(invalid);
+        expect(await host.saveTaskDraft({ id: 't-open', base: { status: activeDraft.status }, patch: { status: 'archived' } })).toMatchObject(invalid);
+        for (const patch of [{ status: 'cancelled' }, { status: 'unknown' }, { status: null }, { energyLevel: 'unknown' }, { dueDate: 'tomorrow' }, { extra: 'unknown' }]) {
+            const malformed = { ...draft, ...patch } as never;
+            expect(host.getTaskView({ id: archived.id, draft: malformed })).toMatchObject(invalid);
+            expect(host.editTaskDraft({ id: archived.id, draft: malformed })).toMatchObject(invalid);
+            expect(host.editTaskChecklist({ id: archived.id, draft: malformed, checklist: [] })).toMatchObject(invalid);
+        }
+        expect(writes).toEqual([]);
+        expect(stored(archived.id)).toBe(archived);
+    });
+
     it('pages a long checklist under one revision and refuses a stale window', async () => {
         freezeClock();
         const host = await openHost();
@@ -244,10 +296,18 @@ describe('native host contract: checklist edits', () => {
         const checklist = stored('t-open').checklist as ChecklistItem[];
         for (const edit of [
             { kind: 'toggle', index: 2 }, { kind: 'toggle', index: -1 }, { kind: 'remove', index: 1.5 }, { kind: 'move', from: 0, to: 2 },
-            { kind: 'rename', index: 0, text: 'x'.repeat(10_001) }, { kind: 'append' }, { kind: 'explode' }, null,
+            { kind: 'append' }, { kind: 'explode' }, null,
         ]) {
             expect(host.editTaskChecklist({ id: 't-open', draft, checklist, edit: edit as never })).toMatchObject(invalid);
         }
+        const longTitle = 'x'.repeat(10_001);
+        const edited = value(host.editTaskChecklist({ id: 't-open', draft, checklist,
+            edit: { kind: 'rename', index: 0, text: longTitle } }));
+        expect(edited.checklist[0].title).toBe(longTitle);
+        expect(host.getTaskView({ id: 't-open', draft: edited.draft, checklist: edited.checklist })).toMatchObject({ ok: true });
+        expect(host.editTaskChecklist({ id: 't-open', draft, checklist,
+            edit: { kind: 'rename', index: 0, text: '漢'.repeat(700_000) } })).toMatchObject(invalid);
+        expect(writes).toEqual([]);
         expect(host.editTaskChecklist({ id: 't-open', draft: { ...draft, status: 'nope' } as never, checklist })).toMatchObject(invalid);
         expect(host.editTaskChecklist({ id: 't-open', draft, checklist: [{ id: 'a', title: 'A' }] as never })).toMatchObject(invalid);
         expect(host.editTaskChecklist({ id: 't-open', draft, checklist: [{ ...checklist[0], extra: 1 }] as never })).toMatchObject(invalid);

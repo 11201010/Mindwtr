@@ -19,6 +19,7 @@ on:
       - "scripts/ci/test-build-macos-widget.sh"
       - "apps/mobile/modules/**/android/**"
       - "apps/android-native/**"
+      - "apps/ios-native/**"
       - "apps/mobile/modules/**/expo-module.config.json"
       - "apps/mobile/ios-app-intents/**"
       - "apps/mobile/widgets-ios/**"
@@ -71,6 +72,7 @@ on:
       - "scripts/ci/test-build-macos-widget.sh"
       - "apps/mobile/modules/**/android/**"
       - "apps/android-native/**"
+      - "apps/ios-native/**"
       - "apps/mobile/modules/**/expo-module.config.json"
       - "apps/mobile/ios-app-intents/**"
       - "apps/mobile/widgets-ios/**"
@@ -158,6 +160,7 @@ jobs:
       macmini: ${{ steps.routing.outputs.macmini }}
       android: ${{ steps.filter.outputs.android }}
       android_client: ${{ steps.filter.outputs.android_client }}
+      ios_client: ${{ steps.filter.outputs.ios_client }}
       ios: ${{ steps.filter.outputs.ios }}
       macos: ${{ steps.filter.outputs.macos }}
       windows: ${{ steps.filter.outputs.windows }}
@@ -225,6 +228,8 @@ jobs:
               echo "$platform=$enabled" >> "$GITHUB_OUTPUT"
               if [ "$platform" = android ]; then
                 echo "android_client=$enabled" >> "$GITHUB_OUTPUT"
+              elif [ "$platform" = ios ]; then
+                echo "ios_client=$enabled" >> "$GITHUB_OUTPUT"
               fi
             done
             exit 0
@@ -236,7 +241,7 @@ jobs:
           if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             # A force-push removed the old tip ("bad object", run 36272580872), so what changed is unknown: run every lane.
             echo "Base $BASE_SHA is gone (force-push); running every native lane."
-            for output in android android_client ios macos windows; do
+            for output in android android_client ios ios_client macos windows; do
               echo "$output=true" >> "$GITHUB_OUTPUT"
             done
             exit 0
@@ -245,6 +250,7 @@ jobs:
 
           android=false
           android_client=false
+          ios_client=false
           ios=false
           macos=false
           windows=false
@@ -274,10 +280,16 @@ jobs:
                 ios=true
                 ;;
             esac
+            case "$path" in
+              apps/ios-native/*|apps/android-native/bundle/*|packages/core/src/*|packages/core/package.json|scripts/ci/select-apple-sdk.sh|scripts/ci/prepare-apple-cache.sh|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+                ios_client=true
+                ;;
+            esac
           done < "$RUNNER_TEMP/native-changed-paths.txt"
 
           echo "android=$android" >> "$GITHUB_OUTPUT"
           echo "android_client=$android_client" >> "$GITHUB_OUTPUT"
+          echo "ios_client=$ios_client" >> "$GITHUB_OUTPUT"
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
           echo "macos=$macos" >> "$GITHUB_OUTPUT"
           echo "windows=$windows" >> "$GITHUB_OUTPUT"
@@ -557,6 +569,41 @@ jobs:
       - name: Build Android Compose client
         working-directory: apps/android-native/android
         run: ./gradlew :app:assembleDebug --no-daemon
+
+  ios-client:
+    if: needs.changes.outputs.ios_client == 'true' && needs.changes.outputs.macmini != 'true'
+    needs: changes
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    name: iOS SwiftUI client and JavaScriptCore host (${{ matrix.label }})
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: dongdongbh/Mindwtr
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+          clean: ${{ github.repository != 'dongdongbh/Mindwtr-native-ci' }}
+      - name: Select the requested Apple SDK
+        if: runner.environment != 'self-hosted'
+        run: bash scripts/ci/select-apple-sdk.sh 27
+      - name: Prepare persistent Apple build caches
+        run: bash scripts/ci/prepare-apple-cache.sh
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Test the embedded core and build the isolated SwiftUI client
+        run: bash apps/ios-native/scripts/validate.sh
 
   ios-native:
     if: needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini != 'true'
@@ -862,7 +909,7 @@ jobs:
           echo 'Unsigned Release archive compiled. Signing, AppIntentsTesting in the built app, Siri, and on-device model quality remain separate validation gates.' >> "$GITHUB_STEP_SUMMARY"
 
   ios-macmini:
-    if: needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini == 'true'
+    if: (needs.changes.outputs.ios == 'true' || needs.changes.outputs.ios_client == 'true') && needs.changes.outputs.macmini == 'true'
     needs: changes
     runs-on: ubuntu-latest
     name: iOS Swift compile (Mac mini Xcode 27)

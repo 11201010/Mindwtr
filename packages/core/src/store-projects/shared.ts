@@ -12,6 +12,20 @@ import {
 export type ProjectActions = Pick<
     TaskStore,
     | 'addProject'
+    | 'commitPreparedProjectCreate'
+    | 'commitPreparedProjectFocus'
+    | 'commitPreparedProjectRename'
+    | 'commitPreparedProjectFlow'
+    | 'commitPreparedProjectNotesWrite'
+    | 'commitPreparedProjectStatus'
+    | 'commitPreparedProjectDate'
+    | 'commitPreparedProjectSectionCreate'
+    | 'commitPreparedProjectSectionRename'
+    | 'commitPreparedProjectSectionDelete'
+    | 'commitPreparedAreaCreate'
+    | 'commitPreparedAreaColor'
+    | 'commitPreparedAreaOrder'
+    | 'commitPreparedAreaDelete'
     | 'updateProject'
     | 'cancelProject'
     | 'deleteProject'
@@ -53,6 +67,13 @@ export type ProjectActionContext = {
 export type ProjectCoreActions = Pick<
     ProjectActions,
     | 'addProject'
+    | 'commitPreparedProjectCreate'
+    | 'commitPreparedProjectFocus'
+    | 'commitPreparedProjectRename'
+    | 'commitPreparedProjectFlow'
+    | 'commitPreparedProjectNotesWrite'
+    | 'commitPreparedProjectStatus'
+    | 'commitPreparedProjectDate'
     | 'updateProject'
     | 'cancelProject'
     | 'deleteProject'
@@ -63,9 +84,9 @@ export type ProjectCoreActions = Pick<
     | 'toggleProjectFocus'
 >;
 
-export type SectionActions = Pick<ProjectActions, 'addSection' | 'updateSection' | 'deleteSection'>;
+export type SectionActions = Pick<ProjectActions, 'addSection' | 'commitPreparedProjectSectionCreate' | 'commitPreparedProjectSectionRename' | 'commitPreparedProjectSectionDelete' | 'updateSection' | 'deleteSection'>;
 
-export type AreaActions = Pick<ProjectActions, 'addArea' | 'updateArea' | 'deleteArea' | 'restoreArea' | 'reorderAreas'>;
+export type AreaActions = Pick<ProjectActions, 'addArea' | 'commitPreparedAreaCreate' | 'commitPreparedAreaColor' | 'commitPreparedAreaOrder' | 'commitPreparedAreaDelete' | 'updateArea' | 'deleteArea' | 'restoreArea' | 'reorderAreas'>;
 
 export type OrderingActions = Pick<ProjectActions, 'reorderProjects' | 'reorderProjectTasks' | 'reorderBoardTasks' | 'reorderSections'>;
 

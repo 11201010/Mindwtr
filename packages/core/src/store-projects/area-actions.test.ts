@@ -355,4 +355,56 @@ describe('area actions', () => {
         expect(saved.areas.find((item) => item.id === work.id)?.deletedAt).toBe(deletedAt);
         expect(saved.areas.find((item) => item.id === home.id)?.order).toBe(0);
     });
+
+    it('keeps destination Project titles in sync when a differently cased Area merge renames the destination', async () => {
+        const { addArea, addProject, deleteProject, updateArea } = useTaskStore.getState();
+        const work = await addArea('Work', { color: '#3b82f6' });
+        const home = await addArea('Home', { color: '#22c55e' });
+        const other = await addArea('Other');
+        if (!work || !home || !other) throw new Error('Area setup failed');
+        const moving = await addProject('Moving', '#3b82f6', { areaId: work.id });
+        const movingDeleted = await addProject('Moving deleted', '#3b82f6', { areaId: work.id });
+        const destination = await addProject('Already home', '#abcdef', { areaId: home.id });
+        const destinationDeleted = await addProject('Deleted at home', '#fedcba', { areaId: home.id });
+        const alreadyMatching = await addProject('Matching spelling', '#123456', { areaId: home.id });
+        const unrelated = await addProject('Elsewhere', '#654321', { areaId: other.id });
+        if (!moving || !movingDeleted || !destination || !destinationDeleted || !alreadyMatching || !unrelated) {
+            throw new Error('Project setup failed');
+        }
+        vi.setSystemTime(new Date('2026-04-01T12:05:00.000Z'));
+        await deleteProject(movingDeleted.id);
+        await deleteProject(destinationDeleted.id);
+        useTaskStore.setState((state) => ({
+            _allProjects: state._allProjects.map((row) => row.id === alreadyMatching.id
+                ? { ...row, areaTitle: 'HOME' } : row),
+        }));
+        const before = new Map(useTaskStore.getState()._allProjects.map((row) => [row.id, structuredClone(row)]));
+        vi.setSystemTime(new Date('2026-04-01T12:10:00.000Z'));
+
+        expect(await updateArea(work.id, { name: ' HOME ' })).toEqual({ success: true });
+        await flushPendingSave();
+        const rows = new Map(useTaskStore.getState()._allProjects.map((row) => [row.id, row]));
+        const saved = new Map(latestSavedData().projects.map((row) => [row.id, row]));
+        expect(useTaskStore.getState()._allAreas.find((row) => row.id === home.id)?.name).toBe('HOME');
+        for (const id of [destination.id, destinationDeleted.id]) {
+            expect(rows.get(id)).toMatchObject({
+                areaId: home.id, areaTitle: 'HOME',
+                color: before.get(id)?.color, rev: (before.get(id)?.rev ?? 0) + 1,
+                updatedAt: '2026-04-01T12:10:00.000Z',
+            });
+            expect(rows.get(id)?.deletedAt).toBe(before.get(id)?.deletedAt);
+            expect(saved.get(id)).toEqual(rows.get(id));
+        }
+        for (const id of [moving.id, movingDeleted.id]) {
+            expect(rows.get(id)).toMatchObject({
+                areaId: home.id, areaTitle: 'HOME', color: '#22c55e',
+                rev: (before.get(id)?.rev ?? 0) + 1,
+            });
+            expect(rows.get(id)?.deletedAt).toBe(before.get(id)?.deletedAt);
+            expect(saved.get(id)).toEqual(rows.get(id));
+        }
+        expect(rows.get(alreadyMatching.id)).toEqual(before.get(alreadyMatching.id));
+        expect(rows.get(unrelated.id)).toEqual(before.get(unrelated.id));
+    });
+
 });

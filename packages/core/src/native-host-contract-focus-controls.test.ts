@@ -180,30 +180,125 @@ describe('native host contract: Focus controls', () => {
             .toEqual(['@office', '@phone']);
     });
 
-    it('narrows the tokens and projects pickers by their search box, as the Inbox tokens do', async () => {
+    it.each(['tokens', 'projects'] as const)('searches %s beyond the first 100 options before counting and paging', async (list) => {
         freezeClock();
-        const host = await openHost('base');
+        const expanded = structuredClone(fixture);
+        for (let index = 0; index < 140; index += 1) {
+            const suffix = String(index).padStart(3, '0');
+            expanded.projects.push({ ...fixture.projects[0], id: `picker-project-${suffix}`, title: `Picker Project ${suffix}`, status: 'active' });
+            expanded.tasks.push({ ...fixture.tasks[0], id: `picker-task-${suffix}`, projectId: `picker-project-${suffix}`, contexts: [`@picker-${suffix}`], tags: [], status: 'next' });
+        }
+        expanded.tasks[expanded.tasks.length - 1].contexts.push('@café', '@literal*');
+        expanded.projects.push({ ...fixture.projects[0], id: 'literal-project', title: 'Café *', status: 'active' });
+        expanded.tasks.push({ ...fixture.tasks[0], id: 'literal-task', projectId: 'literal-project', contexts: [], tags: [], status: 'next' });
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        await seedFocusControlsStore(expanded, scenario(), { saveData });
+        const host = createNativeHostContract();
+        value(await host.activate({ writeSafetyReady: true }));
+        saveData.mockClear();
+        focusControlsWrites().length = 0;
         const view = value(host.getFocus({ limit: 1, controls: DEFAULT_FOCUS_CONTROL_STATE }));
-        const list = (name: 'tokens' | 'projects' | 'savedFilters', query?: string) => host.getFocusControlsList({
-            controls: view.controls.state, list: name, offset: 0, limit: 100, revision: view.revision, ...(query === undefined ? {} : { query }),
-        });
-        // The Inbox tokens' rule: a trimmed, case-insensitive substring.
-        const matches = (label: string, query: string) => label.toLowerCase().includes(query.trim().toLowerCase());
-        const tokens = view.controls.filterSheet.tokens.items.map((token) => token.value);
-        const needle = tokens[0].slice(1, 3).toUpperCase();
-        const found = value(list('tokens', ` ${needle} `));
-        expect(found.items.map((item) => (item as { value: string }).value)).toEqual(tokens.filter((token) => matches(token, needle)));
-        expect(found.total).toBe(found.items.length);
-        const projects = view.controls.filterSheet.projects.items;
-        const projectNeedle = projects[0].title.slice(0, 2).toLowerCase();
-        expect(value(list('projects', projectNeedle)).items).toEqual(projects.filter((project) => matches(project.title, projectNeedle)));
-        expect(value(list('tokens', 'zzz-none'))).toMatchObject({ total: 0, items: [] });
-        // An empty search is every option.
-        expect(value(list('tokens', '  ')).items).toEqual(value(list('tokens')).items);
-        const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
-        expect(list('savedFilters', 'x')).toMatchObject(invalid);
-        expect(list('tokens', 7 as never)).toMatchObject(invalid);
-        expect(list('tokens', 'x'.repeat(501))).toMatchObject(invalid);
+        const input = { controls: view.controls.state, list, offset: 0, limit: 100, revision: view.revision };
+        const identify = (item: { value?: string; title?: string }) => item.value ?? item.title;
+        const unfiltered = value(host.getFocusControlsList(input));
+        expect(unfiltered.total).toBeGreaterThan(140);
+        expect(unfiltered.items.map(identify)).not.toContain(list === 'tokens' ? '@picker-133' : 'Picker Project 133');
+
+        const query = list === 'tokens' ? '  PICKER-13  ' : '  PICKER PROJECT 13  ';
+        const filtered = value(host.getFocusControlsList({ ...input, query, offset: 3, limit: 2 }));
+        expect(filtered.total).toBe(10);
+        expect(filtered.items.map(identify)).toEqual(list === 'tokens' ? ['@picker-133', '@picker-134'] : ['Picker Project 133', 'Picker Project 134']);
+        const first = value(host.getFocusControlsList({ ...input, query, limit: 3 }));
+        expect(first.items.map(identify)).toEqual(list === 'tokens' ? ['@picker-130', '@picker-131', '@picker-132'] : ['Picker Project 130', 'Picker Project 131', 'Picker Project 132']);
+        expect(filtered.revision).toBe(view.revision);
+        expect(filtered.items[0]).toMatchObject(list === 'tokens'
+            ? { state: 'none', edit: { type: 'filter', edit: { type: 'toggleToken', value: '@picker-133' } } }
+            : { selected: false, edit: { type: 'filter', edit: { type: 'toggleProject', value: 'picker-project-133' } } });
+        for (const empty of ['', ' \t\n ']) {
+            expect(value(host.getFocusControlsList({ ...input, query: empty }))).toEqual(unfiltered);
+        }
+        expect(value(host.getFocusControlsList({ ...input, query, offset: 10 })).items).toEqual([]);
+        expect(value(host.getFocusControlsList({ ...input, query: '*' })).items.map(identify))
+            .toEqual(list === 'tokens' ? ['@literal*'] : ['Café *']);
+        expect(value(host.getFocusControlsList({ ...input, query: '  CAFÉ ' })).items.map(identify))
+            .toEqual(list === 'tokens' ? ['@café'] : ['Café *']);
+        for (const unmatched of ['cafe', 'picker-*', '[a-z]', 'x'.repeat(2000)]) {
+            expect(value(host.getFocusControlsList({ ...input, query: unmatched }))).toMatchObject({ total: 0, items: [] });
+        }
+        if (list === 'projects') {
+            expect(value(host.getFocusControlsList({ ...input, query: 'picker-project-133' }))).toMatchObject({ total: 0, items: [] });
+        }
+        expect(saveData).not.toHaveBeenCalled();
+        expect(focusControlsWrites()).toEqual([]);
+    });
+
+    it('refuses malformed picker queries and stale control revisions without writing', async () => {
+        freezeClock();
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const host = await openHost('base', saveData);
+        saveData.mockClear();
+        const view = value(host.getFocus({ limit: 1, controls: DEFAULT_FOCUS_CONTROL_STATE }));
+        const input = { controls: view.controls.state, list: 'tokens' as const, offset: 0, limit: 100, revision: view.revision };
+        const invalid = [
+            { query: null }, { query: false }, { query: 42 }, { query: [] }, { query: {} }, { query: 'x'.repeat(2001) },
+            { list: 'savedFilters', query: '' }, { list: 'savedFilters', query: 'Calls' }, { list: 'unknown', query: '' },
+            { query: '@office', offset: -1 }, { query: '@office', limit: 101 },
+        ];
+        for (const extra of invalid) {
+            expect(host.getFocusControlsList({ ...input, ...extra } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect(host.getFocusControlsList({ ...input, list: 'savedFilters' })).toMatchObject({ ok: true });
+        const changed = value(host.getFocus({ limit: 1, controls: view.controls.state, controlEdit: { type: 'sort', sortBy: 'due' } }));
+        expect(changed.revision).not.toBe(view.revision);
+        expect(host.getFocusControlsList({ ...input, controls: changed.controls.state, query: '@office' }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(host.getFocusControlsList({ ...input, controls: changed.controls.state, revision: changed.revision, query: '@office' }))
+            .toMatchObject({ ok: true, value: { total: 1, items: [{ value: '@office' }] } });
+        expect(saveData).not.toHaveBeenCalled();
+        expect(focusControlsWrites()).toEqual([]);
+    });
+
+    it('roundtrips a saved title sort through Focus reads and filter edits without offering a title sort edit', async () => {
+        freezeClock();
+        const saveData = vi.fn().mockResolvedValue(undefined);
+        const host = await openHost('base', saveData);
+        const state = useTaskStore.getState();
+        useTaskStore.setState({ settings: {
+            ...state.settings,
+            savedFilters: state.settings.savedFilters?.map((filter) => filter.id === 'sf-phone'
+                ? { ...filter, sortBy: 'title', groupBy: 'context' }
+                : filter),
+        } });
+        saveData.mockClear();
+        const before = { tasks: useTaskStore.getState()._allTasks, settings: useTaskStore.getState().settings };
+        const first = value(host.getFocus({
+            limit: 1, controls: DEFAULT_FOCUS_CONTROL_STATE, controlEdit: { type: 'applySavedFilter', id: 'sf-phone' },
+        }));
+        expect(first.controls.state).toMatchObject({ savedFilterId: 'sf-phone', sortBy: 'title' });
+        expect(first.controls.view.sort.options.map((option) => option.value)).not.toContain('title');
+        expect(value(host.getFocus({ limit: 1, controls: first.controls.state }))).toEqual(first);
+        const page = value(host.getFocusSectionWindow({ key: 'next', offset: 1, limit: 1, revision: first.revision, controls: first.controls.state }));
+        expect(page.rows.map((row) => row.id)).toEqual(['n2']);
+        expect(page).toMatchObject({ total: 1, rowTotal: 2, groups: [{ id: 'context:@phone', start: 1 }] });
+        expect(value(host.getFocusControlsList({ list: 'tokens', offset: 0, limit: 100, revision: first.revision, controls: first.controls.state, query: 'phone' })))
+            .toMatchObject({ total: 1, items: [{ value: '@phone', state: 'included' }] });
+
+        const office = first.controls.filterSheet.tokens.items.find((token) => token.value === '@office')!;
+        const changed = value(host.getFocus({ limit: 100, controls: first.controls.state, controlEdit: office.edit }));
+        // RN retains the inherited sort when a picker change detaches the saved filter.
+        expect(changed.controls.state).toMatchObject({ savedFilterId: null, sortBy: 'title' });
+        expect(value(host.getFocus({ limit: 100, controls: changed.controls.state }))).toEqual(changed);
+        expect(host.getFocusControlsList({ list: 'projects', offset: 0, limit: 100, revision: changed.revision, controls: changed.controls.state })).toMatchObject({ ok: true });
+        const cleared = value(host.getFocus({ limit: 100, controls: changed.controls.state, controlEdit: changed.controls.filterSheet.clear.edit }));
+        expect(cleared.controls.state).toEqual(DEFAULT_FOCUS_CONTROL_STATE);
+        expect(host.getFocus({ limit: 1, controls: first.controls.state, controlEdit: { type: 'sort', sortBy: 'title' } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        for (const sortBy of ['unknown', 1, null, 'completed']) {
+            expect(host.getFocus({ limit: 1, controls: { sortBy } } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        expect({ tasks: useTaskStore.getState()._allTasks, settings: useTaskStore.getState().settings }).toEqual(before);
+        expect(saveData).not.toHaveBeenCalled();
+        expect(focusControlsWrites()).toEqual([]);
     });
 
     it('refuses what Focus cannot hold or offer', async () => {
@@ -211,7 +306,7 @@ describe('native host contract: Focus controls', () => {
         const host = await openHost('prioritiesOff');
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
         expect(host.getFocus({ limit: 1, controls: { filters: { searchQuery: 'x' } } })).toMatchObject(invalid);
-        expect(host.getFocus({ limit: 1, controls: { sortBy: 'title' as never } })).toMatchObject(invalid);
+        expect(host.getFocus({ limit: 1, controls: { sortBy: 'unknown' as never } })).toMatchObject(invalid);
         expect(host.getFocus({ limit: 1, controls: { extra: true } as never })).toMatchObject(invalid);
         expect(host.getFocus({ limit: 1, controlEdit: { type: 'filter', edit: { type: 'setSearch', value: 'x' } } })).toMatchObject(invalid);
         expect(host.getFocus({ limit: 1, controlEdit: { type: 'applySavedFilter', id: 'sf-list' } })).toMatchObject(invalid);

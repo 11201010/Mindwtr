@@ -1,0 +1,1501 @@
+import SwiftUI
+
+struct ProjectsScreen: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var titleFocused: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                controls
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if ["active", "deferred", "archived"].allSatisfy({ model.projects.objects($0).isEmpty }) {
+                        Text(model.label("projects.empty")).rnFont(16).foregroundStyle(palette.secondary)
+                            .frame(maxWidth: .infinity).padding(48).accessibilityIdentifier("projects-empty")
+                    }
+                    projectSection("active", title: model.label("projects.activeSection"))
+                    projectSection("deferred", title: model.label("projects.deferredSection"))
+                    projectSection("archived", title: model.label("projects.closed"))
+                    if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 16)
+            }
+        }
+        .accessibilityIdentifier("projects-scroll")
+        .refreshable { await model.refresh() }
+        .sheet(isPresented: Binding(get: { model.areaManagerPresented }, set: { if !$0 { model.closeAreaManager() } })) {
+            AreaManagerSheet(model: model, palette: palette)
+                .presentationDetents([.medium, .large])
+                .interactiveDismissDisabled(model.busy || model.areaCreatePending || model.areaColorPending
+                    || model.areaOrderPending || model.areaDeletePending || model.retryNeeded)
+        }
+    }
+
+    private var controls: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                TextField(model.label("projects.addPlaceholder"), text: Binding(
+                    get: { model.projectCreateTitle },
+                    set: { model.setProjectCreateTitle($0) }))
+                    .focused($titleFocused).submitLabel(.done).onSubmit { submitProject() }
+                    .rnFont(16).padding(.horizontal, 12).frame(minHeight: 46)
+                    .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .disabled(model.retryNeeded)
+                    .accessibilityLabel(model.label("projects.addPlaceholder"))
+                    .accessibilityIdentifier("projects-create-title")
+                Button { submitProject() } label: {
+                    AppIcon(name: "plus", size: 22).foregroundStyle(palette.onTint)
+                        .frame(width: 46, height: 46).background(palette.tint, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain).disabled(!model.projectCreateCanSubmit)
+                .opacity(model.projectCreateCanSubmit ? 1 : 0.5)
+                .accessibilityLabel(model.label("projects.add"))
+                .accessibilityIdentifier("projects-create-add")
+            }
+            if !model.projectCreateTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !model.projectCreateOptions.objects("areas").isEmpty {
+                let areas = model.projectCreateOptions.objects("areas")
+                AppChipFlow {
+                    createAreaChip(id: nil, label: model.projectCreateOptions.text("noAreaLabel"), color: nil)
+                    ForEach(areas.indices, id: \.self) { index in
+                        let area = areas[index]
+                        createAreaChip(id: area.text("id"), label: area.text("label"), color: area.text("color"))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10).padding(.bottom, 12)
+            }
+            if let message = model.projectCreateError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8).accessibilityIdentifier("projects-create-error")
+                if model.projectCreatePending && model.retryNeeded {
+                    Button(model.label("common.retry")) { Task { await model.retry() } }
+                        .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .disabled(model.busy).accessibilityIdentifier("projects-create-retry")
+                }
+            }
+            if let message = model.projectCreateReadError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8).accessibilityIdentifier("projects-create-read-error")
+                Button(model.label("common.retry")) { Task { await model.retryProjectCreateRead() } }
+                    .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .disabled(model.busy || model.retryNeeded).accessibilityIdentifier("projects-create-read-retry")
+            }
+            if let message = model.projectFocusError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8).accessibilityIdentifier("project-focus-error")
+                if model.projectFocusPending && model.retryNeeded {
+                    Button { Task { await model.retry() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy).accessibilityIdentifier("project-focus-retry")
+                }
+            }
+            if let message = model.projectFocusReadError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8).accessibilityIdentifier("project-focus-read-error")
+                Button { Task { await model.retryProjectFocusRead() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                    .accessibilityIdentifier("project-focus-read-retry")
+            }
+            if model.error != nil && model.projectCreateError == nil && model.projectCreateReadError == nil
+                && model.projectFocusError == nil && model.projectFocusReadError == nil {
+                FailureBanner(model: model, palette: palette)
+            }
+            HStack(spacing: 12) {
+                Button {} label: {
+                    HStack {
+                        Text(model.label("projects.tagFilter")).rnFont(12, .semibold)
+                        Spacer()
+                        Text(model.label("common.all")).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                    }
+                    .frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(true)
+                Button(model.label("areas.manage")) { Task { await model.openAreaManager() } }
+                    .rnFont(12, .semibold).padding(.horizontal, 8).frame(minHeight: 44)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .buttonStyle(.plain).disabled(!model.projectCreateInputEnabled)
+                    .accessibilityIdentifier("projects-manage-areas")
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 16)
+        .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+    }
+
+    private func createAreaChip(id: String?, label: String, color: String?) -> some View {
+        let selected = model.projectCreateAreaID == id
+        return Button { model.selectProjectCreateArea(id) } label: {
+            HStack(spacing: 6) {
+                if let color, !color.isEmpty {
+                    Circle().fill(Color(hex: color)).frame(width: 8, height: 8)
+                        .overlay(Circle().stroke(palette.border, lineWidth: 1)).accessibilityHidden(true)
+                }
+                Text(label).rnFont(14, selected ? .semibold : .regular)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(selected ? palette.onTint : palette.text)
+            .padding(.horizontal, 12).frame(minHeight: 44)
+            .background(selected ? palette.tint : palette.card, in: Capsule())
+            .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain).disabled(!model.projectCreateInputEnabled)
+        .accessibilityLabel(label).accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("projects-create-area-" + (id ?? "none"))
+    }
+
+    private func submitProject() {
+        titleFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        guard model.beginProjectCreate() else { return }
+        Task { await model.addProject() }
+    }
+
+    @ViewBuilder private func projectSection(_ key: String, title: String) -> some View {
+        let groups = model.projects.objects(key)
+        if !groups.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                if key == "active" {
+                    Text(title.uppercased()).rnFont(12, .bold).tracking(0.4).foregroundStyle(palette.secondary)
+                        .padding(.top, 8).padding(.bottom, 8).accessibilityAddTraits(.isHeader)
+                } else {
+                    Button {
+                        if model.expandedProjectSections.contains(key) { model.expandedProjectSections.remove(key) }
+                        else { model.expandedProjectSections.insert(key) }
+                    } label: {
+                        HStack {
+                            Text(title.uppercased()).rnFont(12, .bold).tracking(0.4)
+                            Spacer()
+                            AppIcon(name: "chevron", size: 16)
+                                .rotationEffect(.degrees(model.expandedProjectSections.contains(key) ? 0 : -90))
+                        }
+                        .foregroundStyle(palette.secondary).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                    .padding(.top, 6).overlay(alignment: .top) { palette.border.frame(height: 1) }
+                    .accessibilityValue(model.label(model.expandedProjectSections.contains(key) ? "markdown.collapse" : "markdown.expand"))
+                    .accessibilityIdentifier("projects-section-" + key)
+                }
+                if key == "active" || model.expandedProjectSections.contains(key) {
+                    ForEach(groups.indices, id: \.self) { index in areaGroup(groups[index], section: key) }
+                }
+            }
+        }
+    }
+
+    private func areaGroup(_ group: CoreObject, section: String) -> some View {
+        let id = group.text("areaId").isEmpty ? "no-area" : group.text("areaId")
+        let collapsed = model.collapsedProjectAreas.contains(id)
+        return VStack(spacing: 0) {
+            Button {
+                if collapsed { model.collapsedProjectAreas.remove(id) }
+                else { model.collapsedProjectAreas.insert(id) }
+            } label: {
+                HStack(spacing: 8) {
+                    if !group.text("areaIcon").isEmpty {
+                        Text(group.text("areaIcon")).rnFont(14).accessibilityHidden(true)
+                    } else if !group.text("areaColor").isEmpty {
+                        Circle().fill(Color(hex: group.text("areaColor"))).frame(width: 8, height: 8)
+                            .overlay(Circle().stroke(palette.border, lineWidth: 1)).accessibilityHidden(true)
+                    }
+                    Text((group.text("areaName").isEmpty ? model.label("projects.noArea") : group.text("areaName")).uppercased())
+                        .rnFont(12, .bold).tracking(0.4).frame(maxWidth: .infinity, alignment: .leading)
+                    AppIcon(name: "chevron", size: 16).rotationEffect(.degrees(collapsed ? -90 : 0))
+                }
+                .foregroundStyle(palette.secondary).frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+            .accessibilityValue(model.label(collapsed ? "markdown.expand" : "markdown.collapse"))
+            .accessibilityIdentifier("project-area-" + section + "-" + id)
+            if !collapsed {
+                let rows = group.objects("projects")
+                ForEach(rows.indices, id: \.self) { index in projectRow(rows[index]) }
+            }
+        }
+        .padding(.bottom, 12)
+    }
+
+    private func projectRow(_ row: CoreObject) -> some View {
+        HStack(spacing: 8) {
+            Button { Task { await model.openProject(row) } } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.text("title")).rnFont(16, .medium).foregroundStyle(palette.text)
+                    if !row.text("nextActionTitle").isEmpty {
+                        Text("↳ " + row.text("nextActionTitle")).rnFont(12).foregroundStyle(palette.secondary)
+                    } else if row.flag("focusedWithoutNextAction") {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle").font(.system(size: 12)).accessibilityHidden(true)
+                            Text(model.label("projects.noNextAction")).rnFont(12)
+                        }
+                        .foregroundStyle(Color(hex: "F59E0B"))
+                    } else {
+                        Text(row.text("statusLabel")).rnFont(12).foregroundStyle(statusColor(row.text("status")))
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+            .accessibilityIdentifier("project-open-" + row.text("id"))
+            Text(String(row.number("activeTaskCount"))).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                .frame(minWidth: 20).accessibilityLabel(String(row.number("activeTaskCount")) + " " + model.label("common.tasks"))
+            Button { Task { await model.setProjectFocus(row) } } label: {
+                AppFocusStar(focused: row.flag("isFocused"), disabled: row.flag("focusDisabled"),
+                             inactiveColor: palette.secondary, size: 18)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(!model.projectFocusInputEnabled || row.flag("focusDisabled"))
+            .accessibilityLabel(model.label(row.flag("isFocused") ? "projects.removeFromFocus" : "projects.addToFocus"))
+            .accessibilityAddTraits(row.flag("isFocused") ? .isSelected : [])
+            .accessibilityIdentifier("project-focus-" + row.text("id"))
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8).background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 6)
+    }
+
+    private func statusColor(_ status: String) -> Color {
+        // RN buildProjectStatusPalette presentation swatches, not task eligibility.
+        switch status {
+        case "active": return palette.tint
+        case "waiting": return Color(hex: "F59E0B")
+        case "someday": return Color(hex: "A855F7")
+        default: return palette.secondary
+        }
+    }
+}
+
+private struct AreaManagerSheet: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var nameFocused: Bool
+
+    private var areas: [CoreObject] { model.areaManagerAreas }
+    private var colors: [String] { model.areaCreateOptions["colors"] as? [String] ?? [] }
+    private var areaColors: [String] { model.areaColorOptions["colors"] as? [String] ?? [] }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(model.label("areas.manage")).rnFont(20, .bold)
+                    .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
+                Button { model.closeAreaManager() } label: {
+                    Image(systemName: "xmark").font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.areaCreatePending || model.areaColorPending
+                    || model.areaOrderPending || model.areaDeletePending || model.retryNeeded)
+                .accessibilityLabel(model.label("common.close"))
+                .accessibilityIdentifier("area-manager-close")
+            }
+            .padding(.horizontal, 20).padding(.vertical, 8)
+            .background(palette.card)
+            .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        Button { submitAreaOrder("sortName") } label: {
+                            Text(model.label("projects.sortByName"))
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("area-order-sort-name")
+                        Button { submitAreaOrder("sortColor") } label: {
+                            Text(model.label("projects.sortByColor"))
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("area-order-sort-color")
+                    }
+                    .buttonStyle(.plain).rnFont(14, .semibold).foregroundStyle(palette.tint)
+                    .disabled(!model.areaOrderInputEnabled || areas.isEmpty)
+                    if areas.isEmpty {
+                        Text(model.label("projects.noArea")).rnFont(14).foregroundStyle(palette.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(areas.indices, id: \.self) { index in
+                                let area = areas[index]
+                                let canDelete = area.flag("canDelete")
+                                let deleteDecisionAvailable = area["canDelete"] is Bool
+                                VStack(spacing: 0) {
+                                    HStack(spacing: 4) {
+                                        Button { model.toggleAreaColorPicker(area.text("id")) } label: {
+                                            Circle().fill(area.text("color").isEmpty
+                                                ? palette.tint : Color(hex: area.text("color")))
+                                                .frame(width: 18, height: 18)
+                                                .frame(width: 44, height: 44).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.areaColorInputEnabled)
+                                        .accessibilityLabel("\(model.label("projects.changeColor")): \(area.text("name"))")
+                                        .accessibilityIdentifier("area-color-open-" + area.text("id"))
+                                        Text(area.text("name")).rnFont(15)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        Button { submitAreaOrder("moveUp", areaID: area.text("id")) } label: {
+                                            Image(systemName: "arrow.up").font(.system(size: 17, weight: .semibold))
+                                                .frame(width: 44, height: 44).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(index == 0 || !model.areaOrderInputEnabled)
+                                        .accessibilityLabel("\(model.label("projects.moveUp")): \(area.text("name"))")
+                                        .accessibilityIdentifier("area-order-up-" + area.text("id"))
+                                        Button { submitAreaDelete(area.text("id")) } label: {
+                                            Text(model.label("common.delete")).rnFont(14, .semibold)
+                                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .foregroundStyle(canDelete ? palette.danger : palette.secondary)
+                                        .disabled(!canDelete || !model.areaDeleteInputEnabled)
+                                        .accessibilityLabel("\(model.label("common.delete")): \(area.text("name"))")
+                                        .accessibilityHint(deleteDecisionAvailable && !canDelete
+                                            ? model.label("projects.areaInUse") : "")
+                                        .accessibilityIdentifier("area-delete-" + area.text("id"))
+                                    }
+                                    .frame(minHeight: 44)
+                                    if model.expandedAreaColorID == area.text("id") {
+                                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 10)], spacing: 10) {
+                                            Button { submitAreaColor(area.text("id"), color: nil) } label: {
+                                                Image(systemName: "slash.circle").font(.system(size: 22))
+                                                    .foregroundStyle(palette.secondary)
+                                                    .frame(width: 44, height: 44)
+                                                    .overlay(Circle().stroke(colorSelected(area, nil) ? palette.tint : palette.border,
+                                                                             lineWidth: colorSelected(area, nil) ? 3 : 1))
+                                                    .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.plain).disabled(!model.areaColorInputEnabled)
+                                            .accessibilityLabel(model.label("projects.colorNone"))
+                                            .accessibilityAddTraits(colorSelected(area, nil) ? .isSelected : [])
+                                            .accessibilityIdentifier("area-color-" + area.text("id") + "-none")
+                                            ForEach(areaColors, id: \.self) { color in
+                                                Button { submitAreaColor(area.text("id"), color: color) } label: {
+                                                    Circle().fill(Color(hex: color)).frame(width: 34, height: 34)
+                                                        .frame(width: 44, height: 44)
+                                                        .overlay(Circle().stroke(colorSelected(area, color) ? palette.tint : palette.border,
+                                                                                 lineWidth: colorSelected(area, color) ? 3 : 1))
+                                                        .contentShape(Rectangle())
+                                                }
+                                                .buttonStyle(.plain).disabled(!model.areaColorInputEnabled)
+                                                .accessibilityLabel(color)
+                                                .accessibilityAddTraits(colorSelected(area, color) ? .isSelected : [])
+                                                .accessibilityIdentifier("area-color-" + area.text("id") + "-" + color)
+                                            }
+                                        }
+                                        .padding(.bottom, 10)
+                                    }
+                                }
+                                if index < areas.count - 1 { palette.border.frame(height: 1) }
+                            }
+                        }
+                        .padding(.horizontal, 14).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                    }
+                    if let message = model.areaColorError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-color-error")
+                        if model.areaColorPending && model.retryNeeded {
+                            Button { Task { await model.retry() } } label: {
+                                Text(model.label("common.retry")).rnFont(14, .semibold)
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            }
+                            .disabled(model.busy).accessibilityIdentifier("area-color-retry")
+                        }
+                    }
+                    if let message = model.areaColorReadError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-color-read-error")
+                        Button { Task { await model.retryAreaColorRead() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                            .disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("area-color-read-retry")
+                    }
+                    if let message = model.areaOrderError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-order-error")
+                        if model.areaOrderPending && model.retryNeeded {
+                            Button { Task { await model.retry() } } label: {
+                                Text(model.label("common.retry")).rnFont(14, .semibold)
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            }
+                            .disabled(model.busy).accessibilityIdentifier("area-order-retry")
+                        }
+                    }
+                    if let message = model.areaOrderReadError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-order-read-error")
+                        Button { Task { await model.retryAreaOrderRead() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("area-order-read-retry")
+                    }
+                    if let message = model.areaDeleteError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-delete-error")
+                        if model.areaDeletePending && model.retryNeeded {
+                            Button { Task { await model.retry() } } label: {
+                                Text(model.label("common.retry")).rnFont(14, .semibold)
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            }
+                            .disabled(model.busy).accessibilityIdentifier("area-delete-retry")
+                        }
+                    }
+                    if let message = model.areaDeleteReadError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-delete-read-error")
+                        Button { Task { await model.retryAreaDeleteRead() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("area-delete-read-retry")
+                    }
+                    TextField(model.label("projects.areaLabel"), text: Binding(
+                        get: { model.areaCreateName }, set: { model.setAreaCreateName($0) }))
+                        .focused($nameFocused).submitLabel(.done)
+                        .onSubmit { submitArea() }
+                        .rnFont(16).padding(.horizontal, 12).frame(minHeight: 46)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                        .disabled(!model.areaCreateInputEnabled)
+                        .accessibilityLabel(model.label("projects.areaLabel"))
+                        .accessibilityIdentifier("area-create-name")
+                    if model.areaCreateNameTaken {
+                        Text(model.label("areas.nameExists")).rnFont(13).foregroundStyle(palette.danger)
+                            .accessibilityIdentifier("area-create-name-taken")
+                    }
+                    if model.areaCreateNameChecking { ProgressView().accessibilityIdentifier("area-create-name-checking") }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 10)], spacing: 10) {
+                        ForEach(colors, id: \.self) { color in
+                            Button { model.selectAreaCreateColor(color) } label: {
+                                Circle().fill(Color(hex: color)).frame(width: 34, height: 34)
+                                    .frame(width: 44, height: 44)
+                                    .overlay(Circle().stroke(model.areaCreateColor == color ? palette.tint : palette.border,
+                                                             lineWidth: model.areaCreateColor == color ? 3 : 1))
+                            }
+                            .buttonStyle(.plain).disabled(!model.areaCreateInputEnabled)
+                            .accessibilityLabel(color)
+                            .accessibilityAddTraits(model.areaCreateColor == color ? .isSelected : [])
+                            .accessibilityIdentifier("area-create-color-" + color)
+                        }
+                    }
+                    if let message = model.areaCreateError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-create-error")
+                        if model.areaCreatePending && model.retryNeeded {
+                            Button { Task { await model.retry() } } label: {
+                                Text(model.label("common.retry")).rnFont(14, .semibold)
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            }
+                                .disabled(model.busy).accessibilityIdentifier("area-create-retry")
+                        }
+                    }
+                    if let message = model.areaCreateReadError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("area-create-read-error")
+                        Button { Task { await model.retryAreaCreateRead() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                            .disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("area-create-read-retry")
+                    }
+                    if model.busy { ProgressView().frame(maxWidth: .infinity).padding(8) }
+                    HStack(spacing: 12) {
+                        Button { model.closeAreaManager() } label: {
+                            Text(model.label("common.cancel"))
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                            .disabled(model.busy || model.areaCreatePending || model.areaColorPending
+                                || model.areaOrderPending || model.areaDeletePending || model.retryNeeded)
+                            .accessibilityIdentifier("area-create-cancel")
+                        Button { submitArea() } label: {
+                            Text(model.label("common.save"))
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                            .disabled(!model.areaCreateCanSubmit)
+                            .accessibilityIdentifier("area-create-save")
+                    }
+                    .buttonStyle(.plain).rnFont(15, .semibold).foregroundStyle(palette.tint)
+                }
+                .frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
+                .padding(20)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("area-manager-scroll")
+        }
+        .background(palette.bg.ignoresSafeArea())
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape) { model.closeAreaManager() }
+    }
+
+    private func submitArea() {
+        guard model.areaCreateCanSubmit else { return }
+        nameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.addArea() }
+    }
+
+    private func submitAreaColor(_ id: String, color: String?) {
+        guard model.areaColorInputEnabled else { return }
+        nameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.changeAreaColor(id, color: color) }
+    }
+
+    private func submitAreaOrder(_ kind: String, areaID: String? = nil) {
+        guard model.areaOrderInputEnabled else { return }
+        nameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.changeAreaOrder(kind, areaID: areaID) }
+    }
+
+    private func submitAreaDelete(_ id: String) {
+        guard model.areaDeleteInputEnabled else { return }
+        nameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.deleteArea(id) }
+    }
+
+    private func colorSelected(_ area: CoreObject, _ color: String?) -> Bool {
+        if model.areaColorIntentID == area.text("id") { return model.areaColorIntentColor == color }
+        return (area["color"] as? String) == color
+    }
+}
+
+struct ProjectDetailScreen: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var renameFocused: Bool
+    @FocusState private var notesFocused: Bool
+    @FocusState private var sectionFocused: Bool
+    @State private var detailsExpanded = false
+    @State private var detailsProjectID = ""
+    @State private var discardNotesConfirm = false
+    @State private var deleteSectionConfirmPresented = false
+    @State private var projectDateDraft = Date()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Button { resignProjectNotesInput(); Task { await model.closeProject() } } label: {
+                        AppIcon(name: "chevron", size: 24).rotationEffect(.degrees(90)).foregroundStyle(palette.tint)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectRenameEditing)
+                    .accessibilityLabel(model.label("common.back")).accessibilityIdentifier("project-back")
+                    if model.projectRenameEditing {
+                        TextField(model.label("taskEdit.titleLabel"), text: Binding(
+                            get: { model.projectRenameTitle },
+                            set: { model.setProjectRenameTitle($0) }))
+                            .focused($renameFocused).submitLabel(.done).onSubmit { submitRename() }
+                            .rnFont(18, .bold).foregroundStyle(palette.text)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .disabled(!model.projectRenameInputEnabled)
+                            .accessibilityIdentifier("project-rename-title")
+                    } else {
+                        Text(model.projectHeader.text("title")).rnFont(18, .bold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier("project-detail-title")
+                            .overlay {
+                                Button { resignProjectNotesInput(); Task { await model.openProjectRename() } } label: {
+                                    Color.clear.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).disabled(!model.projectRenameOpenEnabled)
+                                .accessibilityLabel(model.label("taskEdit.titleLabel"))
+                                .accessibilityIdentifier("project-rename-open")
+                            }
+                    }
+                    Button {} label: {
+                        Image(systemName: "ellipsis").font(.system(size: 20)).foregroundStyle(palette.secondary)
+                            .frame(width: 44, height: 44).background(palette.filter, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain).disabled(true).accessibilityLabel(model.label("projects.actionsLabel"))
+                }
+                if model.projectRenameEditing {
+                    HStack(spacing: 12) {
+                        Button { submitRename() } label: {
+                            Text(model.label("common.save"))
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .disabled(!model.projectRenameCanSave)
+                        .accessibilityIdentifier("project-rename-save")
+                        Button {
+                            renameFocused = false
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            model.cancelProjectRename()
+                        } label: {
+                            Text(model.label("common.cancel"))
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .disabled(model.busy || model.retryNeeded || model.projectRenamePending)
+                        .accessibilityIdentifier("project-rename-cancel")
+                    }
+                    .buttonStyle(.plain).rnFont(14, .semibold).foregroundStyle(palette.tint)
+                }
+                if let error = model.projectRenameError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-rename-error")
+                    if model.projectRenamePending {
+                        Button(model.label("common.retry")) { Task { await model.retry() } }
+                            .rnFont(14, .semibold).frame(minHeight: 44)
+                            .disabled(model.busy).accessibilityIdentifier("project-rename-retry")
+                    }
+                }
+                if let error = model.projectRenameReadError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-rename-read-error")
+                    Button(model.label("common.retry")) { Task { await model.retryProjectRenameRead() } }
+                        .rnFont(14, .semibold).frame(minHeight: 44)
+                        .disabled(model.busy || model.retryNeeded || model.projectRenamePending)
+                        .accessibilityIdentifier("project-rename-read-retry")
+                }
+                if let error = model.projectFlowError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-flow-error")
+                    if model.projectFlowPending {
+                        Button { Task { await model.retry() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy).accessibilityIdentifier("project-flow-retry")
+                    }
+                }
+                    if let error = model.projectFlowReadError {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("project-flow-read-error")
+                    Button { Task { await model.retryProjectFlowRead() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectFlowPending)
+                        .accessibilityIdentifier("project-flow-read-retry")
+                    }
+                    if model.projectDateField == nil || !model.projectCurrent {
+                        projectDateErrorView
+                    }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8).background(palette.card)
+            .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if let error = model.projectError {
+                        Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("project-error")
+                        Button(model.label("common.retry")) { Task { await model.refresh() } }
+                            .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("project-retry")
+                    }
+                    if !model.projectCurrent { statusReadErrorView }
+                    // Keep the same Project's layout during its refresh, with stale controls inert.
+                    if model.projectCurrent || (model.busy && !model.projectDetail.isEmpty
+                        && model.projectDetail.text("projectId") == model.projectHeader.text("id")) {
+                        Group {
+                            let metadata = model.projectDetail.object("metadata")
+                            if !metadata.isEmpty { detailsPanel(metadata) }
+                            let items = model.projectDetail.objects("items")
+                            if items.isEmpty {
+                                Text(model.label("list.noTasks")).rnFont(16).foregroundStyle(palette.secondary)
+                                    .frame(maxWidth: .infinity).padding(32).accessibilityIdentifier("project-empty")
+                            }
+                            ForEach(items.indices, id: \.self) { index in
+                                let item = items[index]
+                                if item.text("type") == "section" {
+                                    HStack(spacing: 8) {
+                                        Text(item.text("title")).rnFont(13, .bold)
+                                        Text(String(item.number("count"))).rnFont(12, .semibold)
+                                    }
+                                    .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
+                                    .padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+                                } else if item.text("type") == "task" {
+                                    TaskCard(row: item.object("row"), model: model, palette: palette,
+                                             readOnly: model.projectDetail.flag("readOnly"),
+                                             beforeAction: resignProjectNotesInput)
+                                        .id(item.object("row").text("id"))
+                                }
+                            }
+                            if items.count < model.projectDetail.number("total") {
+                                Button { resignProjectNotesInput(); Task { await model.loadMoreProject() } } label: {
+                                    Text(model.label("common.more")).rnFont(13, .semibold)
+                                        .padding(.horizontal, 16).frame(minHeight: 44).background(palette.filter, in: Capsule())
+                                }
+                                .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                                .frame(maxWidth: .infinity).accessibilityIdentifier("project-more")
+                            }
+                        }
+                        .disabled(!model.projectCurrent)
+                        .allowsHitTesting(model.projectCurrent)
+                    }
+                    if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
+                }
+                .padding(12)
+            }
+            .refreshable { resignProjectNotesInput(); await model.refresh() }
+            .allowsHitTesting(!model.projectRenameEditing)
+        }
+        .onChange(of: model.projectRenameEditing) { renameFocused = $0 }
+        .onChange(of: model.projectRenameInputEnabled) { if $0 { renameFocused = true } }
+        .onChange(of: notesFocused) { if !$0 { Task { await model.flushProjectNotesEdit() } } }
+        .onChange(of: model.projectDatePicker.text("date")) { _ in
+            if let date = TaskDatePickerComponents.date(model.projectDatePicker) { projectDateDraft = date }
+        }
+        .task(id: model.projectDetail.text("mutationRevision")) {
+            if model.projectDateField != nil && !model.projectDatePending && model.projectCurrent {
+                await model.retryProjectDateRead()
+            }
+        }
+        .onAppear { detailsProjectID = model.projectHeader.text("id") }
+        .onChange(of: model.projectHeader.text("id")) { id in
+            if id != detailsProjectID {
+                detailsProjectID = id
+                detailsExpanded = false
+                notesFocused = false
+                discardNotesConfirm = false
+            }
+        }
+        .onChange(of: model.projectSectionsPresented) {
+            if !$0 { deleteSectionConfirmPresented = false }
+        }
+        .alert(model.label("taskEdit.discardChanges"), isPresented: $discardNotesConfirm) {
+            Button(model.label("common.discard"), role: .destructive) {
+                Task { await model.discardProjectNotesDraft() }
+            }
+            .accessibilityIdentifier("project-notes-discard-confirm")
+            Button(model.label("common.cancel"), role: .cancel) {}
+        } message: { Text(model.label("taskEdit.discardChangesDesc")) }
+        .sheet(isPresented: Binding(get: { model.projectDateField != nil },
+                                    set: { if !$0 { model.cancelProjectDate() } })) {
+            projectDateSheet
+                .presentationDetents([.medium, .large])
+                .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
+        }
+        .sheet(isPresented: Binding(get: { model.projectSectionsPresented },
+                                    set: { if !$0 { model.closeProjectSections() } })) {
+            projectSectionsSheet
+                .presentationDetents([.large])
+                .interactiveDismissDisabled(!model.projectSectionCloseEnabled)
+                .alert(model.label("projects.sectionsLabel"), isPresented: $deleteSectionConfirmPresented) {
+                    Button(model.label("common.cancel"), role: .cancel) {
+                        model.cancelProjectSectionDelete()
+                    }
+                    Button(model.label("common.delete"), role: .destructive) {
+                        Task { await model.confirmProjectSectionDelete() }
+                    }
+                } message: {
+                    Text(model.label("projects.deleteSectionConfirm"))
+                }
+        }
+        .accessibilityAction(.escape) { resignProjectNotesInput(); Task { await model.closeProject() } }
+    }
+
+    @ViewBuilder
+    private var projectDateErrorView: some View {
+        if let message = model.projectDateError {
+            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-date-error")
+            Button {
+                Task {
+                    if model.projectDatePending { await model.retry() }
+                    else { await model.retryProjectDateRead() }
+                }
+            } label: {
+                Text(model.label("common.retry"))
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(model.busy)
+            .accessibilityIdentifier("project-date-retry")
+        }
+        if let message = model.projectDateReadError {
+            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-date-read-error")
+            Button { Task { await model.retryProjectDateRead() } } label: {
+                Text(model.label("common.retry"))
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectDatePending)
+            .accessibilityIdentifier("project-date-read-retry")
+        }
+    }
+
+    private var projectDateSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                let field = model.projectDateField ?? "startDate"
+                let label = model.label(field == "startDate" ? "taskEdit.startDateLabel" : "taskEdit.dueDateLabel")
+                Text(label).rnFont(18, .semibold).foregroundStyle(palette.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                if !model.projectDatePicker.isEmpty {
+                    DatePicker(label, selection: $projectDateDraft, displayedComponents: .date)
+                        .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
+                        .disabled(model.busy || model.projectDatePending || model.retryNeeded)
+                        .accessibilityLabel(label).accessibilityIdentifier("project-date-picker")
+                } else if model.projectDateReadError == nil {
+                    ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+                }
+                projectDateErrorView
+                HStack(spacing: 12) {
+                    Button { model.cancelProjectDate() } label: {
+                        Text(model.label("common.cancel"))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(model.projectDatePending || model.retryNeeded || model.busy)
+                    .accessibilityIdentifier("project-date-cancel")
+                    Button {
+                        let value = TaskDatePickerComponents.string(projectDateDraft, time: false)
+                        Task { await model.changeProjectDate(field, value: value) }
+                    } label: {
+                        Text(model.label("common.done"))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(!model.projectDateDoneEnabled)
+                    .accessibilityIdentifier("project-date-done")
+                }
+                .buttonStyle(.plain).rnFont(14, .semibold).foregroundStyle(palette.tint)
+            }
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(palette.card)
+        .accessibilityIdentifier("project-date-sheet")
+    }
+
+    @ViewBuilder
+    private var statusReadErrorView: some View {
+        if let message = model.projectStatusReadError {
+            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-status-read-error")
+            Button {
+                Task { await model.retryProjectStatusRead() }
+            } label: {
+                Text(model.label("common.retry"))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("project-status-read-retry")
+        }
+    }
+
+    private func detailsPanel(_ metadata: CoreObject) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    AppIcon(name: "chevron", size: 16).rotationEffect(.degrees(detailsExpanded ? 0 : -90))
+                        .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                    Text(model.label("taskEdit.details")).rnFont(15, .semibold).foregroundStyle(palette.text)
+                }
+                if !detailsExpanded {
+                    Text(metadata.text("summary")).rnFont(13).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-details-summary")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay {
+                Button {
+                    resignProjectNotesInput()
+                    Task {
+                        if detailsExpanded {
+                            guard await model.collapseProjectNotesForDetails() else { return }
+                            model.closeProjectStatusSelector()
+                        }
+                        detailsExpanded.toggle()
+                    }
+                } label: {
+                    Color.clear.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.projectRenameEditing || model.projectStatusPending || model.retryNeeded)
+                .accessibilityLabel(model.label("taskEdit.details"))
+                .accessibilityValue(model.label(detailsExpanded ? "markdown.collapse" : "markdown.expand"))
+                .accessibilityIdentifier("project-details-toggle")
+            }
+            if detailsExpanded {
+                VStack(alignment: .leading, spacing: 16) {
+                    if model.projectDetail.flag("readOnly") {
+                        metadataRow("projects.statusLabel", value: metadata.text("statusLabel"), id: "status")
+                    } else {
+                        metadataRow("projects.statusLabel", value: metadata.text("statusLabel"), id: "status")
+                            .padding(.trailing, 32)
+                            .frame(minHeight: 44)
+                            .padding(8)
+                            .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .trailing) {
+                                AppIcon(name: "chevron", size: 16)
+                                    .rotationEffect(.degrees(model.projectStatusOpen ? 0 : -90))
+                                    .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                            }
+                            .overlay {
+                                Button {
+                                    resignProjectNotesInput()
+                                    Task { await model.openProjectStatus() }
+                                } label: {
+                                    Color.clear.frame(maxWidth: .infinity, minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).disabled(!model.projectStatusOpenTapEnabled)
+                                .accessibilityLabel(model.label("projects.statusLabel") + ": " + metadata.text("statusLabel"))
+                                .accessibilityValue(model.label(model.projectStatusOpen ? "markdown.collapse" : "markdown.expand"))
+                                .accessibilityIdentifier("project-status-open")
+                            }
+                        if model.projectStatusOpen {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(["active", "waiting", "someday"], id: \.self) { status in
+                                    Button {
+                                        resignProjectNotesInput()
+                                        Task { await model.changeProjectStatus(status) }
+                                    } label: {
+                                        HStack {
+                                            Text(model.label("status." + status)).rnFont(14)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            Spacer(minLength: 8)
+                                            if model.projectStatusSelectedStatus == status {
+                                                Image(systemName: "checkmark").accessibilityHidden(true)
+                                            }
+                                        }
+                                        .foregroundStyle(palette.text)
+                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain).disabled(!model.projectStatusPickTapEnabled)
+                                    .accessibilityAddTraits(model.projectStatusSelectedStatus == status ? .isSelected : [])
+                                    .accessibilityIdentifier("project-status-" + status)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                        }
+                        if let message = model.projectStatusError {
+                            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("project-status-error")
+                            Button {
+                                Task {
+                                    if model.projectStatusPending { await model.retry() }
+                                    else { await model.retryProjectStatusRead() }
+                                }
+                            } label: {
+                                Text(model.label("common.retry"))
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("project-status-retry")
+                        }
+                        statusReadErrorView
+                    }
+                    if model.projectDetail.flag("readOnly") {
+                        metadataRow("projects.projectTypeLabel", value: metadata.text("typeLabel"), id: "type")
+                    } else {
+                        metadataRow("projects.projectTypeLabel", value: metadata.text("typeLabel"), id: "type")
+                            .padding(.trailing, 32)
+                            .frame(minHeight: 44)
+                            .padding(8)
+                            .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .trailing) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 16)).foregroundStyle(palette.tint)
+                                    .accessibilityHidden(true)
+                            }
+                            .overlay {
+                                Button { resignProjectNotesInput(); Task { await model.toggleProjectType() } } label: {
+                                    Color.clear.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).disabled(!model.projectFlowInputEnabled)
+                                .accessibilityLabel(model.label("projects.projectTypeLabel") + ": " + metadata.text("typeLabel"))
+                                .accessibilityHint(model.label("projects.projectTypeHelpText"))
+                                .accessibilityIdentifier("project-flow-type")
+                            }
+                    }
+                    if !metadata.text("sequentialScopeLabel").isEmpty {
+                        metadataRow("projects.sequentialScope", value: metadata.text("sequentialScopeLabel"), id: "sequential-scope")
+                        if !model.projectDetail.flag("readOnly") {
+                            AppChipFlow {
+                                projectScopeChip("project", metadata: metadata)
+                                projectScopeChip("section", metadata: metadata)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    ProjectSectionsMetadata(model: model, palette: palette, metadata: metadata) {
+                        resignProjectNotesInput()
+                        Task { await model.openProjectSections() }
+                    }
+                    metadataRow("projects.areaLabel", value: metadata.text("areaLabel"), id: "area")
+                    metadataRow("taskEdit.tagsLabel", value: metadata.text("tagsLabel"), id: "tags")
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                projectNotesPanel
+                VStack(alignment: .leading, spacing: 16) {
+                    projectDateRow("startDate", value: metadata.text("startDateLabel"),
+                                   hasValue: metadata.flag("hasStartDate"))
+                    projectDateRow("dueDate", value: metadata.text("dueDateLabel"),
+                                   hasValue: metadata.flag("hasDueDate"))
+                    metadataRow("projects.reviewAt", value: metadata.text("reviewDateLabel"), id: "review-date")
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+    }
+
+    private var projectSectionsSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Text(model.label("projects.sectionsLabel"))
+                    .rnFont(20, .bold).foregroundStyle(palette.text)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                Button {
+                    sectionFocused = false
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    model.closeProjectSections()
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 20)).foregroundStyle(palette.secondary)
+                        .frame(width: 48, height: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.projectSectionCloseEnabled)
+                .accessibilityLabel(model.label("common.close"))
+                .accessibilityIdentifier("project-sections-close")
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if model.projectSectionOptions.flag("canCreate") && !model.projectSectionEditing {
+                        Button { model.beginProjectSection() } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "plus").accessibilityHidden(true)
+                                Text(model.label("projects.addSection")).rnFont(15, .semibold)
+                                Spacer(minLength: 8)
+                            }
+                            .foregroundStyle(palette.tint)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectSectionAddEnabled)
+                        .accessibilityIdentifier("project-section-add")
+                    }
+                    if model.projectSectionEditing {
+                        TextField(model.label("projects.sectionPlaceholder"), text: Binding(
+                            get: { model.projectSectionTitle },
+                            set: { model.setProjectSectionTitle($0) }))
+                            .focused($sectionFocused).submitLabel(.done)
+                            .onSubmit { submitProjectSection() }
+                            .rnFont(16).foregroundStyle(palette.text)
+                            .padding(12).frame(minHeight: 48)
+                            .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                            .disabled(!model.projectSectionInputEnabled)
+                            .accessibilityIdentifier("project-section-title")
+                        HStack(spacing: 12) {
+                            Button {
+                                sectionFocused = false
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                model.cancelProjectSection()
+                            } label: {
+                                Text(model.label("common.cancel"))
+                                    .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                            }
+                            .disabled(!model.projectSectionCloseEnabled)
+                            .accessibilityIdentifier("project-section-cancel")
+                            Button { submitProjectSection() } label: {
+                                Text(model.label("common.save"))
+                                    .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                            }
+                            .disabled(!model.projectSectionCanSave)
+                            .accessibilityIdentifier("project-section-save")
+                        }
+                        .buttonStyle(.plain).rnFont(14, .semibold).foregroundStyle(palette.tint)
+                    }
+                    if model.projectSectionRows.isEmpty {
+                        Text(model.label("common.none")).rnFont(14).foregroundStyle(palette.secondary)
+                    } else {
+                        ForEach(model.projectSectionRows.indices, id: \.self) { index in
+                            let row = model.projectSectionRows[index]
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(row.text("title")).rnFont(15).foregroundStyle(palette.text)
+                                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                    .accessibilityIdentifier("project-section-row-" + row.text("id"))
+                                if model.projectSectionOptions.flag("canCreate") {
+                                    HStack(spacing: 12) {
+                                        Button { Task { await model.beginProjectSectionRename(row.text("id")) } } label: {
+                                            Text(model.label("common.edit")).rnFont(14, .semibold)
+                                                .foregroundStyle(palette.tint)
+                                                .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.projectSectionEditEnabled(row.text("id")))
+                                        .accessibilityLabel(model.label("common.edit") + " " + row.text("title"))
+                                        .accessibilityIdentifier("project-section-edit-" + row.text("id"))
+                                        Button {
+                                            Task {
+                                                if await model.beginProjectSectionDelete(row.text("id")),
+                                                   model.projectSectionDeleteConfirmationReady(row.text("id")) {
+                                                    deleteSectionConfirmPresented = true
+                                                }
+                                            }
+                                        } label: {
+                                            Text(model.label("common.delete")).rnFont(14, .semibold)
+                                                .foregroundStyle(palette.danger)
+                                                .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.projectSectionDeleteEnabled(row.text("id")))
+                                        .accessibilityLabel(model.label("common.delete") + " " + row.text("title"))
+                                        .accessibilityIdentifier("project-section-delete-" + row.text("id"))
+                                        Spacer(minLength: 0)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let message = model.projectSectionError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("project-section-error")
+                        if model.projectSectionPending {
+                            Button { Task { await model.retry() } } label: {
+                                Text(model.label("common.retry"))
+                                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(model.busy)
+                            .accessibilityIdentifier("project-section-retry")
+                        }
+                    }
+                    if model.projectSectionReadRetryVisible {
+                        if let message = model.projectSectionReadError {
+                            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("project-section-read-error")
+                        }
+                        Button { Task { await model.retryProjectSectionRead() } } label: {
+                            Text(model.label("common.retry"))
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectSectionCloseEnabled)
+                        .accessibilityIdentifier("project-section-read-retry")
+                    }
+                }
+                .padding(16)
+            }
+            .accessibilityIdentifier("project-sections-scroll")
+        }
+        .background(palette.card)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
+        .accessibilityIdentifier("project-sections-sheet")
+        .onChange(of: model.projectSectionEditing) { if $0 { sectionFocused = true } }
+        .onChange(of: model.projectSectionInputEnabled) { if $0 && model.projectSectionEditing { sectionFocused = true } }
+    }
+
+    private func submitProjectSection() {
+        guard model.projectSectionCanSave else { return }
+        sectionFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.saveProjectSection() }
+    }
+
+    private func projectDateRow(_ field: String, value: String, hasValue: Bool) -> some View {
+        let start = field == "startDate"
+        let label = model.label(start ? "taskEdit.startDateLabel" : "taskEdit.dueDateLabel")
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(label).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    resignProjectNotesInput()
+                    Task { await model.openProjectDate(field) }
+                } label: {
+                    Text(value.isEmpty ? model.label("common.notSet") : value)
+                        .rnFont(14).foregroundStyle(palette.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.projectDateTapEnabled)
+                .accessibilityLabel(label + ": " + (value.isEmpty ? model.label("common.notSet") : value))
+                .accessibilityIdentifier(start ? "project-start-date-open" : "project-due-date-open")
+                if hasValue {
+                    Button {
+                        resignProjectNotesInput()
+                        Task { await model.changeProjectDate(field, value: nil) }
+                    } label: {
+                        Image(systemName: "xmark.circle").font(.system(size: 19))
+                            .foregroundStyle(palette.secondary)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectDateTapEnabled)
+                    .accessibilityLabel(model.label("common.clear") + " " + label)
+                    .accessibilityIdentifier(start ? "project-start-date-clear" : "project-due-date-clear")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var projectNotesPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                AppIcon(name: "chevron", size: 16)
+                    .rotationEffect(.degrees(model.projectNotesExpanded ? 0 : -90))
+                    .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                Text(model.label("project.notes")).rnFont(15, .semibold).foregroundStyle(palette.text)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay {
+                Button { resignProjectNotesInput(); Task { await model.toggleProjectNotes() } } label: {
+                    Color.clear.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                .accessibilityLabel(model.label("project.notes"))
+                .accessibilityValue(model.label(model.projectNotesExpanded ? "markdown.collapse" : "markdown.expand"))
+                .accessibilityIdentifier("project-notes-toggle")
+            }
+            if model.projectNotesExpanded {
+                if !model.projectDetail.flag("readOnly") {
+                    HStack(spacing: 8) {
+                        Button {
+                            resignProjectNotesInput()
+                            Task { await model.showProjectNotesEditor() }
+                        } label: {
+                            Text(model.label("markdown.edit")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(model.projectNotesEditMode ? palette.tint : palette.text)
+                        .background(model.projectNotesEditMode ? palette.card : palette.filter,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .disabled(!model.projectActionsEnabled || model.projectNotesEditMode)
+                        .accessibilityIdentifier("project-notes-mode-edit")
+                        Button {
+                            resignProjectNotesInput()
+                            Task { await model.showProjectNotesPreview() }
+                        } label: {
+                            Text(model.label("markdown.preview")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(!model.projectNotesEditMode ? palette.tint : palette.text)
+                        .background(!model.projectNotesEditMode ? palette.card : palette.filter,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .disabled(!model.projectActionsEnabled || !model.projectNotesEditMode)
+                        .accessibilityIdentifier("project-notes-mode-preview")
+                    }
+                }
+                if let message = model.projectNotesEditError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-notes-write-error")
+                    if model.projectNotesWritePending {
+                        Button { Task { await model.retry() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy)
+                            .accessibilityIdentifier("project-notes-write-retry")
+                    }
+                }
+                if let message = model.projectNotesEditReadError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-notes-edit-read-error")
+                    Button { Task { await model.retryProjectNotesEditRead() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectNotesWritePending)
+                        .accessibilityIdentifier("project-notes-edit-read-retry")
+                } else if model.projectNotesEditError != nil && !model.projectNotesWritePending {
+                    Button { Task { await model.retryProjectNotesEditRead() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("project-notes-edit-read-retry")
+                }
+                if model.projectNotesCanDiscard {
+                    Button(model.label("common.discard"), role: .destructive) { discardNotesConfirm = true }
+                        .rnFont(14, .semibold).frame(minHeight: 44)
+                        .accessibilityIdentifier("project-notes-discard")
+                }
+                if model.projectNotesEditMode {
+                    if model.projectNotesEditReady {
+                        ZStack(alignment: .topLeading) {
+                            if model.projectNotesDraft.isEmpty {
+                                Text(model.label("taskEdit.descriptionPlaceholder"))
+                                    .rnFont(14).foregroundStyle(palette.secondary).padding(.top, 8).padding(.leading, 5)
+                                    .accessibilityHidden(true)
+                            }
+                            TextEditor(text: Binding(get: { model.projectNotesDraft },
+                                                     set: { model.setProjectNotesDraft($0) }))
+                                .focused($notesFocused)
+                                .rnFont(15)
+                                .scrollContentBackground(.hidden)
+                                .frame(minHeight: 160)
+                                .disabled(!model.projectNotesEditInputEnabled)
+                                .environment(\.layoutDirection,
+                                    (model.projectNotesDraftDirection.isEmpty ? model.projectNotes.text("direction")
+                                        : model.projectNotesDraftDirection) == "rtl" ? .rightToLeft : .leftToRight)
+                                .task(id: [model.projectHeader.text("id"), model.projectHeader.text("title"),
+                                           model.projectNotesDraft, model.projectNotes.text("direction")]) {
+                                    await model.refreshProjectNotesDraftDirection()
+                                }
+                                .accessibilityIdentifier("project-notes-input")
+                        }
+                        .padding(8).background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    } else if model.busy {
+                        ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                } else {
+                    if let message = model.projectNotesError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("project-notes-error")
+                        Button { Task { await model.retryProjectNotes() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                        .accessibilityIdentifier("project-notes-retry")
+                    } else if model.projectNotesCurrent {
+                        let notes = model.projectNotes
+                        let blocks = notes.objects("blocks")
+                        if notes.number("total") == 0 {
+                            Text(model.label("common.none")).rnFont(14).foregroundStyle(palette.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .accessibilityIdentifier("project-notes-empty")
+                        } else {
+                            NativeMarkdownContent(blocks: blocks, labels: notes.object("markdownLabels"),
+                                                  strings: model.strings, palette: palette)
+                                .environment(\.layoutDirection, notes.text("direction") == "rtl" ? .rightToLeft : .leftToRight)
+                                .accessibilityElement(children: .contain)
+                                .accessibilityIdentifier("project-notes-content")
+                            if blocks.count < notes.number("total") {
+                                Button { Task { await model.loadMoreProjectNotes() } } label: {
+                                    Text(model.label("common.more")).rnFont(14, .semibold)
+                                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain).disabled(!model.projectActionsEnabled)
+                                .accessibilityIdentifier("project-notes-more")
+                            }
+                        }
+                    } else if model.busy {
+                        ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                }
+            }
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func metadataRow(_ caption: String, value: String, id: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.label(caption)).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+            Text(value).rnFont(14).foregroundStyle(palette.text).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-detail-meta-" + id)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func projectScopeChip(_ scope: String, metadata: CoreObject) -> some View {
+        let label = model.label(scope == "section" ? "projects.sequentialWithinSections" : "projects.sequentialAcrossSections")
+        let selected = metadata.text("sequentialScopeLabel") == label
+        return Button { resignProjectNotesInput(); Task { await model.setProjectScope(scope) } } label: {
+            Text(label).rnFont(14, selected ? .semibold : .regular)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(selected ? palette.onTint : palette.text)
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .background(selected ? palette.tint : palette.card, in: Capsule())
+                .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.projectFlowInputEnabled)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(model.label("projects.sequentialScopeHelpText"))
+        .accessibilityIdentifier("project-flow-scope-" + scope)
+    }
+
+    private func submitRename() {
+        guard model.projectRenameCanSave else { return }
+        renameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.saveProjectRename() }
+    }
+
+    private func resignProjectNotesInput() {
+        notesFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+// Keep this concrete View boundary: expanding Details exceeded the iOS 17
+// main-thread stack while resolving the former nested SwiftUI generic type.
+private struct ProjectSectionsMetadata: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let metadata: CoreObject
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            let sections = metadata.objects("sections")
+            HStack(spacing: 8) {
+                Text(model.label("projects.sectionsLabel"))
+                    .rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                Spacer(minLength: 8)
+                if !model.projectDetail.flag("readOnly") || !sections.isEmpty {
+                    Button(action: onOpen) {
+                        Text(model.label(sections.isEmpty ? "projects.addSection" : "settings.manage"))
+                            .rnFont(14, .semibold).foregroundStyle(palette.tint)
+                            .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectSectionOpenTapEnabled)
+                    .accessibilityIdentifier("project-sections-open")
+                }
+            }
+            Text(sections.isEmpty ? model.label("common.none")
+                : sections.map { $0.text("title") }.joined(separator: "\n"))
+                .rnFont(14).foregroundStyle(palette.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-detail-meta-sections")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

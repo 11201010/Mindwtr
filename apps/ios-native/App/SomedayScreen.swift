@@ -1,0 +1,298 @@
+import SwiftUI
+
+struct SomedayScreen: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !model.someday.isEmpty { stats }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if let error = model.somedayError {
+                        Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                            .accessibilityIdentifier("someday-error")
+                        Button(model.label("common.retry")) { Task { await model.retrySomeday() } }
+                            .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                            .accessibilityIdentifier("someday-retry")
+                    }
+                    if model.somedayCurrent {
+                        deferredProjects
+                        let items = model.someday.objects("items")
+                        ForEach(items.indices, id: \.self) { index in
+                            let item = items[index]
+                            if item.text("type") == "task" {
+                                TaskCard(row: item.object("row"), model: model, palette: palette,
+                                         showDetails: model.someday.flag("showDetails"))
+                                    .id(item.object("row").text("id"))
+                            } else if item.text("type") == "heading" {
+                                Text(item.text("title")).rnFont(13, .bold)
+                                    .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
+                                    .padding(.top, 14).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier("someday-heading-" + item.text("id"))
+                            }
+                        }
+                        if items.count < model.someday.number("total") {
+                            moreButton("someday-more") { await model.loadMoreSomeday() }
+                        }
+                        emptyState
+                    }
+                    if model.busy || (!model.somedayCurrent && model.somedayError == nil) {
+                        ProgressView().frame(maxWidth: .infinity).padding(12)
+                    }
+                }
+                .padding(16)
+            }
+            .refreshable { await model.refresh() }
+        }
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
+                guard scenePhase == .active, model.selectedSurface == .someday else { return }
+                await model.refresh()
+            }
+        }
+    }
+
+    private var stats: some View {
+        HStack(alignment: .center, spacing: 8) {
+            AppChipFlow {
+                let entries = model.someday.objects("stats")
+                ForEach(entries.indices, id: \.self) { index in
+                    VStack(spacing: 4) {
+                        Text(String(entries[index].number("value"))).rnFont(24, .bold).foregroundStyle(Color(hex: "8B5CF6"))
+                        Text(entries[index].text("label")).rnFont(12).foregroundStyle(palette.secondary)
+                    }
+                    .padding(.trailing, 16).accessibilityElement(children: .combine)
+                }
+                let chip = model.someday.object("filterChip")
+                if !chip.isEmpty {
+                    Button { Task { await model.editSomedayFilter(model.someday.object("filters").object("clearEdit")) } } label: {
+                        HStack(spacing: 4) {
+                            Text(chip.text("label")).rnFont(12, .semibold)
+                            AppIcon(name: "x", size: 12)
+                        }
+                        .foregroundStyle(palette.onTint).padding(.horizontal, 10).frame(minHeight: 44)
+                        .background(palette.tint, in: Capsule()).contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain).disabled(!model.somedayActionsEnabled)
+                    .accessibilityLabel(chip.text("removeLabel")).accessibilityIdentifier("someday-clear-filters")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button { model.somedayPanel = "menu" } label: {
+                Image(systemName: "ellipsis").rnFont(20).foregroundStyle(palette.secondary)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(!model.somedayActionsEnabled)
+            .accessibilityLabel(model.someday.object("menu").text("moreLabel")).accessibilityIdentifier("someday-overflow-button")
+        }
+        .padding(16).background(palette.card).overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        let empty = model.someday.object("empty")
+        if !empty.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "lightbulb").font(.system(size: 44, weight: .light))
+                    .foregroundStyle(palette.secondary).frame(width: 48, height: 48).padding(.bottom, 8).accessibilityHidden(true)
+                Text(empty.text("title")).rnFont(18, .semibold)
+                Text(empty.text("hint")).rnFont(14).foregroundStyle(palette.secondary)
+                if empty.flag("clear") {
+                    Button(model.label("filters.clear")) {
+                        Task { await model.editSomedayFilter(model.someday.object("filters").object("clearEdit")) }
+                    }
+                    .rnFont(14, .semibold).frame(minHeight: 44).disabled(!model.somedayActionsEnabled)
+                        .accessibilityIdentifier("someday-empty-clear")
+                }
+            }
+            .multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.vertical, 48).padding(.horizontal, 24)
+        }
+    }
+
+    @ViewBuilder private var deferredProjects: some View {
+        let deferred = model.someday.object("deferred")
+        let collection = deferred.object("rows")
+        if !deferred.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button { model.somedayProjectsExpanded.toggle() } label: {
+                    HStack(spacing: 8) {
+                        AppIcon(name: "chevron", size: 18).rotationEffect(.degrees(model.somedayProjectsExpanded ? 0 : -90))
+                        Text(deferred.text("title")).rnFont(12, .semibold).tracking(0.5).textCase(.uppercase)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(palette.secondary).frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.somedayActionsEnabled)
+                .accessibilityValue(model.label(model.somedayProjectsExpanded ? "markdown.collapse" : "markdown.expand"))
+                .accessibilityIdentifier("someday-projects-toggle")
+                if model.somedayProjectsExpanded {
+                    let entries = collection.objects("items")
+                    ForEach(entries.indices, id: \.self) { index in
+                        let project = entries[index]
+                        Button { Task { await model.openProject(project) } } label: {
+                            HStack(spacing: 10) {
+                                AppIcon(name: "folder", size: 18)
+                                    .foregroundStyle(project.text("color").isEmpty ? palette.secondary : Color(hex: project.text("color")))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(project.text("title")).rnFont(14, .semibold).foregroundStyle(palette.text)
+                                    if !project.text("areaName").isEmpty {
+                                        Text(project.text("areaName")).rnFont(12).foregroundStyle(palette.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(.vertical, 10).padding(.horizontal, 12).frame(minHeight: 44)
+                            .background(palette.card, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1)).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.somedayActionsEnabled)
+                        .accessibilityIdentifier("someday-project-" + project.text("id"))
+                    }
+                    if entries.count < collection.number("total") {
+                        moreButton("someday-more-deferredProjects") { await model.loadMoreSomeday(deferred: true) }
+                    }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, model.somedayProjectsExpanded ? 12 : 0)
+            .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(.bottom, 4)
+        }
+    }
+
+    private func moreButton(_ identifier: String, action: @escaping () async -> Void) -> some View {
+        Button { Task { await action() } } label: {
+            Text(model.label("common.more")).rnFont(12, .semibold).padding(.horizontal, 12).frame(minHeight: 44)
+                .background(palette.filter, in: Capsule()).contentShape(Capsule())
+        }
+        .buttonStyle(.plain).disabled(!model.somedayActionsEnabled).accessibilityIdentifier(identifier)
+    }
+}
+
+struct SomedayPanel: View {
+    @FocusState private var focusedField: String?
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    private var menu: CoreObject { model.someday.object("menu") }
+    private var isFilter: Bool { model.somedayPanel == "filters" }
+    private var isPicker: Bool { !model.somedayPickerName.isEmpty }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: isFilter ? .bottom : .center) {
+                Button { close() } label: { Color.black.opacity(isFilter ? 0.35 : 0.28).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
+                    .accessibilityIdentifier("someday-panel-dismiss")
+                VStack(alignment: .leading, spacing: 0) {
+                    if isFilter { filterControls } else {
+                        panelHeader
+                        ViewThatFits(in: .vertical) {
+                            overflowContent.fixedSize(horizontal: false, vertical: true)
+                            ScrollView { overflowContent }
+                        }
+                    }
+                }
+                .padding(isFilter ? 16 : 12)
+                .frame(maxWidth: isFilter ? 860 : 440, maxHeight: geometry.size.height * 0.82, alignment: .top)
+                .fixedSize(horizontal: false, vertical: !isFilter)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: isFilter ? 24 : 16))
+                .overlay(RoundedRectangle(cornerRadius: isFilter ? 24 : 16).stroke(palette.border, lineWidth: 1))
+                .padding(.horizontal, isFilter ? 0 : 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { backOrClose() }
+        }
+    }
+
+    private var panelHeader: some View {
+        HStack(spacing: 8) {
+            if model.somedayPanel != "menu" {
+                Button { backOrClose() } label: {
+                    Text(model.label("common.back")).rnFont(13, .semibold).padding(.horizontal, 8).frame(minHeight: 44)
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).accessibilityIdentifier("someday-panel-back")
+            }
+            Text(model.somedayPanel == "menu" ? menu.text("moreLabel") : menu.object(model.somedayPanel).text("label"))
+                .rnFont(17, .bold).frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
+            Button { close() } label: { AppIcon(name: "x", size: 20).frame(width: 44, height: 44) }
+                .buttonStyle(.plain).accessibilityLabel(menu.text("closeLabel")).accessibilityIdentifier("someday-menu-close")
+        }
+        .frame(minHeight: 44).padding(.bottom, 12)
+    }
+
+    private var overflowContent: some View {
+        VStack(spacing: 4) {
+            if model.somedayPanel == "menu" {
+                overflowRow(menu.object("filters"), icon: "sliders", id: "someday-filter-action") { model.somedayPanel = "filters" }
+                overflowRow(menu.object("sort"), icon: "sort", id: "someday-sort-action") { model.somedayPanel = "sort" }
+                overflowRow(menu.object("group"), icon: "folder", id: "someday-group-action") { model.somedayPanel = "group" }
+                overflowRow(menu.object("details"), icon: "eye", id: "someday-toggle-details") {
+                    let value = !model.someday.flag("showDetails")
+                    close()
+                    Task { await model.setSomedayOption("showDetails", value: value) }
+                }
+            } else {
+                let key = model.somedayPanel
+                let options = menu.object(key).objects("options")
+                ForEach(options.indices, id: \.self) { index in
+                    let option = options[index]
+                    overflowRow(option, icon: "", id: "someday-" + key + "-" + option.text("value")) {
+                        close()
+                        Task { await model.setSomedayOption(key == "sort" ? "sortBy" : "groupBy", value: option.text("value")) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func overflowRow(_ item: CoreObject, icon: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                if !icon.isEmpty {
+                    Group {
+                        if icon == "eye" { Image(systemName: "eye").font(.system(size: 18)) }
+                        else { AppIcon(name: icon, size: 18) }
+                    }
+                    .foregroundStyle(item.flag("selected") ? palette.tint : palette.secondary)
+                    .frame(width: 34, height: 34).background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                }
+                Text(item.text("label")).rnFont(15, .semibold).frame(maxWidth: .infinity, alignment: .leading)
+                if !item.text("value").isEmpty && icon != "" {
+                    Text(item.text("value")).rnFont(13).foregroundStyle(palette.secondary).multilineTextAlignment(.trailing)
+                }
+                if item.flag("selected") { Image(systemName: "checkmark").font(.system(size: 16)).foregroundStyle(palette.tint) }
+            }
+            .padding(10).frame(minHeight: 52).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.somedayActionsEnabled).accessibilityIdentifier(id)
+        .accessibilityLabel(item.text("accessibilityLabel").isEmpty ? item.text("label") : item.text("accessibilityLabel"))
+        .accessibilityAddTraits(item.flag("selected") ? .isSelected : [])
+    }
+
+    private var filterControls: some View {
+        ListFilterControls(
+            data: model.someday, strings: model.strings, palette: palette, prefix: "someday",
+            enabled: model.somedayActionsEnabled, busy: model.busy, frozen: model.retryNeeded, error: model.somedayError,
+            searchText: Binding(get: { model.somedaySearchText }, set: { model.setSomedayText($0) }),
+            locationText: Binding(get: { model.somedayLocationText }, set: { model.setSomedayText($0, location: true) }),
+            pickerName: model.somedayPickerName, picker: model.somedayPicker, pickerCurrent: model.somedayPickerCurrent,
+            pickerEnabled: model.somedayPickerActionsEnabled, pickerError: model.somedayPickerError,
+            pickerQuery: Binding(get: { model.somedayPickerQuery }, set: { model.setSomedayPickerQuery($0) }),
+            onEdit: { edit in Task { await model.editSomedayFilter(edit) } },
+            onChipAction: { action in Task { await model.editSomedayFilter(action.object("filterEdit")) } },
+            onArchived: { _ in }, onOpenPicker: model.openSomedayPicker, onBack: model.closeSomedayPicker,
+            onMore: model.loadMoreSomedayPicker, onRetry: { Task { await model.retrySomeday() } },
+            onRetryPicker: model.retrySomedayPicker, onClose: model.closeSomedayPanel, focusedField: $focusedField)
+    }
+
+    private func close() { focusedField = nil; model.closeSomedayPanel() }
+    private func backOrClose() {
+        focusedField = nil
+        if isPicker { model.closeSomedayPicker() }
+        else if !isFilter && model.somedayPanel != "menu" { model.somedayPanel = "menu" }
+        else { close() }
+    }
+}

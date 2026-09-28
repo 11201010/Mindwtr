@@ -89,6 +89,32 @@ type TaskViewDeps = {
 
 const CHECKLIST_LIMIT = 1_000;
 const TEXT_LIMIT = 10_000;
+const NATIVE_JSON_LIMIT_BYTES = 2_000_000;
+
+/** The host checks UTF-8 bytes, including for a JSON string with non-ASCII text. */
+export const isNativeJsonWithinBytes = (value: unknown, limit = NATIVE_JSON_LIMIT_BYTES): boolean => {
+    let json: string;
+    try {
+        json = JSON.stringify(value);
+    } catch {
+        return false;
+    }
+    if (typeof json !== 'string' || json.length > limit) return false;
+    let bytes = 0;
+    for (let index = 0; index < json.length; index++) {
+        const unit = json.charCodeAt(index);
+        if (unit < 0x80) bytes++;
+        else if (unit < 0x800) bytes += 2;
+        else if (unit >= 0xd800 && unit <= 0xdbff
+            && index + 1 < json.length && json.charCodeAt(index + 1) >= 0xdc00
+            && json.charCodeAt(index + 1) <= 0xdfff) {
+            bytes += 4;
+            index++;
+        } else bytes += 3;
+        if (bytes > limit) return false;
+    }
+    return true;
+};
 
 const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAVE_FAILED', message: string): NativeHostResult<never> => ({
     ok: false,
@@ -96,14 +122,16 @@ const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'TASK_NOT_FOUND' | 'SAV
 });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isIndex = (value: unknown, length: number) => Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) < length;
-const isText = (value: unknown): value is string => typeof value === 'string' && value.length <= TEXT_LIMIT;
+const isText = (value: unknown, native = false): value is string => typeof value === 'string'
+    && value.length <= (native ? NATIVE_JSON_LIMIT_BYTES : TEXT_LIMIT);
 
 /** A checklist from the host: items with exactly an id, a title and isCompleted. */
-export const readChecklist = (value: unknown): ChecklistItem[] | null => {
-    if (!Array.isArray(value) || value.length > CHECKLIST_LIMIT) return null;
+export const readChecklist = (value: unknown, native = false): ChecklistItem[] | null => {
+    if (!Array.isArray(value) || value.length > (native ? NATIVE_JSON_LIMIT_BYTES : CHECKLIST_LIMIT)) return null;
     const valid = value.every((item) => isRecord(item)
         && Object.keys(item).every((key) => key === 'id' || key === 'title' || key === 'isCompleted')
-        && typeof item.id === 'string' && item.id.length <= 200 && isText(item.title) && typeof item.isCompleted === 'boolean');
+        && typeof item.id === 'string' && item.id.length <= 200 && isText(item.title, native) && typeof item.isCompleted === 'boolean');
+    if (valid && native && !isNativeJsonWithinBytes(value)) return null;
     return valid ? value.map((item) => ({ id: item.id, title: item.title, isCompleted: item.isCompleted })) : null;
 };
 export const toChecklist = (items: Task['checklist']): ChecklistItem[] => (items ?? []).map(({ id, title, isCompleted }) => ({ id, title, isCompleted }));
@@ -117,11 +145,11 @@ const readEdit = (value: unknown, length: number): TaskChecklistEdit | null => {
         case 'remove':
             return isIndex(value.index, length) ? { kind: value.kind, index: value.index as number } : null;
         case 'rename':
-            return isIndex(value.index, length) && isText(value.text) ? { kind: 'rename', index: value.index as number, text: value.text } : null;
+            return isIndex(value.index, length) && isText(value.text, true) ? { kind: 'rename', index: value.index as number, text: value.text } : null;
         case 'move':
             return isIndex(value.from, length) && isIndex(value.to, length) ? { kind: 'move', from: value.from as number, to: value.to as number } : null;
         case 'append':
-            return isText(value.title) ? { kind: 'append', title: value.title } : null;
+            return isText(value.title, true) ? { kind: 'append', title: value.title } : null;
         case 'add':
         case 'uncheckAll':
             return { kind: value.kind };
@@ -169,10 +197,10 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
         }): NativeHostResult<NativeTaskView> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isRecord(input)) return fail('INVALID_INPUT', 'Task ID is required');
+            if (!isRecord(input) || !isNativeJsonWithinBytes(input)) return fail('INVALID_INPUT', 'A bounded task view request is required');
             const window = { offset: input.offset ?? 0, limit: input.limit ?? NATIVE_HOST_MAX_WINDOW, revision: input.revision };
             const draftInput = input.draft === undefined ? undefined : deps.readDraft(input.draft);
-            const checklistInput = input.checklist === undefined ? undefined : readChecklist(input.checklist);
+            const checklistInput = input.checklist === undefined ? undefined : readChecklist(input.checklist, true);
             if (!isPaging(window) || draftInput === null || checklistInput === null) {
                 return fail('INVALID_INPUT', 'A valid draft and checklist when sent, a window of at most 100 items, and the revision for a later window are required');
             }
@@ -291,12 +319,12 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
         }): NativeHostResult<NativeTaskChecklistEditResult> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isRecord(input)) return fail('INVALID_INPUT', 'Task ID is required');
+            if (!isRecord(input) || !isNativeJsonWithinBytes(input)) return fail('INVALID_INPUT', 'A bounded checklist edit is required');
             const draft = deps.readDraft(input.draft);
-            const checklist = readChecklist(input.checklist);
+            const checklist = readChecklist(input.checklist, true);
             const edit = checklist && input.edit !== undefined ? readEdit(input.edit, checklist.length) : undefined;
             if (!draft || !checklist || edit === null) {
-                return fail('INVALID_INPUT', 'A whole draft, a checklist of at most 1,000 items, and a valid edit are required');
+                return fail('INVALID_INPUT', 'A whole draft, a bounded checklist, and a valid edit are required');
             }
             const task = findTask(input.id);
             if (!isTask(task)) return task;

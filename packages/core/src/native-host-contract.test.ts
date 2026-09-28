@@ -18,10 +18,12 @@ import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import * as projectGrouping from './project-grouping';
 import * as focusDerivation from './focus-sections';
 import * as projectTaskListModel from './project-task-list-model';
+import * as logger from './logger';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { configureDateFormatting, getDateFormattingConfig, safeFormatDate, safeParseDate } from './date';
 import { getFocusStarBlockedText } from './focus-star';
+import { createMarkdownLinkLookup, resolveMarkdownBlocks } from './markdown-blocks';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
 import { isTaskActionable } from './task-status';
@@ -579,6 +581,97 @@ describe('native host contract', () => {
                 .toEqual(['available', 'later', null, 'later']);
         });
 
+        it('returns RN Details metadata on every page without writes, and invalidates changed display inputs', async () => {
+            const host = await activateParity();
+            useTaskStore.setState({
+                _allProjects: projectParity.projects.map((item) => item.id === 'p-live'
+                    ? { ...item, areaId: 'work', tagIds: ['#one', '#two'], isSequential: true,
+                        sequentialScope: 'section' as const, startDate: 'invalid-date', dueDate: '2026-09-15' }
+                    : item),
+                _allAreas: [area('work', 'Work', 0)],
+            });
+            const state = useTaskStore.getState();
+            const dataBefore = JSON.stringify([state._allTasks, state._allProjects, state._allSections, state._allAreas]);
+            saveData.mockClear();
+            const first = detail(host, 'p-live', 1);
+            expect(first.metadata).toMatchObject({
+                summary: 'Active · Sequential · Work · 3 Sections',
+                statusLabel: 'Active', typeLabel: 'Sequential', sequentialScopeLabel: 'Within sections',
+                areaLabel: 'Work', tagsLabel: '#one, #two', startDateLabel: 'invalid-date',
+                sections: [{ id: 'sec-a', title: 'Design' }, { id: 'sec-empty', title: 'Empty' },
+                    { id: 'sec-b', title: 'Build' }],
+            });
+            expect(first.metadata.dueDateLabel).toBe(new Date(2026, 8, 15).toLocaleDateString());
+            const later = host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: first.revision });
+            expect(later).toMatchObject({ ok: true, value: { metadata: first.metadata } });
+            expect(detail(host, 'p-archived').metadata.sections).toEqual([{ id: 'arch-kept', title: 'Kept history' }]);
+            expect(JSON.stringify([state._allTasks, state._allProjects, state._allSections, state._allAreas])).toBe(dataBefore);
+            expect(saveData).not.toHaveBeenCalled();
+
+            useTaskStore.setState({ _allAreas: [area('work', 'Renamed Area', 0)] });
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: first.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            const changed = detail(host, 'p-live', 1);
+            expect(changed.metadata.areaLabel).toBe('Renamed Area');
+            useTaskStore.setState({ _allAreas: [area('work', 'Deleted Area', 0, {
+                deletedAt: '2026-09-16T00:00:00.000Z',
+            })] });
+            const withoutArea = detail(host, 'p-live', 1);
+            expect(withoutArea.metadata.areaLabel).toBe('No area');
+            useTaskStore.setState({ _allSections: state._allSections.map((section) =>
+                section.id === 'sec-a' ? { ...section, title: 'Design changed' } : section) });
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: withoutArea.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            const changedSection = detail(host, 'p-live', 1);
+            expect(changedSection.metadata.sections[0].title).toBe('Design changed');
+            useTaskStore.setState({ _allProjects: state._allProjects.map((item) =>
+                item.id === 'p-live' ? { ...item, tagIds: ['#changed'], reviewAt: 'invalid-review' } : item) });
+            expect(host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: changedSection.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(detail(host, 'p-live', 1).metadata).toMatchObject({
+                tagsLabel: '#changed', reviewDateLabel: 'invalid-review',
+            });
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it('binds Project flow options to the displayed mutation revision without expiring edits on clock changes', async () => {
+            const host = await activateParity();
+            const read = () => {
+                const options = host.getProjectFlowOptions({ projectId: 'p-live' });
+                if (!options.ok) throw new Error(`Project flow options failed: ${options.error.code}`);
+                const notes = host.getProjectNotesEditOptions({ projectId: 'p-live' });
+                if (!notes.ok) throw new Error(`Project Notes options failed: ${notes.error.code}`);
+                const projectDetail = detail(host, 'p-live', 1);
+                expect(notes.value.revision).toBe(projectDetail.mutationRevision);
+                return { options: options.value, detail: projectDetail };
+            };
+            const first = read();
+            expect(first.options.revision).toBe(first.detail.mutationRevision);
+
+            vi.setSystemTime(new Date(2026, 8, 23, 10, 1));
+            const nextMinute = read();
+            expect(nextMinute.options.revision).toBe(nextMinute.detail.mutationRevision);
+            expect(nextMinute.options.revision).toBe(first.options.revision);
+            expect(nextMinute.detail.revision).not.toBe(first.detail.revision);
+
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((project) =>
+                project.id === 'p-live' ? { ...project, rev: (project.rev ?? 0) + 1 } : project) }));
+            const changedProject = read();
+            expect(changedProject.options.revision).toBe(changedProject.detail.mutationRevision);
+            expect(changedProject.options.revision).not.toBe(nextMinute.options.revision);
+
+            useTaskStore.setState({ settings: { dateFormat: 'ymd' } });
+            const changedSettings = read();
+            expect(changedSettings.options.revision).toBe(changedSettings.detail.mutationRevision);
+            expect(changedSettings.options.revision).not.toBe(changedProject.options.revision);
+
+            expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: 'zh-CN' }))
+                .toMatchObject({ ok: true });
+            const changedLanguage = read();
+            expect(changedLanguage.options.revision).toBe(changedLanguage.detail.mutationRevision);
+            expect(changedLanguage.options.revision).not.toBe(changedSettings.options.revision);
+        });
+
         it('follows the saved project sort like mobile, dropping sequence cues off the default sort', async () => {
             const host = await activateParity();
             setProjectSort({ 'p-live': 'title', 'p-seq': 'title' });
@@ -647,6 +740,7 @@ describe('native host contract', () => {
             expect(chinese.revision).not.toBe(english.revision);
             expect(chinese.items.filter((item) => item.type === 'section').map((item) => item.title))
                 .toEqual(['Design', 'Build', zhHans['projects.noSection'], zhHans['status.reference']]);
+            expect(chinese.metadata.statusLabel).toBe(zhHans['status.active']);
             expect(host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: english.revision }))
                 .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         });
@@ -660,6 +754,164 @@ describe('native host contract', () => {
             expect(build).toHaveBeenCalledTimes(1);
             detail(host, 'p-seq');
             expect(build).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    describe('project notes', () => {
+        const read = (host: ReturnType<typeof createNativeHostContract>, projectId: string,
+            offset = 0, limit = NATIVE_HOST_MAX_WINDOW, revision?: string) => {
+            const result = host.getProjectNotes({ projectId, offset, limit, revision });
+            if (!result.ok) throw new Error(`Project notes failed: ${result.error.code}`);
+            return result.value;
+        };
+
+        it('pages the shared Markdown resolver without changing raw notes or saving', async () => {
+            const raw = '\n# Intro\n\nSee [[task:live|Live task]], [[task:gone|Gone task]], '
+                + '[[project:linked|Linked project]], [[project:deleted|Gone project]], '
+                + '[Web](https://example.org), and [Unsafe](javascript:alert(1)).\n'
+                + '- [x] Finished\n- [ ] Open\n```\nconst x = 1;\n```\n';
+            const projects = [project('notes', 'active', 0, { title: 'Notes', supportNotes: raw }),
+                project('linked'), project('deleted', 'active', 0, { deletedAt: '2026-09-02T00:00:00.000Z' })];
+            const tasks = [task('live', '2026-09-01T00:00:00.000Z', { projectId: 'notes' }),
+                task('gone', '2026-09-01T00:00:00.000Z', { deletedAt: '2026-09-02T00:00:00.000Z' })];
+            const host = await activateWith(tasks, projects);
+            saveData.mockClear();
+            const expected = resolveMarkdownBlocks(raw, createMarkdownLinkLookup(tasks, projects));
+            const first = read(host, 'notes', 0, 2);
+            expect(first).toMatchObject({ version: 1, projectId: 'notes', readOnly: false, direction: 'ltr',
+                total: expected.length, blocks: expected.slice(0, 2) });
+            expect(first.blocks[0].type).toBe('blank');
+            const pages = [...first.blocks];
+            for (let offset = 2; offset < first.total; offset += 2) {
+                const page = read(host, 'notes', offset, 2, first.revision);
+                expect(page).toMatchObject({ revision: first.revision, projectId: 'notes', readOnly: false,
+                    direction: 'ltr', total: first.total, markdownLabels: first.markdownLabels });
+                pages.push(...page.blocks);
+            }
+            expect(pages).toEqual(expected);
+            expect(read(host, 'notes', first.total, 2, first.revision).blocks).toEqual([]);
+            expect(JSON.stringify(pages)).toContain('"deletedReference"');
+            expect(JSON.stringify(pages)).toContain('"entityType":"project"');
+            expect(JSON.stringify(pages)).toContain('"checked":true');
+            expect(JSON.stringify(pages)).not.toContain('"href":"javascript:');
+            expect(first.markdownLabels).toEqual({ deletedTask: 'deleted task', deletedProject: 'deleted project',
+                copyCode: 'Copy code' });
+            expect(useTaskStore.getState()._allProjects.find((entry) => entry.id === 'notes')?.supportNotes).toBe(raw);
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it('keeps empty notes empty, resolves title-plus-notes direction, and reads archived/cancelled projects', async () => {
+            const host = await activateWith([], [project('blank', 'active', 0, { title: 'مرحبا', supportNotes: '  \n  ' }),
+                project('archived', 'archived', 0, { title: 'Archive', supportNotes: '  note  ' }),
+                project('cancelled', 'archived', 0, { title: 'Cancel', supportNotes: 'left',
+                    cancelledAt: '2026-09-02T00:00:00.000Z' }),
+                project('rtl-body', 'active', 0, { title: 'English', supportNotes: 'سلام' })]);
+            expect(read(host, 'blank')).toMatchObject({ direction: 'rtl', readOnly: false, total: 0, blocks: [] });
+            expect(read(host, 'archived')).toMatchObject({ direction: 'ltr', readOnly: true,
+                blocks: resolveMarkdownBlocks('  note  ', createMarkdownLinkLookup([], useTaskStore.getState()._allProjects)) });
+            expect(read(host, 'cancelled')).toMatchObject({ direction: 'ltr', readOnly: true, total: 1 });
+            expect(read(host, 'rtl-body')).toMatchObject({ direction: 'rtl', readOnly: false, total: 1 });
+            expect(host.getProjectNotes({ projectId: 'missing', offset: 0, limit: 1 }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((entry) => entry.id === 'cancelled'
+                ? { ...entry, deletedAt: '2026-09-03T00:00:00.000Z' } : entry) }));
+            expect(host.getProjectNotes({ projectId: 'cancelled', offset: 0, limit: 1 }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+            useTaskStore.setState((state) => ({ _allProjects: [...state._allProjects,
+                project('purged', 'active', 0, { purgedAt: '2026-09-03T00:00:00.000Z' })] }));
+            expect(useTaskStore.getState()._allProjects.find((entry) => entry.id === 'purged')?.purgedAt).toBeDefined();
+            expect(host.getProjectNotes({ projectId: 'purged', offset: 0, limit: 1 }))
+                .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        });
+
+        it('projects direction from the current raw Notes draft without saving or changing stored Notes', async () => {
+            const host = await activateWith([], [
+                project('english', 'active', 0, { title: 'English', supportNotes: 'Stored English' }),
+                project('arabic-saved', 'active', 1, { title: 'English', supportNotes: 'سلام محفوظ' }),
+                project('arabic-title', 'active', 2, { title: 'مرحبا', supportNotes: 'Stored English' }),
+                project('deleted', 'active', 3, { deletedAt: '2026-09-03T00:00:00.000Z' }),
+                project('purged', 'active', 4, { purgedAt: '2026-09-03T00:00:00.000Z' }),
+            ]);
+            await flushPendingSave();
+            saveData.mockClear();
+            const before = structuredClone(useTaskStore.getState()._allProjects);
+            const direction = (projectId: string, text: string) =>
+                host.getProjectNotesDraftDirection({ projectId, text });
+            expect(direction('english', '  سلام جديد  ')).toEqual({ ok: true, value: { direction: 'rtl' } });
+            expect(direction('arabic-saved', 'English replacement')).toEqual({ ok: true, value: { direction: 'ltr' } });
+            expect(direction('arabic-title', 'English replacement')).toEqual({ ok: true, value: { direction: 'rtl' } });
+            expect(direction('english', '')).toEqual({ ok: true, value: { direction: 'ltr' } });
+            for (const locale of ['ar', 'fa'] as const) {
+                expect(await host.setLanguage({ storedLanguage: locale, systemLocale: 'en-US' }))
+                    .toMatchObject({ ok: true, value: { language: locale } });
+                expect(direction('english', 'English replacement')).toEqual({ ok: true, value: { direction: 'rtl' } });
+            }
+            expect(direction('missing', 'draft')).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(direction('deleted', 'draft')).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(direction('purged', 'draft')).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            for (const malformed of [null, { projectId: '', text: 'draft' },
+                { projectId: 'x'.repeat(501), text: 'draft' }, { projectId: 'english' },
+                { projectId: 'english', text: null }, { projectId: 'english', text: 'draft', extra: true },
+                { projectId: 'english', text: '漢'.repeat(700_000) }]) {
+                expect(host.getProjectNotesDraftDirection(malformed as never))
+                    .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            }
+            expect(useTaskStore.getState()._allProjects).toEqual(before);
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it('rejects stale pages after note, reference, settings, or language changes but not a clock tick', async () => {
+            const host = await activateWith([task('linked', '2026-09-01T00:00:00.000Z')],
+                [project('notes', 'active', 0, { supportNotes: '[[task:linked|Link]]\n\nTail' })]);
+            freezeClock();
+            const first = read(host, 'notes', 0, 1);
+            expect(read(host, 'notes', 1, 1, first.revision).revision).toBe(first.revision);
+            vi.setSystemTime(new Date(2026, 8, 24, 0, 0));
+            expect(read(host, 'notes', 1, 1, first.revision).revision).toBe(first.revision);
+            useTaskStore.setState((state) => ({ _allTasks: state._allTasks.map((entry) => entry.id === 'linked'
+                ? { ...entry, deletedAt: '2026-09-24T00:00:00.000Z' } : entry) }));
+            expect(host.getProjectNotes({ projectId: 'notes', offset: 1, limit: 1, revision: first.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            const withoutReference = read(host, 'notes', 0, 1);
+            expect(JSON.stringify(withoutReference.blocks)).toContain('deletedReference');
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((entry) => entry.id === 'notes'
+                ? { ...entry, supportNotes: 'Changed\n\nTail' } : entry) }));
+            expect(host.getProjectNotes({ projectId: 'notes', offset: 1, limit: 1, revision: withoutReference.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            const changedNotes = read(host, 'notes', 0, 1);
+            useTaskStore.setState({ settings: { dateFormat: 'ymd' } });
+            expect(host.getProjectNotes({ projectId: 'notes', offset: 1, limit: 1, revision: changedNotes.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            const changedSettings = read(host, 'notes', 0, 1);
+            expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: 'zh-CN' })).toMatchObject({ ok: true });
+            expect(host.getProjectNotes({ projectId: 'notes', offset: 1, limit: 1, revision: changedSettings.revision }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        });
+
+        it('rejects malformed windows and oversized raw or resolved pages without truncating source', async () => {
+            const host = await activateWith([], [project('notes', 'active', 0, { supportNotes: 'One\n\nTwo' })]);
+            saveData.mockClear();
+            for (const input of [null, {}, { projectId: '', offset: 0, limit: 1 },
+                { projectId: 'notes', offset: -1, limit: 1 }, { projectId: 'notes', offset: 0, limit: 0 },
+                { projectId: 'notes', offset: 0, limit: NATIVE_HOST_MAX_WINDOW + 1 },
+                { projectId: 'notes', offset: 1, limit: 1 },
+                { projectId: 'notes', offset: 0, limit: 1, revision: 2 }]) {
+                expect(host.getProjectNotes(input as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            }
+            const raw = '😀'.repeat(600_000);
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((entry) => entry.id === 'notes'
+                ? { ...entry, supportNotes: raw } : entry) }));
+            expect(host.getProjectDetail({ projectId: 'notes', offset: 0, limit: 1 }).ok).toBe(true);
+            expect(host.getProjectNotes({ projectId: 'notes', offset: 0, limit: 1 }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(useTaskStore.getState()._allProjects[0].supportNotes).toBe(raw);
+            const expanded = '- [ ] item\n'.repeat(80_000);
+            useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((entry) => entry.id === 'notes'
+                ? { ...entry, supportNotes: expanded } : entry) }));
+            expect(host.getProjectNotes({ projectId: 'notes', offset: 0, limit: 1 }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(useTaskStore.getState()._allProjects[0].supportNotes).toBe(expanded);
+            expect(saveData).not.toHaveBeenCalled();
         });
     });
 
@@ -726,6 +978,79 @@ describe('native host contract', () => {
         saveData.mockResolvedValue(undefined);
         expect(await host.completeTask({ id: 'to-complete' })).toEqual({ ok: true, value: { id: 'to-complete' } });
         expect(useTaskStore.getState()._tasksById.get('to-complete')?.completedAt).toBe(completedAt);
+    });
+
+    it.each([
+        { status: 'reference', parent: 'archived' },
+        { status: 'reference', parent: 'deleted' },
+        { status: 'next', parent: 'archived' },
+        { status: 'next', parent: 'deleted' },
+    ] as const)('refuses completing $status under a $parent project without writing', async ({ status, parent }) => {
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        useTaskStore.setState({
+            _allTasks: [task('read-only', '2026-09-01T00:00:00.000Z', { status, projectId: 'parent', rev: 7 })],
+            _allProjects: [project('parent', parent === 'archived' ? 'archived' : 'active', 0,
+                parent === 'deleted' ? { deletedAt: '2026-09-02T00:00:00.000Z' } : {})],
+        });
+        saveData.mockClear();
+        const before = useTaskStore.getState();
+        const warn = vi.spyOn(logger, 'logWarn');
+
+        expect(await host.completeTask({ id: 'read-only' })).toEqual({
+            ok: false, error: { code: 'INVALID_INPUT', message: 'Task is read-only while its project is archived or deleted' },
+        });
+        expect(useTaskStore.getState()).toBe(before);
+        expect(useTaskStore.getState()._tasksById.get('read-only')?.rev).toBe(7);
+        expect(saveData).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith('Native completion refused for a read-only project', {
+            scope: 'native-host', category: 'validation',
+            context: { releaseCheck: 'v1.3.3/native-readonly-completion' },
+        });
+    });
+
+    it.each([
+        { parent: 'archived', failedSave: true },
+        { parent: 'deleted', failedSave: true },
+        { parent: 'archived', failedSave: false },
+        { parent: 'deleted', failedSave: false },
+    ] as const)('keeps completion replay after the parent becomes $parent (failed save: $failedSave)', async ({ parent, failedSave }) => {
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        useTaskStore.setState({
+            _allTasks: [task('reference', '2026-09-01T00:00:00.000Z', { status: 'reference', projectId: 'parent', rev: 7 })],
+            _allProjects: [project('parent')],
+        });
+        saveData.mockClear();
+        if (failedSave) saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.completeTask({ id: 'reference' })).toMatchObject(failedSave
+            ? { ok: false, error: { code: 'SAVE_FAILED' } }
+            : { ok: true, value: { id: 'reference' } });
+        const completed = useTaskStore.getState()._tasksById.get('reference');
+        expect(completed).toMatchObject({ status: 'done', completedAt: expect.any(String), rev: 8 });
+        useTaskStore.setState({
+            _allProjects: [project('parent', parent === 'archived' ? 'archived' : 'active', 0,
+                parent === 'deleted' ? { deletedAt: '2026-09-02T00:00:00.000Z' } : {})],
+        });
+        saveData.mockResolvedValue(undefined);
+        saveData.mockClear();
+
+        expect(await host.completeTask({ id: 'reference' })).toEqual({ ok: true, value: { id: 'reference' } });
+        expect(useTaskStore.getState()._tasksById.get('reference')).toBe(completed);
+        expect(saveData).toHaveBeenCalledTimes(failedSave ? 1 : 0);
+    });
+
+    it.each(['missing', 'deleted'] as const)('keeps TASK_NOT_FOUND for completing a %s task', async (state) => {
+        const host = createNativeHostContract();
+        expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+        useTaskStore.setState({ _allTasks: state === 'deleted'
+            ? [task('missing', '2026-09-01T00:00:00.000Z', { deletedAt: '2026-09-02T00:00:00.000Z' })]
+            : [] });
+        saveData.mockClear();
+        const before = useTaskStore.getState();
+        expect(await host.completeTask({ id: 'missing' })).toEqual({ ok: false, error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } });
+        expect(useTaskStore.getState()).toBe(before);
+        expect(saveData).not.toHaveBeenCalled();
     });
 
     it('rejects every entry point until a real adapter, load, and write-safety gate succeed', async () => {
@@ -1174,6 +1499,20 @@ describe('native host contract', () => {
             title: 'Original', status: 'next', ...extra,
         });
         const storedTask = (id = 'edit') => useTaskStore.getState()._tasksById.get(id);
+        const restartEditorFromLastSave = async () => {
+            const persisted = structuredClone(saveData.mock.lastCall?.[0]);
+            expect(persisted).toBeDefined();
+            resetForTests();
+            useTaskStore.setState({
+                _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+                settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
+            });
+            getData.mockResolvedValue(persisted);
+            const restarted = createNativeHostContract();
+            expect(await restarted.activate({ writeSafetyReady: true, recoveryLoad: true })).toEqual({ ok: true, value: null });
+            saveData.mockClear();
+            return restarted;
+        };
 
         it('serves the core model for the stored task, draft and settings', async () => {
             freezeClock();
@@ -1209,6 +1548,8 @@ describe('native host contract', () => {
                 readOnly: false,
                 draft,
                 focusStar: expect.objectContaining({ isFocused: false, canToggle: false, queued: false, blockedReason: 'deferred' }),
+                scheduleBase: { startTime: null, dueDate: '2026-09-25', relativeStartOffset: null, reviewAt: null },
+                recurrenceBase: { recurrence: stored.recurrence ?? null, showFutureRecurrence: stored.showFutureRecurrence ?? null },
                 ...buildTaskEditorModel({
                     task: stored, draft, settings: state.settings, projects: state.projects, sections: state.sections,
                     areas: state.areas, tasks: state.tasks, people: state.people, contexts: allContexts, tags: allTags,
@@ -1405,6 +1746,62 @@ describe('native host contract', () => {
             expect(storedTask('complete')).toMatchObject({ status: 'done', completedAt });
         });
 
+        it.each([
+            { status: 'reference', field: 'priority', value: 'urgent' },
+            { status: 'reference', field: 'timeEstimate', value: '30min' },
+            { status: 'next', field: 'priority', value: 'urgent' },
+            { status: 'next', field: 'timeEstimate', value: '30min' },
+        ] as const)('rejects $field when a $status task would remain or become Reference before writing', async ({ status, field, value }) => {
+            const host = await activateEditor([editTask({ status })]);
+            await flushPendingSave();
+            saveData.mockClear();
+            const before = storedTask();
+            const base: Partial<TaskDraft> = { [field]: '' };
+            const patch: Partial<TaskDraft> = { [field]: value };
+            if (status !== 'reference') {
+                base.status = status;
+                patch.status = 'reference';
+            }
+
+            expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toEqual({
+                ok: false, error: { code: 'INVALID_INPUT', message: `${field} cannot be set while status is reference` },
+            });
+            expect(storedTask()).toBe(before);
+            expect(storedTask()?.rev).toBe(before?.rev);
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it.each(['reference', 'next'] as const)('saves Reference text, energy and empty metadata clears from %s and replays after restart', async (status) => {
+            const host = await activateEditor([editTask({
+                status, energyLevel: 'low', ...(status === 'next' ? { priority: 'urgent', timeEstimate: '30min' } : {}),
+            })]);
+            const before = createTaskDraft(storedTask()!);
+            const input = {
+                id: 'edit',
+                base: { status, title: 'Original', description: '', energyLevel: 'low', priority: before.priority, timeEstimate: before.timeEstimate },
+                patch: { status: 'reference', title: '  Reference note  ', description: 'Notes', energyLevel: 'high', priority: '', timeEstimate: '' },
+            } as const;
+            const first = await host.saveTaskDraft(input);
+            expect(first).toMatchObject({ ok: true, value: { draft: {
+                status: 'reference', title: 'Reference note', description: 'Notes', energyLevel: 'high', priority: '', timeEstimate: '',
+            } } });
+            const saved = storedTask();
+            const restarted = await restartEditorFromLastSave();
+            expect(await restarted.saveTaskDraft(input)).toEqual(first);
+            expect(storedTask()).toEqual(saved);
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it.each(['next', 'reference'] as const)('saves eligible metadata from %s when the resulting status is Next', async (status) => {
+            const host = await activateEditor([editTask({ status })]);
+            expect(await host.saveTaskDraft({
+                id: 'edit',
+                base: { status, priority: '', timeEstimate: '' },
+                patch: { status: 'next', priority: 'urgent', timeEstimate: '30min' },
+            })).toMatchObject({ ok: true, value: { draft: { status: 'next', priority: 'urgent', timeEstimate: '30min' } } });
+            expect(storedTask()).toMatchObject({ status: 'next', priority: 'urgent', timeEstimate: '30min' });
+        });
+
         it('retries a failed save exactly, without a second write', async () => {
             const host = await activateEditor([editTask()]);
             const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
@@ -1423,6 +1820,75 @@ describe('native host contract', () => {
             expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true });
             expect(storedTask()?.rev).toBe(revAfterFailure);
             expect(saveData).toHaveBeenCalledTimes(saves);
+        });
+
+        it.each([
+            { title: '  Renamed  ', description: '  New notes\n ', savedTitle: 'Renamed' },
+            { title: '  Renamed  ', description: '', savedTitle: 'Renamed' },
+            { title: '   ', description: '  New notes\n ', savedTitle: 'Original' },
+            { title: '   ', description: '', savedTitle: 'Original' },
+        ])('replays serialized editor title $title and note after restart without another update', async ({ title, description, savedTitle }) => {
+            const host = await activateEditor([editTask({
+                description: 'Old notes', dueDate: '2026-10-01', startTime: '2026-09-30T14:30:00.000Z',
+            })]);
+            await flushPendingSave();
+            saveData.mockClear();
+            const input = {
+                id: 'edit', base: { title: 'Original', description: 'Old notes' }, patch: { title, description },
+            };
+            const first = await host.saveTaskDraft(input);
+            expect(first).toMatchObject({ ok: true, value: { draft: { title: savedTitle, description } } });
+            expect(saveData).toHaveBeenCalledTimes(1);
+            const saved = storedTask();
+            expect(saved).toMatchObject({
+                title: savedTitle, description: description || undefined,
+                dueDate: '2026-10-01', startTime: '2026-09-30T14:30:00.000Z',
+            });
+
+            // The save landed but its reply was lost; no process-local receipt survives.
+            const restarted = await restartEditorFromLastSave();
+            const updateTask = vi.spyOn(useTaskStore.getState(), 'updateTask');
+            expect(await restarted.saveTaskDraft(input)).toEqual(first);
+            expect(storedTask()).toEqual(saved);
+            expect(updateTask).not.toHaveBeenCalled();
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            { title: '  Renamed  ', otherPatch: { title: 'Other writer' }, field: 'title' },
+            { title: '   ', otherPatch: { title: 'Other writer' }, field: 'title' },
+            { title: '  Renamed  ', otherPatch: { description: 'Other notes' }, field: 'description' },
+        ])('keeps exact editor $field conflicts after restart with title $title', async ({ title, otherPatch, field }) => {
+            const host = await activateEditor([editTask({ description: 'Old notes' })]);
+            const input = {
+                id: 'edit', base: { title: 'Original', description: 'Old notes' },
+                patch: { title, description: '  New notes  ' },
+            };
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true });
+            expect((await useTaskStore.getState().updateTask('edit', otherPatch)).success).toBe(true);
+            await flushPendingSave();
+            const saved = storedTask();
+            const restarted = await restartEditorFromLastSave();
+            const updateTask = vi.spyOn(useTaskStore.getState(), 'updateTask');
+            expect(await restarted.saveTaskDraft(input)).toEqual({
+                ok: false, error: { code: 'STALE_REVISION', message: `Task changed while editing: ${field}` },
+            });
+            expect(storedTask()).toEqual(saved);
+            expect(updateTask).not.toHaveBeenCalled();
+            expect(saveData).not.toHaveBeenCalled();
+        });
+
+        it.each(['  Original  ', '  Renamed  '])('does not trim the current or original-base title for conflict checks: %s', async (title) => {
+            const host = await activateEditor([editTask({ title, description: 'Old notes' })]);
+            await flushPendingSave();
+            saveData.mockClear();
+            const before = storedTask();
+            expect(await host.saveTaskDraft({
+                id: 'edit', base: { title: 'Original', description: 'Old notes' },
+                patch: { title: '  Renamed  ', description: 'New notes' },
+            })).toEqual({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } });
+            expect(storedTask()).toBe(before);
+            expect(saveData).not.toHaveBeenCalled();
         });
 
         // The store stamps recurrence and queues a future-start star, so the
@@ -1665,6 +2131,48 @@ describe('native host contract', () => {
                 expect(edited(host, draft).options.sections.map(({ id }) => id)).toEqual(['s-ship', 's-plan']);
                 // Nothing is written.
                 expect(storedTask()?.status).toBe('next');
+            });
+
+            it('round-trips date input baselines through JSON without weakening prepared raw date intent', async () => {
+                const originalTz = process.env.TZ;
+                try {
+                    process.env.TZ = 'America/New_York';
+                    freezeClock();
+                    const host = await activateEditor([editTask({ dueDate: '2026-10-05T15:00:00.000Z', startTime: '2026-10-04T14:00:00.000Z' })]);
+                    const opening = host.getTaskEditorModel({ id: 'edit' });
+                    if (!opening.ok) throw new Error(opening.error.message);
+                    const draft = json(opening.value.draft);
+                    expect(draft.dateInputBaseline).toMatchObject({ taskId: 'edit', dueDate: { raw: '2026-10-05T15:00:00.000Z', input: '2026-10-05T11:00' } });
+                    process.env.TZ = 'America/Los_Angeles';
+                    saveData.mockClear();
+                    const titleEdit = edited(host, draft, { type: 'fields', patch: { title: 'After' } });
+                    expect(titleEdit.draft.dateInputBaseline).toEqual(draft.dateInputBaseline);
+                    expect(titleEdit.scheduleBase).toEqual(opening.value.scheduleBase);
+                    const recoveredView = host.getTaskView({ id: 'edit', draft });
+                    const savedView = host.getTaskView({ id: 'edit' });
+                    if (!recoveredView.ok || !savedView.ok) throw new Error('Task view did not load');
+                    expect(recoveredView.value.rows).toEqual(savedView.value.rows);
+                    const { dateInputBaseline: _baseline, ...legacyDraft } = draft;
+                    expect(host.editTaskDraft({ id: 'edit', draft: legacyDraft })).toMatchObject({ ok: true });
+                    expect(host.editTaskDraft({ id: 'edit', draft: { ...draft, dateInputBaseline: { taskId: 'edit' } } as TaskDraft }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                    expect(host.editTaskDraft({ id: 'edit', draft, edit: { type: 'fields', patch: { dateInputBaseline: draft.dateInputBaseline } } }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                    expect(await host.saveTaskDraft({ id: 'edit', base: { dateInputBaseline: draft.dateInputBaseline }, patch: { dateInputBaseline: draft.dateInputBaseline } }))
+                        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                    expect(saveData).not.toHaveBeenCalled();
+
+                    // Explicit native date intent remains raw even when it equals
+                    // the opening projection that RN now protects from drift.
+                    const prepared = host.prepareTaskDraftSave({ id: 'edit', base: { dueDate: draft.dueDate }, patch: { dueDate: draft.dueDate }, scheduleBase: opening.value.scheduleBase });
+                    if (!prepared.ok) throw new Error(prepared.error.message);
+                    const recovered = json(prepared.value);
+                    expect(await host.commitPreparedTaskDraftSave({ request: recovered.request, prepared: recovered })).toMatchObject({ ok: true });
+                    expect(storedTask()).toMatchObject({ dueDate: '2026-10-05T11:00', startTime: '2026-10-04T14:00:00.000Z' });
+                } finally {
+                    if (originalTz === undefined) delete process.env.TZ;
+                    else process.env.TZ = originalTz;
+                }
             });
 
             it('moves a relative start with its due date and keeps the link through the save', async () => {
@@ -1968,6 +2476,8 @@ describe('native host contract', () => {
         expect(result.value.sections.find(({ key }) => key === 'next')?.rows.map(({ id }) => id)).toContain('seq-first');
         expect(result.value.sections.find(({ key }) => key === 'schedule')?.rows.map(({ id, laterToday }) => ({ id, laterToday })))
             .toEqual([{ id: 'due-today', laterToday: false }, { id: 'later-today', laterToday: true }]);
+        expect(result.value.sections.find(({ key }) => key === 'schedule')?.rows.map(({ laterTodayLabel }) => laterTodayLabel))
+            .toEqual([null, safeFormatDate(tasks.find(({ id }) => id === 'later-today')!.startTime, 'p')]);
         const reveal = pools.upcoming.find(({ task: item }) => item.id === 'upcoming')?.appearsAt;
         expect(reveal).toBeInstanceOf(Date);
         expect(reveal && formatLocalDate(reveal)).toBe('2026-09-24');

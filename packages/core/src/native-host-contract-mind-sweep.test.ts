@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createCalendarRecorder, loadCalendarViewsFixture, seedCalendarStore } from './calendar-view-model.replay';
 import { loadTranslations } from './i18n/i18n-loader';
 import {
     addMindSweepCapture,
@@ -11,6 +12,7 @@ import {
 import { createNativeHostContract } from './native-host-contract';
 import { loadScreenFixture, normalize, openScreenHost, requestId, restartScreenHost, value } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { taskToSqliteRow } from './task-sync-schema';
 
 type Action = [string, ...string[]];
 type Fixture = {
@@ -306,4 +308,166 @@ describe('Mind Sweep: core and the native host contract', () => {
         expect(await host.addMindSweepItem({ requestId: requestId(), title: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(useTaskStore.getState()._allTasks).toEqual([]);
     });
+});
+
+describe('Mind Sweep: prepared iOS add', () => {
+const fixture = loadCalendarViewsFixture();
+const requestId = '6475c779-e751-42d3-a2ea-85abffb3be73';
+const value = <T,>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
+    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    return result.value;
+};
+const open = async (saveData?: (data: unknown) => Promise<void>) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(fixture.now));
+    await seedCalendarStore(fixture, { name: 'mind-sweep', settings: 'month', actions: [] }, createCalendarRecorder(), { saveData });
+    const host = createNativeHostContract();
+    value(await host.setLanguage({ storedLanguage: 'en', systemLocale: fixture.deviceLocale }));
+    value(await host.activate({ writeSafetyReady: true }));
+    return host;
+};
+
+afterEach(async () => {
+    await flushPendingSave();
+    resetForTests();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+});
+
+it('projects the shared nine/five/four Mind Sweep groups with localized prompts', async () => {
+    const host = await open();
+    const all = value(host.getMindSweepGuide({ scope: 'all' }));
+    expect(all.groups).toHaveLength(9);
+    expect(all.groups[0]).toMatchObject({ id: 'homeStuff', prompts: expect.any(Array) });
+    expect(all.groups.every((group) => group.prompts.length === 5)).toBe(true);
+    expect(value(host.getMindSweepGuide({ scope: 'personal' })).groups).toHaveLength(5);
+    expect(value(host.getMindSweepGuide({ scope: 'work' })).groups).toHaveLength(4);
+    expect(all.text.progressTemplate).toContain('{{current}}');
+    expect(all.text.addFailed).toBeTruthy();
+    expect(host.getMindSweepGuide({ scope: 'other' as 'all' }).ok).toBe(false);
+    expect(host.getMindSweepGuide({ scope: 'all', unexpected: true } as never).ok).toBe(false);
+    value(await host.setLanguage({ storedLanguage: 'fr', systemLocale: fixture.deviceLocale }));
+    expect(value(host.getMindSweepGuide({ scope: 'all' })).groups[0].title).not.toBe(all.groups[0].title);
+});
+
+it('prepares and commits one literal Inbox title with an exact durable receipt', async () => {
+    const saveData = vi.fn(async () => undefined);
+    const host = await open(saveData);
+    const request = { requestId, title: '  Call +Studio /due:tomorrow\nthen note @home  ' };
+    saveData.mockClear();
+    const answer = value(await host.prepareMindSweepAdd(request));
+    expect(saveData).not.toHaveBeenCalled();
+    expect(answer.prepared.task).toMatchObject({ id: requestId, title: 'Call +Studio /due:tomorrow\nthen note @home', status: 'inbox' });
+    expect(answer.prepared.task.projectId).toBeUndefined();
+    const command = { request: answer.prepared.request, prepared: answer.prepared };
+    expect(value(await host.commitPreparedMindSweepAdd(command))).toEqual({ taskId: requestId, title: answer.prepared.task.title });
+    expect(saveData).toHaveBeenCalledTimes(1);
+    expect(useTaskStore.getState()._tasksById.get(requestId)?.title).toBe(answer.prepared.task.title);
+    expect(value(await host.commitPreparedMindSweepAdd(command))).toEqual(answer.prepared.result);
+    expect(saveData).toHaveBeenCalledTimes(1);
+});
+
+it('matches ordinary RN addTask rows for literal tokens, internal newlines and the effective default area', async () => {
+    const host = await open();
+    const area = useTaskStore.getState()._allAreas[0];
+    expect(area).toBeDefined();
+    const samples = [
+        { id: requestId, title: '  Plain item  ', fixedArea: false },
+        { id: '7475c779-e751-42d3-a2ea-85abffb3be73', title: '  +Project /due:tomorrow @home\nsecond line  ', fixedArea: true },
+    ];
+    for (const sample of samples) {
+        useTaskStore.setState((state) => ({ settings: { ...state.settings, gtd: { ...state.settings.gtd,
+            defaultAreaMode: sample.fixedArea ? 'fixed' : 'none', defaultAreaId: sample.fixedArea ? area.id : undefined } } }));
+        const answer = value(host.prepareMindSweepAdd({ requestId: sample.id, title: sample.title }));
+        const referenceId = sample.id.replace(/^./, sample.fixedArea ? '9' : '8');
+        const ordinary = await useTaskStore.getState().addTask(sample.title.trim(), { status: 'inbox' }, { captureId: referenceId });
+        expect(ordinary.success).toBe(true);
+        const reference = useTaskStore.getState()._tasksById.get(referenceId)!;
+        expect(taskToSqliteRow({ ...reference, id: sample.id })).toEqual(taskToSqliteRow(answer.prepared.task));
+        expect(answer.prepared.task.areaId ?? null).toBe(sample.fixedArea ? area.id : null);
+        expect(answer.prepared.task.projectId).toBeUndefined();
+    }
+});
+
+it('rejects malformed literal requests and any forged factory field before a write', async () => {
+    const saveData = vi.fn(async () => undefined);
+    const host = await open(saveData);
+    const source = { requestId, title: '  Literal +Studio /due:tomorrow  ' };
+    for (const input of [{ ...source, requestId: requestId.toUpperCase() }, { ...source, title: ' \n ' },
+        { ...source, surprise: true }]) expect(host.prepareMindSweepAdd(input as typeof source).ok).toBe(false);
+    const answer = value(host.prepareMindSweepAdd(source));
+    saveData.mockClear();
+    const original = { request: answer.prepared.request, prepared: answer.prepared };
+    const copy = <T,>(input: T): T => JSON.parse(JSON.stringify(input)) as T;
+    const mutations = [
+        (item: typeof original) => { item.request.title = 'Different'; },
+        (item: typeof original) => { item.prepared.task.title = 'Different'; },
+        (item: typeof original) => { item.prepared.task.status = 'next'; },
+        (item: typeof original) => { item.prepared.task.projectId = 'another-project'; },
+        (item: typeof original) => { item.prepared.task.sectionId = 'another-section'; },
+        (item: typeof original) => { item.prepared.task.areaId = 'another-area'; },
+        (item: typeof original) => { item.prepared.task.dueDate = '2026-11-02'; },
+        (item: typeof original) => { item.prepared.task.tags = ['@work']; },
+        (item: typeof original) => { item.prepared.task.isFocusedToday = true; },
+        (item: typeof original) => { item.prepared.task.rev = 2; },
+        (item: typeof original) => { item.prepared.result.title = 'Different'; },
+        (item: typeof original) => { item.prepared.effectiveDefaultAreaId = 'forged-area'; },
+        (item: typeof original) => { (item.prepared as unknown as Record<string, unknown>).extra = true; },
+    ];
+    for (const mutate of mutations) {
+        const altered = copy(original);
+        mutate(altered);
+        expect(host.validatePreparedMindSweepAdd(altered).ok).toBe(false);
+        expect((await host.commitPreparedMindSweepAdd(altered)).ok).toBe(false);
+    }
+    expect(saveData).not.toHaveBeenCalled();
+    expect(useTaskStore.getState()._tasksById.has(requestId)).toBe(false);
+});
+
+it('guards default area/device only before publication, then acknowledges the exact row first', async () => {
+    const saveData = vi.fn(async () => undefined);
+    const host = await open(saveData);
+    const area = useTaskStore.getState()._allAreas[0];
+    useTaskStore.setState((state) => ({ settings: { ...state.settings, gtd: { ...state.settings.gtd,
+        defaultAreaMode: 'fixed', defaultAreaId: area.id } } }));
+    const prepared = value(host.prepareMindSweepAdd({ requestId, title: 'Area item' })).prepared;
+    const command = { request: prepared.request, prepared };
+    const originalSettings = useTaskStore.getState().settings;
+    saveData.mockClear();
+    useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: 'different-device' } }));
+    expect((await host.commitPreparedMindSweepAdd(command)).ok).toBe(false);
+    useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: originalSettings.deviceId,
+        gtd: { ...state.settings.gtd, defaultAreaMode: 'none' } } }));
+    expect((await host.commitPreparedMindSweepAdd(command)).ok).toBe(false);
+    expect(saveData).not.toHaveBeenCalled();
+    useTaskStore.setState({ settings: originalSettings });
+    expect(value(await host.commitPreparedMindSweepAdd(command))).toEqual(prepared.result);
+    expect(saveData).toHaveBeenCalledTimes(1);
+    useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: 'later-device',
+        gtd: { ...state.settings.gtd, defaultAreaMode: 'none' } } }));
+    saveData.mockClear();
+    expect(value(await host.commitPreparedMindSweepAdd(command))).toEqual(prepared.result);
+    expect(saveData).not.toHaveBeenCalled();
+    const changed = { ...prepared.task, title: 'Changed later', rev: 2 };
+    useTaskStore.setState((state) => ({ _allTasks: state._allTasks.map((task) => task.id === requestId ? changed : task),
+        _tasksById: new Map([...state._tasksById, [requestId, changed]]) }));
+    expect((await host.commitPreparedMindSweepAdd(command)).ok).toBe(false);
+    expect(saveData).not.toHaveBeenCalled();
+});
+
+it('freezes a missing device ID without initializing settings before the journal', async () => {
+    const saveData = vi.fn(async () => undefined);
+    const host = await open(saveData);
+    useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: undefined } }));
+    saveData.mockClear();
+    const prepared = value(host.prepareMindSweepAdd({ requestId, title: 'New device item' })).prepared;
+    expect(prepared.deviceIdBefore).toBeNull();
+    expect(prepared.deviceIdToInitialize).toBe(prepared.task.revBy);
+    expect(useTaskStore.getState().settings.deviceId).toBeUndefined();
+    expect(saveData).not.toHaveBeenCalled();
+    const command = { request: prepared.request, prepared };
+    expect(value(await host.commitPreparedMindSweepAdd(command))).toEqual(prepared.result);
+    expect(useTaskStore.getState().settings.deviceId).toBe(prepared.deviceIdToInitialize);
+    expect(saveData).toHaveBeenCalledTimes(1);
+});
 });

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from './types';
+import { buildTaskEditUpdatePatch, createTaskEditDraft } from './task-editor-model';
+import * as logger from './logger';
 
 import {
     areDraftAttachmentsDirty,
@@ -24,6 +26,90 @@ const baseTask: Task = {
 };
 
 describe('task-draft', () => {
+    const originalTimezone = process.env.TZ;
+    afterEach(() => {
+        if (originalTimezone === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTimezone;
+        vi.restoreAllMocks();
+    });
+
+    it('preserves raw timed dates on a title-only save after an editor timezone change and JSON recovery', () => {
+        process.env.TZ = 'America/New_York';
+        const task = { ...baseTask, startTime: '2026-10-04T14:00:00.000Z', dueDate: '2026-10-05T15:00:00.000Z', reviewAt: '2026-10-06' };
+        const opening = createTaskEditDraft(task);
+        expect(opening.draft).toMatchObject({ startTime: '2026-10-04T10:00', dueDate: '2026-10-05T11:00' });
+        process.env.TZ = 'America/Los_Angeles';
+        const recovered = JSON.parse(JSON.stringify(opening));
+        const patch = buildTaskEditUpdatePatch(recovered, task, { title: 'After' });
+
+        expect(patch).toEqual({ title: 'After' });
+        expect({ ...task, ...patch }).toMatchObject({ startTime: '2026-10-04T14:00:00.000Z', dueDate: '2026-10-05T15:00:00.000Z', reviewAt: '2026-10-06' });
+        expect(isTaskDraftDirty(recovered.draft, task)).toBe(false);
+    });
+
+    it.each([
+        ['absolute Z', '2026-10-05T15:00:00.000Z', '2026-10-05T11:00', true],
+        ['absolute offset', '2026-10-05T17:00:00+02:00', '2026-10-05T11:00', true],
+        ['floating', '2026-10-05T11:00', '2026-10-05T11:00', false],
+        ['date-only', '2026-10-05', '2026-10-05', false],
+    ] as const)('preserves %s dates while leaving same-timezone serialization unchanged', (_name, raw, local, shifted) => {
+        process.env.TZ = 'America/New_York';
+        const task = { ...baseTask, startTime: raw, dueDate: raw, reviewAt: raw };
+        const draft = createTaskDraft(task);
+        const info = vi.spyOn(logger, 'logInfo').mockImplementation(() => {});
+        expect(taskDraftToUpdatePatch(draft, task)).toMatchObject({ startTime: local, dueDate: local, reviewAt: local });
+        expect(taskDraftToChangedUpdatePatch(draft, task)).toEqual({});
+        expect(info).not.toHaveBeenCalled();
+
+        process.env.TZ = 'America/Los_Angeles';
+        const recovered = JSON.parse(JSON.stringify(draft));
+        expect(taskDraftToUpdatePatch(recovered, task)).toMatchObject({ startTime: raw, dueDate: raw, reviewAt: raw });
+        expect(taskDraftToChangedUpdatePatch({ ...recovered, title: 'After' }, task)).toEqual({ title: 'After' });
+        expect(info).toHaveBeenCalledTimes(shifted ? 1 : 0);
+        if (shifted) expect(info).toHaveBeenCalledWith('Task draft preserved unchanged dates after timezone change', {
+            scope: 'task-draft', category: 'storage', context: { releaseCheck: 'v1.3.3/task-draft-timezone', outcome: 'preserved' },
+        });
+    });
+
+    it('keeps genuine edits equal to the new timezone projection and explicit date clears', () => {
+        process.env.TZ = 'America/New_York';
+        const task = { ...baseTask, startTime: '2026-10-04T14:00:00.000Z', dueDate: '2026-10-05T15:00:00.000Z', reviewAt: '2026-10-06T15:00:00.000Z' };
+        let draft = createTaskDraft(task);
+        process.env.TZ = 'America/Los_Angeles';
+        draft = setTaskDraftField(draft, 'dueDate', '2026-10-05T08:00');
+        draft = setTaskDraftField(draft, 'startTime', '');
+        draft = setTaskDraftField(draft, 'reviewAt', '2026-10-06');
+        expect(taskDraftToChangedUpdatePatch(JSON.parse(JSON.stringify(draft)), task)).toEqual({
+            dueDate: '2026-10-05T08:00', startTime: undefined, reviewAt: '2026-10-06',
+        });
+        expect(isTaskDraftDirty(draft, task)).toBe(true);
+    });
+
+    it('does not recompute a linked DST schedule for an unrelated edit after a timezone change', () => {
+        process.env.TZ = 'America/New_York';
+        const task: Task = { ...baseTask, dueDate: '2026-11-01T15:00:00.000Z', startTime: '2026-10-31T14:00:00.000Z', relativeStartOffset: { amount: -1, unit: 'day' } };
+        const draft = createTaskDraft(task);
+        process.env.TZ = 'UTC';
+        expect(taskDraftToChangedUpdatePatch(setTaskDraftField(draft, 'title', 'After'), task)).toEqual({ title: 'After' });
+        expect(taskDraftToUpdatePatch(draft, task)).toMatchObject({
+            dueDate: '2026-11-01T15:00:00.000Z', startTime: '2026-10-31T14:00:00.000Z', relativeStartOffset: { amount: -1, unit: 'day' },
+        });
+    });
+
+    it('uses opening projections only for the same task and raw source, never as authoritative raw dates', () => {
+        process.env.TZ = 'America/New_York';
+        const task = { ...baseTask, dueDate: '2026-10-05T15:00:00.000Z' };
+        const draft = createTaskDraft(task);
+        process.env.TZ = 'America/Los_Angeles';
+        const altered = JSON.parse(JSON.stringify(draft));
+        altered.dateInputBaseline.dueDate.raw = '2099-01-01T00:00:00.000Z';
+        expect(taskDraftToUpdatePatch(altered, task)?.dueDate).toBe('2026-10-05T11:00');
+        expect(taskDraftToUpdatePatch(draft, { ...task, id: 'other' })?.dueDate).toBe('2026-10-05T11:00');
+        const changedSource = { ...task, dueDate: '2026-10-05T16:00:00.000Z' };
+        expect(taskDraftToUpdatePatch(draft, changedSource)?.dueDate).toBe('2026-10-05T11:00');
+        expect(taskDraftToUpdatePatch({ ...draft, dateInputBaseline: undefined }, task)?.dueDate).toBe('2026-10-05T11:00');
+    });
+
     it('a fresh draft is never dirty', () => {
         expect(isTaskDraftDirty(createTaskDraft(baseTask), baseTask)).toBe(false);
     });
@@ -186,6 +272,11 @@ describe('task-draft', () => {
     it('falls back to the task title and refuses an unusable one', () => {
         const draft = createTaskDraft(baseTask);
         expect(taskDraftToUpdatePatch({ ...draft, title: '   ' }, baseTask)).toMatchObject({ title: 'Write report' });
+        expect(taskDraftToUpdatePatch({ ...draft, title: '  Renamed  ', description: '  Notes\n ' }, baseTask))
+            .toMatchObject({ title: 'Renamed', description: '  Notes\n ' });
+        const paddedTitle = { ...baseTask, title: '  Original  ' };
+        expect(taskDraftToUpdatePatch({ ...createTaskDraft(paddedTitle), title: '   ' }, paddedTitle))
+            .toMatchObject({ title: '  Original  ' });
 
         const untitled: Task = { ...baseTask, title: '' };
         expect(taskDraftToUpdatePatch({ ...createTaskDraft(untitled), title: ' ' }, untitled)).toBeNull();

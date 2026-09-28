@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
 import {
     buildRRuleString,
     editRRuleString,
     parseRRuleString,
     createNextRecurringTask,
+    projectNextRecurringTask,
+    buildNextRecurringTask,
     createCurrentRecurringCalendarTask,
     expandCalendarRecurringTasks,
     expandCalendarRecurringTasksInRange,
@@ -23,6 +26,7 @@ import {
     CALENDAR_RANGE_PROJECTION_TOTAL_CAP,
 } from './recurrence';
 import { safeParseDate } from './date';
+import { applyTaskUpdates } from './store-helpers';
 import { isTaskDateCoherent } from './task-date-coherence';
 import type { Task, TaskStatus } from './types';
 
@@ -460,6 +464,53 @@ describe('recurrence', () => {
         expect(next?.checklist).toHaveLength(1);
         expect(next?.checklist?.[0]).toMatchObject({ title: 'Call pharmacy', isCompleted: false });
         expect(next?.checklist?.[0]?.id).not.toBe('c1');
+    });
+
+    it('replays the same complete and follow-up rows from frozen generated IDs', () => {
+        const now = '2026-10-05T14:00:00.000Z';
+        const task: Task = {
+            id: 'source-occurrence', title: 'Renew subscription', status: 'next',
+            tags: ['#finance'], contexts: ['@desk'], dueDate: '2026-10-05',
+            recurrence: { rule: 'daily', strategy: 'strict' },
+            checklist: [
+                { id: 'source-check-done', title: 'Verify invoice', isCompleted: true },
+                { id: 'source-check-open', title: 'File receipt', isCompleted: false },
+            ],
+            attachments: [
+                { id: 'source-live-file', kind: 'file', title: 'invoice.pdf', uri: 'file:///invoice.pdf',
+                    cloudKey: 'retained-cloud-object', createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:00:00.000Z' },
+                { id: 'source-deleted-file', kind: 'file', title: 'old.pdf', uri: 'file:///old.pdf',
+                    createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:00:00.000Z',
+                    deletedAt: '2026-10-02T10:00:00.000Z' },
+            ],
+            createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:00:00.000Z',
+        };
+        const sourceBefore = JSON.parse(JSON.stringify(task)) as Task;
+        const ids = ['next-file', 'next-occurrence', 'next-check-done', 'next-check-open'];
+        const plan = () => {
+            let used = 0;
+            const result = applyTaskUpdates(task, { status: 'done' }, now, () => ids[used++]);
+            return { result, used };
+        };
+        const first = plan();
+        const second = plan();
+
+        expect(first).toEqual(second);
+        expect(first.used).toBe(ids.length);
+        expect(first.result.updatedTask).toMatchObject({ id: task.id, status: 'done', completedAt: now });
+        const followUp = first.result.nextRecurringTask;
+        expect(followUp?.id).toBe('next-occurrence');
+        expect(followUp?.checklist).toEqual([
+            { id: 'next-check-done', title: 'Verify invoice', isCompleted: false },
+            { id: 'next-check-open', title: 'File receipt', isCompleted: false },
+        ]);
+        expect(followUp?.attachments).toEqual([{
+            ...task.attachments?.[0], id: 'next-file', createdAt: now, updatedAt: now, deletedAt: undefined,
+        }]);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(ids.every((id) => id !== task.id && !task.checklist?.some((item) => item.id === id)
+            && !task.attachments?.some((item) => item.id === id))).toBe(true);
+        expect(task).toEqual(sourceBefore);
     });
 
     it('regenerates relative start dates from the next due date across month clamps', () => {
@@ -2785,5 +2836,223 @@ describe('getRecurringTaskPreviewDate', () => {
     it('returns undefined for done tasks and tasks without recurrence', () => {
         expect(getRecurringTaskPreviewDate({ ...base, status: 'done' as TaskStatus, recurrence: 'daily' }, nowIso)).toBeUndefined();
         expect(getRecurringTaskPreviewDate(base, nowIso)).toBeUndefined();
+    });
+});
+
+describe('frozen recurring follow-up projection', () => {
+    const completedAtIso = '2026-03-07T15:00:00.000Z';
+    const ids = ['attachment-1', 'task-1', 'checklist-1', 'checklist-2'];
+    const sourceUrl = new URL('./recurrence.ts', import.meta.url).href;
+    const subprocess = `
+        import { projectNextRecurringTask, buildNextRecurringTask, createNextRecurringTask } from ${JSON.stringify(sourceUrl)};
+        const input = JSON.parse(await Bun.stdin.text());
+        const projection = input.projection ?? projectNextRecurringTask(input.task, input.completedAtIso);
+        let used = 0;
+        const row = buildNextRecurringTask(input.task, input.completedAtIso, 'done', projection, () => input.ids[used++]);
+        let rnUsed = 0;
+        const rn = input.projection ? undefined : createNextRecurringTask(input.task, input.completedAtIso, 'done',
+            { createId: () => input.ids[rnUsed++] });
+        console.log(JSON.stringify({ projection, row, rn, used, rnUsed }));
+    `;
+    const inTimeZone = (timeZone: string, input: object) => JSON.parse(execFileSync('bun', ['-e', subprocess], {
+        cwd: new URL('../../..', import.meta.url).pathname,
+        env: { ...process.env, TZ: timeZone },
+        input: JSON.stringify(input),
+        encoding: 'utf8',
+    }).trim()) as { projection: ReturnType<typeof projectNextRecurringTask>; row: Task | null; rn?: Task | null; used: number; rnUsed: number };
+    const base = { id: 'source', title: 'Recurring', status: 'done', recurrence: { rule: 'daily', strategy: 'strict' } } as Task;
+
+    it('rebuilds exact full rows across processes and opposite timezones', () => {
+        const cases: Array<{ name: string; task: Task; completedAt: string; expectDue?: string; expectDateOnly?: boolean }> = [
+            { name: 'spring DST and copied sub-IDs', task: { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+                checklist: [{ id: 'old-check-1', text: 'One', isCompleted: true }, { id: 'old-check-2', text: 'Two', isCompleted: false }],
+                attachments: [{ id: 'old-attachment', name: 'file', uri: 'file:///example', cloudKey: 'shared' }] as Task['attachments'],
+            }, completedAt: completedAtIso, expectDue: '2026-03-08T13:00:00.000Z' },
+            { name: 'fluid date-only near midnight', task: { ...base, dueDate: '2026-03-07',
+                recurrence: { rule: 'daily', strategy: 'fluid' } }, completedAt: '2026-03-08T04:30:00.000Z', expectDateOnly: true },
+            { name: 'monthly day 31', task: { ...base, dueDate: '2026-01-31',
+                recurrence: { rule: 'monthly', anchorDay: 31 } }, completedAt: '2026-01-31T15:00:00.000Z', expectDateOnly: true },
+            { name: 'naive UNTIL', task: { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+                recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;UNTIL=20260308T090000' } }, completedAt: completedAtIso },
+            { name: 'naive DST-gap UNTIL', task: { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+                recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;UNTIL=20260308T023000' } }, completedAt: completedAtIso },
+            { name: 'Z UNTIL', task: { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+                recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;UNTIL=20260308T130000Z' } }, completedAt: completedAtIso },
+            { name: 'invalid legacy UNTIL', task: { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+                recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;UNTIL=not-a-date' } }, completedAt: completedAtIso },
+            { name: 'COUNT exhausted', task: { ...base, dueDate: '2026-03-07',
+                recurrence: { rule: 'daily', count: 1, completedOccurrences: 0 } }, completedAt: completedAtIso },
+            { name: 'past UNTIL', task: { ...base, dueDate: '2026-03-07',
+                recurrence: { rule: 'daily', until: '2026-03-07' } }, completedAt: completedAtIso },
+        ];
+        for (const testCase of cases) {
+            for (const [prepareZone, rebuildZone] of [
+                ['America/New_York', 'UTC'], ['UTC', 'America/New_York'],
+            ]) {
+                const input = { task: testCase.task, completedAtIso: testCase.completedAt, ids };
+                const prepared = inTimeZone(prepareZone, input);
+                const rebuilt = inTimeZone(rebuildZone, { ...input, projection: prepared.projection });
+                expect(prepared.row, `${testCase.name} prepared in ${prepareZone}`).toEqual(prepared.rn);
+                expect(rebuilt.row, `${testCase.name} rebuilt in ${rebuildZone}`).toEqual(prepared.row);
+                expect(rebuilt.used).toBe(prepared.used);
+                expect(prepared.used).toBe(prepared.rnUsed);
+                if (testCase.expectDue && prepareZone === 'America/New_York') {
+                    expect(prepared.row?.dueDate).toBe(testCase.expectDue);
+                }
+                if (testCase.expectDateOnly) expect(prepared.row?.dueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+                if (testCase.name === 'naive UNTIL' && prepareZone === 'America/New_York') {
+                    expect(prepared.row?.recurrence && typeof prepared.row.recurrence === 'object'
+                        ? prepared.row.recurrence.rrule : undefined).toBe('FREQ=DAILY;UNTIL=20260308T130000Z');
+                }
+                if (testCase.name === 'invalid legacy UNTIL') {
+                    expect(prepared.row?.recurrence && typeof prepared.row.recurrence === 'object'
+                        ? prepared.row.recurrence.rrule : undefined).toBe('FREQ=DAILY');
+                }
+                if (testCase.name === 'spring DST and copied sub-IDs') {
+                    expect(prepared.row?.id).toBe('task-1');
+                    expect(prepared.row?.attachments?.[0].id).toBe('attachment-1');
+                    expect(prepared.row?.checklist?.map((item) => item.id)).toEqual(['checklist-1', 'checklist-2']);
+                }
+                if (testCase.name === 'COUNT exhausted' || testCase.name === 'past UNTIL') {
+                    expect(prepared.projection?.candidate.dueDate).toBeTruthy();
+                    expect(prepared.row).toBeNull();
+                    expect(prepared.used).toBe(0);
+                }
+            }
+        }
+    }, 60_000);
+
+    it('preserves RN legacy invalid schedule fallback and a relative start absent from the source', () => {
+        const legacy = createNextRecurringTask({ ...base, dueDate: 'not-a-date' }, completedAtIso, 'done');
+        expect(legacy?.dueDate).toBeTruthy();
+        expect(legacy?.dueDate).not.toBe('not-a-date');
+        const offset = { amount: -1, unit: 'day' as const };
+        const linked = { ...base, dueDate: '2026-03-07', relativeStartOffset: offset };
+        const next = createNextRecurringTask(linked, completedAtIso, 'done');
+        expect(next?.dueDate).toBe('2026-03-08');
+        expect(next?.startTime).toBe('2026-03-07');
+        expect(next?.relativeStartOffset).toEqual(offset);
+        const projection = projectNextRecurringTask(linked, completedAtIso)!;
+        expect(buildNextRecurringTask(linked, completedAtIso, 'done', projection)?.startTime).toBe('2026-03-07');
+        expect(() => buildNextRecurringTask(linked, completedAtIso, 'done', {
+            ...projection, candidate: { ...projection.candidate, relativeStartOffset: undefined },
+        })).toThrow('Incomplete recurrence candidate');
+    });
+
+    it('refuses a missing or single-operand-tampered projection before allocating IDs', () => {
+        const task = { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+            recurrence: { rule: 'daily', until: '2026-03-08T13:00:00.000Z' } } as Task;
+        const projection = projectNextRecurringTask(task, completedAtIso);
+        expect(projection).not.toBeNull();
+        const createId = () => { throw new Error('must not allocate'); };
+        expect(() => buildNextRecurringTask(task, completedAtIso, 'done', null, createId)).toThrow('Missing recurrence projection');
+        expect(() => buildNextRecurringTask(task, completedAtIso, 'done', {
+            ...projection!, candidate: { ...projection!.candidate, dueDate: undefined },
+        }, createId)).toThrow('Incomplete recurrence candidate');
+        const comparison = projection!.until?.comparison;
+        expect(comparison?.kind).toBe('epoch');
+        if (comparison?.kind !== 'epoch') throw new Error('Expected epoch comparison');
+        expect(() => buildNextRecurringTask(task, completedAtIso, 'done', {
+            ...projection!, until: { ...projection!.until!, comparison: { ...comparison, candidateMs: comparison.candidateMs + 1 } },
+        }, createId)).toThrow('Invalid recurrence instant comparison');
+        const dayTask = { ...task, dueDate: '2026-03-07', recurrence: { rule: 'daily', until: '2026-03-08' } } as Task;
+        const dayProjection = projectNextRecurringTask(dayTask, completedAtIso)!;
+        const dayComparison = dayProjection.until?.comparison;
+        if (dayComparison?.kind !== 'local-day') throw new Error('Expected day comparison');
+        expect(() => buildNextRecurringTask(dayTask, completedAtIso, 'done', {
+            ...dayProjection, until: { ...dayProjection.until!, comparison: { ...dayComparison, candidateDay: '2026-03-07' } },
+        }, createId)).toThrow('Invalid recurrence day comparison');
+        const exhausted = { ...dayTask, recurrence: { rule: 'daily', count: 1, completedOccurrences: 0 } } as Task;
+        expect(() => buildNextRecurringTask(exhausted, completedAtIso, 'done', null, createId)).toThrow('Missing recurrence projection');
+        const nonRecurring = { ...task, recurrence: undefined } as Task;
+        expect(projectNextRecurringTask(nonRecurring, completedAtIso)).toBeNull();
+        expect(buildNextRecurringTask(nonRecurring, completedAtIso, 'done', null, createId)).toBeNull();
+        expect(() => buildNextRecurringTask(nonRecurring, completedAtIso, 'done', projection, createId))
+            .toThrow('Unexpected recurrence projection');
+    });
+
+    it('binds explicit UTC and date-only RRULE UNTIL tokens to the frozen stop value', () => {
+        const createId = () => { throw new Error('must not allocate'); };
+        const utcTask = { ...base, dueDate: '2026-03-07T14:00:00.000Z',
+            recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;UNTIL=20260312T140000Z' } } as Task;
+        const utcProjection = projectNextRecurringTask(utcTask, completedAtIso)!;
+        expect(utcProjection.until?.comparison?.kind).toBe('epoch');
+        const utcComparison = utcProjection.until?.comparison;
+        if (utcComparison?.kind !== 'epoch') throw new Error('Expected epoch comparison');
+        const earlierUtc = '2026-03-07T13:00:00.000Z';
+        const tamperedUtc = {
+            ...utcProjection,
+            until: {
+                normalized: earlierUtc,
+                comparison: {
+                    ...utcComparison,
+                    untilInstant: { epochMs: Date.parse(earlierUtc), offsetMinutes: 0,
+                        local: '2026-03-07T13:00:00.000' },
+                    untilMs: Date.parse(earlierUtc),
+                },
+                rruleUntilToken: '20260307T130000Z',
+            },
+            rruleText: 'FREQ=DAILY;UNTIL=20260307T130000Z',
+        } satisfies NonNullable<ReturnType<typeof projectNextRecurringTask>>;
+        expect(() => buildNextRecurringTask(utcTask, completedAtIso, 'done', tamperedUtc, createId))
+            .toThrow('Invalid recurrence UNTIL source');
+
+        const dayTask = { ...base, dueDate: '2026-03-07',
+            recurrence: { rule: 'daily', rrule: 'FREQ=DAILY;UNTIL=20260312' } } as Task;
+        const dayProjection = projectNextRecurringTask(dayTask, completedAtIso)!;
+        const dayComparison = dayProjection.until?.comparison;
+        if (dayComparison?.kind !== 'local-day') throw new Error('Expected day comparison');
+        const tamperedDay = {
+            ...dayProjection,
+            until: { normalized: '2026-03-07',
+                comparison: { ...dayComparison, untilDay: '2026-03-07' },
+                rruleUntilToken: '20260307' },
+            rruleText: 'FREQ=DAILY;UNTIL=20260307',
+        } satisfies NonNullable<ReturnType<typeof projectNextRecurringTask>>;
+        expect(() => buildNextRecurringTask(dayTask, completedAtIso, 'done', tamperedDay, createId))
+            .toThrow('Invalid recurrence UNTIL source');
+
+        const explicitUntilTask = { ...dayTask,
+            recurrence: { rule: 'daily', until: '2026-03-12', rrule: 'FREQ=DAILY;UNTIL=20260307' } } as Task;
+        const explicitUntilProjection = projectNextRecurringTask(explicitUntilTask, completedAtIso)!;
+        expect(explicitUntilProjection.until?.normalized).toBe('2026-03-12');
+        expect(buildNextRecurringTask(explicitUntilTask, completedAtIso, 'done', explicitUntilProjection,
+            () => 'allowed-by-explicit-until')).not.toBeNull();
+    });
+
+    it('binds floating candidate wall text, explicit anchors and copied relative offsets', () => {
+        const createId = () => { throw new Error('must not allocate'); };
+        const floatingTask = { ...base, dueDate: '2026-03-07T09:00',
+            recurrence: { rule: 'daily', until: '2026-03-15' } } as Task;
+        const floatingProjection = projectNextRecurringTask(floatingTask, completedAtIso)!;
+        const comparison = floatingProjection.until?.comparison;
+        if (comparison?.kind !== 'local-day') throw new Error('Expected day comparison');
+        const falseWall = '2026-03-16T09:00:00.000';
+        const falseEpoch = Date.parse(`${falseWall}Z`) + comparison.candidate.offsetMinutes * 60_000;
+        const tamperedFloating = {
+            ...floatingProjection,
+            until: { ...floatingProjection.until!, comparison: {
+                ...comparison,
+                candidate: { ...comparison.candidate, local: falseWall, epochMs: falseEpoch },
+                candidateDay: '2026-03-16',
+            } },
+        } satisfies NonNullable<ReturnType<typeof projectNextRecurringTask>>;
+        expect(() => buildNextRecurringTask(floatingTask, completedAtIso, 'done', tamperedFloating, createId))
+            .toThrow('Invalid recurrence candidate witness');
+
+        const monthlyTask = { ...base, dueDate: '2026-01-31',
+            recurrence: { rule: 'monthly', anchorDay: 31 } } as Task;
+        const monthlyProjection = projectNextRecurringTask(monthlyTask, '2026-01-31T15:00:00.000Z')!;
+        expect(() => buildNextRecurringTask(monthlyTask, '2026-01-31T15:00:00.000Z', 'done', {
+            ...monthlyProjection,
+            sourceAnchorDays: { ...monthlyProjection.sourceAnchorDays, dueDate: 1 },
+        }, createId)).toThrow('Invalid recurrence source anchor');
+
+        const noOffsetTask = { ...base, dueDate: '2026-03-07' } as Task;
+        const noOffsetProjection = projectNextRecurringTask(noOffsetTask, completedAtIso)!;
+        expect(() => buildNextRecurringTask(noOffsetTask, completedAtIso, 'done', {
+            ...noOffsetProjection,
+            candidate: { ...noOffsetProjection.candidate, relativeStartOffset: { amount: -2, unit: 'day' } },
+        }, createId)).toThrow('Invalid recurrence relative start offset');
     });
 });

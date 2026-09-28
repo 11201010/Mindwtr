@@ -195,7 +195,7 @@ export function createCoreBackend(options: { t: Translate; toasts: unknown[] }):
     let session: ProcessInboxSession | null = null;
     let answers: ProcessInboxAnswers = { ...INITIAL_PROCESS_INBOX_ANSWERS };
     let draft: ProcessInboxDraft | null = null;
-    let latchedTotal = 0;
+    let previousProgress = { total: 0, processed: 0 };
 
     const context = () => {
         const state = useTaskStore.getState();
@@ -248,8 +248,8 @@ export function createCoreBackend(options: { t: Translate; toasts: unknown[] }):
             const task = currentTask();
             if (!task || !draft) return null;
             const { state, plan, queue } = context();
-            const progress = getProcessInboxProgress(latchedTotal, getProcessInboxRemainingCandidates(session!, queue).length);
-            latchedTotal = progress.total;
+            const progress = getProcessInboxProgress(previousProgress, getProcessInboxRemainingCandidates(session!, queue).length, session!);
+            previousProgress = progress;
             const settings = state.settings;
             return {
                 ...buildProcessInboxStepView({

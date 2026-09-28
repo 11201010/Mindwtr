@@ -5,6 +5,7 @@ import {
     legacyImportMismatch,
     planLegacyJsonImport,
     sqliteHasAnyData,
+    assertNativeLegacyBackupSafe,
     type LegacyJsonImportState,
 } from './legacy-json-import';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
@@ -30,6 +31,28 @@ const state = (overrides: Partial<LegacyJsonImportState> = {}): LegacyJsonImport
 const sqlite = data([task('kept', 2)]);
 const backupJson = JSON.stringify(data([task('kept', 1, { title: 'stale' }), task('json-only', 1)]));
 const titles = (appData?: AppData) => appData?.tasks.map((item) => `${item.id}:${item.title}`).sort();
+
+describe('native upgrade source gate', () => {
+    it('preserves corrupt or ambiguous backup authority instead of acknowledging an empty import', () => {
+        for (const backupJson of [null, '', '[', 'null', '{}', '{"tasks":"lost"}',
+            JSON.stringify(data([task('duplicate', 1), task('duplicate', 2)])),
+            JSON.stringify({ ...data([]), tasks: [{ id: 'broken', title: 'Missing required data' }] })]) {
+            expect(() => assertNativeLegacyBackupSafe({ jsonAhead: true, backupJson })).toThrow('recovery');
+        }
+    });
+
+    it('allows valid raw RN backup data without changing fields or legacy import policy', () => {
+        expect(() => assertNativeLegacyBackupSafe({ jsonAhead: false, backupJson: null })).not.toThrow();
+        for (const source of [data([]), data([task('rich', 2, {
+            description: 'Notes', dueDate: '2026-10-01', startTime: '2026-09-28T10:30',
+            tags: ['#tag'], contexts: ['@home'], deletedAt: '2026-09-03T00:00:00.000Z',
+        })])]) {
+            const backupJson = JSON.stringify(source);
+            expect(() => assertNativeLegacyBackupSafe({ jsonAhead: true, backupJson })).not.toThrow();
+            expect(JSON.parse(backupJson)).toEqual(source);
+        }
+    });
+});
 
 describe('planLegacyJsonImport', () => {
     it('(a) merges a json-ahead backup, keeps newer SQLite rows, clears the marker', () => {

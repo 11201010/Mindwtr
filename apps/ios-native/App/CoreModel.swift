@@ -1,0 +1,8783 @@
+import Foundation
+import MindwtrNativeCore
+import SwiftUI
+
+typealias CoreObject = [String: Any]
+
+extension Dictionary where Key == String, Value == Any {
+    func text(_ key: String) -> String { self[key] as? String ?? "" }
+    func object(_ key: String) -> CoreObject { self[key] as? CoreObject ?? [:] }
+    func objects(_ key: String) -> [CoreObject] { self[key] as? [CoreObject] ?? [] }
+    func flag(_ key: String) -> Bool { self[key] as? Bool ?? false }
+    func number(_ key: String) -> Int { self[key] as? Int ?? 0 }
+}
+
+@MainActor
+final class CoreModel: ObservableObject {
+    enum Surface: Equatable { case inbox, focus, review, calendar, board, search, projects, project, waiting, someday, reference, history, trash, contexts }
+
+    @Published private(set) var selectedSurface: Surface = .inbox
+    @Published private(set) var inbox: CoreObject = [:]
+    @Published private(set) var processInboxPresented = false
+    @Published private(set) var processInboxView: CoreObject = [:]
+    @Published private(set) var processInboxNotice: CoreObject = [:]
+    @Published private(set) var processInboxToast = ""
+    @Published private(set) var processInboxError: String?
+    @Published private(set) var processInboxReadError: String?
+    @Published private(set) var processInboxInputs: [String: String] = [:]
+    @Published private(set) var mindSweepGuide: CoreObject = [:]
+    @Published private(set) var mindSweepPresented = false
+    @Published private(set) var mindSweepStep = -1
+    @Published private(set) var mindSweepDraft = ""
+    @Published private(set) var mindSweepCaptured: [String: [String]] = [:]
+    @Published private(set) var mindSweepAddFailed = false
+    @Published private(set) var mindSweepGuideError: String?
+    @Published private(set) var focus: CoreObject = [:]
+    @Published private(set) var focusCurrent = false
+    @Published private(set) var focusLoading = false
+    @Published private(set) var focusError: String?
+    @Published private(set) var reviewOverview: CoreObject = [:]
+    @Published private(set) var reviewGuide: CoreObject = [:]
+    @Published private(set) var reviewKind = ""
+    @Published private(set) var reviewCurrent = false
+    @Published private(set) var reviewError: String?
+    @Published private(set) var reviewPickerPresented = false
+    @Published private(set) var reviewGuidePresented = false
+    @Published private(set) var reviewNested: [String: CoreObject] = [:]
+    @Published private(set) var reviewExpandedContexts: Set<String> = []
+    @Published private(set) var reviewExpandedScheduled: Set<String> = []
+    @Published private(set) var boardView: CoreObject = [:]
+    @Published private(set) var boardCurrent = false
+    @Published private(set) var boardLoading = false
+    @Published private(set) var boardError: String?
+    @Published private(set) var boardSearchText = ""
+    @Published private(set) var boardFiltersPresented = false
+    @Published private(set) var boardScrollGeneration = 0
+    var boardScrollAnchor = "board-top"
+    @Published private(set) var calendarView: CoreObject = [:]
+    @Published private(set) var calendarCurrent = false
+    @Published private(set) var calendarError: String?
+    @Published private(set) var calendarQuery = ""
+    @Published private(set) var calendarItemSheet: CoreObject = [:]
+    @Published private(set) var calendarItemPresented = false
+    @Published private(set) var calendarItemError: String?
+    @Published private(set) var calendarComposerView: CoreObject = [:]
+    @Published private(set) var calendarComposerPresented = false
+    @Published private(set) var calendarComposerError: String?
+    @Published private(set) var calendarNotice: String?
+    @Published var calendarComposerQueryInput = ""
+    @Published var calendarComposerTitleInput = ""
+    @Published var calendarComposerStartInput = ""
+    @Published var calendarComposerEndInput = ""
+    @Published private(set) var focusPanel = ""
+    @Published private(set) var focusLocationText = ""
+    @Published private(set) var focusPickerName = ""
+    @Published private(set) var focusPickerQuery = ""
+    @Published private(set) var focusPicker: CoreObject = [:]
+    @Published private(set) var focusPickerCurrent = false
+    @Published private(set) var searchView: CoreObject = [:]
+    @Published private(set) var searchQuery = ""
+    @Published private(set) var searchFilters: CoreObject = [:]
+    @Published private(set) var searchLoading = false
+    @Published private(set) var searchError: String?
+    @Published private(set) var moreMenu: CoreObject = [:]
+    @Published private(set) var morePresented = false
+    @Published private(set) var projects: CoreObject = [:]
+    @Published private(set) var projectCreateOptions: CoreObject = [:]
+    @Published private(set) var projectCreateTitle = ""
+    @Published private(set) var projectCreateAreaID: String?
+    @Published private(set) var projectCreateError: String?
+    @Published private(set) var projectCreateReadError: String?
+    @Published private(set) var projectFocusError: String?
+    @Published private(set) var projectFocusReadError: String?
+    @Published private(set) var projectRenameEditing = false
+    @Published private(set) var projectRenameTitle = ""
+    @Published private(set) var projectRenameError: String?
+    @Published private(set) var projectRenameReadError: String?
+    @Published private(set) var projectFlowError: String?
+    @Published private(set) var projectFlowReadError: String?
+    @Published private(set) var projectStatusOpen = false
+    @Published private(set) var projectStatusError: String?
+    @Published private(set) var projectStatusReadError: String?
+    @Published private(set) var projectDateField: String?
+    @Published private(set) var projectDatePicker: CoreObject = [:]
+    @Published private(set) var projectDateError: String?
+    @Published private(set) var projectDateReadError: String?
+    @Published private(set) var projectSectionsPresented = false
+    @Published private(set) var projectSectionEditing = false
+    @Published private(set) var projectSectionEditID: String?
+    @Published private(set) var projectSectionTitle = ""
+    @Published private(set) var projectSectionOptions: CoreObject = [:]
+    @Published private(set) var projectSectionError: String?
+    @Published private(set) var projectSectionReadError: String?
+    @Published private(set) var areaManagerPresented = false
+    @Published private(set) var areaCreateOptions: CoreObject = [:]
+    @Published private(set) var areaCreateName = ""
+    @Published private(set) var areaCreateColor = ""
+    @Published private(set) var areaCreateNameTaken = false
+    @Published private(set) var areaCreateNameChecking = false
+    @Published private(set) var areaCreateError: String?
+    @Published private(set) var areaCreateReadError: String?
+    @Published private(set) var areaColorOptions: CoreObject = [:]
+    @Published private(set) var expandedAreaColorID: String?
+    @Published private(set) var areaColorIntentID: String?
+    @Published private(set) var areaColorIntentColor: String?
+    @Published private(set) var areaColorError: String?
+    @Published private(set) var areaColorReadError: String?
+    @Published private(set) var areaOrderOptions: CoreObject = [:]
+    @Published private(set) var areaOrderIntent: CoreObject?
+    @Published private(set) var areaOrderError: String?
+    @Published private(set) var areaOrderReadError: String?
+    @Published private(set) var areaDeleteOptions: CoreObject = [:]
+    @Published private(set) var areaDeleteIntentID: String?
+    @Published private(set) var areaDeleteError: String?
+    @Published private(set) var areaDeleteReadError: String?
+    @Published private(set) var projectHeader: CoreObject = [:]
+    @Published private(set) var projectDetail: CoreObject = [:]
+    @Published private(set) var projectCurrent = false
+    @Published private(set) var projectError: String?
+    @Published private(set) var projectNotes: CoreObject = [:]
+    @Published private(set) var projectNotesExpanded = false
+    @Published private(set) var projectNotesCurrent = false
+    @Published private(set) var projectNotesError: String?
+    @Published private(set) var projectNotesEditMode = false
+    @Published private(set) var projectNotesDraft = ""
+    @Published private(set) var projectNotesDraftDirection = ""
+    @Published private(set) var projectNotesEditError: String?
+    @Published private(set) var projectNotesEditReadError: String?
+    @Published private(set) var projectNotesEditConflict = false
+    @Published var collapsedProjectAreas: Set<String> = []
+    @Published var expandedProjectSections: Set<String> = []
+    @Published private(set) var contexts: CoreObject = [:]
+    @Published private(set) var contextsSearchText = ""
+    @Published private(set) var contextsCurrent = false
+    @Published private(set) var contextsLoading = false
+    @Published private(set) var contextsError: String?
+    @Published private(set) var waiting: CoreObject = [:]
+    @Published private(set) var waitingPerson = ""
+    @Published private(set) var waitingCurrent = false
+    @Published private(set) var waitingError: String?
+    @Published var waitingProjectsExpanded = true
+    @Published private(set) var someday: CoreObject = [:]
+    @Published private(set) var somedayCurrent = false
+    @Published private(set) var somedayError: String?
+    @Published var somedayPanel = ""
+    @Published var somedayProjectsExpanded = true
+    @Published private(set) var somedaySearchText = ""
+    @Published private(set) var somedayLocationText = ""
+    @Published private(set) var somedayPickerName = ""
+    @Published private(set) var somedayPickerQuery = ""
+    @Published private(set) var somedayPicker: CoreObject = [:]
+    @Published private(set) var somedayPickerCurrent = false
+    @Published private(set) var somedayPickerError: String?
+    @Published private(set) var reference: CoreObject = [:]
+    @Published private(set) var referenceCurrent = false
+    @Published private(set) var referenceError: String?
+    @Published var referencePanel = ""
+    @Published private(set) var referenceSearchText = ""
+    @Published private(set) var referenceLocationText = ""
+    @Published private(set) var referencePickerName = ""
+    @Published private(set) var referencePickerQuery = ""
+    @Published private(set) var referencePicker: CoreObject = [:]
+    @Published private(set) var referencePickerCurrent = false
+    @Published private(set) var referencePickerError: String?
+    @Published private(set) var historyTabs: CoreObject = [:]
+    @Published private(set) var history: CoreObject = [:]
+    @Published private(set) var historyCurrent = false
+    @Published private(set) var historyError: String?
+    @Published private(set) var historyPanel = ""
+    @Published private(set) var historySearchText = ""
+    @Published private(set) var historyLocationText = ""
+    @Published private(set) var historyPickerName = ""
+    @Published private(set) var historyPickerQuery = ""
+    @Published private(set) var historyPicker: CoreObject = [:]
+    @Published private(set) var historyPickerCurrent = false
+    @Published private(set) var historyPickerError: String?
+    @Published private(set) var trash: CoreObject = [:]
+    @Published private(set) var trashCurrent = false
+    @Published private(set) var trashError: String?
+    @Published private(set) var theme: CoreObject = [:]
+    @Published private(set) var area: CoreObject = [:]
+    @Published private(set) var strings: CoreObject = [:]
+    @Published private(set) var capture: CoreObject = [:]
+    @Published private(set) var ready = false
+    @Published private(set) var busy = false
+    @Published private(set) var retryNeeded = false
+    @Published private(set) var error: String?
+    @Published var capturePresented = false
+    @Published private(set) var areaPickerPresented = false
+    @Published private(set) var taskPresented = false
+    private(set) var taskInitialTab = "view"
+    @Published private(set) var taskView: CoreObject = [:]
+    @Published private(set) var taskError: String?
+    @Published private(set) var taskEditor: CoreObject = [:]
+    @Published private(set) var taskDestination: CoreObject = [:]
+    @Published private(set) var taskDestinationKind = ""
+    @Published private(set) var taskDestinationQuery = ""
+    @Published private(set) var taskDestinationCurrent = false
+    @Published private(set) var taskDestinationError: String?
+    @Published var taskTitleDraft = ""
+    @Published var taskNoteDraft = ""
+    @Published var taskEstimateInput = ""
+    @Published private(set) var taskChecklist: [CoreObject] = []
+    @Published private(set) var taskChecklistField: CoreObject = [:]
+    @Published private(set) var taskChecklistInputs: [Int: String] = [:]
+    @Published var taskChecklistAppendInput = ""
+    @Published private(set) var taskChecklistFocusIndex: Int?
+    @Published private(set) var taskScheduleUpdating = false
+    @Published private(set) var taskSchedulePending = false
+    @Published private(set) var taskRelativeAmountInput = ""
+    @Published private(set) var taskRelativeUnitInput = ""
+    @Published private(set) var taskRecurrenceInputs: [String: String] = [:]
+    @Published private(set) var taskTokenInputs: [String: String] = [:]
+    @Published private(set) var taskTokenSuggestions: [String: CoreObject] = [:]
+    @Published private(set) var taskTokenErrors: [String: String] = [:]
+    @Published var draft = ""
+    @Published var noteDraft = ""
+    @Published var contextQuery = ""
+    @Published private(set) var contextPickerPresented = false
+    @Published private(set) var notice: String?
+    @Published var bulkConfirm: CoreObject = [:]
+
+    private var host: CoreHost?
+    private var reviewOverviewParams: CoreObject = ["scope": "due"]
+    private var reviewOverviewDepth = 50
+    private var reviewGuideDepth = 50
+    private var reviewNestedDepth: [String: Int] = [:]
+    private var reviewCheckpointInput: String?
+    private var reviewExpandedProject: String?
+    private var reviewFinishPending = false
+    private let reviewPreferencePrefix = "nativeFoundation.review."
+    private var preferenceDefaults: UserDefaults = .standard
+    private var boardFilters: CoreObject = [:]
+    private var boardPendingEdit: CoreObject?
+    @Published private var boardActionRequest: String?
+    private var boardRecoveredResult: CoreObject?
+    private var boardDepth: [String: Int] = [:]
+    private var boardGeneration = 0
+    private var boardReadTask: Task<Void, Never>?
+    private var boardNeedsRead = false
+    private var calendarState: CoreObject = [:]
+    private var calendarLoadedDepth = 50
+    private var calendarNeedsRead = false
+    private var calendarReadTask: Task<Void, Never>?
+    private var calendarItemTaskID = ""
+    private var calendarPreferenceValues: CoreObject = [:]
+    private var calendarPreferencePending = false
+    private var calendarPreferenceTarget: CoreObject?
+    @Published private var calendarComposerEdits: [CoreObject] = []
+    @Published private var calendarComposerEditing = false
+    private var calendarComposerGeneration = 0
+    private var calendarComposerSaveRequest: String?
+    private var calendarComposerRecoveredResult: CoreObject?
+    private var calendarComposerNavigation: (state: CoreObject, minute: Double)?
+    // Native scroll position only; core state remains the source of dates/modes.
+    var calendarScrollAnchor = ""
+    var calendarViewportAnchors: [String: Double] = [:]
+    private(set) var calendarViewportGeneration = 0
+    private var previewTask: Task<Void, Never>?
+    private var previewGeneration = 0
+    private var previewedText = ""
+    private var captureID = UUID().uuidString
+    private var capturePending = false
+    private var mindSweepRequest: String?
+    private var mindSweepRequestID: String?
+    private var mindSweepRequestGroup: String?
+    private var mindSweepCountedIDs: Set<String> = []
+    private var mindSweepRecoveredResult: CoreObject?
+    private var mindSweepRequestedScope = "all"
+    private var mindSweepCaller: Surface?
+    private var processInboxCaller: Surface?
+    private var processInboxSessionID: String?
+    private var processInboxRequest: String?
+    private var processInboxRequestMethod: String?
+    private var processInboxRequestID: String?
+    private var processInboxRequestTaskID: String?
+    private var processInboxAfterRequestID: String?
+    private var processInboxPendingEdits: [CoreObject] = []
+    private var processInboxEditTask: Task<Void, Never>?
+    private var processInboxTransitioning = false
+    private var refreshRequested = false
+    private var viewedTaskID = ""
+    private var taskSavePending = false
+    private var taskChecklistLoaded = false
+    private var taskOriginalChecklist: [CoreObject] = []
+    private var taskChecklistSession = 0
+    private var taskChecklistWriteKind: String?
+    private var taskChecklistWriteRequest: String?
+    private var taskChecklistResetAcknowledgment: CoreObject?
+    @Published private(set) var taskChecklistReadPending = false
+    private var taskOriginalDraft: CoreObject = [:]
+    private var taskOriginalSchedule: CoreObject = [:]
+    private var taskOriginalRecurrence: CoreObject = [:]
+    private var taskScheduleSession = 0
+    private var taskScheduleSequence = 0
+    private var taskScheduleEdits: [TaskScheduleEdit] = []
+    private var taskScheduleTask: Task<Void, Never>?
+    private var taskScheduleFailure: Error?
+    private var taskScheduleFailedID: Int?
+    private var taskRelativeInputOwned = false
+    private var taskRelativeInputCommitRequested = false
+    private var taskRecurrenceInputOwned: Set<String> = []
+    private var taskRecurrenceInputCommitRequested: Set<String> = []
+    private let taskRecurrenceFields = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
+    private let taskDateFields = ["startTime", "dueDate", "reviewAt"]
+    private var taskEstimateResolvedInput = ""
+    private let taskSaveFields = ["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "startTime", "dueDate", "reviewAt"]
+    private let taskTokenFields = ["contexts", "tags"]
+    private var taskTokenCanonical: [String: String] = [:]
+    private var taskTokenResolvedInputs: [String: String] = [:]
+    private var taskTokenSuggestionInputs: [String: String] = [:]
+    private var taskTokenReadTasks: [String: Task<Void, Never>] = [:]
+    private var taskTokenGenerations: [String: Int] = [:]
+    private var taskTokenGeneration = 0
+    private var taskTokenNeedsRead: Set<String> = []
+    private var taskTokenCommitDisplay: Set<String> = []
+    private var taskTokenEdited: Set<String> = []
+    private var taskDestinationGeneration = 0
+    private var taskDestinationReadTask: Task<Void, Never>?
+    private var taskDestinationNeedsRead = false
+    private var taskDestinationDraftIdentity = ""
+    private var focusState: CoreObject = [:]
+    private var focusEdits: [CoreObject] = []
+    private var focusEditSequence = 0
+    @Published private var focusRefusedLocationID: Int?
+    #if DEBUG && targetEnvironment(simulator)
+    // Exercise the empty-snapshot error and Retry through the real UI. Both
+    // initial attempts fail; the explicit retry then uses the real core read.
+    private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
+    #endif
+    private var focusGeneration = 0
+    private var focusReadTask: Task<Void, Never>?
+    private var focusNeedsRead = false
+    private var focusLoadedDepth: [String: Int] = [:]
+    private var focusSavedDepth = 100
+    private var focusPickerDepth = 100
+    private var focusPickerPublishedName = ""
+    private var focusPickerPublishedQuery = ""
+    private var searchCaller: Surface = .inbox
+    private var searchTask: Task<Void, Never>?
+    private var searchGeneration = 0
+    private var publishedSearchGeneration = -1
+    private var searchNeedsRead = false
+    private var projectCaller: Surface = .projects
+    private var projectLoadedDepth = 50
+    private var projectNotesLoadedDepth = 50
+    private var projectNotesEditOptions: CoreObject = [:]
+    private var projectNotesEditOptionsCurrent = false
+    private var projectNotesEditLoaded = false
+    private var projectNotesEditBaseRaw: String?
+    private var projectNotesWriteRequest: String?
+    private var projectNotesExpectedRaw: String?
+    private var projectNotesFlushTask: Task<Bool, Never>?
+    private var projectNotesFlushID: UUID?
+    private var projectCreateAreaFilterValue: String?
+    private var projectCreateRequest: String?
+    private var projectCreateRequestID: String?
+    private var projectCreateOptionsCurrent = false
+    private var projectFocusRequest: String?
+    private var projectFocusExpectedID: String?
+    private var projectFocusDesired: Bool?
+    private var projectRenameOptions: CoreObject = [:]
+    private var projectRenameOptionsCurrent = false
+    private var projectRenameRequest: String?
+    private var projectRenameExpectedID: String?
+    private var projectFlowRequest: String?
+    private var projectFlowExpectedResult: CoreObject?
+    private var projectStatusOptions: CoreObject = [:]
+    private var projectStatusOptionsCurrent = false
+    private var projectStatusRequest: String?
+    private var projectStatusExpectedID: String?
+    private var projectStatusExpectedStatus: String?
+    private var projectDateOptions: CoreObject = [:]
+    private var projectDateOptionsField: String?
+    private var projectDateOptionsCurrent = false
+    private var projectDateRequest: String?
+    private var projectDateExpectedID: String?
+    private var projectDateExpectedField: String?
+    private var projectDateExpectedValue: Any?
+    private var projectSectionOptionsCurrent = false
+    private var projectSectionRequest: String?
+    private var projectSectionExpectedID: String?
+    private var projectSectionExpectedProjectID: String?
+    private var projectSectionRenameOptions: CoreObject = [:]
+    private var projectSectionRenameOptionsCurrent = false
+    private var projectSectionRenameRequest: String?
+    private var projectSectionRenameExpectedID: String?
+    private var projectSectionRenameExpectedProjectID: String?
+    private var projectSectionDeleteOptions: CoreObject = [:]
+    private var projectSectionDeleteOptionsCurrent = false
+    private var projectSectionDeleteReadyID: String?
+    private var projectSectionDeleteRequest: String?
+    private var projectSectionDeleteExpectedID: String?
+    private var projectSectionDeleteExpectedProjectID: String?
+    private var areaCreateRequest: String?
+    private var areaCreateExpectedID: String?
+    private var areaCreateOptionsCurrent = false
+    private var areaCreateNameGeneration = 0
+    private var areaColorRequest: String?
+    private var areaColorExpectedID: String?
+    private var areaColorOptionsCurrent = false
+    private var areaOrderRequest: String?
+    private var areaOrderExpectedIDs: [String]?
+    private var areaOrderOptionsCurrent = false
+    private var areaDeleteRequest: String?
+    private var areaDeleteExpectedID: String?
+    private var areaDeleteOptionsCurrent = false
+    private var contextsCaller: Surface = .inbox
+    private var contextsSelection: CoreObject = [:]
+    private var contextsLoadedDepth = 50
+    private var contextsGeneration = 0
+    private var contextsReadTask: Task<Void, Never>?
+    private var contextsNeedsRead = false
+    private var contextsIntents: [CoreObject] = []
+    private var waitingCaller: Surface = .inbox
+    private var waitingLoadedDepth = 50
+    private var waitingCollectionDepth: [String: Int] = [:]
+    private var somedayCaller: Surface = .inbox
+    private var somedayParams: CoreObject = [:]
+    private var somedayLoadedDepth = 50
+    private var somedayDeferredDepth = 100
+    private var somedayTextEdits: [String: CoreObject] = [:]
+    private var somedayPendingEdit: CoreObject?
+    private var somedayTextNeedsRead = false
+    private var somedayReadTask: Task<Void, Never>?
+    private var somedayPickerDepth = 100
+    private var somedayPickerNeedsRead = false
+    private var referenceCaller: Surface = .inbox
+    private var referenceParams: CoreObject = [:]
+    private var referenceLoadedDepth = 50
+    private var referenceTextEdits: [String: CoreObject] = [:]
+    private var referencePendingEdit: CoreObject?
+    private var referenceTextNeedsRead = false
+    private var referenceReadTask: Task<Void, Never>?
+    private var referencePickerDepth = 100
+    private var referencePickerNeedsRead = false
+    private var historyCaller: Surface = .inbox
+    private var historyParamsByTab: [String: CoreObject] = [:]
+    private var historyDepthByTab: [String: Int] = [:]
+    private var historyTextEdits: [String: CoreObject] = [:]
+    private var historyPendingEdit: CoreObject?
+    private var historyNeedsRead = false
+    private var historyReadTask: Task<Void, Never>?
+    private var historyPickerDepth = 100
+    private var historyPickerNeedsRead = false
+    private var trashCaller: Surface = .inbox
+    private var trashLoadedDepth = 50
+    private let pageSize = 50
+    private var preference = "nativeFoundation.capture.addAnother"
+    private var storedLanguage = ""
+    private var storedTheme = ""
+    private var initialAddAnother = false
+
+    var focusControlsEnabled: Bool {
+        ready && selectedSurface == .focus && !focus.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented
+    }
+    var reviewActionsEnabled: Bool {
+        ready && selectedSurface == .review && reviewCurrent && !busy && !retryNeeded
+            && !taskPresented && !areaPickerPresented && !reviewPickerPresented && !mindSweepPresented
+            && !processInboxPresented
+    }
+    var reviewRows: [CoreObject] {
+        (reviewGuidePresented ? reviewGuide : reviewOverview).objects("items").compactMap {
+            let row = $0.object("row")
+            return row.isEmpty ? nil : row
+        }
+    }
+    private var reviewTaskIDs: Set<String> {
+        var ids = Set(reviewRows.map { $0.text("id") })
+        if reviewGuidePresented {
+            ids.formUnion(reviewGuide.object("content").objects("tasks").map { $0.text("taskId") })
+            for item in reviewGuide.objects("items") where item.text("type") == "context" {
+                ids.formUnion(reviewNestedWindow("contextTasks", key: item.text("context"), fallback: item.object("tasks"))
+                    .objects("items").map { $0.text("id") })
+            }
+        }
+        return ids
+    }
+    var boardControlsEnabled: Bool {
+        ready && selectedSurface == .board && !boardView.isEmpty && !boardLoading && !busy && !retryNeeded
+            && !taskPresented && !areaPickerPresented
+    }
+    var boardActionsEnabled: Bool { boardControlsEnabled && boardCurrent && !boardFiltersPresented }
+    var boardActionPending: Bool { boardActionRequest != nil }
+    var mindSweepControlsEnabled: Bool {
+        guard let caller = mindSweepCaller else { return false }
+        return ready && mindSweepPresented && selectedSurface == caller && !busy && !retryNeeded
+            && mindSweepRequest == nil && (caller != .review || (reviewGuidePresented && reviewKind == "weekly"))
+    }
+    var processInboxControlsEnabled: Bool {
+        guard let caller = processInboxCaller else { return false }
+        return ready && processInboxPresented && selectedSurface == caller && !processInboxView.isEmpty
+            && !busy && !retryNeeded && !processInboxTransitioning && processInboxRequest == nil
+            && processInboxAfterRequestID == nil && processInboxReadError == nil
+    }
+    var processInboxCloseEnabled: Bool {
+        processInboxPresented && !busy && !retryNeeded && processInboxRequest == nil
+            && !processInboxTransitioning
+    }
+    var mindSweepCanAdd: Bool {
+        mindSweepControlsEnabled && !mindSweepCurrentGroup.isEmpty
+            && !mindSweepDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    var mindSweepCurrentGroup: CoreObject {
+        let groups = mindSweepGuide.objects("groups")
+        return groups.indices.contains(mindSweepStep) ? groups[mindSweepStep] : [:]
+    }
+    var mindSweepCapturedCount: Int { mindSweepCaptured.values.reduce(0) { $0 + $1.count } }
+    var calendarActionsEnabled: Bool {
+        ready && selectedSurface == .calendar && calendarCurrent && !busy && !retryNeeded
+            && !taskPresented && !areaPickerPresented && !calendarItemPresented && !calendarComposerPresented
+            && !capturePresented && !morePresented
+    }
+    var calendarComposerCanSave: Bool {
+        let composer = calendarComposerView.object("composer")
+        return calendarComposerPresented && !composer.isEmpty && !calendarComposerView.flag("saveDisabled")
+            && !calendarComposerEditing && calendarComposerEdits.isEmpty && calendarComposerError == nil
+            && calendarComposerQueryInput == composer.text("query")
+            && calendarComposerTitleInput == composer.text("title")
+            && calendarComposerStartInput == composer.text("startTimeValue")
+            && calendarComposerEndInput == composer.text("endTimeValue")
+            && !busy && !retryNeeded && calendarComposerSaveRequest == nil
+    }
+    var calendarComposerEditPending: Bool { calendarComposerEditing || !calendarComposerEdits.isEmpty }
+    var calendarItems: [CoreObject] {
+        calendarView.objects("items").compactMap { $0.text("type") == "item" ? $0.object("item") : nil }
+    }
+    private func calendarEditableTask(_ id: String) -> Bool {
+        calendarItems.contains { $0.text("taskId") == id && $0.flag("pressable") && !$0.flag("projected")
+            && $0.object("row").text("id") == id && !$0.object("row").flag("readOnly") }
+    }
+    var focusActionsEnabled: Bool { focusControlsEnabled && focusCurrent && focusPanel.isEmpty }
+    var focusPickerMatchesQuery: Bool {
+        focusPickerPublishedName == focusPickerName && focusPickerPublishedQuery == focusPickerQuery
+    }
+    var focusPickerActionsEnabled: Bool { focusControlsEnabled && focusPickerMatchesQuery && !focusPicker.isEmpty }
+    var focusLocationRefused: Bool { focusRefusedLocationID != nil }
+    var items: [CoreObject] { inbox.objects("items") }
+    var searchCurrent: Bool { publishedSearchGeneration == searchGeneration && !searchLoading }
+    var searchActionsEnabled: Bool {
+        ready && selectedSurface == .search && searchCurrent && !busy && !retryNeeded && !taskPresented
+    }
+    var projectActionsEnabled: Bool {
+        ready && selectedSurface == .project && projectCurrent && !busy && !retryNeeded && !taskPresented
+            && !projectRenameEditing
+    }
+    var projectRenameOpenEnabled: Bool {
+        projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && projectRenameRequest == nil
+    }
+    var projectRenameInputEnabled: Bool {
+        ready && selectedSurface == .project && projectRenameEditing && projectRenameOptionsCurrent
+            && projectRenameOptions.flag("canRename") && projectRenameReadError == nil
+            && !busy && !retryNeeded && projectRenameRequest == nil
+    }
+    var projectRenameCanSave: Bool { projectRenameInputEnabled && !projectRenameTitle.isEmpty }
+    var projectRenamePending: Bool { projectRenameRequest != nil }
+    var projectFlowPending: Bool { projectFlowRequest != nil }
+    var projectStatusPending: Bool { projectStatusRequest != nil }
+    var projectDatePending: Bool { projectDateRequest != nil }
+    var projectSectionPending: Bool {
+        projectSectionRequest != nil || projectSectionRenameRequest != nil || projectSectionDeleteRequest != nil
+    }
+    var projectSectionRows: [CoreObject] { projectSectionOptions.objects("sections") }
+    var projectSectionCloseEnabled: Bool { !busy && !retryNeeded && !projectSectionPending }
+    private var projectSectionOptionsFresh: Bool {
+        projectSectionOptionsCurrent && selectedSurface == .project && projectCurrent
+            && projectSectionOptions.object("project").text("id") == projectHeader.text("id")
+            && projectSectionOptions.text("revision") == projectDetail.text("mutationRevision")
+    }
+    private var projectSectionRenameOptionsFresh: Bool {
+        guard let sectionID = projectSectionEditID else { return false }
+        return projectSectionRenameOptionsCurrent && projectSectionOptionsFresh
+            && projectSectionRenameOptions.text("revision") == projectDetail.text("mutationRevision")
+            && projectSectionRenameOptions.object("project").text("id") == projectHeader.text("id")
+            && projectSectionRenameOptions.object("section").text("id") == sectionID
+    }
+    private var projectSectionDeleteOptionsFresh: Bool {
+        guard let sectionID = projectSectionDeleteReadyID else { return false }
+        return projectSectionDeleteOptionsCurrent && projectSectionOptionsFresh
+            && projectSectionDeleteOptions.text("revision") == projectDetail.text("mutationRevision")
+            && projectSectionDeleteOptions.object("project").text("id") == projectHeader.text("id")
+            && projectSectionDeleteOptions.object("section").text("id") == sectionID
+            && projectSectionDeleteOptions.flag("canDelete")
+    }
+    var projectSectionAddEnabled: Bool {
+        projectSectionsPresented && !projectSectionEditing && projectSectionOptionsFresh
+            && projectSectionOptions.flag("canCreate") && projectSectionCloseEnabled
+    }
+    func projectSectionEditEnabled(_ id: String) -> Bool {
+        projectSectionsPresented && !projectSectionEditing && projectSectionOptionsFresh
+            && projectSectionOptions.flag("canCreate") && projectSectionCloseEnabled
+            && projectSectionRows.contains { $0.text("id") == id }
+    }
+    func projectSectionDeleteEnabled(_ id: String) -> Bool {
+        projectSectionsPresented && !projectSectionEditing && projectSectionOptionsFresh
+            && projectSectionOptions.flag("canCreate") && projectSectionCloseEnabled
+            && projectSectionRows.contains { $0.text("id") == id }
+    }
+    func projectSectionDeleteConfirmationReady(_ id: String) -> Bool {
+        projectSectionDeleteReadyID == id && projectSectionDeleteOptionsFresh
+            && projectSectionsPresented && !projectSectionEditing && projectSectionCloseEnabled
+    }
+    var projectSectionReadRetryVisible: Bool {
+        projectSectionsPresented && !projectSectionPending
+            && (!projectSectionOptionsFresh || (projectSectionEditID != nil && !projectSectionRenameOptionsFresh)
+                || projectSectionReadError != nil)
+    }
+    var projectSectionInputEnabled: Bool {
+        projectSectionsPresented && projectSectionEditing && projectSectionOptionsFresh
+            && projectSectionOptions.flag("canCreate") && projectSectionReadError == nil
+            && (projectSectionEditID == nil ||
+                (projectSectionRenameOptionsFresh && projectSectionRenameOptions.flag("canRename")))
+            && !busy && !retryNeeded && !projectSectionPending
+    }
+    var projectSectionCanSave: Bool {
+        let title = projectSectionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return projectSectionInputEnabled && !title.isEmpty && title.utf16.count <= 100_000
+    }
+    var projectSectionOpenTapEnabled: Bool {
+        ready && selectedSurface == .project && projectCurrent && !retryNeeded && !taskPresented
+            && !projectRenameEditing && !capturePresented && !areaPickerPresented
+            && !areaManagerPresented && !morePresented && !projectSectionsPresented
+            && !projectSectionPending
+    }
+    var projectDateTapEnabled: Bool {
+        ready && selectedSurface == .project && !retryNeeded && !taskPresented
+            && !projectRenameEditing && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && projectDateRequest == nil
+    }
+    var projectDateOpenEnabled: Bool { projectDateTapEnabled && projectActionsEnabled }
+    var projectDateDoneEnabled: Bool {
+        projectDateField != nil && projectDateOptionsCurrent && projectDateOptions.flag("canEdit")
+            && projectDateReadError == nil && projectDateRequest == nil && !busy && !retryNeeded
+            && projectCurrent && projectDateOptions.text("revision") == projectDetail.text("mutationRevision")
+    }
+    var projectStatusSelectedStatus: String { projectStatusOptions.object("project").text("status") }
+    var projectStatusOpenTapEnabled: Bool {
+        ready && selectedSurface == .project && !retryNeeded && !taskPresented
+            && !projectRenameEditing && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && projectStatusRequest == nil
+    }
+    var projectStatusPickTapEnabled: Bool {
+        projectStatusOpen && projectStatusReadError == nil && !retryNeeded
+            && projectStatusRequest == nil && !projectStatusOptions.object("project").isEmpty
+    }
+    var projectStatusOpenEnabled: Bool {
+        projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && projectStatusRequest == nil
+    }
+    var projectNotesWritePending: Bool { projectNotesWriteRequest != nil }
+    var projectNotesEditReady: Bool { projectNotesEditLoaded }
+    var projectNotesDirty: Bool { projectNotesEditLoaded && projectNotesDraft != (projectNotesEditBaseRaw ?? "") }
+    var projectNotesEditInputEnabled: Bool {
+        projectActionsEnabled && projectNotesExpanded && projectNotesEditMode
+            && projectNotesEditOptionsCurrent && projectNotesEditOptions.flag("canEdit")
+            && projectNotesWriteRequest == nil && projectNotesEditReadError == nil
+            && !projectNotesEditConflict
+    }
+    var projectNotesCanDiscard: Bool {
+        projectNotesDirty && (projectNotesEditError != nil || projectNotesEditConflict)
+            && projectNotesWriteRequest == nil && !retryNeeded && !busy
+    }
+    var projectFlowInputEnabled: Bool {
+        projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && projectFlowRequest == nil && projectFlowReadError == nil
+    }
+    var projectCreateInputEnabled: Bool {
+        ready && selectedSurface == .projects && !busy && !retryNeeded && projectCreateRequest == nil
+            && projectFocusRequest == nil
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaDeleteRequest == nil && !areaManagerPresented
+            && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
+    }
+    var projectCreateCanSubmit: Bool {
+        projectCreateInputEnabled && projectCreateOptionsCurrent && projectCreateReadError == nil
+            && !projectCreateTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (projectCreateAreaID.map { id in projectCreateOptions.objects("areas")
+                .contains(where: { $0.text("id") == id }) } ?? true)
+    }
+    var projectCreatePending: Bool { projectCreateRequest != nil }
+    var projectFocusPending: Bool { projectFocusRequest != nil }
+    var projectFocusInputEnabled: Bool {
+        projectCreateInputEnabled && projectFocusReadError == nil
+    }
+    var areaCreatePending: Bool { areaCreateRequest != nil }
+    var areaColorPending: Bool { areaColorRequest != nil }
+    var areaOrderPending: Bool { areaOrderRequest != nil }
+    var areaDeletePending: Bool { areaDeleteRequest != nil }
+    private var areaManagerOptionsCurrent: Bool {
+        areaCreateOptionsCurrent && areaColorOptionsCurrent && areaOrderOptionsCurrent && areaDeleteOptionsCurrent
+    }
+    var areaCreateInputEnabled: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaDeleteRequest == nil
+            && areaManagerOptionsCurrent
+    }
+    var areaCreateCanSubmit: Bool {
+        areaCreateInputEnabled && areaCreateOptionsCurrent && areaCreateReadError == nil
+            && !areaCreateNameChecking && !areaCreateNameTaken
+            && !areaCreateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (areaCreateOptions["colors"] as? [String])?.contains(areaCreateColor) == true
+    }
+    var areaManagerAreas: [CoreObject] {
+        areaDeleteOptionsCurrent ? areaDeleteOptions.objects("areas")
+            : areaOrderOptionsCurrent ? areaOrderOptions.objects("areas")
+            : areaColorOptionsCurrent ? areaColorOptions.objects("areas") : areaCreateOptions.objects("areas")
+    }
+    var areaColorInputEnabled: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaDeleteRequest == nil
+            && areaManagerOptionsCurrent && areaColorReadError == nil
+    }
+    var areaOrderInputEnabled: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaDeleteRequest == nil
+            && areaManagerOptionsCurrent && areaOrderReadError == nil
+    }
+    var areaDeleteInputEnabled: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaDeleteRequest == nil && areaManagerOptionsCurrent && areaDeleteReadError == nil
+    }
+    var contextsControlsEnabled: Bool {
+        ready && selectedSurface == .contexts && !contexts.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented
+    }
+    var contextsActionsEnabled: Bool { contextsControlsEnabled && contextsCurrent }
+    var waitingActionsEnabled: Bool {
+        ready && selectedSurface == .waiting && waitingCurrent && !busy && !retryNeeded && !taskPresented
+    }
+    var somedayActionsEnabled: Bool {
+        ready && selectedSurface == .someday && somedayCurrent && !busy && !retryNeeded && !taskPresented
+    }
+    var somedayPickerActionsEnabled: Bool { somedayActionsEnabled && somedayPickerCurrent }
+    var referenceActionsEnabled: Bool {
+        ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
+    }
+    var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
+    var historyArchived: Bool { historyTabs.text("tab") == "archived" }
+    var historyPrefix: String { historyArchived ? "archive" : "done" }
+    private var historyReadName: String { historyArchived ? "archive" : "done" }
+    var historyActionsEnabled: Bool {
+        ready && selectedSurface == .history && historyCurrent && !busy && !retryNeeded && !taskPresented
+    }
+    var historyPickerActionsEnabled: Bool { historyActionsEnabled && historyPickerCurrent }
+    var trashActionsEnabled: Bool {
+        ready && selectedSurface == .trash && trashCurrent && !busy && !retryNeeded && !taskPresented
+    }
+    var quickAccessView: String { moreMenu.text("quickAccessView") }
+    var quickAccessLabel: String {
+        label(quickAccessView == "review" ? "tab.review" : quickAccessView == "projects" ? "projects.title" : "nav." + quickAccessView)
+    }
+    private var captureIsCurrent: Bool {
+        previewedText == draft && capture.object("options").text("note") == noteDraft
+    }
+    var canSave: Bool { !busy && !retryNeeded && !contextPickerPresented && captureIsCurrent && capture.flag("canSave") }
+    var contextPickerReady: Bool {
+        !busy && !retryNeeded && captureIsCurrent && capture.object("picker").text("kind") == "context"
+            && capture.object("picker").text("query") == contextQuery
+    }
+    func label(_ key: String) -> String { strings.text(key) }
+    var taskDirty: Bool {
+        !taskEditor.isEmpty && ((taskSaveFields + taskRecurrenceFields).contains { !taskDraftValuesEqual(taskDraft[$0], taskOriginalDraft[$0]) }
+            || !taskDraftValuesEqual(taskDraft["relativeStartOffset"], taskOriginalDraft["relativeStartOffset"])
+            || !taskDraftValuesEqual(taskDraft["status"], taskOriginalDraft["status"])
+            || !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
+            || taskChecklistInputs.contains { entry in
+                entry.key < taskChecklist.count && entry.value != taskChecklist[entry.key].text("title")
+            }
+            || !taskChecklistAppendInput.isEmpty
+            || taskSchedulePending || taskEstimatePending || taskTokenFields.contains { taskTokenResolvedInputs[$0] != taskTokenInputs[$0] })
+    }
+    var taskDestinationActionsEnabled: Bool {
+        taskPresented && !taskDestinationKind.isEmpty && taskDestinationCurrent && !busy && !retryNeeded
+            && !taskEditor.flag("readOnly") && !taskDestination.flag("readOnly")
+            && taskDestination.text("id") == viewedTaskID
+            && taskDestination.text("query") == taskDestinationQuery
+            && (try? json(taskDraft)) == taskDestinationDraftIdentity
+    }
+    private var taskDraft: CoreObject {
+        var draft = taskEditor.object("draft")
+        draft["title"] = taskTitleDraft
+        draft["description"] = taskNoteDraft
+        for field in taskTokenFields {
+            if let canonical = taskTokenCanonical[field] { draft[field] = canonical }
+        }
+        return draft
+    }
+    private func taskEditRequest(_ edit: CoreObject? = nil) -> CoreObject {
+        var request: CoreObject = ["id": viewedTaskID, "draft": taskDraft]
+        if taskChecklistLoaded { request["checklist"] = taskChecklist }
+        if let edit { request["edit"] = edit }
+        return request
+    }
+    private var taskEstimatePending: Bool {
+        taskEditor.object("fields").object("timeEstimate").flag("customSelected")
+            && taskEstimateInput != taskEstimateResolvedInput
+    }
+
+    func start() async {
+        guard !busy else { return }
+        #if targetEnvironment(simulator) || (DEBUG && NATIVE_DEVICE_TEST)
+        #if !targetEnvironment(simulator)
+        // Device alpha builds must never open under the installed RN identity.
+        guard Bundle.main.bundleIdentifier == "tech.dongdongbh.mindwtr.native.dev" else {
+            error = "Physical testing requires the isolated native development app."
+            return
+        }
+        #endif
+        busy = true
+        error = nil
+        var boardTaskOpened = false
+        defer {
+            finishOperation()
+            if boardTaskOpened { Task { await readTaskView() } }
+        }
+        do {
+            if host == nil {
+                guard let bundle = Bundle.main.url(forResource: "core-host", withExtension: "js") else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+                let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                    appropriateFor: nil, create: true)
+                #if DEBUG && targetEnvironment(simulator)
+                let arguments = ProcessInfo.processInfo.arguments
+                let testLibraryPositions = arguments.indices.filter { arguments[$0] == "--native-ui-test-library" }
+                if let position = testLibraryPositions.first {
+                    guard testLibraryPositions.count == 1, !arguments.contains("--native-rn-rehearsal"),
+                          position + 1 < arguments.count,
+                          let identifier = UUID(uuidString: arguments[position + 1]),
+                          identifier.uuidString.lowercased() == arguments[position + 1] else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let testRoot = support.appendingPathComponent("NativeUITests", isDirectory: true)
+                    try FileManager.default.createDirectory(at: testRoot, withIntermediateDirectories: true)
+                    guard try testRoot.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let directory = testRoot.appendingPathComponent(identifier.uuidString.lowercased(), isDirectory: true)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    guard try directory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    guard let isolatedDefaults = UserDefaults(suiteName: "nativeUITests.\(identifier.uuidString.lowercased())") else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    preferenceDefaults = isolatedDefaults
+                    host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
+                } else if arguments.contains("--native-rn-rehearsal") {
+                    // An explicitly staged copy only. Never select the live RN container.
+                    let container = support.appendingPathComponent("NativeRNRehearsal", isDirectory: true)
+                    let database = container.appendingPathComponent("Documents/SQLite/mindwtr.db")
+                    guard try container.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true,
+                          try database.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey]).isSymbolicLink != true,
+                          try database.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true,
+                          database.resolvingSymlinksInPath().path == container.resolvingSymlinksInPath()
+                            .appendingPathComponent("Documents/SQLite/mindwtr.db").path,
+                          let identifier = Bundle.main.bundleIdentifier else { throw CocoaError(.fileReadCorruptFile) }
+                    let legacy = try LegacyRNStorage(containerURL: container, bundleIdentifier: identifier)
+                    storedLanguage = try legacy.value(forKey: "mindwtr-language") ?? ""
+                    storedTheme = try legacy.value(forKey: "@mindwtr_theme") ?? ""
+                    initialAddAnother = try legacy.value(forKey: "mindwtr:quickCapture:addAnother") == "true"
+                    preference = "nativeRNRehearsal.capture.addAnother"
+                    host = CoreHost(databaseURL: database, bundleURL: bundle, legacyStorage: legacy)
+                }
+                #endif
+                if host == nil {
+                    let directory = support.appendingPathComponent("NativeFoundation", isDirectory: true)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
+                }
+            }
+            let startup = try decode(await host!.start())
+            let recovery = startup.object("recovery")
+            if recovery.text("method") == "boardCommit" {
+                // Keep the durable acknowledgement if a later startup read fails.
+                boardRecoveredResult = recovery.object("result")
+            } else if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(recovery.text("method")) {
+                calendarComposerRecoveredResult = recovery.object("result")
+            } else if recovery.text("method") == "mindSweepCommit" {
+                mindSweepRecoveredResult = recovery.object("result")
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
+                       "areaDeleteCommit"].contains(recovery.text("method")) {
+                // The host already verified the durable row. Reopen the list;
+                // there is no project-detail navigation for quick add.
+                selectedSurface = .projects
+            } else if recovery.text("method") == "inboxPreparedCommit" {
+                // The durable data recovered, but the in-memory queue did not.
+                selectedSurface = .inbox
+            }
+            _ = try await query("language", [storedLanguage, Locale.preferredLanguages.first ?? Locale.current.identifier])
+            let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
+                        "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading",
+                        "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
+                        "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
+                        "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
+                        "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
+                        "common.save", "common.edit", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
+                        "markdown.edit", "markdown.preview", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
+                        "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
+                        "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators",
+                        "search.hiddenCompletedMatches", "filters.label", "common.clear", "review.markDone",
+                        "nav.projects", "nav.review", "nav.calendar", "nav.board", "nav.contexts", "common.back", "common.tasks",
+                        "task.aria.openContext", "task.aria.openTag",
+                        "projects.title", "projects.activeSection", "projects.deferredSection", "projects.closed",
+                        "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
+                        "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.areaLabel",
+                        "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
+                        "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
+                        "projects.projectTypeHelpText", "projects.sequentialScopeHelpText",
+                        "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
+                        "projects.reviewAt", "common.none",
+                        "project.notes",
+                        "areas.manage", "areas.nameExists", "projects.changeColor", "projects.colorNone",
+                        "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.areaInUse",
+                        "common.delete",
+                        "projects.addToFocus", "projects.removeFromFocus", "projects.actionsLabel", "waiting.title",
+                        "someday.title", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
+                        "filters.more", "filters.priority", "filters.remove", "filters.active", "filters.clear", "taskEdit.energyLevel",
+                        "taskEdit.locationLabel", "taskEdit.locationPlaceholder", "reference.title", "nav.history", "nav.trash",
+                        "filters.matchAny", "filters.contextMatchMode", "filters.tagMatchMode",
+                        "sort.label", "list.groupBy", "taskEdit.moreOptions", "dailyReview.completeDesc"]
+            strings = try await query("strings", [try json(keys)]).object("strings")
+            theme = try await query("theme", [storedTheme])
+            if boardRecoveredResult != nil { selectedSurface = .board }
+            if calendarComposerRecoveredResult != nil { selectedSurface = .calendar }
+            if mindSweepRecoveredResult != nil { selectedSurface = .inbox }
+            try await readSelectedSurface()
+            ready = true
+            retryNeeded = false
+            if let result = boardRecoveredResult {
+                boardTaskOpened = presentAcknowledgedBoardTask(result)
+                boardRecoveredResult = nil
+            }
+            if let result = calendarComposerRecoveredResult {
+                await acknowledgeCalendarComposerSave(result)
+                calendarComposerRecoveredResult = nil
+            }
+            mindSweepRecoveredResult = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+        #else
+        error = "This build is not enabled for physical-device testing."
+        #endif
+    }
+
+    func refresh() async {
+        if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
+        guard ready, !retryNeeded, !capturePresented, !taskPresented, !calendarItemPresented,
+              !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
+              !projectRenameEditing else { return }
+        guard !busy else { refreshRequested = true; return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            theme = try await query("theme", [storedTheme])
+            try await readSelectedSurface()
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func selectSurface(_ surface: Surface) async {
+        if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
+              !projectRenameEditing else { return }
+        morePresented = false
+        guard selectedSurface != surface else { return }
+        selectedSurface = surface
+        await refresh()
+    }
+
+    func toggleMore() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !calendarComposerPresented, !mindSweepPresented, !processInboxPresented,
+              !projectRenameEditing else { return }
+        if morePresented { morePresented = false; return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            moreMenu = try await query("menuRead", ["more", "{}"])
+            morePresented = true
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func closeMore() {
+        guard !busy, !retryNeeded else { return }
+        morePresented = false
+    }
+
+    func openProjects() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !projectRenameEditing else { return }
+        morePresented = false
+        selectedSurface = .projects
+        await refresh()
+    }
+
+    func setProjectCreateTitle(_ value: String) {
+        guard projectCreateInputEnabled else { return }
+        projectCreateTitle = value
+        projectCreateError = nil
+    }
+
+    func selectProjectCreateArea(_ id: String?) {
+        guard projectCreateInputEnabled else { return }
+        if let id {
+            guard projectCreateOptions.objects("areas").contains(where: { $0.text("id") == id }) else { return }
+        }
+        projectCreateAreaID = id
+        projectCreateError = nil
+    }
+
+    func beginProjectCreate() -> Bool {
+        guard projectCreateCanSubmit else { return false }
+        let id = UUID().uuidString.lowercased()
+        let request: String
+        do {
+            request = try json(["requestId": id, "title": projectCreateTitle,
+                                "areaId": projectCreateAreaID as Any? ?? NSNull()])
+        } catch {
+            projectCreateError = error.localizedDescription
+            return false
+        }
+        projectCreateRequest = request
+        projectCreateRequestID = id
+        busy = true
+        projectCreateError = nil
+        error = nil
+        return true
+    }
+
+    func addProject() async {
+        guard busy, let request = projectCreateRequest else { return }
+        defer { finishOperation() }
+        let result: CoreObject
+        do { result = try await query("projectCreate", [request]) }
+        catch { await handleProjectCreateWriteError(error); return }
+        do { try acknowledgeProjectCreate(result, retrying: false) }
+        catch { await handleProjectCreateWriteError(error); return }
+        do { try await readSelectedSurface() }
+        catch {
+            // The write was acknowledged and its UUID must never be submitted
+            // again merely because the subsequent list/options read failed.
+            projectCreateReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    func retryProjectCreateRead() async {
+        guard ready, selectedSurface == .projects, !busy, !retryNeeded, projectCreateRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readSelectedSurface()
+            projectCreateReadError = nil
+            error = nil
+        } catch {
+            projectCreateReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectCreate(_ result: CoreObject, retrying: Bool) throws {
+        guard let id = projectCreateRequestID, projectCreateRequest != nil,
+              result.count == 2, let created = result["created"] as? Bool,
+              !result.text("id").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        guard created ? result.text("id") == id : (!retrying || result.text("id") == id) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectCreateRequest = nil
+        projectCreateRequestID = nil
+        retryNeeded = false
+        projectCreateTitle = ""
+        projectCreateAreaID = projectCreateOptions["defaultAreaId"] as? String
+        projectCreateError = nil
+        projectCreateReadError = nil
+        error = nil
+    }
+
+    private func handleProjectCreateWriteError(_ failure: Error) async {
+        if projectCreateRequest != nil && isDefiniteRejection(failure) {
+            projectCreateRequest = nil
+            projectCreateRequestID = nil
+            retryNeeded = false
+            projectCreateError = failure.localizedDescription
+            error = nil
+            do { try await readProjectCreateOptions() }
+            catch { projectCreateReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectCreateRequest != nil
+            projectCreateError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func readProjectCreateOptions() async throws {
+        projectCreateOptionsCurrent = false
+        let options = try await query("projectCreateOptions")
+        guard !options.text("revision").isEmpty, !options.text("areaFilterValue").isEmpty,
+              !options.text("noAreaLabel").isEmpty,
+              options["defaultAreaId"] is NSNull || options["defaultAreaId"] is String,
+              let areas = options["areas"] as? [CoreObject],
+              areas.allSatisfy({ !$0.text("id").isEmpty && !$0.text("label").isEmpty
+                  && ($0["color"] is NSNull || $0["color"] is String) }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let token = options.text("areaFilterValue")
+        if projectCreateAreaFilterValue == nil || projectCreateAreaFilterValue != token {
+            projectCreateAreaID = options["defaultAreaId"] as? String
+        }
+        projectCreateAreaFilterValue = token
+        projectCreateOptions = options
+        projectCreateOptionsCurrent = true
+        projectCreateReadError = nil
+    }
+
+    private func readProjectsWithCreateOptions() async throws {
+        projectCreateOptionsCurrent = false
+        do {
+            projects = try await query("projects")
+            try await readProjectCreateOptions()
+            projectFocusReadError = nil
+        } catch {
+            projectCreateReadError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func setProjectFocus(_ displayed: CoreObject) async {
+        guard projectFocusInputEnabled, !displayed.text("id").isEmpty else { return }
+        busy = true
+        projectFocusError = nil
+        defer { finishOperation() }
+        let id = displayed.text("id")
+        let selected: CoreObject
+        do {
+            let options = try await query("projectFocusOptions", [try json(["projectId": id])])
+            let project = options.object("project")
+            guard options.count == 4, !options.text("revision").isEmpty,
+                  project.count == 7, project.text("id") == id,
+                  project["title"] is String, !project.text("status").isEmpty,
+                  !project.text("updatedAt").isEmpty,
+                  let focused = project["isFocused"] as? NSNumber,
+                  CFGetTypeID(focused) == CFBooleanGetTypeID(),
+                  project["rev"] is Int || project["rev"] is NSNull,
+                  project["revBy"] is String || project["revBy"] is NSNull,
+                  let count = options["focusedProjectCount"] as? NSNumber,
+                  let limit = options["limit"] as? NSNumber,
+                  CFGetTypeID(count) != CFBooleanGetTypeID(),
+                  CFGetTypeID(limit) != CFBooleanGetTypeID(),
+                  count.doubleValue.isFinite, count.doubleValue >= 0,
+                  count.doubleValue.rounded(.towardZero) == count.doubleValue,
+                  limit.doubleValue.isFinite, limit.doubleValue > 0,
+                  limit.doubleValue.rounded(.towardZero) == limit.doubleValue else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            selected = project
+        } catch {
+            projectFocusReadError = error.localizedDescription
+            do { try await readSelectedSurface() }
+            catch { projectFocusReadError = error.localizedDescription }
+            return
+        }
+        guard selected.text("title") == displayed.text("title"),
+              selected.text("status") == displayed.text("status"),
+              selected.flag("isFocused") == displayed.flag("isFocused") else {
+            do { try await readSelectedSurface() }
+            catch { projectFocusReadError = error.localizedDescription }
+            return
+        }
+        let desired = !displayed.flag("isFocused")
+        let request: String
+        do {
+            let expected: CoreObject = ["title": selected.text("title"), "status": selected.text("status"),
+                                        "isFocused": selected["isFocused"]!, "rev": selected["rev"]!,
+                                        "revBy": selected["revBy"]!, "updatedAt": selected.text("updatedAt")]
+            request = try json(["requestId": UUID().uuidString.lowercased(), "projectId": id,
+                                "focused": desired, "expected": expected])
+            projectFocusRequest = request
+            projectFocusExpectedID = id
+            projectFocusDesired = desired
+        } catch {
+            projectFocusReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectFocusWrite", [request]) }
+        catch { await handleProjectFocusWriteError(error); return }
+        do { try acknowledgeProjectFocus(result) }
+        catch { await handleProjectFocusWriteError(error); return }
+        do { try await readSelectedSurface() }
+        catch {
+            projectFocusReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectFocus(_ result: CoreObject) throws {
+        guard projectFocusRequest != nil, let id = projectFocusExpectedID,
+              let desired = projectFocusDesired else { throw CocoaError(.coderReadCorrupt) }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            guard result.count == 2, result.text("id") == id,
+                  let focused = result["focused"] as? NSNumber,
+                  CFGetTypeID(focused) == CFBooleanGetTypeID(), focused.boolValue == desired else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            focusCurrent = false
+            focusNeedsRead = true
+        }
+        projectFocusRequest = nil
+        projectFocusExpectedID = nil
+        projectFocusDesired = nil
+        retryNeeded = false
+        projectFocusError = nil
+        projectFocusReadError = nil
+        error = nil
+    }
+
+    private func handleProjectFocusWriteError(_ failure: Error) async {
+        if projectFocusRequest != nil && isDefiniteRejection(failure) {
+            projectFocusRequest = nil
+            projectFocusExpectedID = nil
+            projectFocusDesired = nil
+            retryNeeded = false
+            projectFocusError = failure.localizedDescription
+            error = nil
+            do { try await readSelectedSurface() }
+            catch { projectFocusReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectFocusRequest != nil
+            projectFocusError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryProjectFocusRead() async {
+        guard ready, selectedSurface == .projects, !areaManagerPresented, !busy, !retryNeeded,
+              projectFocusRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readSelectedSurface()
+            projectFocusReadError = nil
+            error = nil
+        } catch { projectFocusReadError = error.localizedDescription }
+    }
+
+    func openProjectRename() async {
+        guard await flushProjectNotesEdit() else { return }
+        guard projectRenameOpenEnabled, !projectHeader.text("id").isEmpty else { return }
+        busy = true
+        projectRenameError = nil
+        defer { finishOperation() }
+        let visibleTitle = projectHeader.text("title")
+        let visibleStatus = projectHeader.text("status")
+        do {
+            try await readProjectRenameOptions()
+            if projectHeader.text("title") != visibleTitle
+                || (!visibleStatus.isEmpty && projectHeader.text("status") != visibleStatus) {
+                try await readSelectedSurface()
+                return
+            }
+            guard projectRenameOptions.flag("canRename") else { return }
+            projectRenameTitle = visibleTitle
+            projectRenameEditing = true
+        } catch {
+            projectRenameReadError = error.localizedDescription
+            do { try await readSelectedSurface() }
+            catch { projectRenameReadError = error.localizedDescription }
+        }
+    }
+
+    func setProjectRenameTitle(_ value: String) {
+        guard projectRenameInputEnabled, value != projectRenameTitle else { return }
+        projectRenameTitle = value
+        projectRenameError = nil
+    }
+
+    func cancelProjectRename() {
+        guard projectRenameEditing, !busy, !retryNeeded, projectRenameRequest == nil else { return }
+        projectRenameEditing = false
+        projectRenameTitle = ""
+        projectRenameError = nil
+        projectRenameOptionsCurrent = false
+    }
+
+    func saveProjectRename() async {
+        guard projectRenameCanSave else { return }
+        busy = true
+        projectRenameError = nil
+        defer { finishOperation() }
+        let project = projectRenameOptions.object("project")
+        let id = project.text("id")
+        let request: String
+        do {
+            let expected: CoreObject = ["title": project.text("title"), "status": project.text("status"),
+                                        "rev": project["rev"]!, "revBy": project["revBy"]!,
+                                        "updatedAt": project.text("updatedAt")]
+            request = try json(["requestId": UUID().uuidString.lowercased(), "projectId": id,
+                                "title": projectRenameTitle, "expected": expected])
+            projectRenameRequest = request
+            projectRenameExpectedID = id
+        } catch {
+            projectRenameError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectRenameWrite", [request]) }
+        catch { await handleProjectRenameWriteError(error); return }
+        do { try acknowledgeProjectRename(result) }
+        catch { await handleProjectRenameWriteError(error); return }
+        do { try await refreshProjectRenameAfterWrite() }
+        catch {
+            projectRenameReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectRename(_ result: CoreObject) throws {
+        guard projectRenameRequest != nil, let id = projectRenameExpectedID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            guard result.count == 2, result.text("id") == id,
+                  let title = result["title"] as? String else { throw CocoaError(.coderReadCorrupt) }
+            projectHeader["title"] = title
+        }
+        projectRenameRequest = nil
+        projectRenameExpectedID = nil
+        projectRenameOptionsCurrent = false
+        projectRenameEditing = false
+        projectRenameTitle = ""
+        retryNeeded = false
+        projectRenameError = nil
+        projectRenameReadError = nil
+        error = nil
+    }
+
+    private func handleProjectRenameWriteError(_ failure: Error) async {
+        if projectRenameRequest != nil && isDefiniteRejection(failure) {
+            projectRenameRequest = nil
+            projectRenameExpectedID = nil
+            projectRenameOptionsCurrent = false
+            retryNeeded = false
+            projectRenameError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectRenameAfterWrite() }
+            catch { projectRenameReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectRenameRequest != nil
+            projectRenameError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func readProjectRenameOptions() async throws {
+        projectRenameOptionsCurrent = false
+        let id = projectHeader.text("id")
+        let options = try await query("projectRenameOptions", [try json(["projectId": id])])
+        let project = options.object("project")
+        guard options.count == 3, !options.text("revision").isEmpty,
+              let canRename = options["canRename"] as? NSNumber,
+              CFGetTypeID(canRename) == CFBooleanGetTypeID(),
+              project.count == 6, project.text("id") == id,
+              project["title"] is String, !project.text("status").isEmpty,
+              !project.text("updatedAt").isEmpty,
+              project["rev"] is Int || project["rev"] is NSNull,
+              project["revBy"] is String || project["revBy"] is NSNull else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectHeader["title"] = project.text("title")
+        projectHeader["status"] = project.text("status")
+        projectRenameOptions = options
+        projectRenameOptionsCurrent = true
+        projectRenameReadError = nil
+        if !canRename.boolValue && projectRenameEditing {
+            projectRenameEditing = false
+            projectRenameTitle = ""
+        }
+    }
+
+    private func refreshProjectRenameAfterWrite() async throws {
+        try await readProjectRenameOptions()
+        try await readSelectedSurface()
+    }
+
+    func retryProjectRenameRead() async {
+        guard ready, selectedSurface == .project, !busy, !retryNeeded,
+              projectRenameRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectRenameAfterWrite()
+            projectRenameReadError = nil
+            error = nil
+        } catch { projectRenameReadError = error.localizedDescription }
+    }
+
+    func toggleProjectType() async {
+        await changeProjectFlow(["kind": "toggleType"])
+    }
+
+    func setProjectScope(_ scope: String) async {
+        guard scope == "project" || scope == "section" else { return }
+        await changeProjectFlow(["kind": "setScope", "scope": scope])
+    }
+
+    private func changeProjectFlow(_ action: CoreObject) async {
+        guard await flushProjectNotesEdit() else { return }
+        guard projectFlowInputEnabled else { return }
+        let id = projectHeader.text("id")
+        let visibleRevision = projectDetail.text("mutationRevision")
+        guard !id.isEmpty, projectDetail.text("projectId") == id, !visibleRevision.isEmpty else { return }
+        busy = true
+        projectFlowError = nil
+        defer { finishOperation() }
+        let options: CoreObject
+        let project: CoreObject
+        do {
+            options = try await query("projectFlowOptions", [try json(["projectId": id])])
+            project = options.object("project")
+            guard options.count == 3, !options.text("revision").isEmpty,
+                  let canChange = options["canChange"] as? NSNumber,
+                  CFGetTypeID(canChange) == CFBooleanGetTypeID(),
+                  project.count == 8, project.text("id") == id,
+                  project["title"] is String, !project.text("status").isEmpty,
+                  !project.text("updatedAt").isEmpty,
+                  project["rev"] is Int || project["rev"] is NSNull,
+                  project["revBy"] is String || project["revBy"] is NSNull,
+                  project["isSequential"] is NSNull ||
+                    (project["isSequential"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true,
+                  project["sequentialScope"] is NSNull ||
+                    ["project", "section"].contains(project["sequentialScope"] as? String ?? "") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            guard options.text("revision") == visibleRevision,
+                  projectDetail.text("mutationRevision") == visibleRevision,
+                  projectDetail.text("projectId") == id,
+                  projectHeader.text("id") == id, projectCurrent else {
+                try await refreshProjectFlowAfterWrite()
+                return
+            }
+            guard canChange.boolValue else {
+                try await refreshProjectFlowAfterWrite()
+                return
+            }
+        } catch {
+            projectFlowReadError = error.localizedDescription
+            return
+        }
+        let request: String
+        do {
+            let expected: CoreObject = [
+                "title": project.text("title"), "status": project.text("status"),
+                "isSequential": project["isSequential"]!, "sequentialScope": project["sequentialScope"]!,
+                "rev": project["rev"]!, "revBy": project["revBy"]!, "updatedAt": project.text("updatedAt")
+            ]
+            let beforeSequential = (project["isSequential"] as? NSNumber)?.boolValue ?? false
+            let afterSequential = action.text("kind") == "toggleType" ? !beforeSequential : beforeSequential
+            let afterScope: Any = action.text("kind") == "setScope"
+                ? action.text("scope") : project["sequentialScope"]!
+            request = try json(["requestId": UUID().uuidString.lowercased(), "projectId": id,
+                                "action": action, "expected": expected])
+            projectFlowRequest = request
+            projectFlowExpectedResult = ["id": id, "isSequential": afterSequential,
+                                         "sequentialScope": afterScope]
+        } catch {
+            projectFlowReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectFlowWrite", [request]) }
+        catch { await handleProjectFlowWriteError(error); return }
+        do { try acknowledgeProjectFlow(result) }
+        catch { await handleProjectFlowWriteError(error); return }
+        do { try await refreshProjectFlowAfterWrite() }
+        catch {
+            projectFlowReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectFlow(_ result: CoreObject) throws {
+        guard projectFlowRequest != nil, let expected = projectFlowExpectedResult else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            guard result.count == 3, result.text("id") == expected.text("id"),
+                  let sequential = result["isSequential"] as? NSNumber,
+                  CFGetTypeID(sequential) == CFBooleanGetTypeID(),
+                  sequential.boolValue == expected.flag("isSequential"),
+                  result["sequentialScope"] is NSNull ||
+                    ["project", "section"].contains(result["sequentialScope"] as? String ?? ""),
+                  (result["sequentialScope"] as? String) == (expected["sequentialScope"] as? String) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
+        projectFlowRequest = nil
+        projectFlowExpectedResult = nil
+        retryNeeded = false
+        projectFlowError = nil
+        projectFlowReadError = nil
+        error = nil
+    }
+
+    private func handleProjectFlowWriteError(_ failure: Error) async {
+        if projectFlowRequest != nil && isDefiniteRejection(failure) {
+            projectFlowRequest = nil
+            projectFlowExpectedResult = nil
+            retryNeeded = false
+            projectFlowError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectFlowAfterWrite() }
+            catch { projectFlowReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectFlowRequest != nil
+            projectFlowError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshProjectFlowAfterWrite() async throws {
+        try await readSelectedSurface()
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == projectHeader.text("id") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func retryProjectFlowRead() async {
+        guard ready, selectedSurface == .project, !busy, !retryNeeded,
+              projectFlowRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectFlowAfterWrite()
+            projectFlowReadError = nil
+            error = nil
+        } catch { projectFlowReadError = error.localizedDescription }
+    }
+
+    func openProjectStatus() async {
+        let id = projectHeader.text("id")
+        let close = projectStatusOpen
+        guard await flushProjectNotesEdit() else { return }
+        guard projectStatusOpenEnabled, projectHeader.text("id") == id else { return }
+        if close { projectStatusOpen = false; return }
+        projectStatusOpen = true
+        busy = true
+        defer { finishOperation() }
+        do { try await readProjectStatusOptions() }
+        catch { projectStatusReadError = error.localizedDescription }
+    }
+
+    func closeProjectStatusSelector() { projectStatusOpen = false }
+
+    private func readProjectStatusOptions() async throws {
+        projectStatusOptionsCurrent = false
+        let id = projectHeader.text("id")
+        guard selectedSurface == .project, projectCurrent, projectDetail.text("projectId") == id,
+              !id.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        for attempt in 0..<2 {
+            let options = try await query("projectStatusOptions", [try json(["projectId": id])])
+            let project = options.object("project")
+            guard options.count == 3, !options.text("revision").isEmpty,
+                  let canChange = options["canChange"] as? NSNumber,
+                  CFGetTypeID(canChange) == CFBooleanGetTypeID(),
+                  project.count == 8, project.text("id") == id,
+                  project["title"] is String,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  project["isFocused"] is NSNull ||
+                    (project["isFocused"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true,
+                  project["cancelledAt"] is String || project["cancelledAt"] is NSNull,
+                  project["rev"] is Int || project["rev"] is NSNull,
+                  project["revBy"] is String || project["revBy"] is NSNull,
+                  !project.text("updatedAt").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
+               projectDetail.text("projectId") == id, projectHeader.text("id") == id {
+                projectStatusOptions = options
+                projectStatusOptionsCurrent = true
+                projectStatusReadError = nil
+                projectStatusError = nil
+                projectStatusOpen = canChange.boolValue
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    func changeProjectStatus(_ status: String) async {
+        let id = projectHeader.text("id")
+        guard projectStatusOpen else { return }
+        guard await flushProjectNotesEdit() else { return }
+        guard ["active", "waiting", "someday"].contains(status), projectStatusOpenEnabled,
+              projectHeader.text("id") == id else { return }
+        busy = true
+        projectStatusError = nil
+        defer { finishOperation() }
+        do {
+            if !projectStatusOptionsCurrent ||
+                projectStatusOptions.text("revision") != projectDetail.text("mutationRevision") {
+                try await readProjectStatusOptions()
+            }
+            let project = projectStatusOptions.object("project")
+            guard projectStatusOptionsCurrent, projectStatusOptions.flag("canChange"),
+                  project.text("id") == id, projectDetail.text("projectId") == id,
+                  projectStatusOptions.text("revision") == projectDetail.text("mutationRevision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if project.text("status") == status {
+                projectStatusOpen = false
+                return
+            }
+            let expected: CoreObject = [
+                "title": project.text("title"), "status": project.text("status"),
+                "isFocused": project["isFocused"]!, "cancelledAt": project["cancelledAt"]!,
+                "rev": project["rev"]!, "revBy": project["revBy"]!,
+                "updatedAt": project.text("updatedAt")
+            ]
+            projectStatusRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                                             "projectId": id, "status": status, "expected": expected])
+            projectStatusExpectedID = id
+            projectStatusExpectedStatus = status
+        } catch {
+            projectStatusReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectStatusWrite", [projectStatusRequest!]) }
+        catch { await handleProjectStatusWriteError(error); return }
+        do { try acknowledgeProjectStatus(result) }
+        catch { await handleProjectStatusWriteError(error); return }
+        do { try await refreshProjectStatusAfterWrite() }
+        catch {
+            projectStatusReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectStatus(_ result: CoreObject) throws {
+        guard projectStatusRequest != nil, let id = projectStatusExpectedID,
+              let status = projectStatusExpectedStatus else { throw CocoaError(.coderReadCorrupt) }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            guard result.count == 3, result.text("id") == id, result.text("status") == status,
+                  result["isFocused"] is NSNull ||
+                    (result["isFocused"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
+        projectStatusRequest = nil
+        projectStatusExpectedID = nil
+        projectStatusExpectedStatus = nil
+        projectStatusOpen = false
+        projectStatusOptionsCurrent = false
+        retryNeeded = false
+        projectStatusError = nil
+        projectStatusReadError = nil
+        error = nil
+    }
+
+    private func handleProjectStatusWriteError(_ failure: Error) async {
+        if projectStatusRequest != nil && isDefiniteRejection(failure) {
+            projectStatusRequest = nil
+            projectStatusExpectedID = nil
+            projectStatusExpectedStatus = nil
+            projectStatusOptionsCurrent = false
+            retryNeeded = false
+            projectStatusError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectStatusAfterWrite() }
+            catch { projectStatusReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectStatusRequest != nil
+            projectStatusError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshProjectStatusAfterWrite() async throws {
+        try await readSelectedSurface()
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == projectHeader.text("id") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func retryProjectStatusRead() async {
+        guard ready, selectedSurface == .project, !busy, !retryNeeded,
+              projectStatusRequest == nil else { return }
+        let reopen = projectStatusOpen
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectStatusAfterWrite()
+            if reopen { try await readProjectStatusOptions() }
+            projectStatusReadError = nil
+            projectStatusError = nil
+            error = nil
+        } catch { projectStatusReadError = error.localizedDescription }
+    }
+
+    func openProjectSections() async {
+        let id = projectHeader.text("id")
+        guard projectSectionOpenTapEnabled,
+              !projectDetail.flag("readOnly") || !projectDetail.object("metadata").objects("sections").isEmpty,
+              await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectSectionOpenTapEnabled, !busy else { return }
+        projectSectionsPresented = true
+        projectSectionEditing = false
+        projectSectionEditID = nil
+        projectSectionTitle = ""
+        projectSectionError = nil
+        projectSectionReadError = nil
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptions = [:]
+        projectSectionDeleteOptionsCurrent = false
+        busy = true
+        defer { finishOperation() }
+        do { try await readProjectSectionOptions(projectID: id) }
+        catch { projectSectionReadError = error.localizedDescription }
+    }
+
+    func closeProjectSections() {
+        guard projectSectionCloseEnabled else { return }
+        projectSectionsPresented = false
+        projectSectionEditing = false
+        projectSectionEditID = nil
+        projectSectionTitle = ""
+        projectSectionError = nil
+        projectSectionReadError = nil
+        projectSectionOptions = [:]
+        projectSectionOptionsCurrent = false
+        projectSectionRenameOptions = [:]
+        projectSectionRenameOptionsCurrent = false
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptions = [:]
+        projectSectionDeleteOptionsCurrent = false
+    }
+
+    func beginProjectSection() {
+        guard projectSectionAddEnabled else { return }
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptionsCurrent = false
+        projectSectionEditing = true
+        projectSectionEditID = nil
+        projectSectionTitle = ""
+        projectSectionError = nil
+    }
+
+    func beginProjectSectionRename(_ sectionID: String) async {
+        let id = projectHeader.text("id")
+        guard projectSectionEditEnabled(sectionID),
+              let row = projectSectionRows.first(where: { $0.text("id") == sectionID }) else { return }
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptionsCurrent = false
+        projectSectionRenameOptions = [:]
+        projectSectionRenameOptionsCurrent = false
+        projectSectionEditID = sectionID
+        projectSectionEditing = true
+        projectSectionTitle = row.text("title")
+        projectSectionError = nil
+        projectSectionReadError = nil
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readProjectSectionRenameOptions(projectID: id, sectionID: sectionID)
+            // This is the opening read, before the editor becomes enabled. A
+            // later explicit Retry never replaces the user's draft.
+            if projectSectionEditID == sectionID {
+                projectSectionTitle = projectSectionRenameOptions.object("section").text("title")
+            }
+        } catch { projectSectionReadError = error.localizedDescription }
+    }
+
+    func cancelProjectSection() {
+        guard projectSectionCloseEnabled else { return }
+        projectSectionEditing = false
+        projectSectionEditID = nil
+        projectSectionTitle = ""
+        projectSectionError = nil
+        projectSectionReadError = nil
+        projectSectionRenameOptions = [:]
+        projectSectionRenameOptionsCurrent = false
+    }
+
+    func setProjectSectionTitle(_ title: String) {
+        guard projectSectionInputEnabled, title != projectSectionTitle else { return }
+        projectSectionTitle = String(title.prefix(100_000))
+    }
+
+    private func readProjectSectionOptions(projectID id: String) async throws {
+        projectSectionOptionsCurrent = false
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == id, projectHeader.text("id") == id,
+              !id.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        for attempt in 0..<2 {
+            let options = try await query("projectSectionOptions", [try json(["projectId": id])])
+            let project = options.object("project")
+            guard options.count == 4, !options.text("revision").isEmpty,
+                  project.count == 3, project.text("id") == id,
+                  project["title"] is String,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  let canCreate = options["canCreate"] as? NSNumber,
+                  CFGetTypeID(canCreate) == CFBooleanGetTypeID(),
+                  canCreate.boolValue == (project.text("status") != "archived"),
+                  let sections = options["sections"] as? [CoreObject],
+                  sections.allSatisfy({ $0.count == 2 && !$0.text("id").isEmpty && $0["title"] is String }),
+                  Set(sections.map { $0.text("id") }).count == sections.count else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
+               projectDetail.text("projectId") == id, projectHeader.text("id") == id {
+                projectSectionOptions = options
+                projectSectionOptionsCurrent = true
+                projectSectionReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func readProjectSectionRenameOptions(projectID id: String, sectionID: String) async throws {
+        projectSectionRenameOptionsCurrent = false
+        guard projectSectionEditID == sectionID, projectSectionOptionsFresh,
+              projectSectionRows.contains(where: { $0.text("id") == sectionID }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        for attempt in 0..<2 {
+            let options = try await query("projectSectionRenameOptions", [try json([
+                "projectId": id, "sectionId": sectionID
+            ])])
+            let project = options.object("project")
+            let section = options.object("section")
+            let token = options.object("token")
+            guard options.count == 5, !options.text("revision").isEmpty,
+                  project.count == 3, project.text("id") == id, project["title"] is String,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  section.count == 2, section.text("id") == sectionID, section["title"] is String,
+                  token.text("id") == sectionID, token.text("projectId") == id,
+                  token["title"] is String, token.text("title") == section.text("title"),
+                  let canRename = options["canRename"] as? NSNumber,
+                  CFGetTypeID(canRename) == CFBooleanGetTypeID(),
+                  !canRename.boolValue || project.text("status") != "archived" else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if options.text("revision") == projectDetail.text("mutationRevision"),
+               projectSectionOptionsFresh, projectSectionEditID == sectionID,
+               projectSectionRows.contains(where: { $0.text("id") == sectionID }) {
+                projectSectionRenameOptions = options
+                projectSectionRenameOptionsCurrent = true
+                projectSectionReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try await readProjectSectionOptions(projectID: id)
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func readProjectSectionDeleteOptions(projectID id: String, sectionID: String) async throws {
+        projectSectionDeleteOptionsCurrent = false
+        guard projectSectionsPresented, !projectSectionEditing, projectSectionOptionsFresh,
+              projectSectionRows.contains(where: { $0.text("id") == sectionID }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        for attempt in 0..<2 {
+            let options = try await query("projectSectionDeleteOptions", [try json([
+                "projectId": id, "sectionId": sectionID
+            ])])
+            let project = options.object("project")
+            let section = options.object("section")
+            let token = options.object("token")
+            guard options.count == 5, !options.text("revision").isEmpty,
+                  project.count == 3, project.text("id") == id, project["title"] is String,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  section.count == 2, section.text("id") == sectionID, section["title"] is String,
+                  token.text("id") == sectionID, token.text("projectId") == id,
+                  token["title"] is String, token.text("title") == section.text("title"),
+                  let canDelete = options["canDelete"] as? NSNumber,
+                  CFGetTypeID(canDelete) == CFBooleanGetTypeID(),
+                  !canDelete.boolValue || project.text("status") != "archived" else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if options.text("revision") == projectDetail.text("mutationRevision"),
+               projectSectionOptionsFresh, projectHeader.text("id") == id,
+               projectSectionRows.contains(where: { $0.text("id") == sectionID }) {
+                projectSectionDeleteOptions = options
+                projectSectionDeleteOptionsCurrent = true
+                projectSectionReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try await readProjectSectionOptions(projectID: id)
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    func beginProjectSectionDelete(_ sectionID: String) async -> Bool {
+        let id = projectHeader.text("id")
+        guard projectSectionDeleteEnabled(sectionID) else { return false }
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptions = [:]
+        projectSectionDeleteOptionsCurrent = false
+        projectSectionError = nil
+        projectSectionReadError = nil
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readProjectSectionDeleteOptions(projectID: id, sectionID: sectionID)
+            guard projectSectionsPresented, !projectSectionEditing, projectHeader.text("id") == id,
+                  projectSectionDeleteOptionsCurrent,
+                  projectSectionDeleteOptions.flag("canDelete"),
+                  projectSectionDeleteOptions.text("revision") == projectDetail.text("mutationRevision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            projectSectionDeleteReadyID = sectionID
+            return true
+        } catch {
+            projectSectionReadError = error.localizedDescription
+            return false
+        }
+    }
+
+    func cancelProjectSectionDelete() {
+        guard !projectSectionPending else { return }
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptions = [:]
+        projectSectionDeleteOptionsCurrent = false
+    }
+
+    func confirmProjectSectionDelete() async {
+        guard let sectionID = projectSectionDeleteReadyID else { return }
+        let id = projectHeader.text("id")
+        guard projectSectionsPresented, !projectSectionEditing, projectSectionCloseEnabled,
+              projectSectionDeleteOptionsFresh,
+              projectSectionDeleteOptions.object("token").text("id") == sectionID else {
+            cancelProjectSectionDelete()
+            projectSectionReadError = CocoaError(.coderReadCorrupt).localizedDescription
+            return
+        }
+        let token = projectSectionDeleteOptions.object("token")
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptionsCurrent = false
+        busy = true
+        projectSectionError = nil
+        defer { finishOperation() }
+        do {
+            projectSectionDeleteRequest = try json([
+                "requestId": UUID().uuidString.lowercased(), "projectId": id,
+                "sectionId": sectionID, "expected": token
+            ])
+            projectSectionDeleteExpectedID = sectionID
+            projectSectionDeleteExpectedProjectID = id
+        } catch {
+            projectSectionReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectSectionDelete", [projectSectionDeleteRequest!]) }
+        catch { await handleProjectSectionDeleteWriteError(error); return }
+        do { try acknowledgeProjectSectionDelete(result) }
+        catch { await handleProjectSectionDeleteWriteError(error); return }
+        do { try await refreshProjectSectionsAfterWrite() }
+        catch {
+            projectSectionReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectSectionDelete(_ result: CoreObject) throws {
+        guard projectSectionDeleteRequest != nil, let sectionID = projectSectionDeleteExpectedID,
+              let projectID = projectSectionDeleteExpectedProjectID,
+              result.count == 2, result.text("id") == sectionID,
+              result.text("projectId") == projectID else { throw CocoaError(.coderReadCorrupt) }
+        projectSectionDeleteRequest = nil
+        projectSectionDeleteExpectedID = nil
+        projectSectionDeleteExpectedProjectID = nil
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteOptions = [:]
+        projectSectionDeleteOptionsCurrent = false
+        projectSectionOptionsCurrent = false
+        retryNeeded = false
+        projectSectionError = nil
+        projectSectionReadError = nil
+        error = nil
+    }
+
+    private func handleProjectSectionDeleteWriteError(_ failure: Error) async {
+        if projectSectionDeleteRequest != nil && isDefiniteRejection(failure) {
+            projectSectionDeleteRequest = nil
+            projectSectionDeleteExpectedID = nil
+            projectSectionDeleteExpectedProjectID = nil
+            projectSectionDeleteReadyID = nil
+            projectSectionDeleteOptions = [:]
+            projectSectionDeleteOptionsCurrent = false
+            retryNeeded = false
+            projectSectionError = failure.localizedDescription
+            error = nil
+            // A later attempt must read a new token and ask for confirmation again.
+            do { try await refreshProjectSectionsAfterWrite() }
+            catch { projectSectionReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectSectionDeleteRequest != nil
+            projectSectionError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func saveProjectSection() async {
+        if projectSectionEditID != nil { await saveProjectSectionRename(); return }
+        let id = projectHeader.text("id")
+        guard projectSectionCanSave else { return }
+        let title = projectSectionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectSectionsPresented, projectSectionEditing, projectSectionCloseEnabled,
+              !title.isEmpty, projectSectionEditID == nil, projectSectionRequest == nil else { return }
+        busy = true
+        projectSectionError = nil
+        defer { finishOperation() }
+        do {
+            // Notes autosave can advance the Project token while this sheet is open.
+            try await readProjectSectionOptions(projectID: id)
+            guard projectSectionOptionsCurrent, projectSectionOptions.flag("canCreate"),
+                  projectSectionOptions.text("revision") == projectDetail.text("mutationRevision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let requestID = UUID().uuidString.lowercased()
+            projectSectionRequest = try json(["requestId": requestID, "projectId": id, "title": title])
+            projectSectionExpectedID = requestID
+            projectSectionExpectedProjectID = id
+        } catch {
+            projectSectionReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectSectionCreate", [projectSectionRequest!]) }
+        catch { await handleProjectSectionWriteError(error); return }
+        do { try acknowledgeProjectSection(result) }
+        catch { await handleProjectSectionWriteError(error); return }
+        do { try await refreshProjectSectionsAfterWrite() }
+        catch {
+            projectSectionReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func saveProjectSectionRename() async {
+        let id = projectHeader.text("id")
+        guard let sectionID = projectSectionEditID, projectSectionCanSave else { return }
+        let title = projectSectionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectSectionEditID == sectionID, projectSectionsPresented, projectSectionEditing,
+              projectSectionCloseEnabled, !title.isEmpty, projectSectionRenameRequest == nil else { return }
+        guard projectSectionRenameOptionsFresh else {
+            projectSectionRenameOptionsCurrent = false
+            projectSectionReadError = CocoaError(.coderReadCorrupt).localizedDescription
+            return
+        }
+        busy = true
+        projectSectionError = nil
+        defer { finishOperation() }
+        do {
+            let token = projectSectionRenameOptions.object("token")
+            guard !token.isEmpty, projectSectionRenameOptions.flag("canRename"),
+                  token.text("id") == sectionID, token.text("projectId") == id else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            projectSectionRenameRequest = try json([
+                "requestId": UUID().uuidString.lowercased(), "projectId": id,
+                "sectionId": sectionID, "title": title, "expected": token
+            ])
+            projectSectionRenameExpectedID = sectionID
+            projectSectionRenameExpectedProjectID = id
+        } catch {
+            projectSectionReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectSectionRename", [projectSectionRenameRequest!]) }
+        catch { await handleProjectSectionRenameWriteError(error); return }
+        do { try acknowledgeProjectSectionRename(result) }
+        catch { await handleProjectSectionRenameWriteError(error); return }
+        do { try await refreshProjectSectionsAfterWrite() }
+        catch {
+            projectSectionReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectSectionRename(_ result: CoreObject) throws {
+        guard projectSectionRenameRequest != nil, let sectionID = projectSectionRenameExpectedID,
+              let projectID = projectSectionRenameExpectedProjectID,
+              result.count == 2, result.text("id") == sectionID,
+              result.text("projectId") == projectID else { throw CocoaError(.coderReadCorrupt) }
+        projectSectionRenameRequest = nil
+        projectSectionRenameExpectedID = nil
+        projectSectionRenameExpectedProjectID = nil
+        projectSectionRenameOptions = [:]
+        projectSectionRenameOptionsCurrent = false
+        projectSectionEditID = nil
+        projectSectionEditing = false
+        projectSectionTitle = ""
+        projectSectionOptionsCurrent = false
+        retryNeeded = false
+        projectSectionError = nil
+        projectSectionReadError = nil
+        error = nil
+    }
+
+    private func handleProjectSectionRenameWriteError(_ failure: Error) async {
+        if projectSectionRenameRequest != nil && isDefiniteRejection(failure) {
+            projectSectionRenameRequest = nil
+            projectSectionRenameExpectedID = nil
+            projectSectionRenameExpectedProjectID = nil
+            projectSectionRenameOptionsCurrent = false
+            retryNeeded = false
+            projectSectionError = failure.localizedDescription
+            error = nil
+            // Refresh visible rows, but require an explicit read Retry before
+            // binding the retained draft to a new Section token.
+            do { try await refreshProjectSectionsAfterWrite() }
+            catch { projectSectionReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectSectionRenameRequest != nil
+            projectSectionError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectSection(_ result: CoreObject) throws {
+        guard projectSectionRequest != nil, let id = projectSectionExpectedID,
+              let projectID = projectSectionExpectedProjectID,
+              result.count == 2, result.text("id") == id,
+              result.text("projectId") == projectID else { throw CocoaError(.coderReadCorrupt) }
+        projectSectionRequest = nil
+        projectSectionExpectedID = nil
+        projectSectionExpectedProjectID = nil
+        projectSectionEditing = false
+        projectSectionEditID = nil
+        projectSectionTitle = ""
+        projectSectionOptionsCurrent = false
+        retryNeeded = false
+        projectSectionError = nil
+        projectSectionReadError = nil
+        error = nil
+    }
+
+    private func handleProjectSectionWriteError(_ failure: Error) async {
+        if projectSectionRequest != nil && isDefiniteRejection(failure) {
+            projectSectionRequest = nil
+            projectSectionExpectedID = nil
+            projectSectionExpectedProjectID = nil
+            projectSectionOptionsCurrent = false
+            retryNeeded = false
+            projectSectionError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectSectionsAfterWrite() }
+            catch { projectSectionReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectSectionRequest != nil
+            projectSectionError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshProjectSectionsAfterWrite() async throws {
+        let id = projectHeader.text("id")
+        try await readSelectedSurface()
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == id else { throw CocoaError(.coderReadCorrupt) }
+        try await readProjectSectionOptions(projectID: id)
+    }
+
+    func retryProjectSectionRead() async {
+        guard ready, projectSectionsPresented, selectedSurface == .project,
+              !busy, !retryNeeded, !projectSectionPending else { return }
+        cancelProjectSectionDelete()
+        let sectionID = projectSectionEditID
+        let id = projectHeader.text("id")
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectSectionsAfterWrite()
+            if let sectionID {
+                guard projectHeader.text("id") == id, projectSectionEditID == sectionID else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try await readProjectSectionRenameOptions(projectID: id, sectionID: sectionID)
+            }
+            projectSectionReadError = nil
+            projectSectionError = nil
+            error = nil
+        } catch { projectSectionReadError = error.localizedDescription }
+    }
+
+    func openProjectDate(_ field: String) async {
+        let id = projectHeader.text("id")
+        guard ["startDate", "dueDate"].contains(field), projectDateTapEnabled else { return }
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectDateOpenEnabled else { return }
+        projectDateField = field
+        projectDatePicker = [:]
+        projectDateError = nil
+        projectDateReadError = nil
+        busy = true
+        defer { finishOperation() }
+        do { try await readProjectDateOptions(field, projectID: id) }
+        catch { projectDateReadError = error.localizedDescription }
+    }
+
+    func cancelProjectDate() {
+        guard projectDateRequest == nil, !retryNeeded, !busy else { return }
+        projectDateField = nil
+        projectDatePicker = [:]
+        projectDateError = nil
+    }
+
+    private func readProjectDateOptions(_ field: String, projectID id: String) async throws {
+        projectDateOptionsCurrent = false
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == id, projectHeader.text("id") == id,
+              ["startDate", "dueDate"].contains(field) else { throw CocoaError(.coderReadCorrupt) }
+        for attempt in 0..<2 {
+            let options = try await query("projectDateOptions", [try json(["projectId": id, "field": field])])
+            let project = options.object("project")
+            let picker = options.object("picker")
+            guard options.count == 4, !options.text("revision").isEmpty,
+                  let canEdit = options["canEdit"] as? NSNumber,
+                  CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
+                  project.count == 8, project.text("id") == id,
+                  project["title"] is String,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  ["startDate", "dueDate"].allSatisfy({ key in
+                      project[key] is NSNull || (project[key] as? String).map({ $0.utf16.count <= 100 }) == true
+                  }),
+                  project["rev"] is Int || project["rev"] is NSNull,
+                  project["revBy"] is String || project["revBy"] is NSNull,
+                  !project.text("updatedAt").isEmpty,
+                  picker.count == 2, picker.text("time") == "12:00",
+                  picker.text("date").range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+                  TaskDatePickerComponents.date(picker) != nil,
+                  canEdit.boolValue == (project.text("status") != "archived") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
+               projectDetail.text("projectId") == id, projectHeader.text("id") == id {
+                projectDateOptions = options
+                projectDateOptionsField = field
+                projectDateOptionsCurrent = true
+                if projectDateField != field || projectDatePicker.isEmpty { projectDatePicker = picker }
+                projectDateReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    func changeProjectDate(_ field: String, value: String?) async {
+        let id = projectHeader.text("id")
+        guard ["startDate", "dueDate"].contains(field),
+              value == nil || projectDateField == field, projectDateTapEnabled else { return }
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectDateOpenEnabled, projectDateRequest == nil else { return }
+        busy = true
+        projectDateError = nil
+        defer { finishOperation() }
+        do {
+            // Notes autosave may have advanced this Project's row token while the
+            // date wheel was open. Always bind the write to a fresh read.
+            try await readProjectDateOptions(field, projectID: id)
+            let project = projectDateOptions.object("project")
+            guard projectDateOptionsCurrent, projectDateOptionsField == field,
+                  projectDateOptions.flag("canEdit"), project.text("id") == id,
+                  projectDateOptions.text("revision") == projectDetail.text("mutationRevision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let expected: CoreObject = [
+                "title": project.text("title"), "status": project.text("status"),
+                "startDate": project["startDate"]!, "dueDate": project["dueDate"]!,
+                "rev": project["rev"]!, "revBy": project["revBy"]!,
+                "updatedAt": project.text("updatedAt")
+            ]
+            let requested: Any
+            if let value { requested = value } else { requested = NSNull() }
+            projectDateRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                                           "projectId": id, "field": field, "value": requested,
+                                           "expected": expected])
+            projectDateExpectedID = id
+            projectDateExpectedField = field
+            projectDateExpectedValue = requested
+        } catch {
+            projectDateReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectDateWrite", [projectDateRequest!]) }
+        catch { await handleProjectDateWriteError(error); return }
+        do { try acknowledgeProjectDate(result) }
+        catch { await handleProjectDateWriteError(error); return }
+        do { try await refreshProjectDateAfterWrite() }
+        catch {
+            projectDateReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectDate(_ result: CoreObject) throws {
+        guard projectDateRequest != nil, let id = projectDateExpectedID,
+              let field = projectDateExpectedField, let value = projectDateExpectedValue else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            guard result.count == 3, result.text("id") == id, result.text("field") == field,
+                  try json([result["value"] ?? NSNull()]) == json([value]) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
+        projectDateRequest = nil
+        projectDateExpectedID = nil
+        projectDateExpectedField = nil
+        projectDateExpectedValue = nil
+        projectDateOptionsCurrent = false
+        projectDateField = nil
+        projectDatePicker = [:]
+        retryNeeded = false
+        projectDateError = nil
+        projectDateReadError = nil
+        error = nil
+    }
+
+    private func handleProjectDateWriteError(_ failure: Error) async {
+        if projectDateRequest != nil && isDefiniteRejection(failure) {
+            projectDateRequest = nil
+            projectDateExpectedID = nil
+            projectDateExpectedField = nil
+            projectDateExpectedValue = nil
+            projectDateOptionsCurrent = false
+            retryNeeded = false
+            projectDateError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectDateAfterWrite() }
+            catch { projectDateReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectDateRequest != nil
+            projectDateError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshProjectDateAfterWrite() async throws {
+        try await readSelectedSurface()
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == projectHeader.text("id") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func retryProjectDateRead() async {
+        guard ready, selectedSurface == .project, !busy, !retryNeeded,
+              projectDateRequest == nil else { return }
+        let field = projectDateField
+        let id = projectHeader.text("id")
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectDateAfterWrite()
+            if let field { try await readProjectDateOptions(field, projectID: id) }
+            projectDateReadError = nil
+            projectDateError = nil
+            error = nil
+        } catch { projectDateReadError = error.localizedDescription }
+    }
+
+    private func invalidateAreaManagerOptions() {
+        areaCreateOptionsCurrent = false
+        areaColorOptionsCurrent = false
+        areaOrderOptionsCurrent = false
+        areaDeleteOptionsCurrent = false
+    }
+
+    private func readAreaManagerOptions() async throws {
+        invalidateAreaManagerOptions()
+        do { try await readAreaCreateOptions() }
+        catch { areaCreateReadError = error.localizedDescription; throw error }
+        do { try await readAreaColorOptions() }
+        catch { areaColorReadError = error.localizedDescription; throw error }
+        do { try await readAreaOrderOptions() }
+        catch { areaOrderReadError = error.localizedDescription; throw error }
+        do { try await readAreaDeleteOptions() }
+        catch { areaDeleteReadError = error.localizedDescription; throw error }
+        scheduleAreaCreateNameCheck()
+    }
+
+    private func refreshAreaManagerAfterWrite() async throws {
+        invalidateAreaManagerOptions()
+        try await readSelectedSurface()
+        try await readAreaManagerOptions()
+    }
+
+    func openAreaManager() async {
+        guard projectCreateInputEnabled else { return }
+        areaManagerPresented = true
+        expandedAreaColorID = nil
+        areaColorIntentID = nil
+        areaColorIntentColor = nil
+        areaColorError = nil
+        areaColorReadError = nil
+        areaOrderIntent = nil
+        areaOrderError = nil
+        areaOrderReadError = nil
+        areaDeleteIntentID = nil
+        areaDeleteError = nil
+        areaDeleteReadError = nil
+        invalidateAreaManagerOptions()
+        busy = true
+        defer { finishOperation() }
+        do { try await readAreaManagerOptions() }
+        catch { /* The failing options read publishes its own reachable retry. */ }
+    }
+
+    func closeAreaManager() {
+        guard !busy, areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+              areaDeleteRequest == nil,
+              !retryNeeded else { return }
+        areaManagerPresented = false
+        areaCreateNameGeneration += 1
+        areaCreateNameChecking = false
+        expandedAreaColorID = nil
+        areaColorIntentID = nil
+        areaColorIntentColor = nil
+        areaColorError = nil
+        areaOrderIntent = nil
+        areaOrderError = nil
+        areaDeleteIntentID = nil
+        areaDeleteError = nil
+    }
+
+    func setAreaCreateName(_ name: String) {
+        guard areaCreateInputEnabled, name != areaCreateName else { return }
+        areaCreateName = name
+        areaCreateError = nil
+        if areaCreateOptionsCurrent { areaCreateReadError = nil }
+        scheduleAreaCreateNameCheck()
+    }
+
+    func selectAreaCreateColor(_ color: String) {
+        guard areaCreateInputEnabled, (areaCreateOptions["colors"] as? [String])?.contains(color) == true else { return }
+        areaCreateColor = color
+        areaCreateError = nil
+    }
+
+    private func scheduleAreaCreateNameCheck() {
+        areaCreateNameGeneration += 1
+        let generation = areaCreateNameGeneration
+        let name = areaCreateName
+        areaCreateNameTaken = false
+        guard areaManagerPresented, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            areaCreateNameChecking = false
+            return
+        }
+        areaCreateNameChecking = true
+        Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard generation == areaCreateNameGeneration, areaManagerPresented,
+                  areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+                  areaDeleteRequest == nil else { return }
+            do {
+                let result = try await query("areaCreateResolve", [try json([
+                    "requestId": UUID().uuidString.lowercased(), "name": name,
+                ])])
+                guard generation == areaCreateNameGeneration, areaManagerPresented,
+                      areaColorRequest == nil, areaOrderRequest == nil, areaDeleteRequest == nil else { return }
+                areaCreateNameTaken = result.flag("taken")
+                if areaCreateOptionsCurrent { areaCreateReadError = nil }
+            } catch {
+                guard generation == areaCreateNameGeneration, areaManagerPresented,
+                      areaColorRequest == nil, areaOrderRequest == nil, areaDeleteRequest == nil else { return }
+                areaCreateReadError = error.localizedDescription
+            }
+            areaCreateNameChecking = false
+        }
+    }
+
+    private func readAreaCreateOptions() async throws {
+        areaCreateOptionsCurrent = false
+        let options = try await query("areaCreateOptions")
+        guard !options.text("revision").isEmpty,
+              let colors = options["colors"] as? [String], !colors.isEmpty,
+              let areas = options["areas"] as? [CoreObject],
+              areas.allSatisfy({ !$0.text("id").isEmpty && !$0.text("name").isEmpty }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if !colors.contains(areaCreateColor) { areaCreateColor = options.text("defaultColor") }
+        guard colors.contains(areaCreateColor) else { throw CocoaError(.coderReadCorrupt) }
+        areaCreateOptions = options
+        areaCreateOptionsCurrent = true
+        areaCreateReadError = nil
+    }
+
+    func addArea() async {
+        guard areaCreateCanSubmit else { return }
+        busy = true
+        areaCreateNameGeneration += 1
+        areaCreateNameChecking = false
+        defer { finishOperation() }
+        let name = areaCreateName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let color = areaCreateColor
+        let id = UUID().uuidString.lowercased()
+        let request: String
+        do {
+            let resolved = try await query("areaCreateResolve", [try json(["requestId": id, "name": name])])
+            if resolved.flag("taken") {
+                areaCreateNameTaken = true
+                areaCreateError = nil
+                return
+            }
+            let expected = resolved.text("expectedAreaId")
+            guard !expected.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            request = try json(["requestId": id, "name": name, "color": color, "expectedAreaId": expected])
+            areaCreateRequest = request
+            areaCreateExpectedID = expected
+        } catch {
+            areaCreateReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("areaCreate", [request]) }
+        catch { await handleAreaCreateWriteError(error); return }
+        do { try acknowledgeAreaCreate(result) }
+        catch { await handleAreaCreateWriteError(error); return }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            areaManagerPresented = false
+        } catch {
+            areaCreateReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeAreaCreate(_ result: CoreObject) throws {
+        guard areaCreateRequest != nil, let expected = areaCreateExpectedID,
+              result.count == 2, result["created"] is Bool, result.text("id") == expected else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        areaCreateRequest = nil
+        areaCreateExpectedID = nil
+        retryNeeded = false
+        areaCreateName = ""
+        areaCreateNameTaken = false
+        areaCreateError = nil
+        areaCreateReadError = nil
+        error = nil
+    }
+
+    private func handleAreaCreateWriteError(_ failure: Error) async {
+        if areaCreateRequest != nil && isDefiniteRejection(failure) {
+            areaCreateRequest = nil
+            areaCreateExpectedID = nil
+            retryNeeded = false
+            areaCreateError = failure.localizedDescription
+            error = nil
+            do {
+                try await refreshAreaManagerAfterWrite()
+            } catch { areaCreateReadError = error.localizedDescription }
+        } else {
+            retryNeeded = areaCreateRequest != nil
+            areaCreateError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryAreaCreateRead() async {
+        guard areaManagerPresented, !busy, !retryNeeded,
+              areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+              areaDeleteRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            error = nil
+        } catch { areaCreateReadError = error.localizedDescription }
+    }
+
+    func toggleAreaColorPicker(_ id: String) {
+        guard areaColorInputEnabled,
+              areaColorOptions.objects("areas").contains(where: { $0.text("id") == id }) else { return }
+        if expandedAreaColorID != id {
+            areaColorIntentID = nil
+            areaColorIntentColor = nil
+            areaColorError = nil
+        }
+        expandedAreaColorID = expandedAreaColorID == id ? nil : id
+    }
+
+    private func readAreaColorOptions() async throws {
+        areaColorOptionsCurrent = false
+        let options = try await query("areaColorOptions")
+        guard !options.text("revision").isEmpty,
+              let colors = options["colors"] as? [String], !colors.isEmpty,
+              let areas = options["areas"] as? [CoreObject],
+              areas.allSatisfy({ row in
+                  !row.text("id").isEmpty && !row.text("name").isEmpty && !row.text("updatedAt").isEmpty
+                      && (row["color"] is String || row["color"] is NSNull)
+                      && (row["rev"] is Int || row["rev"] is NSNull)
+                      && (row["revBy"] is String || row["revBy"] is NSNull)
+              }) else { throw CocoaError(.coderReadCorrupt) }
+        areaColorOptions = options
+        areaColorOptionsCurrent = true
+        areaColorReadError = nil
+    }
+
+    func changeAreaColor(_ id: String, color: String?) async {
+        guard areaColorInputEnabled,
+              let row = areaColorOptions.objects("areas").first(where: { $0.text("id") == id }),
+              color.map({ (areaColorOptions["colors"] as? [String])?.contains($0) == true }) ?? true else { return }
+        busy = true
+        areaCreateNameGeneration += 1
+        areaCreateNameChecking = false
+        expandedAreaColorID = nil
+        areaColorIntentID = id
+        areaColorIntentColor = color
+        areaColorError = nil
+        defer { finishOperation() }
+        let request: String
+        do {
+            let expected: CoreObject = ["name": row.text("name"), "color": row["color"] ?? NSNull(),
+                                        "rev": row["rev"] ?? NSNull(), "revBy": row["revBy"] ?? NSNull(),
+                                        "updatedAt": row.text("updatedAt")]
+            let requestedColor: Any = color.map { $0 as Any } ?? NSNull()
+            request = try json(["requestId": UUID().uuidString.lowercased(), "areaId": id,
+                                "color": requestedColor, "expected": expected])
+            areaColorRequest = request
+            areaColorExpectedID = id
+        } catch {
+            areaColorReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("areaColor", [request]) }
+        catch { await handleAreaColorWriteError(error); return }
+        do { try acknowledgeAreaColor(result) }
+        catch { await handleAreaColorWriteError(error); return }
+        do {
+            try await refreshAreaManagerAfterWrite()
+        } catch {
+            areaColorReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeAreaColor(_ result: CoreObject) throws {
+        guard areaColorRequest != nil, let expected = areaColorExpectedID,
+              result.count == 2, result.text("id") == expected,
+              (areaColorIntentColor.map { result["color"] as? String == $0 }
+                  ?? (result["color"] is NSNull)) else { throw CocoaError(.coderReadCorrupt) }
+        areaColorRequest = nil
+        areaColorExpectedID = nil
+        retryNeeded = false
+        areaColorIntentID = nil
+        areaColorIntentColor = nil
+        areaColorError = nil
+        areaColorReadError = nil
+        error = nil
+    }
+
+    private func handleAreaColorWriteError(_ failure: Error) async {
+        if areaColorRequest != nil && isDefiniteRejection(failure) {
+            areaColorRequest = nil
+            areaColorExpectedID = nil
+            retryNeeded = false
+            areaColorError = failure.localizedDescription
+            expandedAreaColorID = areaColorIntentID
+            error = nil
+            do {
+                try await refreshAreaManagerAfterWrite()
+            } catch { areaColorReadError = error.localizedDescription }
+        } else {
+            retryNeeded = areaColorRequest != nil
+            areaColorError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryAreaColorRead() async {
+        guard areaManagerPresented, !busy, !retryNeeded,
+              areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+              areaDeleteRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            areaColorReadError = nil
+            error = nil
+        } catch { areaColorReadError = error.localizedDescription }
+    }
+
+    private func readAreaOrderOptions() async throws {
+        areaOrderOptionsCurrent = false
+        let options = try await query("areaOrderOptions")
+        guard !options.text("revision").isEmpty,
+              let areas = options["areas"] as? [CoreObject],
+              Set(areas.map { $0.text("id") }).count == areas.count,
+              areas.allSatisfy({ row in
+                  !row.text("id").isEmpty && !row.text("name").isEmpty && !row.text("updatedAt").isEmpty
+                      && (row["color"] is String || row["color"] is NSNull)
+                      && (row["order"] as? NSNumber)?.doubleValue.isFinite == true
+                      && (row["rev"] is Int || row["rev"] is NSNull)
+                      && (row["revBy"] is String || row["revBy"] is NSNull)
+              }) else { throw CocoaError(.coderReadCorrupt) }
+        areaOrderOptions = options
+        areaOrderOptionsCurrent = true
+        areaOrderReadError = nil
+    }
+
+    func changeAreaOrder(_ kind: String, areaID: String? = nil) async {
+        guard areaOrderInputEnabled, ["moveUp", "sortName", "sortColor"].contains(kind) else { return }
+        let rows = areaOrderOptions.objects("areas")
+        if kind == "moveUp" {
+            guard let areaID, let index = rows.firstIndex(where: { $0.text("id") == areaID }),
+                  index > 0 else { return }
+        } else { guard areaID == nil else { return } }
+        busy = true
+        areaCreateNameGeneration += 1
+        areaCreateNameChecking = false
+        expandedAreaColorID = nil
+        let intent: CoreObject = kind == "moveUp" ? ["kind": kind, "areaId": areaID!] : ["kind": kind]
+        areaOrderIntent = intent
+        areaOrderError = nil
+        defer { finishOperation() }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(),
+                                "intent": intent, "expectedAreas": rows])
+            areaOrderRequest = request
+            areaOrderExpectedIDs = rows.map { $0.text("id") }
+        } catch {
+            areaOrderReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("areaOrder", [request]) }
+        catch { await handleAreaOrderWriteError(error); return }
+        do { try acknowledgeAreaOrder(result) }
+        catch { await handleAreaOrderWriteError(error); return }
+        do { try await refreshAreaManagerAfterWrite() }
+        catch {
+            areaOrderReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeAreaOrder(_ result: CoreObject) throws {
+        guard areaOrderRequest != nil, let expected = areaOrderExpectedIDs,
+              result.count == 1, let ordered = result["orderedIds"] as? [String],
+              ordered.count == expected.count, Set(ordered).count == ordered.count,
+              Set(ordered) == Set(expected) else { throw CocoaError(.coderReadCorrupt) }
+        areaOrderRequest = nil
+        areaOrderExpectedIDs = nil
+        retryNeeded = false
+        areaOrderIntent = nil
+        areaOrderError = nil
+        areaOrderReadError = nil
+        error = nil
+    }
+
+    private func handleAreaOrderWriteError(_ failure: Error) async {
+        if areaOrderRequest != nil && isDefiniteRejection(failure) {
+            areaOrderRequest = nil
+            areaOrderExpectedIDs = nil
+            retryNeeded = false
+            areaOrderError = failure.localizedDescription
+            error = nil
+            do { try await refreshAreaManagerAfterWrite() }
+            catch { areaOrderReadError = error.localizedDescription }
+        } else {
+            retryNeeded = areaOrderRequest != nil
+            areaOrderError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryAreaOrderRead() async {
+        guard areaManagerPresented, !busy, !retryNeeded,
+              areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+              areaDeleteRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            areaOrderReadError = nil
+            error = nil
+        } catch { areaOrderReadError = error.localizedDescription }
+    }
+
+    private func readAreaDeleteOptions() async throws {
+        areaDeleteOptionsCurrent = false
+        let options = try await query("areaDeleteOptions")
+        guard !options.text("revision").isEmpty,
+              let areas = options["areas"] as? [CoreObject],
+              Set(areas.map { $0.text("id") }).count == areas.count,
+              areas.allSatisfy({ row in
+                  guard !row.text("id").isEmpty, !row.text("name").isEmpty,
+                        !row.text("updatedAt").isEmpty,
+                        row["color"] is String || row["color"] is NSNull,
+                        (row["order"] as? NSNumber)?.doubleValue.isFinite == true,
+                        row["rev"] is Int || row["rev"] is NSNull,
+                        row["revBy"] is String || row["revBy"] is NSNull,
+                        let count = row["projectCount"] as? NSNumber,
+                        CFGetTypeID(count) != CFBooleanGetTypeID(),
+                        count.doubleValue.isFinite, count.doubleValue >= 0,
+                        count.doubleValue <= 9_007_199_254_740_991,
+                        count.doubleValue.rounded(.towardZero) == count.doubleValue,
+                        let eligible = row["canDelete"] as? NSNumber,
+                        CFGetTypeID(eligible) == CFBooleanGetTypeID() else { return false }
+                  return true
+              }) else { throw CocoaError(.coderReadCorrupt) }
+        areaDeleteOptions = options
+        areaDeleteOptionsCurrent = true
+        areaDeleteReadError = nil
+    }
+
+    func deleteArea(_ id: String) async {
+        guard areaDeleteInputEnabled,
+              let row = areaDeleteOptions.objects("areas").first(where: { $0.text("id") == id }),
+              row.flag("canDelete") else { return }
+        busy = true
+        areaCreateNameGeneration += 1
+        areaCreateNameChecking = false
+        expandedAreaColorID = nil
+        areaDeleteIntentID = id
+        areaDeleteError = nil
+        defer { finishOperation() }
+        let request: String
+        do {
+            let expected: CoreObject = ["name": row.text("name"), "color": row["color"] ?? NSNull(),
+                                        "order": row["order"] ?? NSNull(), "rev": row["rev"] ?? NSNull(),
+                                        "revBy": row["revBy"] ?? NSNull(),
+                                        "updatedAt": row.text("updatedAt")]
+            request = try json(["requestId": UUID().uuidString.lowercased(), "areaId": id,
+                                "expected": expected])
+            areaDeleteRequest = request
+            areaDeleteExpectedID = id
+        } catch {
+            areaDeleteReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("areaDelete", [request]) }
+        catch { await handleAreaDeleteWriteError(error); return }
+        do { try acknowledgeAreaDelete(result) }
+        catch { await handleAreaDeleteWriteError(error); return }
+        do { try await refreshAreaManagerAfterWrite() }
+        catch {
+            areaDeleteReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeAreaDelete(_ result: CoreObject) throws {
+        guard areaDeleteRequest != nil, let expected = areaDeleteExpectedID,
+              result.count == 1, result.text("areaId") == expected else { throw CocoaError(.coderReadCorrupt) }
+        areaDeleteRequest = nil
+        areaDeleteExpectedID = nil
+        retryNeeded = false
+        areaDeleteIntentID = nil
+        areaDeleteError = nil
+        areaDeleteReadError = nil
+        error = nil
+    }
+
+    private func handleAreaDeleteWriteError(_ failure: Error) async {
+        if areaDeleteRequest != nil && isDefiniteRejection(failure) {
+            areaDeleteRequest = nil
+            areaDeleteExpectedID = nil
+            retryNeeded = false
+            areaDeleteError = failure.localizedDescription
+            error = nil
+            do { try await refreshAreaManagerAfterWrite() }
+            catch { areaDeleteReadError = error.localizedDescription }
+        } else {
+            retryNeeded = areaDeleteRequest != nil
+            areaDeleteError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryAreaDeleteRead() async {
+        guard areaManagerPresented, !busy, !retryNeeded,
+              areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+              areaDeleteRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            areaDeleteReadError = nil
+            error = nil
+        } catch { areaDeleteReadError = error.localizedDescription }
+    }
+
+    func openBoard() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        morePresented = false
+        selectedSurface = .board
+        await refresh()
+    }
+
+    func presentBoardFilters(_ presented: Bool) {
+        guard selectedSurface == .board, !retryNeeded, !taskPresented else { return }
+        if presented { guard boardControlsEnabled else { return } }
+        boardFiltersPresented = presented
+    }
+
+    func setBoardSearch(_ text: String) {
+        guard selectedSurface == .board, !retryNeeded, !boardActionPending, !taskPresented, text != boardSearchText else { return }
+        boardSearchText = text
+        resetBoardCardDepth()
+        requestBoardRead()
+    }
+
+    func boardSwipeAction(_ side: String) -> String? {
+        let actions = boardView.object("cardActions").object("swipes").object(side)["actions"] as? [String]
+        // Only the two supplied, single-action RN sequences are enabled in this slice.
+        if side == "left", actions == ["duplicate"] { return "duplicateTask" }
+        if side == "right", actions == ["trash"] { return "trashTask" }
+        return nil
+    }
+
+    func performBoardSwipe(_ side: String, taskID: String) async {
+        guard boardActionsEnabled, !morePresented, !capturePresented, !boardActionPending,
+              let action = boardSwipeAction(side), boardView.objects("columns").contains(where: {
+                  $0.objects("cards").contains(where: { $0.object("row").text("id") == taskID })
+              }) else { return }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString,
+                                "action": ["type": action, "taskId": taskID]])
+        } catch { self.error = error.localizedDescription; return }
+        boardActionRequest = request
+        busy = true
+        error = nil
+        var boardTaskOpened = false
+        defer {
+            finishOperation()
+            if boardTaskOpened { Task { await readTaskView() } }
+        }
+        let result: CoreObject
+        do {
+            result = try await query("boardAction", [request])
+        } catch {
+            // Only the host's typed, cleaned-up rejection proves no write is owed.
+            // Every other failure retains this exact request and its private journal.
+            if isDefiniteRejection(error) { boardActionRequest = nil }
+            retryNeeded = boardActionPending
+            self.error = error.localizedDescription
+            return
+        }
+        boardTaskOpened = await acknowledgeBoardAction(result)
+    }
+
+    private func acknowledgeBoardAction(_ result: CoreObject) async -> Bool {
+        boardActionRequest = nil
+        retryNeeded = false
+        error = nil
+        // Navigation is blocked while the command is pending. Still never route
+        // an acknowledgement onto a different surface if that state has changed.
+        guard selectedSurface == .board else { return false }
+        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+        return presentAcknowledgedBoardTask(result)
+    }
+
+    private func presentAcknowledgedBoardTask(_ result: CoreObject) -> Bool {
+        let open = result.object("open")
+        guard selectedSurface == .board, !taskPresented, !capturePresented, !areaPickerPresented,
+              open.text("tab") == "task", !open.text("taskId").isEmpty else { return false }
+        // The trusted result may be outside the current filter or loaded page.
+        // It is the frozen copy ID, never a source/current-selection lookup.
+        prepareTaskPresentation(open.text("taskId"), initialTab: "task")
+        return true
+    }
+
+    func editBoardFilters(_ edit: CoreObject) {
+        guard boardControlsEnabled, !edit.isEmpty else { return }
+        if edit.text("type") == "setSearch" { setBoardSearch(edit.text("value")); return }
+        if edit.text("type") == "clear" { boardSearchText = "" }
+        boardPendingEdit = edit
+        resetBoardCardDepth()
+        requestBoardRead(delay: 0)
+    }
+
+    private func resetBoardCardDepth() {
+        boardDepth = boardDepth.filter { !$0.key.hasPrefix("cards:") }
+        boardScrollAnchor = "board-top"
+        boardScrollGeneration += 1
+    }
+
+    func loadMoreBoard(_ list: String, status: String = "") {
+        guard boardControlsEnabled, boardCurrent else { return }
+        let window: CoreObject
+        if list == "cards" {
+            guard let column = boardView.objects("columns").first(where: { $0.text("status") == status }) else { return }
+            window = ["items": column.objects("cards"), "total": column.number("count")]
+        } else {
+            guard ["tokens", "projects", "chips"].contains(list) else { return }
+            window = boardView.object("sheet").object(list)
+        }
+        guard window.objects("items").count < window.number("total") else { return }
+        // Picker page zero is currently 100; card page zero is 50. Always use
+        // the loaded count, including for chips, and rebuild at a fresh revision.
+        boardDepth[list == "cards" ? list + ":" + status : list] = window.objects("items").count + pageSize
+        requestBoardRead(delay: 0)
+    }
+
+    func retryBoard() {
+        guard selectedSurface == .board, !busy, !retryNeeded, !taskPresented else { return }
+        requestBoardRead(delay: 0)
+    }
+
+    private func requestBoardRead(delay: UInt64 = 150_000_000) {
+        boardGeneration += 1
+        boardReadTask?.cancel()
+        boardCurrent = false
+        boardLoading = true
+        boardError = nil
+        boardNeedsRead = true
+        scheduleBoardRead(delay: delay)
+    }
+
+    private func scheduleBoardRead(delay: UInt64 = 150_000_000) {
+        guard selectedSurface == .board, !busy, !retryNeeded, !taskPresented, !areaPickerPresented else { return }
+        boardReadTask?.cancel()
+        boardReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .board, !busy, !retryNeeded,
+                  !taskPresented, !areaPickerPresented else { return }
+            await readBoard()
+        }
+    }
+
+    private func boardReadAllowed(_ generation: Int, ownsOperation: Bool) -> Bool {
+        !Task.isCancelled && generation == boardGeneration && selectedSurface == .board
+            && !retryNeeded && !taskPresented && (ownsOperation || (!areaPickerPresented && !busy))
+    }
+
+    private func readBoard(ownsOperation: Bool = false) async {
+        let generation = boardGeneration
+        let search = boardSearchText
+        let edit = boardPendingEdit
+        let depth = boardDepth
+        boardNeedsRead = false
+        boardCurrent = false
+        boardLoading = true
+        boardError = nil
+        defer {
+            if generation == boardGeneration {
+                // Area or a temporary global operation can invalidate an awaited
+                // response without settling this read. Keep its pure edit/depth
+                // and wake it now, or when the existing gate closes.
+                if !Task.isCancelled, selectedSurface == .board, !boardCurrent, boardError == nil {
+                    boardNeedsRead = true
+                    scheduleBoardRead(delay: 0)
+                }
+                boardLoading = boardNeedsRead
+            }
+        }
+        for attempt in 0..<2 {
+            do {
+                var filters = boardFilters
+                filters["searchQuery"] = search
+                var input: CoreObject = ["filters": filters, "limit": pageSize]
+                if let edit { input["filterEdit"] = edit }
+                var next = try await query("menuRead", ["board", try json(input)])
+                guard boardReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                // A search typed while a pure Clear was resolving wins over the
+                // earlier Clear's query. All other filter normalization stays core.
+                if next.object("filters").text("searchQuery") != search {
+                    filters = next.object("filters")
+                    filters["searchQuery"] = search
+                    next = try await query("menuRead", ["board", try json(["filters": filters, "limit": pageSize])])
+                    guard boardReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                }
+                guard next.number("version") == 1, !next.text("revision").isEmpty,
+                      !next.object("filters").isEmpty, next.objects("columns").count == 5 else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let revision = next.text("revision")
+                let resolved = next.object("filters")
+                var columns = next.objects("columns")
+                var sheet = next.object("sheet")
+                // Stage every list against the same effective filters/revision;
+                // publish only after all previously loaded windows are rebuilt.
+                for key in columns.map({ "cards:" + $0.text("status") }) + ["tokens", "projects", "chips"] {
+                    let status = key.hasPrefix("cards:") ? String(key.dropFirst(6)) : ""
+                    let list = status.isEmpty ? key : "cards"
+                    let index = columns.firstIndex(where: { $0.text("status") == status })
+                    let first: CoreObject
+                    if let index { first = ["total": columns[index].number("count"), "items": columns[index].objects("cards")] }
+                    else { first = sheet.object(list) }
+                    var entries = first.objects("items")
+                    let total = first.number("total")
+                    guard total >= 0, entries.count == min(list == "cards" ? pageSize : 100, total) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    let target = min(max(entries.count, depth[key] ?? 0), total)
+                    while entries.count < target {
+                        let limit = min(pageSize, target - entries.count)
+                        var params: CoreObject = ["filters": resolved, "revision": revision,
+                            "list": list, "offset": entries.count, "limit": limit]
+                        if !status.isEmpty { params["status"] = status }
+                        let page = try await query("menuRead", ["boardList", try json(params)])
+                        guard boardReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                        guard page.number("version") == 1, page.text("revision") == revision,
+                              page.text("list") == list, page.number("total") == total,
+                              page.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                        entries += page.objects("items")
+                    }
+                    let ids = entries.map { list == "cards" ? $0.object("row").text("id") : $0.text(list == "tokens" ? "value" : "id") }
+                    guard !ids.contains(""), Set(ids).count == ids.count else { throw CocoaError(.coderReadCorrupt) }
+                    if let index { columns[index]["cards"] = entries }
+                    else { sheet[list] = ["total": total, "items": entries] }
+                }
+                next["columns"] = columns
+                next["sheet"] = sheet
+                boardFilters = resolved
+                boardPendingEdit = nil
+                boardView = next
+                boardCurrent = true
+                return
+            } catch {
+                guard !Task.isCancelled, generation == boardGeneration, selectedSurface == .board else { return }
+                // A refused pure input is settled even if Area/More opened while
+                // it was awaiting. Do not reapply that edit after the gate closes.
+                if error.localizedDescription.hasPrefix("INVALID_INPUT:") {
+                    boardPendingEdit = nil
+                    boardError = error.localizedDescription
+                    return
+                }
+                guard boardReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                // Retrying starts from the unchanged pre-edit state, so a pure
+                // toggle is never applied twice after a stale nested page.
+                if attempt == 1 {
+                    boardPendingEdit = nil
+                    boardError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func openCalendar() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !calendarComposerPresented else { return }
+        morePresented = false
+        selectedSurface = .calendar
+        await refresh()
+    }
+
+    func navigateCalendar(_ target: CoreObject) async {
+        guard calendarActionsEnabled, !target.isEmpty else { return }
+        calendarNotice = nil
+        if target.text("viewMode") != calendarView.object("state").text("viewMode") {
+            await saveCalendarPreference("viewMode", value: target.text("viewMode"), target: target)
+            return
+        }
+        calendarState = target
+        calendarLoadedDepth = pageSize
+        calendarScrollAnchor = ""
+        calendarViewportAnchors.removeAll()
+        calendarViewportGeneration += 1
+        busy = true
+        defer { finishOperation() }
+        await readCalendar()
+    }
+
+    func selectCalendarMode(_ mode: String) async {
+        guard calendarActionsEnabled, let option = calendarView.objects("modes").first(where: { $0.text("mode") == mode }) else { return }
+        await saveCalendarPreference("viewMode", value: mode, target: option.object("state"))
+    }
+
+    func setCalendarShowCompleted(_ on: Bool) async {
+        guard calendarActionsEnabled else { return }
+        await saveCalendarPreference("showCompleted", value: on)
+    }
+
+    func setCalendarWeekDensity(_ days: Int) async {
+        guard calendarActionsEnabled, calendarView.object("content").object("density").objects("choices")
+            .contains(where: { $0.number("days") == days }) else { return }
+        await saveCalendarPreference("weekVisibleDays", value: days)
+    }
+
+    private func saveCalendarPreference(_ field: String, value: Any, target: CoreObject? = nil) async {
+        guard calendarActionsEnabled, let before = calendarPreferenceValues[field] else { return }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString, "field": field, "before": before, "value": value])
+        } catch { calendarError = error.localizedDescription; return }
+        busy = true
+        calendarPreferencePending = true
+        calendarPreferenceTarget = target
+        calendarError = nil
+        error = nil
+        defer { finishOperation() }
+        do {
+            _ = try await query("calendarPreference", [request])
+        } catch {
+            if isDefiniteRejection(error) {
+                calendarPreferencePending = false
+                calendarPreferenceTarget = nil
+                // A refused before-value never becomes an automatic overwrite of newer intent.
+                await readCalendar()
+                calendarError = error.localizedDescription
+            } else {
+                retryNeeded = true
+                self.error = error.localizedDescription
+            }
+            return
+        }
+        acknowledgeCalendarPreference()
+        await readCalendar()
+    }
+
+    private func acknowledgeCalendarPreference() {
+        calendarPreferencePending = false
+        if calendarPreferenceTarget != nil {
+            calendarLoadedDepth = pageSize
+            calendarScrollAnchor = ""
+            calendarViewportAnchors.removeAll()
+            calendarViewportGeneration += 1
+        }
+    }
+
+    func selectCalendarDay(_ key: String) async {
+        guard calendarActionsEnabled, calendarView.object("content").text("mode") == "month",
+              calendarView.objects("items").contains(where: { $0.text("type") == "day" && $0.text("key") == key }) else { return }
+        var state = calendarView.object("state")
+        state["selectedDate"] = key
+        await navigateCalendar(state)
+    }
+
+    func setCalendarQuery(_ text: String) {
+        guard selectedSurface == .calendar, !retryNeeded, !taskPresented, !calendarItemPresented,
+              !calendarComposerPresented, text != calendarQuery else { return }
+        calendarScrollAnchor = "calendar-list-top"
+        calendarNotice = nil
+        calendarQuery = text
+        calendarLoadedDepth = pageSize
+        calendarCurrent = false
+        calendarError = nil
+        calendarNeedsRead = true
+        scheduleCalendarRead()
+    }
+
+    private func scheduleCalendarRead() {
+        guard selectedSurface == .calendar, !busy, !retryNeeded, !taskPresented, !calendarItemPresented,
+              !calendarComposerPresented else { return }
+        calendarReadTask?.cancel()
+        calendarReadTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+            guard let self, self.selectedSurface == .calendar, !self.busy, !self.retryNeeded,
+                  !self.taskPresented, !self.calendarItemPresented, !self.calendarComposerPresented else { return }
+            self.calendarReadTask = nil
+            self.busy = true
+            defer { self.finishOperation() }
+            await self.readCalendar()
+        }
+    }
+
+    func retryCalendar() async {
+        guard selectedSurface == .calendar, !busy, !retryNeeded, !taskPresented, !calendarItemPresented,
+              !calendarComposerPresented else { return }
+        busy = true
+        defer { finishOperation() }
+        await readCalendar()
+    }
+
+    func loadMoreCalendar() async {
+        guard calendarActionsEnabled, calendarView.objects("items").count < calendarView.number("total") else { return }
+        calendarLoadedDepth = calendarView.objects("items").count + pageSize
+        await retryCalendar()
+    }
+
+    func openCalendarComposer(_ entry: CoreObject) async {
+        let openingState = calendarView.object("state")
+        let day = openingState.text("selectedDate")
+        let openingQuery = calendarQuery
+        let openingRevision = calendarView.text("revision")
+        guard calendarActionsEnabled, entry.text("type") == "task", !day.isEmpty,
+              !entry.text("taskId").isEmpty,
+              calendarView.objects("items").contains(where: {
+                  $0.text("type") == "task" && $0.text("taskId") == entry.text("taskId")
+                      && $0.text("list") == entry.text("list") && $0.text("title") == entry.text("title")
+              }) else { return }
+        busy = true
+        calendarNotice = nil
+        calendarComposerError = nil
+        defer { finishOperation() }
+        do {
+            let result = try await query("calendarComposerOpen", [try json([
+                "day": day, "scheduleTaskId": entry.text("taskId")
+            ])])
+            guard calendarComposerOpeningCurrent(query: openingQuery, revision: openingRevision, state: openingState) else { return }
+            let view = result.object("composer")
+            if view.isEmpty {
+                let toast = result.object("toast")
+                calendarNotice = [toast.text("title"), toast.text("message")].filter { !$0.isEmpty }.joined(separator: ": ")
+                if calendarNotice?.isEmpty == true { calendarNotice = nil }
+                return
+            }
+            guard view.object("composer").text("mode") == "existing" else { throw CocoaError(.coderReadCorrupt) }
+            calendarComposerGeneration += 1
+            calendarComposerEdits = []
+            calendarComposerView = view
+            syncCalendarComposerInputs()
+            calendarComposerPresented = true
+        } catch {
+            if calendarComposerOpeningCurrent(query: openingQuery, revision: openingRevision, state: openingState) {
+                calendarError = error.localizedDescription
+            }
+        }
+    }
+
+    func openNewCalendarComposer(day: String, rawMinutes: Double? = nil) async {
+        let openingState = calendarView.object("state")
+        let openingQuery = calendarQuery
+        let openingRevision = calendarView.text("revision")
+        let mode = openingState.text("viewMode")
+        let validTarget: Bool
+        if mode == "month" {
+            validTarget = rawMinutes == nil && day == openingState.text("selectedDate")
+                && !calendarView.object("content").object("details").isEmpty
+        } else if mode == "week" {
+            validTarget = rawMinutes == nil && calendarView.objects("items").contains {
+                $0.text("type") == "day" && $0.text("key") == day
+            }
+        } else if mode == "day" {
+            validTarget = day == calendarView.object("content").text("dayKey")
+                && (rawMinutes.map { $0.isFinite && $0 >= 0 && $0 <= 1440 } ?? true)
+        } else { validTarget = false }
+        guard calendarActionsEnabled, validTarget, !day.isEmpty else { return }
+        busy = true
+        calendarNotice = nil
+        calendarComposerError = nil
+        defer { finishOperation() }
+        do {
+            var input: CoreObject = ["day": day, "mode": "new"]
+            if let rawMinutes { input["rawMinutes"] = rawMinutes }
+            let result = try await query("calendarComposerOpen", [try json(input)])
+            guard calendarComposerOpeningCurrent(query: openingQuery, revision: openingRevision, state: openingState) else { return }
+            let next = result.object("composer")
+            if next.isEmpty {
+                let toast = result.object("toast")
+                calendarNotice = [toast.text("title"), toast.text("message")].filter { !$0.isEmpty }.joined(separator: ": ")
+                if calendarNotice?.isEmpty == true { calendarNotice = nil }
+                return
+            }
+            guard next.object("composer").text("mode") == "new" else { throw CocoaError(.coderReadCorrupt) }
+            calendarComposerGeneration += 1
+            calendarComposerEdits = []
+            calendarComposerView = next
+            syncCalendarComposerInputs()
+            calendarComposerPresented = true
+        } catch {
+            if calendarComposerOpeningCurrent(query: openingQuery, revision: openingRevision, state: openingState) {
+                calendarError = error.localizedDescription
+            }
+        }
+    }
+
+    private func calendarComposerOpeningCurrent(query: String, revision: String, state: CoreObject) -> Bool {
+        let current = calendarView.object("state")
+        return selectedSurface == .calendar && calendarCurrent && calendarQuery == query
+            && calendarView.text("revision") == revision
+            && current.text("selectedDate") == state.text("selectedDate")
+            && current.text("visibleMonth") == state.text("visibleMonth")
+            && current.text("viewMode") == state.text("viewMode")
+    }
+
+    func closeCalendarComposer() {
+        guard !busy, !retryNeeded, calendarComposerSaveRequest == nil else { return }
+        calendarComposerGeneration += 1
+        calendarComposerPresented = false
+        calendarComposerView = [:]
+        calendarComposerEdits = []
+        calendarComposerError = nil
+        if calendarNeedsRead { scheduleCalendarRead() }
+    }
+
+    func setCalendarComposerQuery(_ text: String) {
+        guard calendarComposerPresented, !busy, !retryNeeded, calendarComposerSaveRequest == nil,
+              text != calendarComposerQueryInput else { return }
+        calendarComposerQueryInput = text
+        queueCalendarComposerEdit(["type": "query", "query": text])
+    }
+
+    func setCalendarComposerTitle(_ text: String) {
+        guard calendarComposerPresented, !busy, !retryNeeded, calendarComposerSaveRequest == nil,
+              text != calendarComposerTitleInput else { return }
+        calendarComposerTitleInput = text
+        queueCalendarComposerEdit(["type": "title", "title": text])
+    }
+
+    func setCalendarComposerMode(_ mode: String) {
+        let sameMode = mode == calendarComposerView.object("composer").text("mode")
+        let visibleError = calendarComposerError != nil || !calendarComposerView.text("error").isEmpty
+        guard calendarComposerPresented, !busy, !retryNeeded, calendarComposerSaveRequest == nil,
+              ["new", "existing"].contains(mode),
+              !sameMode || visibleError || calendarComposerEditPending else { return }
+        queueCalendarComposerEdit(["type": "mode", "mode": mode])
+    }
+
+    func setCalendarComposerTime(_ field: String, text: String) {
+        guard calendarComposerPresented, !busy, !retryNeeded, calendarComposerSaveRequest == nil else { return }
+        if field == "startTime" {
+            guard text != calendarComposerStartInput else { return }
+            calendarComposerStartInput = text
+        } else if field == "endTime" {
+            guard text != calendarComposerEndInput else { return }
+            calendarComposerEndInput = text
+        } else { return }
+        queueCalendarComposerEdit(["type": field, "value": text])
+    }
+
+    func selectCalendarComposerTask(_ id: String) {
+        guard calendarComposerPresented, !calendarComposerEditPending, !busy, !retryNeeded,
+              calendarComposerView.objects("candidates").contains(where: { $0.text("id") == id }) else { return }
+        queueCalendarComposerEdit(["type": "selectTask", "taskId": id])
+    }
+
+    func setCalendarComposerDuration(_ minutes: Int) {
+        guard calendarComposerPresented, !calendarComposerEditPending, !busy, !retryNeeded,
+              calendarComposerView.objects("durations").contains(where: { $0.number("minutes") == minutes }) else { return }
+        queueCalendarComposerEdit(["type": "duration", "minutes": minutes])
+    }
+
+    func retryCalendarComposerEdit() {
+        guard calendarComposerPresented, !calendarComposerEditing, !calendarComposerEdits.isEmpty,
+              !busy, !retryNeeded else { return }
+        calendarComposerError = nil
+        Task { await pumpCalendarComposerEdits() }
+    }
+
+    private func queueCalendarComposerEdit(_ edit: CoreObject) {
+        // Coalesce only adjacent unsent keystrokes. Other control edits retain order.
+        if calendarComposerError != nil && calendarComposerEdits.first?.text("type") == edit.text("type") {
+            calendarComposerEdits.removeFirst()
+        }
+        if calendarComposerEdits.last?.text("type") == edit.text("type") {
+            calendarComposerEdits[calendarComposerEdits.count - 1] = edit
+        } else { calendarComposerEdits.append(edit) }
+        calendarComposerError = nil
+        Task { await pumpCalendarComposerEdits() }
+    }
+
+    private func pumpCalendarComposerEdits() async {
+        guard !calendarComposerEditing, calendarComposerPresented, !busy, !retryNeeded else { return }
+        calendarComposerEditing = true
+        defer {
+            calendarComposerEditing = false
+            if calendarComposerPresented && !calendarComposerEdits.isEmpty && calendarComposerError == nil {
+                Task { await pumpCalendarComposerEdits() }
+            }
+        }
+        let generation = calendarComposerGeneration
+        while calendarComposerPresented && generation == calendarComposerGeneration && !calendarComposerEdits.isEmpty {
+            let edit = calendarComposerEdits.removeFirst()
+            let previousMode = calendarComposerView.object("composer").text("mode")
+            do {
+                let next = try await query("calendarComposerEdit", [try json([
+                    "composer": calendarComposerView.object("composer"), "edit": edit
+                ])])
+                guard calendarComposerPresented, generation == calendarComposerGeneration else { return }
+                let returnedMode = next.object("composer").text("mode")
+                guard ["new", "existing"].contains(returnedMode),
+                      returnedMode == (edit.text("type") == "mode" ? edit.text("mode") : previousMode) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                calendarComposerView = next
+                syncCalendarComposerInputs()
+                calendarComposerError = nil
+            } catch {
+                guard calendarComposerPresented, generation == calendarComposerGeneration else { return }
+                if calendarComposerEdits.first?.text("type") == edit.text("type") {
+                    // A newer raw value superseded the refused in-flight value.
+                    continue
+                }
+                calendarComposerEdits.insert(edit, at: 0)
+                calendarComposerError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    private func syncCalendarComposerInputs() {
+        let composer = calendarComposerView.object("composer")
+        if !calendarComposerEdits.contains(where: { $0.text("type") == "query" }) {
+            calendarComposerQueryInput = composer.text("query")
+        }
+        if !calendarComposerEdits.contains(where: { $0.text("type") == "title" }) {
+            calendarComposerTitleInput = composer.text("title")
+        }
+        if !calendarComposerEdits.contains(where: { $0.text("type") == "startTime" }) {
+            calendarComposerStartInput = composer.text("startTimeValue")
+        }
+        if !calendarComposerEdits.contains(where: { $0.text("type") == "endTime" }) {
+            calendarComposerEndInput = composer.text("endTimeValue")
+        }
+    }
+
+    func saveCalendarComposer() async {
+        guard calendarComposerCanSave else { return }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(),
+                "composer": calendarComposerView.object("composer")])
+        } catch { calendarComposerError = error.localizedDescription; return }
+        calendarComposerSaveRequest = request
+        busy = true
+        calendarComposerError = nil
+        error = nil
+        defer { finishOperation() }
+        do {
+            let result = try await query("calendarComposerSave", [request])
+            await acknowledgeCalendarComposerSave(result)
+        } catch {
+            if isDefiniteRejection(error) { calendarComposerSaveRequest = nil }
+            retryNeeded = calendarComposerSaveRequest != nil
+            calendarComposerError = error.localizedDescription
+            if retryNeeded { self.error = error.localizedDescription }
+        }
+    }
+
+    private func acknowledgeCalendarComposerSave(_ result: CoreObject) async {
+        // The host has crossed its durable barrier. Never submit this request again.
+        calendarComposerSaveRequest = nil
+        retryNeeded = false
+        error = nil
+        let refused = result.object("composer")
+        if !refused.isEmpty {
+            guard calendarComposerPresented,
+                  ["new", "existing"].contains(refused.object("composer").text("mode")) else {
+                calendarError = CocoaError(.coderReadCorrupt).localizedDescription
+                return
+            }
+            calendarComposerView = refused
+            syncCalendarComposerInputs()
+            let toast = result.object("toast")
+            calendarComposerError = refused.text("error").isEmpty ? toast.text("message") : refused.text("error")
+            return
+        }
+        let next = result.object("next")
+        guard next.text("viewMode") == "day", !next.text("selectedDate").isEmpty,
+              !next.text("visibleMonth").isEmpty, let minute = result["scrollToMinutes"] as? NSNumber,
+              !result.text("taskId").isEmpty else {
+            calendarComposerError = CocoaError(.coderReadCorrupt).localizedDescription
+            return
+        }
+        calendarComposerGeneration += 1
+        calendarComposerPresented = false
+        calendarComposerView = [:]
+        calendarComposerEdits = []
+        calendarComposerError = nil
+        calendarComposerNavigation = (next, minute.doubleValue)
+        calendarQuery = ""
+        calendarState = next
+        calendarLoadedDepth = pageSize
+        calendarScrollAnchor = ""
+        calendarViewportAnchors.removeAll()
+        calendarViewportGeneration += 1
+        installCalendarComposerAnchor()
+        selectedSurface = .calendar
+        await readCalendar()
+        await persistComposerDayMode()
+    }
+
+    private func installCalendarComposerAnchor() {
+        guard let navigation = calendarComposerNavigation else { return }
+        let state = navigation.state
+        let key = String(calendarViewportGeneration) + ":day:" + state.text("selectedDate") + ":" +
+            state.text("visibleMonth") + ":vertical"
+        calendarViewportAnchors[key] = navigation.minute
+    }
+
+    private func persistComposerDayMode() async {
+        guard let navigation = calendarComposerNavigation else { return }
+        guard let before = calendarPreferenceValues["viewMode"] as? String else {
+            calendarError = CocoaError(.coderReadCorrupt).localizedDescription
+            return
+        }
+        if before == "day" { calendarComposerNavigation = nil; return }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString, "field": "viewMode", "before": before, "value": "day"])
+        } catch { calendarError = error.localizedDescription; return }
+        calendarPreferencePending = true
+        calendarPreferenceTarget = navigation.state
+        do {
+            _ = try await query("calendarPreference", [request])
+            acknowledgeCalendarPreference()
+            installCalendarComposerAnchor()
+            await readCalendar()
+            calendarComposerNavigation = nil
+        } catch {
+            if isDefiniteRejection(error) {
+                calendarPreferencePending = false
+                calendarPreferenceTarget = nil
+                calendarComposerNavigation = nil
+                calendarError = error.localizedDescription
+            } else {
+                retryNeeded = true
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func readCalendar() async {
+        calendarReadTask?.cancel()
+        calendarNeedsRead = false
+        calendarCurrent = false
+        calendarError = nil
+        let text = calendarQuery
+        for attempt in 0..<2 {
+            do {
+                let preferences = try await query("menuRead", ["calendarPreferences", "{}"])
+                let values = preferences.object("values")
+                guard preferences.number("version") == 1, values["viewMode"] is String,
+                      values["showCompleted"] is Bool, values["weekVisibleDays"] is NSNumber else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var state = calendarState
+                if let target = calendarPreferenceTarget, !calendarPreferencePending {
+                    state = target
+                    // Preserve the core navigation target, but honor the acknowledged stored mode
+                    // if replay finished persistence after a newer same-field preference arrived.
+                    state["viewMode"] = values["viewMode"]
+                }
+                var input: CoreObject = ["scheduleQuery": text, "offset": 0, "limit": pageSize]
+                if !state.isEmpty { input["state"] = state }
+                var next = try await query("menuRead", ["calendar", try json(input)])
+                guard !next.text("revision").isEmpty, !next.object("state").isEmpty,
+                      next.number("total") >= 0, next.objects("items").count == min(pageSize, next.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var entries = next.objects("items")
+                input["state"] = next.object("state")
+                input["revision"] = next.text("revision")
+                let target = min(calendarLoadedDepth, next.number("total"))
+                while entries.count < target {
+                    let limit = min(pageSize, target - entries.count)
+                    input["offset"] = entries.count
+                    input["limit"] = limit
+                    let page = try await query("menuRead", ["calendar", try json(input)])
+                    guard page.text("revision") == next.text("revision"), page.number("total") == next.number("total"),
+                          page.objects("items").count == limit,
+                          try json(page.object("state")) == json(next.object("state")) else { throw CocoaError(.coderReadCorrupt) }
+                    entries += page.objects("items")
+                }
+                guard selectedSurface == .calendar, text == calendarQuery else { calendarNeedsRead = true; return }
+                next["items"] = entries
+                calendarState = next.object("state")
+                calendarPreferenceValues = values
+                calendarPreferenceTarget = nil
+                if calendarView.isEmpty { NSLog("Native iOS Calendar view loaded releaseCheck=v1.3.3/native-ios-calendar-read") }
+                calendarView = next
+                calendarCurrent = true
+                return
+            } catch {
+                guard selectedSurface == .calendar, text == calendarQuery else { calendarNeedsRead = true; return }
+                if attempt == 1 { calendarError = error.localizedDescription }
+            }
+        }
+    }
+
+    func completeCalendarItem(_ item: CoreObject) async {
+        guard calendarActionsEnabled, calendarItems.contains(where: { $0.text("id") == item.text("id")
+            && $0.text("taskId") == item.text("taskId") && $0.flag("showDone") }),
+              calendarEditableTask(item.text("taskId")) else { return }
+        await complete(item.text("taskId"))
+    }
+
+    func openCalendarItem(_ item: CoreObject) async {
+        guard calendarActionsEnabled, item.flag("pressable"), !item.text("taskId").isEmpty,
+              calendarItems.contains(where: { $0.text("id") == item.text("id") && $0.text("taskId") == item.text("taskId") && $0.flag("pressable") }) else { return }
+        calendarItemTaskID = item.text("taskId")
+        calendarItemSheet = [:]
+        calendarItemError = nil
+        calendarItemPresented = true
+        await retryCalendarItem()
+    }
+
+    func retryCalendarItem() async {
+        guard calendarItemPresented, !busy, !retryNeeded, !taskPresented else { return }
+        busy = true
+        defer { finishOperation() }
+        calendarItemError = nil
+        do {
+            let sheet = try await query("menuRead", ["calendarItem", try json(["taskId": calendarItemTaskID, "state": calendarState])])
+            guard sheet.text("kind") == "projected" || (sheet.text("kind") == "task" && sheet.text("taskId") == calendarItemTaskID) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            calendarItemSheet = sheet
+        } catch { calendarItemError = error.localizedDescription }
+    }
+
+    func closeCalendarItem() {
+        guard !busy, !retryNeeded else { return }
+        calendarItemPresented = false
+        calendarItemSheet = [:]
+        calendarItemTaskID = ""
+        calendarItemError = nil
+    }
+
+    func performCalendarItemAction(_ action: String) async {
+        guard calendarItemPresented, !busy, !retryNeeded, !taskPresented,
+              calendarItemSheet.objects("buttons").contains(where: { $0.text("id") == action }) else { return }
+        if action == "cancel" || action == "ok" { closeCalendarItem(); return }
+        guard calendarItemSheet.text("kind") == "task", calendarEditableTask(calendarItemTaskID) else { return }
+        let id = calendarItemTaskID
+        if action == "edit" { closeCalendarItem(); await openTask(id) }
+        else if action == "done" { closeCalendarItem(); await complete(id) }
+    }
+
+    func openReview() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !mindSweepPresented, !processInboxPresented else { return }
+        morePresented = false
+        selectedSurface = .review
+        await refresh()
+    }
+
+    func openReviewPicker() {
+        guard reviewActionsEnabled else { return }
+        reviewPickerPresented = true
+    }
+
+    func closeReviewPicker() {
+        guard !busy, !retryNeeded else { return }
+        reviewPickerPresented = false
+    }
+
+    func editReviewOverview(scope: String? = nil, expansion: CoreObject? = nil) async {
+        guard reviewActionsEnabled, !reviewGuidePresented else { return }
+        if let scope {
+            guard reviewOverview.object("scope").objects("options").contains(where: { $0.text("id") == scope }) else { return }
+            reviewOverviewParams["scope"] = scope
+        }
+        if let expansion { reviewOverviewParams["expansionEdit"] = expansion }
+        busy = true
+        defer { finishOperation() }
+        await readReview()
+    }
+
+    func openReviewGuide(_ kind: String) async {
+        guard ready, selectedSurface == .review, !busy, !retryNeeded, !taskPresented, !mindSweepPresented,
+              reviewOverview.object("startReview").objects("options").contains(where: { $0.text("id") == kind }) else { return }
+        if reviewKind != kind {
+            reviewGuide = [:]
+            reviewGuideDepth = pageSize
+            reviewNestedDepth = [:]
+            reviewExpandedProject = nil
+        }
+        reviewKind = kind
+        reviewCheckpointInput = preferenceDefaults.string(forKey: reviewPreferencePrefix + kind)
+        reviewFinishPending = false
+        reviewPickerPresented = false
+        reviewGuidePresented = true
+        busy = true
+        defer { finishOperation() }
+        await readReview()
+    }
+
+    func closeReviewGuide() async {
+        guard !busy, !retryNeeded, !taskPresented, !mindSweepPresented, !processInboxPresented else { return }
+        reviewGuidePresented = false
+        reviewFinishPending = false
+        await refresh()
+    }
+
+    func moveReview(_ direction: String) async {
+        guard reviewActionsEnabled, reviewGuidePresented, ["back", "next"].contains(direction),
+              let checkpoint = reviewGuide.object(direction)["checkpoint"] as? String else { return }
+        reviewCheckpointInput = checkpoint
+        reviewGuideDepth = pageSize
+        reviewNestedDepth = [:]
+        reviewExpandedProject = nil
+        busy = true
+        defer { finishOperation() }
+        await readReview()
+    }
+
+    func expandWeeklyReviewProject(_ id: String) async {
+        guard reviewActionsEnabled, reviewGuidePresented, reviewKind == "weekly",
+              let item = reviewGuide.objects("items").first(where: { $0.text("type") == "project" && $0.text("id") == id }) else { return }
+        reviewExpandedProject = item.flag("expanded") ? nil : id
+        busy = true
+        defer { finishOperation() }
+        await readReview()
+    }
+
+    func toggleReviewContext(_ context: String) {
+        guard reviewActionsEnabled, reviewGuidePresented, reviewKind == "weekly",
+              reviewGuide.objects("items").contains(where: { $0.text("type") == "context"
+                  && $0.text("context") == context && !$0.text("moreLabel").isEmpty }) else { return }
+        if reviewExpandedContexts.contains(context) { reviewExpandedContexts.remove(context) }
+        else { reviewExpandedContexts.insert(context) }
+    }
+
+    func toggleReviewScheduled() {
+        let content = reviewGuide.object("content")
+        let step = content.text("step")
+        guard reviewActionsEnabled, reviewGuidePresented, reviewKind == "weekly",
+              ["waiting", "someday"].contains(step), content.object("scheduled").number("count") > 0 else { return }
+        if reviewExpandedScheduled.contains(step) { reviewExpandedScheduled.remove(step) }
+        else { reviewExpandedScheduled.insert(step) }
+    }
+
+    func finishReview() async {
+        guard selectedSurface == .review, reviewGuidePresented, !busy, !retryNeeded, !mindSweepPresented,
+              !reviewGuide.object("finish").isEmpty, reviewCurrent || reviewFinishPending else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let finish = reviewGuide.object("finish")
+            if reviewKind == "weekly" {
+                guard !finish.text("lastReviewKey").isEmpty, !finish.text("lastReviewAt").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                try writeReviewPreference(finish.text("lastReviewAt"), key: reviewPreferencePrefix + finish.text("lastReviewKey"))
+            }
+            try writeReviewPreference(nil, key: reviewPreferencePrefix + reviewKind)
+            NSLog("Native iOS Review finished releaseCheck=v1.3.3/native-ios-review-navigation")
+            reviewCheckpointInput = nil
+            reviewGuide = [:]
+            reviewGuideDepth = pageSize
+            if reviewKind == "weekly" {
+                reviewExpandedContexts = []
+                reviewExpandedScheduled = []
+            }
+            reviewNested = [:]
+            reviewNestedDepth = [:]
+            reviewExpandedProject = nil
+            reviewGuidePresented = false
+            reviewFinishPending = false
+            await readReview()
+        } catch {
+            reviewFinishPending = true
+            reviewCurrent = false
+            reviewError = error.localizedDescription
+        }
+    }
+
+    func retryReview() async {
+        guard selectedSurface == .review, !busy, !retryNeeded, !taskPresented, !mindSweepPresented else { return }
+        if reviewFinishPending { await finishReview(); return }
+        busy = true
+        defer { finishOperation() }
+        await readReview()
+    }
+
+    func loadMoreReview() async {
+        guard reviewActionsEnabled else { return }
+        let view = reviewGuidePresented ? reviewGuide : reviewOverview
+        guard view.objects("items").count < view.number("total") else { return }
+        if reviewGuidePresented { reviewGuideDepth = view.objects("items").count + pageSize }
+        else { reviewOverviewDepth = view.objects("items").count + pageSize }
+        await retryReview()
+    }
+
+    func reviewNestedWindow(_ list: String, key: String = "", fallback: CoreObject) -> CoreObject {
+        reviewNested[list + ":" + key] ?? fallback
+    }
+
+    func loadMoreReviewNested(_ list: String, key: String = "") async {
+        guard reviewActionsEnabled, reviewGuidePresented, reviewKind == "weekly",
+              let window = reviewNested[list + ":" + key], window.objects("items").count < window.number("total") else { return }
+        reviewNestedDepth[list + ":" + key] = window.objects("items").count + pageSize
+        await retryReview()
+    }
+
+    // Only opaque checkpoints and returned Finish metadata use this local namespace.
+    // MainActor + busy serializes navigation; failed persistence keeps the old page.
+    private func writeReviewPreference(_ value: String?, key: String) throws {
+        guard key.hasPrefix(reviewPreferencePrefix) else { throw CocoaError(.coderInvalidValue) }
+        let defaults = preferenceDefaults
+        let previous = defaults.string(forKey: key)
+        guard previous != value else { return }
+        if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+        guard defaults.synchronize(), defaults.string(forKey: key) == value else {
+            if let previous { defaults.set(previous, forKey: key) } else { defaults.removeObject(forKey: key) }
+            _ = defaults.synchronize()
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    private func readReview() async {
+        // A foreground refresh must not clear a failed Finish or its reachable retry.
+        guard !reviewFinishPending else { return }
+        reviewCurrent = false
+        reviewError = nil
+        for attempt in 0..<2 {
+            do {
+                if reviewGuidePresented { try await readReviewGuide() }
+                else { try await readReviewOverview() }
+                reviewCurrent = true
+                return
+            } catch {
+                if attempt == 1 { reviewError = error.localizedDescription }
+            }
+        }
+    }
+
+    private func readReviewOverview() async throws {
+        var input = reviewOverviewParams
+        input["offset"] = 0
+        input["limit"] = pageSize
+        var view = try await query("menuRead", ["reviewOverview", try json(input)])
+        try validateReviewFirstWindow(view)
+        var params: CoreObject = ["scope": view.object("scope").text("selected"),
+            "expandedAreaIds": view["expandedAreaIds"] ?? [], "expandedProjectIds": view["expandedProjectIds"] ?? []]
+        params["revision"] = view.text("revision")
+        var items = view.objects("items")
+        while items.count < min(reviewOverviewDepth, view.number("total")) {
+            let limit = min(pageSize, min(reviewOverviewDepth, view.number("total")) - items.count)
+            params["offset"] = items.count
+            params["limit"] = limit
+            let window = try await query("menuRead", ["reviewOverview", try json(params)])
+            try validateReviewWindow(window, against: view, count: limit)
+            items += window.objects("items")
+        }
+        view["items"] = items
+        for key in ["offset", "limit", "revision"] { params.removeValue(forKey: key) }
+        reviewOverviewParams = params
+        reviewOverview = view
+    }
+
+    private func readReviewGuide() async throws {
+        var input: CoreObject = ["checkpoint": reviewCheckpointInput as Any? ?? NSNull(), "offset": 0, "limit": pageSize]
+        if reviewKind == "weekly" { input["expandedProjectId"] = reviewExpandedProject as Any? ?? NSNull() }
+        let name = reviewKind == "daily" ? "dailyReview" : "weeklyReview"
+        var view = try await query("menuRead", [name, try json(input)])
+        try validateReviewFirstWindow(view)
+        let checkpoint = view.text("checkpoint")
+        guard !checkpoint.isEmpty, !view.text("storageKey").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        input["checkpoint"] = checkpoint
+        input["revision"] = view.text("revision")
+        var items = view.objects("items")
+        while items.count < min(reviewGuideDepth, view.number("total")) {
+            let limit = min(pageSize, min(reviewGuideDepth, view.number("total")) - items.count)
+            input["offset"] = items.count
+            input["limit"] = limit
+            let window = try await query("menuRead", [name, try json(input)])
+            try validateReviewWindow(window, against: view, count: limit)
+            guard window.text("checkpoint") == checkpoint else { throw CocoaError(.coderReadCorrupt) }
+            items += window.objects("items")
+        }
+        view["items"] = items
+        var nested: [String: CoreObject] = [:]
+        if reviewKind == "weekly" {
+            var lists: [(String, String, CoreObject)] = []
+            let projects = view.object("content").object("projects")
+            if !projects.isEmpty { lists.append(("staleProjects", "", projects)) }
+            for item in items where item.text("type") == "context" { lists.append(("contextTasks", item.text("context"), item.object("tasks"))) }
+            for (list, key, initial) in lists {
+                var window = initial
+                var entries = initial.objects("items")
+                guard initial.number("total") >= 0, entries.count == min(100, initial.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let identity = list + ":" + key
+                let target = max(entries.count, reviewNestedDepth[identity] ?? 0)
+                var params = input
+                params["list"] = list
+                if !key.isEmpty { params["key"] = key }
+                while entries.count < min(target, initial.number("total")) {
+                    let limit = min(pageSize, min(target, initial.number("total")) - entries.count)
+                    params["offset"] = entries.count
+                    params["limit"] = limit
+                    let next = try await query("menuRead", ["weeklyReviewList", try json(params)])
+                    guard next.text("revision") == view.text("revision"), next.text("list") == list,
+                          next.text("key") == key, next.number("total") == initial.number("total"),
+                          next.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                    entries += next.objects("items")
+                }
+                window["items"] = entries
+                nested[identity] = window
+            }
+        }
+        try writeReviewPreference(checkpoint, key: reviewPreferencePrefix + reviewKind)
+        if reviewGuide.text("checkpoint") != checkpoint {
+            NSLog("Native iOS Review checkpoint acknowledged releaseCheck=v1.3.3/native-ios-review-navigation")
+        }
+        reviewCheckpointInput = checkpoint
+        reviewGuide = view
+        reviewNested = nested
+    }
+
+    private func validateReviewFirstWindow(_ view: CoreObject) throws {
+        guard !view.text("revision").isEmpty, view.number("total") >= 0,
+              view.objects("items").count == min(pageSize, view.number("total")) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    private func validateReviewWindow(_ window: CoreObject, against view: CoreObject, count: Int) throws {
+        guard !view.text("revision").isEmpty, window.text("revision") == view.text("revision"),
+              window.number("total") == view.number("total"), window.objects("items").count == count else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func openContexts() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        if selectedSurface != .contexts { contextsCaller = selectedSurface }
+        morePresented = false
+        selectedSurface = .contexts
+        await refresh()
+    }
+
+    func closeContexts() async {
+        guard selectedSurface == .contexts, !busy, !retryNeeded, !taskPresented else { return }
+        contextsReadTask?.cancel()
+        contextsGeneration += 1
+        selectedSurface = contextsCaller
+        await refresh()
+    }
+
+    func setContextsSearch(_ text: String) {
+        guard selectedSurface == .contexts, !retryNeeded, !taskPresented, text != contextsSearchText else { return }
+        contextsSearchText = text
+        // RN searches the token strip only. Retain the loaded task depth.
+        requestContextsRead()
+    }
+
+    func selectContextsChip(_ id: String) {
+        guard contextsControlsEnabled, contexts.objects("chips").contains(where: { $0.text("id") == id }) else { return }
+        contextsIntents.append(["kind": "chip", "value": id])
+        contextsLoadedDepth = pageSize
+        requestContextsRead(delay: 0)
+    }
+
+    func selectContextsMatchMode(_ mode: String) {
+        guard contextsControlsEnabled, contexts.object("matchMode").objects("options").contains(where: { $0.text("mode") == mode }) else { return }
+        contextsIntents.append(["kind": "mode", "value": mode])
+        contextsLoadedDepth = pageSize
+        requestContextsRead(delay: 0)
+    }
+
+    func focusContextsToken(_ token: String) {
+        guard contextsActionsEnabled, contexts.objects("rows").contains(where: { row in
+            row.object("meta").objects("parts").contains(where: {
+                ["context", "tag"].contains($0.text("kind")) && $0.text("text") == token
+            })
+        }) else { return }
+        // Same explicit navigation as RN's onContextPress/onTagPress. The metadata
+        // text is the token; overflow is a separate field, never parsed here.
+        contextsIntents.append(["kind": "focus", "value": token])
+        contextsLoadedDepth = pageSize
+        requestContextsRead(delay: 0)
+    }
+
+    private func requestContextsRead(delay: UInt64 = 150_000_000) {
+        contextsGeneration += 1
+        contextsReadTask?.cancel()
+        contextsCurrent = false
+        contextsError = nil
+        contextsLoading = true
+        contextsNeedsRead = true
+        scheduleContextsRead(delay: delay)
+    }
+
+    private func scheduleContextsRead(delay: UInt64 = 150_000_000) {
+        guard selectedSurface == .contexts, !busy, !retryNeeded, !taskPresented, !areaPickerPresented else { return }
+        contextsReadTask?.cancel()
+        contextsReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .contexts, !busy, !retryNeeded, !taskPresented, !areaPickerPresented else { return }
+            await readContexts()
+        }
+    }
+
+    func retryContexts() {
+        guard selectedSurface == .contexts, !busy, !retryNeeded, !taskPresented else { return }
+        requestContextsRead(delay: 0)
+    }
+
+    func loadMoreContexts() {
+        guard contextsActionsEnabled, contexts.objects("rows").count < contexts.number("total") else { return }
+        contextsLoadedDepth = contexts.objects("rows").count + pageSize
+        requestContextsRead(delay: 0)
+    }
+
+    private func contextsPage(selection: CoreObject, search: String, offset: Int = 0,
+                              limit: Int = 50, revision: String? = nil) async throws -> CoreObject {
+        var input = selection
+        input["searchQuery"] = search
+        input["offset"] = offset
+        input["limit"] = limit
+        if let revision { input["revision"] = revision }
+        return try await query("menuRead", ["contexts", try json(input)])
+    }
+
+    private func contextsReadAllowed(_ generation: Int, ownsOperation: Bool) -> Bool {
+        !Task.isCancelled && generation == contextsGeneration && selectedSurface == .contexts
+            && !retryNeeded && !taskPresented && (ownsOperation || (!areaPickerPresented && !busy))
+    }
+
+    private func readContexts(ownsOperation: Bool = false) async {
+        let generation = contextsGeneration
+        let search = contextsSearchText
+        let intents = contextsIntents
+        let depth = contextsLoadedDepth
+        contextsNeedsRead = false
+        contextsCurrent = false
+        contextsLoading = true
+        contextsError = nil
+        defer { if generation == contextsGeneration { contextsLoading = false } }
+        for attempt in 0..<2 {
+            do {
+                var selection = contextsSelection
+                // Resolve every accepted tap against the preceding core selection.
+                // Reusing a rendered chip.next for two rapid taps would lose the first.
+                // Empty search keeps a queued chip reachable if typing hid it meanwhile.
+                for intent in intents {
+                    if intent.text("kind") == "focus" {
+                        selection = ["tokens": [intent.text("value")], "matchMode": "all"]
+                        continue
+                    }
+                    let controls = try await contextsPage(selection: selection, search: "")
+                    guard contextsReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                    selection = controls.object("selection")
+                    if intent.text("kind") == "chip" {
+                        if let chip = controls.objects("chips").first(where: { $0.text("id") == intent.text("value") }) {
+                            selection = chip.object("next")
+                        }
+                    } else if let option = controls.object("matchMode").objects("options").first(where: { $0.text("mode") == intent.text("value") }) {
+                        selection["matchMode"] = option.text("mode")
+                    }
+                }
+                var next = try await contextsPage(selection: selection, search: search)
+                guard contextsReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                guard next.number("version") == 1, !next.text("revision").isEmpty,
+                      !next.object("selection").isEmpty, next.number("total") >= 0,
+                      next.objects("rows").count == min(pageSize, next.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                // Contexts revision covers data/time, not selection or chip search.
+                // Every staged page must use the same effective inputs as page zero.
+                selection = next.object("selection")
+                var rows = next.objects("rows")
+                let target = min(depth, next.number("total"))
+                while rows.count < target {
+                    let limit = min(pageSize, target - rows.count)
+                    let page = try await contextsPage(selection: selection, search: search, offset: rows.count,
+                                                      limit: limit, revision: next.text("revision"))
+                    guard contextsReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                    guard page.text("revision") == next.text("revision"), page.number("total") == next.number("total"),
+                          page.objects("rows").count == limit, try json(page.object("selection")) == json(selection) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    rows += page.objects("rows")
+                }
+                guard Set(rows.map { $0.text("id") }).count == rows.count else { throw CocoaError(.coderReadCorrupt) }
+                next["rows"] = rows
+                contextsSelection = selection
+                contextsIntents.removeAll()
+                contexts = next
+                contextsCurrent = true
+                return
+            } catch {
+                guard contextsReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                // Restart at zero once on an expired revision; never publish mixed pages.
+                if attempt == 1 { contextsError = error.localizedDescription }
+            }
+        }
+    }
+
+    func openWaiting() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        if selectedSurface != .waiting { waitingCaller = selectedSurface }
+        morePresented = false
+        selectedSurface = .waiting
+        await refresh()
+    }
+
+    func closeWaiting() async {
+        guard selectedSurface == .waiting, !busy, !retryNeeded, !taskPresented else { return }
+        selectedSurface = waitingCaller
+        await refresh()
+    }
+
+    func openSomeday() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        if selectedSurface != .someday { somedayCaller = selectedSurface }
+        morePresented = false
+        selectedSurface = .someday
+        await refresh()
+    }
+
+    func closeSomeday() async {
+        guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented else { return }
+        closeSomedayPicker()
+        selectedSurface = somedayCaller
+        await refresh()
+    }
+
+    func closeSomedayPanel() {
+        somedayPanel = ""
+        closeSomedayPicker()
+    }
+
+    func setSomedayOption(_ key: String, value: Any) async {
+        guard somedayActionsEnabled, ["sortBy", "groupBy", "showDetails"].contains(key) else { return }
+        somedayParams[key] = value
+        if key != "showDetails" { somedayLoadedDepth = pageSize }
+        busy = true
+        defer { finishOperation() }
+        await readSomeday()
+    }
+
+    func editSomedayFilter(_ edit: CoreObject) async {
+        guard somedayActionsEnabled, !edit.isEmpty else { return }
+        somedayPendingEdit = edit
+        somedayLoadedDepth = pageSize
+        busy = true
+        defer { finishOperation() }
+        await readSomeday()
+    }
+
+    func setSomedayText(_ text: String, location: Bool = false) {
+        guard selectedSurface == .someday, !retryNeeded, !taskPresented else { return }
+        guard text != (location ? somedayLocationText : somedaySearchText) else { return }
+        if location { somedayLocationText = text } else { somedaySearchText = text }
+        let type = location ? "setLocation" : "setSearch"
+        somedayTextEdits[type] = ["type": type, "value": text]
+        if somedayPendingEdit?.text("type") == type { somedayPendingEdit = somedayTextEdits[type] }
+        somedayTextNeedsRead = true
+        somedayCurrent = false
+        somedayError = nil
+        somedayLoadedDepth = pageSize
+        scheduleSomedayRead()
+    }
+
+    func retrySomeday() async {
+        guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented else { return }
+        if !somedayTextEdits.isEmpty {
+            somedayTextNeedsRead = true
+            scheduleSomedayRead(delay: 0)
+        } else { await refresh() }
+    }
+
+    private func scheduleSomedayRead(delay: UInt64 = 200_000_000) {
+        guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented else { return }
+        somedayReadTask?.cancel()
+        somedayReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .someday, !busy, !retryNeeded, !taskPresented else { return }
+            busy = true
+            defer { finishOperation() }
+            somedayTextNeedsRead = false
+            // Text remains editable during reads. Drain the latest value of each
+            // text field in order, always starting from core's effective state.
+            if somedayPendingEdit != nil || somedayError != nil {
+                guard await readSomeday() else {
+                    somedayTextNeedsRead = false
+                    somedayPickerNeedsRead = false
+                    return
+                }
+            }
+            while let type = somedayTextEdits.keys.sorted().first, let edit = somedayTextEdits[type] {
+                somedayPendingEdit = edit
+                guard await readSomeday() else { somedayTextNeedsRead = false; return }
+                if somedayTextEdits[type]?.text("value") == edit.text("value") { somedayTextEdits.removeValue(forKey: type) }
+            }
+            somedayTextNeedsRead = false
+            if !someday.isEmpty {
+                syncSomedayText()
+                somedayCurrent = true
+            }
+            if somedayPickerNeedsRead { await readSomedayPicker() }
+        }
+    }
+
+    private func syncSomedayText() {
+        let state = someday.object("filters").object("state")
+        if somedayTextEdits["setSearch"] == nil { somedaySearchText = state.text("searchQuery") }
+        if somedayTextEdits["setLocation"] == nil { somedayLocationText = state.text("location") }
+    }
+
+    private func effectiveSomedayParams(_ snapshot: CoreObject) -> CoreObject {
+        ["sortBy": snapshot.text("sortBy"), "groupBy": snapshot.text("groupBy"),
+         "showDetails": snapshot.flag("showDetails"), "filters": snapshot.object("filters").object("state")]
+    }
+
+    private func somedayPage(params: CoreObject, offset: Int, limit: Int, revision: String? = nil,
+                             edit: CoreObject? = nil) async throws -> CoreObject {
+        var input = params
+        input["offset"] = offset
+        input["limit"] = limit
+        if let revision { input["revision"] = revision }
+        if let edit { input["filterEdit"] = edit }
+        return try await query("menuRead", ["someday", try json(input)])
+    }
+
+    @discardableResult private func readSomeday() async -> Bool {
+        somedayCurrent = false
+        somedayPickerCurrent = false
+        somedayError = nil
+        for attempt in 0..<2 {
+            do {
+                var next = try await somedayPage(params: somedayParams, offset: 0, limit: pageSize, edit: somedayPendingEdit)
+                guard !next.text("revision").isEmpty, next.number("total") >= 0,
+                      next.objects("items").count == min(pageSize, next.number("total")) else { throw CocoaError(.coderReadCorrupt) }
+                let params = effectiveSomedayParams(next)
+                var items = next.objects("items")
+                let target = min(somedayLoadedDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await somedayPage(params: params, offset: items.count, limit: limit, revision: next.text("revision"))
+                    try validateSomedayPage(page, against: next, count: limit)
+                    items += page.objects("items")
+                }
+                next["items"] = items
+                for name in ["tokens", "projects", "sections", "deferredProjects"] {
+                    let collection = somedayCollection(name, in: next)
+                    guard collection.number("total") >= 0,
+                          collection.objects("items").count == min(100, collection.number("total")) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                }
+                var deferred = next.object("deferred")
+                var collection = deferred.object("rows")
+                var entries = collection.objects("items")
+                let deferredTarget = min(somedayDeferredDepth, collection.number("total"))
+                while entries.count < deferredTarget {
+                    let limit = min(pageSize, deferredTarget - entries.count)
+                    let page = try await somedayCollectionPage("deferredProjects", snapshot: next, offset: entries.count, limit: limit)
+                    guard page.number("total") == collection.number("total"), page.objects("items").count == limit else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    entries += page.objects("items")
+                }
+                if !deferred.isEmpty {
+                    collection["items"] = entries
+                    deferred["rows"] = collection
+                    next["deferred"] = deferred
+                }
+                somedayParams = params
+                somedayPendingEdit = nil
+                someday = next
+                syncSomedayText()
+                somedayCurrent = somedayTextEdits.isEmpty
+                if !somedayPickerName.isEmpty { somedayPickerNeedsRead = true }
+                return true
+            } catch {
+                if attempt == 1 { somedayError = error.localizedDescription }
+            }
+        }
+        return false
+    }
+
+    private func validateSomedayPage(_ page: CoreObject, against snapshot: CoreObject, count: Int) throws {
+        guard page.text("revision") == snapshot.text("revision"), page.number("total") == snapshot.number("total"),
+              page.objects("items").count == count,
+              try json(effectiveSomedayParams(page)) == json(effectiveSomedayParams(snapshot)) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func loadMoreSomeday(deferred: Bool = false) async {
+        guard somedayActionsEnabled else { return }
+        let collection = somedayCollection("deferredProjects", in: someday)
+        let count = deferred ? collection.objects("items").count : someday.objects("items").count
+        let total = deferred ? collection.number("total") : someday.number("total")
+        guard count < total else { return }
+        if deferred { somedayDeferredDepth = count + min(pageSize, total - count) }
+        else { somedayLoadedDepth = count + min(pageSize, total - count) }
+        busy = true
+        defer { finishOperation() }
+        // Stage all windows offscreen before publishing so headings and tasks,
+        // including the deferred collection, always share one revision.
+        await readSomeday()
+    }
+
+    private func somedayCollection(_ name: String, in snapshot: CoreObject) -> CoreObject {
+        if name == "deferredProjects" { return snapshot.object("deferred").object("rows") }
+        if name == "sections" { return snapshot.object("sections") }
+        return snapshot.object("filters").object(name)
+    }
+
+    private func somedayCollectionPage(_ name: String, snapshot: CoreObject, query text: String? = nil,
+                                       offset: Int, limit: Int) async throws -> CoreObject {
+        var input: CoreObject = ["view": "someday", "collection": name, "params": effectiveSomedayParams(snapshot),
+                                 "offset": offset, "limit": limit, "revision": snapshot.text("revision")]
+        if let text { input["query"] = text }
+        let page = try await query("menuRead", ["collection", try json(input)])
+        guard page.text("view") == "someday", page.text("collection") == name,
+              page.text("revision") == snapshot.text("revision"), page.number("total") >= offset,
+              page.objects("items").count == min(limit, page.number("total") - offset) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return page
+    }
+
+    func openSomedayPicker(_ name: String) {
+        guard somedayActionsEnabled, ["tokens", "projects"].contains(name) else { return }
+        somedayPickerName = name
+        somedayPickerQuery = ""
+        somedayPickerDepth = 100
+        somedayPicker = somedayCollection(name, in: someday)
+        somedayPickerCurrent = true
+        somedayPickerError = nil
+        somedayPickerNeedsRead = false
+    }
+
+    func closeSomedayPicker() {
+        somedayPickerName = ""
+        somedayPickerNeedsRead = false
+        somedayPickerCurrent = false
+        somedayPickerError = nil
+    }
+
+    func setSomedayPickerQuery(_ text: String) {
+        guard !somedayPickerName.isEmpty, text != somedayPickerQuery, !retryNeeded else { return }
+        somedayPickerQuery = text
+        somedayPickerDepth = 100
+        somedayPickerCurrent = false
+        somedayPickerError = nil
+        somedayPickerNeedsRead = true
+        scheduleSomedayRead()
+    }
+
+    func loadMoreSomedayPicker() {
+        guard somedayPickerActionsEnabled, somedayPicker.objects("items").count < somedayPicker.number("total") else { return }
+        somedayPickerDepth = somedayPicker.objects("items").count + pageSize
+        retrySomedayPicker()
+    }
+
+    func retrySomedayPicker() {
+        guard !somedayPickerName.isEmpty, !busy, !retryNeeded else { return }
+        somedayPickerCurrent = false
+        somedayPickerNeedsRead = true
+        scheduleSomedayRead(delay: 0)
+    }
+
+    private func readSomedayPicker() async {
+        let name = somedayPickerName
+        let text = somedayPickerQuery
+        guard !name.isEmpty else { return }
+        somedayPickerNeedsRead = false
+        somedayPickerCurrent = false
+        somedayPickerError = nil
+        for attempt in 0..<2 {
+            do {
+                let snapshot = someday
+                var next = try await somedayCollectionPage(name, snapshot: snapshot, query: text, offset: 0, limit: 100)
+                var items = next.objects("items")
+                let target = min(somedayPickerDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await somedayCollectionPage(name, snapshot: snapshot, query: text, offset: items.count, limit: limit)
+                    guard page.number("total") == next.number("total") else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                guard name == somedayPickerName, text == somedayPickerQuery else { return }
+                next["items"] = items
+                somedayPicker = next
+                somedayPickerCurrent = true
+                return
+            } catch {
+                guard name == somedayPickerName, text == somedayPickerQuery else { return }
+                if attempt == 0, await readSomeday() {
+                    guard name == somedayPickerName, text == somedayPickerQuery else { return }
+                    somedayPickerNeedsRead = false
+                    continue
+                }
+                somedayPickerNeedsRead = false
+                somedayPickerError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    func openReference() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented else { return }
+        if selectedSurface != .reference { referenceCaller = selectedSurface }
+        morePresented = false
+        selectedSurface = .reference
+        await refresh()
+    }
+
+    func closeReference() async {
+        guard selectedSurface == .reference, !busy, !retryNeeded, !taskPresented else { return }
+        closeReferencePicker()
+        selectedSurface = referenceCaller
+        await refresh()
+    }
+
+    func closeReferencePanel() {
+        referencePanel = ""
+        closeReferencePicker()
+    }
+
+    func setReferenceOption(_ key: String, value: Any) async {
+        guard referenceActionsEnabled, ["groupBy", "includeArchivedProjects", "collapsedGroupIds"].contains(key) else { return }
+        referenceParams[key] = value
+        if key != "collapsedGroupIds" { referenceLoadedDepth = pageSize }
+        busy = true
+        defer { finishOperation() }
+        await readReference()
+    }
+
+    func toggleReferenceSection(_ id: String) async {
+        guard referenceActionsEnabled, let section = reference.objects("items").first(where: {
+            $0.text("type") == "section" && $0.text("id") == id && $0.flag("collapsible")
+        }) else { return }
+        var ids = reference["collapsedGroupIds"] as? [String] ?? []
+        if section.flag("collapsed") { ids.removeAll { $0 == id } }
+        else if !ids.contains(id) { ids.append(id) }
+        await setReferenceOption("collapsedGroupIds", value: ids)
+    }
+
+    func applyReferenceChipAction(_ action: CoreObject) async {
+        guard referenceActionsEnabled else { return }
+        if !action.object("filterEdit").isEmpty { await editReferenceFilter(action.object("filterEdit")) }
+        else if action["includeArchivedProjects"] is Bool {
+            await setReferenceOption("includeArchivedProjects", value: action.flag("includeArchivedProjects"))
+        }
+    }
+
+    func editReferenceFilter(_ edit: CoreObject) async {
+        guard referenceActionsEnabled, !edit.isEmpty else { return }
+        referencePendingEdit = edit
+        referenceLoadedDepth = pageSize
+        busy = true
+        defer { finishOperation() }
+        await readReference()
+    }
+
+    func setReferenceText(_ text: String, location: Bool = false) {
+        guard selectedSurface == .reference, !retryNeeded, !taskPresented else { return }
+        guard text != (location ? referenceLocationText : referenceSearchText) else { return }
+        if location { referenceLocationText = text } else { referenceSearchText = text }
+        let type = location ? "setLocation" : "setSearch"
+        referenceTextEdits[type] = ["type": type, "value": text]
+        if referencePendingEdit?.text("type") == type { referencePendingEdit = referenceTextEdits[type] }
+        referenceTextNeedsRead = true
+        referenceCurrent = false
+        referenceError = nil
+        referenceLoadedDepth = pageSize
+        scheduleReferenceRead()
+    }
+
+    func retryReference() async {
+        guard selectedSurface == .reference, !busy, !retryNeeded, !taskPresented else { return }
+        if !referenceTextEdits.isEmpty {
+            referenceTextNeedsRead = true
+            scheduleReferenceRead(delay: 0)
+        } else { await refresh() }
+    }
+
+    private func scheduleReferenceRead(delay: UInt64 = 200_000_000) {
+        guard selectedSurface == .reference, !busy, !retryNeeded, !taskPresented else { return }
+        referenceReadTask?.cancel()
+        referenceReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .reference, !busy, !retryNeeded, !taskPresented else { return }
+            busy = true
+            defer { finishOperation() }
+            referenceTextNeedsRead = false
+            // Text remains editable during reads. Drain the latest value of each
+            // text field in order, always starting from core's effective state.
+            if referencePendingEdit != nil || referenceError != nil {
+                guard await readReference() else {
+                    referenceTextNeedsRead = false
+                    referencePickerNeedsRead = false
+                    return
+                }
+            }
+            while let type = referenceTextEdits.keys.sorted().first, let edit = referenceTextEdits[type] {
+                referencePendingEdit = edit
+                guard await readReference() else { referenceTextNeedsRead = false; return }
+                if referenceTextEdits[type]?.text("value") == edit.text("value") { referenceTextEdits.removeValue(forKey: type) }
+            }
+            referenceTextNeedsRead = false
+            if !reference.isEmpty {
+                syncReferenceText()
+                referenceCurrent = true
+            }
+            if referencePickerNeedsRead { await readReferencePicker() }
+        }
+    }
+
+    private func syncReferenceText() {
+        let state = reference.object("filters").object("state")
+        if referenceTextEdits["setSearch"] == nil { referenceSearchText = state.text("searchQuery") }
+        if referenceTextEdits["setLocation"] == nil { referenceLocationText = state.text("location") }
+    }
+
+    private func effectiveReferenceParams(_ snapshot: CoreObject) -> CoreObject {
+        // Reference always reads the saved sort. Sending sortBy is rejected by core.
+        ["groupBy": snapshot.text("groupBy"), "includeArchivedProjects": snapshot.flag("includeArchivedProjects"),
+         "collapsedGroupIds": snapshot["collapsedGroupIds"] as? [String] ?? [],
+         "filters": snapshot.object("filters").object("state")]
+    }
+
+    private func referencePage(params: CoreObject, offset: Int, limit: Int, revision: String? = nil,
+                             edit: CoreObject? = nil) async throws -> CoreObject {
+        var input = params
+        input["offset"] = offset
+        input["limit"] = limit
+        if let revision { input["revision"] = revision }
+        if let edit { input["filterEdit"] = edit }
+        return try await query("menuRead", ["reference", try json(input)])
+    }
+
+    @discardableResult private func readReference() async -> Bool {
+        referenceCurrent = false
+        referencePickerCurrent = false
+        referenceError = nil
+        for attempt in 0..<2 {
+            do {
+                var next = try await referencePage(params: referenceParams, offset: 0, limit: pageSize, edit: referencePendingEdit)
+                guard next.text("kind") == "reference", !next.text("revision").isEmpty, next.number("total") >= 0,
+                      next.objects("items").count == min(pageSize, next.number("total")) else { throw CocoaError(.coderReadCorrupt) }
+                let params = effectiveReferenceParams(next)
+                var items = next.objects("items")
+                let target = min(referenceLoadedDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await referencePage(params: params, offset: items.count, limit: limit, revision: next.text("revision"))
+                    try validateReferencePage(page, against: next, count: limit)
+                    items += page.objects("items")
+                }
+                next["items"] = items
+                for name in ["tokens", "projects"] {
+                    let collection = referenceCollection(name, in: next)
+                    guard collection.number("total") >= 0,
+                          collection.objects("items").count == min(100, collection.number("total")) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                }
+                referenceParams = params
+                referencePendingEdit = nil
+                reference = next
+                syncReferenceText()
+                referenceCurrent = referenceTextEdits.isEmpty
+                if !referencePickerName.isEmpty { referencePickerNeedsRead = true }
+                return true
+            } catch {
+                if attempt == 1 { referenceError = error.localizedDescription }
+            }
+        }
+        return false
+    }
+
+    private func validateReferencePage(_ page: CoreObject, against snapshot: CoreObject, count: Int) throws {
+        guard page.text("kind") == "reference", page.text("revision") == snapshot.text("revision"),
+              page.number("total") == snapshot.number("total"), page.number("count") == snapshot.number("count"),
+              page.text("sortBy") == snapshot.text("sortBy"),
+              page.objects("items").count == count,
+              try json(effectiveReferenceParams(page)) == json(effectiveReferenceParams(snapshot)) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func loadMoreReference() async {
+        guard referenceActionsEnabled else { return }
+        let count = reference.objects("items").count
+        guard count < reference.number("total") else { return }
+        referenceLoadedDepth = count + min(pageSize, reference.number("total") - count)
+        busy = true
+        defer { finishOperation() }
+        await readReference()
+    }
+
+    private func referenceCollection(_ name: String, in snapshot: CoreObject) -> CoreObject {
+        snapshot.object("filters").object(name)
+    }
+
+    private func referenceCollectionPage(_ name: String, snapshot: CoreObject, query text: String? = nil,
+                                       offset: Int, limit: Int) async throws -> CoreObject {
+        var input: CoreObject = ["view": "reference", "collection": name, "params": effectiveReferenceParams(snapshot),
+                                 "offset": offset, "limit": limit, "revision": snapshot.text("revision")]
+        if let text { input["query"] = text }
+        let page = try await query("menuRead", ["collection", try json(input)])
+        guard page.text("view") == "reference", page.text("collection") == name,
+              page.text("revision") == snapshot.text("revision"), page.number("total") >= offset,
+              page.objects("items").count == min(limit, page.number("total") - offset) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return page
+    }
+
+    func openReferencePicker(_ name: String) {
+        guard referenceActionsEnabled, ["tokens", "projects"].contains(name) else { return }
+        referencePickerName = name
+        referencePickerQuery = ""
+        referencePickerDepth = 100
+        referencePicker = referenceCollection(name, in: reference)
+        referencePickerCurrent = true
+        referencePickerError = nil
+        referencePickerNeedsRead = false
+    }
+
+    func closeReferencePicker() {
+        referencePickerName = ""
+        referencePickerNeedsRead = false
+        referencePickerCurrent = false
+        referencePickerError = nil
+    }
+
+    func setReferencePickerQuery(_ text: String) {
+        guard !referencePickerName.isEmpty, text != referencePickerQuery, !retryNeeded else { return }
+        referencePickerQuery = text
+        referencePickerDepth = 100
+        referencePickerCurrent = false
+        referencePickerError = nil
+        referencePickerNeedsRead = true
+        scheduleReferenceRead()
+    }
+
+    func loadMoreReferencePicker() {
+        guard referencePickerActionsEnabled, referencePicker.objects("items").count < referencePicker.number("total") else { return }
+        referencePickerDepth = referencePicker.objects("items").count + pageSize
+        retryReferencePicker()
+    }
+
+    func retryReferencePicker() {
+        guard !referencePickerName.isEmpty, !busy, !retryNeeded else { return }
+        referencePickerCurrent = false
+        referencePickerNeedsRead = true
+        scheduleReferenceRead(delay: 0)
+    }
+
+    private func readReferencePicker() async {
+        let name = referencePickerName
+        let text = referencePickerQuery
+        guard !name.isEmpty else { return }
+        referencePickerNeedsRead = false
+        referencePickerCurrent = false
+        referencePickerError = nil
+        for attempt in 0..<2 {
+            do {
+                let snapshot = reference
+                var next = try await referenceCollectionPage(name, snapshot: snapshot, query: text, offset: 0, limit: 100)
+                var items = next.objects("items")
+                let target = min(referencePickerDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await referenceCollectionPage(name, snapshot: snapshot, query: text, offset: items.count, limit: limit)
+                    guard page.number("total") == next.number("total") else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                guard name == referencePickerName, text == referencePickerQuery else { return }
+                next["items"] = items
+                referencePicker = next
+                referencePickerCurrent = true
+                return
+            } catch {
+                guard name == referencePickerName, text == referencePickerQuery else { return }
+                if attempt == 0, await readReference() {
+                    guard name == referencePickerName, text == referencePickerQuery else { return }
+                    referencePickerNeedsRead = false
+                    continue
+                }
+                referencePickerNeedsRead = false
+                referencePickerError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    func openTrash() async {
+        guard ready, !busy, !retryNeeded, !taskPresented, !capturePresented, !areaPickerPresented else { return }
+        if selectedSurface != .trash { trashCaller = selectedSurface }
+        morePresented = false
+        selectedSurface = .trash
+        await refresh()
+    }
+
+    func closeTrash() async {
+        guard selectedSurface == .trash, !busy, !retryNeeded, !taskPresented else { return }
+        selectedSurface = trashCaller
+        await refresh()
+    }
+
+    func retryTrash() async {
+        guard selectedSurface == .trash, !busy, !retryNeeded, !taskPresented else { return }
+        await refresh()
+    }
+
+    func loadMoreTrash() async {
+        guard trashActionsEnabled else { return }
+        let count = trash.objects("items").count
+        guard count < trash.number("total") else { return }
+        trashLoadedDepth = count + min(pageSize, trash.number("total") - count)
+        busy = true
+        defer { finishOperation() }
+        await readTrash()
+    }
+
+    private func trashPage(offset: Int, limit: Int, revision: String? = nil) async throws -> CoreObject {
+        var input: CoreObject = ["offset": offset, "limit": limit]
+        if let revision { input["revision"] = revision }
+        return try await query("menuRead", ["trash", try json(input)])
+    }
+
+    private func readTrash() async {
+        trashCurrent = false
+        trashError = nil
+        for attempt in 0..<2 {
+            do {
+                var next = try await trashPage(offset: 0, limit: pageSize)
+                guard !next.text("revision").isEmpty, next.number("total") >= 0,
+                      next.number("taskCount") >= 0, next.number("projectCount") >= 0,
+                      next.number("total") == next.number("taskCount") + next.number("projectCount"),
+                      next.objects("items").count == min(pageSize, next.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var items = next.objects("items")
+                let target = min(trashLoadedDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await trashPage(offset: items.count, limit: limit, revision: next.text("revision"))
+                    guard page.text("revision") == next.text("revision"), page.number("total") == next.number("total"),
+                          page.number("taskCount") == next.number("taskCount"), page.number("projectCount") == next.number("projectCount"),
+                          page.text("summary") == next.text("summary"), page.text("retentionHint") == next.text("retentionHint"),
+                          page.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                var identities: Set<String> = []
+                for item in items {
+                    let kind = item.text("type")
+                    let id = kind == "task" ? item.object("row").text("id") : item.text("id")
+                    guard ["task", "project"].contains(kind), !id.isEmpty,
+                          identities.insert(kind + ":" + id).inserted else { throw CocoaError(.coderReadCorrupt) }
+                }
+                next["items"] = items
+                trash = next
+                trashCurrent = true
+                return
+            } catch {
+                if attempt == 1 { trashError = error.localizedDescription }
+            }
+        }
+    }
+
+    func openHistory() async {
+        guard ready, !busy, !retryNeeded, !taskPresented, !capturePresented else { return }
+        if selectedSurface != .history { historyCaller = selectedSurface }
+        morePresented = false
+        selectedSurface = .history
+        await refresh()
+    }
+
+    func closeHistory() async {
+        guard selectedSurface == .history, !busy, !retryNeeded, !taskPresented else { return }
+        closeHistoryPanel()
+        selectedSurface = historyCaller
+        await refresh()
+    }
+
+    func selectHistoryTab(_ id: String) async {
+        guard selectedSurface == .history, !busy, !retryNeeded, !taskPresented,
+              id != historyTabs.text("tab"), historyTabs.objects("tabs").contains(where: { $0.text("id") == id }) else { return }
+        // Finish text edits before switching their owner to the other tab.
+        guard historyTextEdits.isEmpty, historyPendingEdit == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let tabs = try await query("menuRead", ["history", try json(["tab": id])])
+            // Input can arrive while core resolves the tab. Drain it in its original tab.
+            guard historyTextEdits.isEmpty, historyPendingEdit == nil else { return }
+            historyPanel = ""
+            closeHistoryPicker()
+            historyTabs = tabs
+            history = [:]
+            historyNeedsRead = false
+            await readHistory()
+        } catch { historyCurrent = false; historyError = error.localizedDescription }
+    }
+
+    func setHistoryPanel(_ panel: String) {
+        guard ["", "menu", "sort", "group", "filters"].contains(panel), !retryNeeded, !taskPresented else { return }
+        let wasFilter = historyPanel == "filters"
+        historyPanel = panel
+        if panel != "filters" { closeHistoryPicker() }
+        if historyArchived && wasFilter != (panel == "filters") {
+            // Archive exposes all token options only while its filter sheet is open.
+            historyCurrent = false
+            historyNeedsRead = true
+            scheduleHistoryRead(delay: 0)
+        }
+    }
+
+    func closeHistoryPanel() { setHistoryPanel("") }
+
+    func setHistoryOption(_ key: String, value: Any) async {
+        guard historyActionsEnabled,
+              ["sortBy", "groupBy", "collapsedGroupIds", "segment"].contains(key),
+              historyArchived || key != "segment" else { return }
+        historyParamsByTab[historyReadName, default: [:]][key] = value
+        if key != "collapsedGroupIds" { historyDepthByTab[historyReadName] = pageSize }
+        busy = true
+        defer { finishOperation() }
+        await readHistory()
+    }
+
+    func toggleHistorySection(_ id: String) async {
+        guard historyActionsEnabled, let section = history.objects("items").first(where: {
+            $0.text("type") == "section" && $0.text("id") == id && $0.flag("collapsible")
+        }) else { return }
+        var ids = historyParamsByTab[historyReadName]?["collapsedGroupIds"] as? [String] ?? []
+        if section.flag("collapsed") { ids.removeAll { $0 == id } }
+        else if !ids.contains(id) { ids.append(id) }
+        await setHistoryOption("collapsedGroupIds", value: ids)
+    }
+
+    func applyHistoryChipAction(_ action: CoreObject) async {
+        guard historyActionsEnabled, !action.object("filterEdit").isEmpty else { return }
+        await editHistoryFilter(action.object("filterEdit"))
+    }
+
+    func editHistoryFilter(_ edit: CoreObject) async {
+        guard historyActionsEnabled, !edit.isEmpty else { return }
+        historyPendingEdit = edit
+        historyDepthByTab[historyReadName] = pageSize
+        busy = true
+        defer { finishOperation() }
+        await readHistory()
+    }
+
+    func setHistoryText(_ text: String, location: Bool = false) {
+        guard selectedSurface == .history, !retryNeeded, !taskPresented,
+              text != (location ? historyLocationText : historySearchText) else { return }
+        if location { historyLocationText = text } else { historySearchText = text }
+        let type = location ? "setLocation" : "setSearch"
+        historyTextEdits[type] = ["type": type, "value": text]
+        if historyPendingEdit?.text("type") == type { historyPendingEdit = historyTextEdits[type] }
+        historyNeedsRead = true
+        historyCurrent = false
+        historyError = nil
+        historyDepthByTab[historyReadName] = pageSize
+        scheduleHistoryRead()
+    }
+
+    func retryHistory() async {
+        guard selectedSurface == .history, !busy, !retryNeeded, !taskPresented else { return }
+        historyNeedsRead = true
+        scheduleHistoryRead(delay: 0)
+    }
+
+    private func scheduleHistoryRead(delay: UInt64 = 200_000_000) {
+        guard selectedSurface == .history, !busy, !retryNeeded, !taskPresented else { return }
+        historyReadTask?.cancel()
+        historyReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .history, !busy, !retryNeeded, !taskPresented else { return }
+            busy = true
+            defer { finishOperation() }
+            let needsRead = historyNeedsRead
+            historyNeedsRead = false
+            if historyPendingEdit != nil || historyError != nil || (needsRead && historyTextEdits.isEmpty) {
+                guard await readHistory() else {
+                    historyNeedsRead = false
+                    historyPickerNeedsRead = false
+                    return
+                }
+            }
+            while let type = historyTextEdits.keys.sorted().first, let edit = historyTextEdits[type] {
+                historyPendingEdit = edit
+                guard await readHistory() else { historyNeedsRead = false; historyPickerNeedsRead = false; return }
+                if historyTextEdits[type]?.text("value") == edit.text("value") { historyTextEdits.removeValue(forKey: type) }
+            }
+            let correctSheet = !historyArchived || historyParamsByTab[historyReadName]?.flag("filterSheetOpen") == (historyPanel == "filters")
+            historyNeedsRead = !correctSheet
+            if !history.isEmpty && correctSheet {
+                syncHistoryText()
+                historyCurrent = true
+            }
+            if historyPickerNeedsRead && historyCurrent { await readHistoryPicker() }
+        }
+    }
+
+    private func syncHistoryText() {
+        let state = history.object("filters").object("state")
+        if historyTextEdits["setSearch"] == nil { historySearchText = state.text("searchQuery") }
+        if historyTextEdits["setLocation"] == nil { historyLocationText = state.text("location") }
+    }
+
+    private func effectiveHistoryParams(_ snapshot: CoreObject, name: String, input: CoreObject) -> CoreObject {
+        if name == "done" {
+            return ["sortBy": snapshot.text("sortBy"), "groupBy": snapshot.text("groupBy"),
+                    "collapsedGroupIds": snapshot["collapsedGroupIds"] as? [String] ?? [],
+                    "filters": snapshot.object("filters").object("state")]
+        }
+        // Archive revisions identify data/time, not choices. Preserve the exact
+        // non-echoed inputs and resolve only choices that core returns selected.
+        var params = input
+        params.removeValue(forKey: "filterEdit")
+        params["segment"] = snapshot.text("segment")
+        params["filters"] = snapshot.object("filters").object("state")
+        for (menu, key) in [("sort", "sortBy"), ("group", "groupBy")] {
+            if let option = snapshot.object("menu").object(menu).objects("options").first(where: { $0.flag("selected") }) {
+                params[key] = option.text("id")
+            }
+        }
+        return params
+    }
+
+    private func historyPage(name: String, params: CoreObject, offset: Int, limit: Int,
+                             revision: String? = nil, edit: CoreObject? = nil) async throws -> CoreObject {
+        var input = params
+        input["offset"] = offset
+        input["limit"] = limit
+        if let revision { input["revision"] = revision }
+        if let edit { input["filterEdit"] = edit }
+        return try await query("menuRead", [name, try json(input)])
+    }
+
+    @discardableResult private func readHistory() async -> Bool {
+        historyCurrent = false
+        historyPickerCurrent = false
+        historyError = nil
+        for attempt in 0..<2 {
+            do {
+                let tabInput: CoreObject = historyTabs.text("tab").isEmpty ? [:] : ["tab": historyTabs.text("tab")]
+                historyTabs = try await query("menuRead", ["history", try json(tabInput)])
+                let name = historyReadName
+                var input = historyParamsByTab[name] ?? [:]
+                if name == "archive" { input["filterSheetOpen"] = historyPanel == "filters" }
+                var next = try await historyPage(name: name, params: input, offset: 0, limit: pageSize, edit: historyPendingEdit)
+                guard !next.text("revision").isEmpty, next.number("total") >= 0,
+                      next.objects("items").count == min(pageSize, next.number("total")),
+                      name == "archive" ? !next.text("segment").isEmpty : next.text("kind") == "done" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let params = effectiveHistoryParams(next, name: name, input: input)
+                var items = next.objects("items")
+                let target = min(historyDepthByTab[name] ?? pageSize, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await historyPage(name: name, params: params, offset: items.count, limit: limit,
+                                                     revision: next.text("revision"))
+                    guard page.text("revision") == next.text("revision"), page.number("total") == next.number("total"),
+                          page.objects("items").count == limit,
+                          try json(effectiveHistoryParams(page, name: name, input: params)) == json(params) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    if name == "done" {
+                        guard page.text("kind") == "done", page.number("count") == next.number("count") else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                    } else {
+                        guard page.number("visibleTaskCount") == next.number("visibleTaskCount"),
+                              try json(page.object("menu")) == json(next.object("menu")) else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                    }
+                    items += page.objects("items")
+                }
+                let tokens = next.object("filters").object("tokens")
+                guard tokens.number("total") >= 0, tokens.objects("items").count == min(100, tokens.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                next["items"] = items
+                historyParamsByTab[name] = params
+                historyPendingEdit = nil
+                history = next
+                syncHistoryText()
+                let correctSheet = name != "archive" || params.flag("filterSheetOpen") == (historyPanel == "filters")
+                historyCurrent = historyTextEdits.isEmpty && correctSheet
+                historyNeedsRead = !correctSheet || !historyTextEdits.isEmpty
+                if !historyPickerName.isEmpty { historyPickerNeedsRead = true }
+                return true
+            } catch {
+                if attempt == 1 { historyError = error.localizedDescription }
+            }
+        }
+        return false
+    }
+
+    func loadMoreHistory() async {
+        guard historyActionsEnabled else { return }
+        let count = history.objects("items").count
+        guard count < history.number("total") else { return }
+        historyDepthByTab[historyReadName] = count + min(pageSize, history.number("total") - count)
+        busy = true
+        defer { finishOperation() }
+        await readHistory()
+    }
+
+    func openHistoryPicker(_ name: String) {
+        guard historyActionsEnabled, name == "tokens" else { return }
+        historyPickerName = name
+        historyPickerQuery = ""
+        historyPickerDepth = 100
+        historyPicker = history.object("filters").object("tokens")
+        historyPickerCurrent = true
+        historyPickerError = nil
+        historyPickerNeedsRead = false
+    }
+
+    func closeHistoryPicker() {
+        historyPickerName = ""
+        historyPickerNeedsRead = false
+        historyPickerCurrent = false
+        historyPickerError = nil
+    }
+
+    func setHistoryPickerQuery(_ text: String) {
+        guard !historyPickerName.isEmpty, text != historyPickerQuery, !retryNeeded else { return }
+        historyPickerQuery = text
+        historyPickerDepth = 100
+        historyPickerCurrent = false
+        historyPickerError = nil
+        historyPickerNeedsRead = true
+        scheduleHistoryRead()
+    }
+
+    func loadMoreHistoryPicker() {
+        guard historyPickerActionsEnabled, historyPicker.objects("items").count < historyPicker.number("total") else { return }
+        historyPickerDepth = historyPicker.objects("items").count + pageSize
+        retryHistoryPicker()
+    }
+
+    func retryHistoryPicker() {
+        guard !historyPickerName.isEmpty, !busy, !retryNeeded else { return }
+        historyPickerCurrent = false
+        historyPickerNeedsRead = true
+        scheduleHistoryRead(delay: 0)
+    }
+
+    private func historyTokenPage(name: String, params: CoreObject, revision: String, text: String,
+                                  offset: Int, limit: Int) async throws -> CoreObject {
+        var input: CoreObject = ["params": params, "revision": revision, "query": text, "offset": offset, "limit": limit]
+        if name == "done" { input["view"] = "done"; input["collection"] = "tokens" }
+        let page = try await query("menuRead", [name == "done" ? "collection" : "archiveTokens", try json(input)])
+        guard page.text("revision") == revision, page.number("total") >= offset,
+              page.objects("items").count == min(limit, page.number("total") - offset),
+              name == "archive" || (page.text("view") == "done" && page.text("collection") == "tokens") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return page
+    }
+
+    private func readHistoryPicker() async {
+        let name = historyReadName
+        let text = historyPickerQuery
+        guard !historyPickerName.isEmpty else { return }
+        historyPickerNeedsRead = false
+        historyPickerCurrent = false
+        historyPickerError = nil
+        for attempt in 0..<2 {
+            do {
+                let revision = history.text("revision")
+                let params = historyParamsByTab[name] ?? [:]
+                var next = try await historyTokenPage(name: name, params: params, revision: revision, text: text, offset: 0, limit: 100)
+                var items = next.objects("items")
+                let target = min(historyPickerDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await historyTokenPage(name: name, params: params, revision: revision,
+                                                          text: text, offset: items.count, limit: limit)
+                    guard page.number("total") == next.number("total") else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                guard name == historyReadName, !historyPickerName.isEmpty, text == historyPickerQuery,
+                      historyPanel == "filters", historyCurrent else { return }
+                next["items"] = items
+                historyPicker = next
+                historyPickerCurrent = true
+                return
+            } catch {
+                guard name == historyReadName, !historyPickerName.isEmpty, text == historyPickerQuery else { return }
+                if attempt == 0, await readHistory() {
+                    guard !historyPickerName.isEmpty, text == historyPickerQuery, historyCurrent else { return }
+                    historyPickerNeedsRead = false
+                    continue
+                }
+                historyPickerNeedsRead = false
+                historyPickerError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    func selectWaitingPerson(_ person: String) async {
+        guard waitingActionsEnabled, person != waitingPerson,
+              person.isEmpty || waiting.object("people").objects("items").contains(where: { $0.text("person") == person }) else { return }
+        waitingPerson = person
+        waitingLoadedDepth = pageSize
+        busy = true
+        defer { finishOperation() }
+        await readWaiting()
+    }
+
+    func loadMoreWaiting() async {
+        guard waitingActionsEnabled, waiting.objects("rows").count < waiting.number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        let offset = waiting.objects("rows").count
+        let limit = min(pageSize, waiting.number("total") - offset)
+        waitingLoadedDepth = offset + limit
+        waitingCurrent = false
+        do {
+            let page = try await query("menuRead", ["waiting", try json([
+                "person": waitingPerson, "offset": offset, "limit": limit, "revision": waiting.text("revision")])])
+            try validateWaitingPage(page, against: waiting, count: limit)
+            waiting["rows"] = waiting.objects("rows") + page.objects("rows")
+            waitingCurrent = true
+            waitingError = nil
+        } catch { await readWaiting() }
+    }
+
+    func loadMoreWaitingCollection(_ name: String) async {
+        guard waitingActionsEnabled, name == "people" || name == "deferredProjects" else { return }
+        let collection = waitingCollection(name, in: waiting)
+        let offset = collection.objects("items").count
+        guard offset < collection.number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        let limit = min(pageSize, collection.number("total") - offset)
+        waitingCollectionDepth[name] = offset + limit
+        waitingCurrent = false
+        do {
+            let page = try await readWaitingCollection(name, snapshot: waiting, offset: offset, limit: limit)
+            var next = waiting
+            setWaitingCollection(name, items: collection.objects("items") + page.objects("items"), in: &next)
+            waiting = next
+            waitingCurrent = true
+            waitingError = nil
+        } catch { await readWaiting() }
+    }
+
+    private func readWaiting() async {
+        waitingCurrent = false
+        waitingError = nil
+        for attempt in 0..<2 {
+            do {
+                var next = try await query("menuRead", ["waiting", try json([
+                    "person": waitingPerson, "offset": 0, "limit": pageSize])])
+                guard !next.text("revision").isEmpty, next.number("total") >= 0,
+                      next.objects("rows").count == min(pageSize, next.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var rows = next.objects("rows")
+                // A removed person falls back to core's All selection. Rebuild
+                // every requested window using that effective person and revision.
+                let personChanged = next.text("person") != waitingPerson
+                let target = min(personChanged ? pageSize : waitingLoadedDepth, next.number("total"))
+                while rows.count < target {
+                    let limit = min(pageSize, target - rows.count)
+                    let page = try await query("menuRead", ["waiting", try json([
+                        "person": next.text("person"), "offset": rows.count, "limit": limit, "revision": next.text("revision")])])
+                    try validateWaitingPage(page, against: next, count: limit)
+                    rows += page.objects("rows")
+                }
+                next["rows"] = rows
+                for name in ["people", "deferredProjects"] {
+                    let collection = waitingCollection(name, in: next)
+                    var entries = collection.objects("items")
+                    guard collection.number("total") >= entries.count else { throw CocoaError(.coderReadCorrupt) }
+                    let target = min(waitingCollectionDepth[name] ?? entries.count, collection.number("total"))
+                    while entries.count < target {
+                        let limit = min(pageSize, target - entries.count)
+                        let page = try await readWaitingCollection(name, snapshot: next, offset: entries.count, limit: limit)
+                        entries += page.objects("items")
+                    }
+                    setWaitingCollection(name, items: entries, in: &next)
+                }
+                waitingPerson = next.text("person")
+                if personChanged { waitingLoadedDepth = pageSize }
+                waiting = next
+                waitingCurrent = true
+                return
+            } catch {
+                if attempt == 1 { waitingError = error.localizedDescription }
+            }
+        }
+    }
+
+    private func validateWaitingPage(_ page: CoreObject, against snapshot: CoreObject, count: Int) throws {
+        guard page.text("revision") == snapshot.text("revision"), page.text("person") == snapshot.text("person"),
+              page.number("total") == snapshot.number("total"), page.objects("rows").count == count else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    private func waitingCollection(_ name: String, in snapshot: CoreObject) -> CoreObject {
+        name == "people" ? snapshot.object("people") : snapshot.object("deferred").object("rows")
+    }
+
+    private func readWaitingCollection(_ name: String, snapshot: CoreObject, offset: Int, limit: Int) async throws -> CoreObject {
+        let page = try await query("menuRead", ["collection", try json([
+            "view": "waiting", "collection": name, "params": ["person": snapshot.text("person")],
+            "offset": offset, "limit": limit, "revision": snapshot.text("revision")])])
+        guard page.text("view") == "waiting", page.text("collection") == name,
+              page.text("revision") == snapshot.text("revision"),
+              page.number("total") == waitingCollection(name, in: snapshot).number("total"),
+              page.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+        return page
+    }
+
+    private func setWaitingCollection(_ name: String, items: [CoreObject], in snapshot: inout CoreObject) {
+        var collection = waitingCollection(name, in: snapshot)
+        guard !collection.isEmpty else { return }
+        collection["items"] = items
+        if name == "people" { snapshot["people"] = collection }
+        else {
+            var deferred = snapshot.object("deferred")
+            deferred["rows"] = collection
+            snapshot["deferred"] = deferred
+        }
+    }
+
+    func openProject(_ row: CoreObject) async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              selectedSurface != .project, selectedSurface != .trash, !row.text("id").isEmpty else { return }
+        if selectedSurface == .review {
+            let entries = (reviewGuidePresented ? reviewGuide : reviewOverview).objects("items")
+            let stale = reviewGuidePresented ? reviewNested["staleProjects:"]?.objects("items") ?? [] : []
+            guard reviewActionsEnabled, entries.contains(where: { $0.text("type") == "project"
+                && ($0.text("projectId") == row.text("id") || (reviewGuidePresented && $0.text("id") == row.text("id"))) })
+                || stale.contains(where: { $0.text("id") == row.text("id") })
+                || reviewRows.contains(where: { $0.object("meta").objects("parts").contains(where: {
+                    $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
+                }) }) else { return }
+        }
+        if selectedSurface == .focus {
+            guard focusActionsEnabled, focus.objects("reviewProjects").contains(where: { $0.text("id") == row.text("id") })
+                || focus.objects("sections").contains(where: { section in
+                    section.objects("rows").contains(where: { task in
+                        task.object("meta").objects("parts").contains(where: {
+                            $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
+                        })
+                    })
+                }) else { return }
+        }
+        if selectedSurface == .waiting {
+            guard waitingActionsEnabled, waiting.object("deferred").object("rows").objects("items")
+                .contains(where: { $0.text("id") == row.text("id") }) else { return }
+        }
+        if selectedSurface == .someday {
+            guard somedayActionsEnabled, someday.object("deferred").object("rows").objects("items")
+                .contains(where: { $0.text("id") == row.text("id") }) else { return }
+        }
+        if selectedSurface == .reference {
+            guard referenceActionsEnabled, reference.objects("items").contains(where: { item in
+                item.text("type") == "task" && item.object("row").object("meta").objects("parts").contains(where: {
+                    $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
+                })
+            }) else { return }
+        }
+        if selectedSurface == .history {
+            guard historyActionsEnabled, history.objects("items").contains(where: { item in
+                (item.text("type") == "project" && item.text("id") == row.text("id")) ||
+                (item.text("type") == "task" && item.object("row").object("meta").objects("parts").contains(where: {
+                    $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
+                }))
+            }) else { return }
+        }
+        if selectedSurface == .contexts {
+            guard contextsActionsEnabled, contexts.objects("rows").contains(where: { task in
+                task.object("meta").objects("parts").contains(where: {
+                    $0.text("kind") == "project" && $0.text("projectId") == row.text("id")
+                })
+            }) else { return }
+        }
+        if selectedSurface == .search {
+            guard searchActionsEnabled,
+                  searchView.objects("projects").contains(where: { $0.text("id") == row.text("id") }) else { return }
+            invalidateSearch()
+        }
+        projectCaller = selectedSurface
+        projectHeader = row
+        projectDetail = [:]
+        projectLoadedDepth = pageSize
+        projectCurrent = false
+        projectError = nil
+        projectNotes = [:]
+        projectNotesExpanded = false
+        projectNotesCurrent = false
+        projectNotesError = nil
+        projectNotesLoadedDepth = pageSize
+        projectNotesEditMode = false
+        projectNotesDraft = ""
+        projectNotesDraftDirection = ""
+        projectNotesEditError = nil
+        projectNotesEditReadError = nil
+        projectNotesEditConflict = false
+        projectNotesEditOptions = [:]
+        projectNotesEditOptionsCurrent = false
+        projectNotesEditLoaded = false
+        projectNotesEditBaseRaw = nil
+        projectNotesWriteRequest = nil
+        projectNotesExpectedRaw = nil
+        projectFlowError = nil
+        projectFlowReadError = nil
+        projectStatusOpen = false
+        projectStatusError = nil
+        projectStatusReadError = nil
+        projectStatusOptions = [:]
+        projectStatusOptionsCurrent = false
+        projectStatusRequest = nil
+        projectStatusExpectedID = nil
+        projectStatusExpectedStatus = nil
+        projectDateField = nil
+        projectDatePicker = [:]
+        projectDateError = nil
+        projectDateReadError = nil
+        projectDateOptions = [:]
+        projectDateOptionsField = nil
+        projectDateOptionsCurrent = false
+        projectDateRequest = nil
+        projectDateExpectedID = nil
+        projectDateExpectedField = nil
+        projectDateExpectedValue = nil
+        projectSectionsPresented = false
+        projectSectionEditing = false
+        projectSectionEditID = nil
+        projectSectionTitle = ""
+        projectSectionOptions = [:]
+        projectSectionOptionsCurrent = false
+        projectSectionRenameOptions = [:]
+        projectSectionRenameOptionsCurrent = false
+        projectSectionError = nil
+        projectSectionReadError = nil
+        projectSectionRequest = nil
+        projectSectionExpectedID = nil
+        projectSectionExpectedProjectID = nil
+        projectSectionRenameRequest = nil
+        projectSectionRenameExpectedID = nil
+        projectSectionRenameExpectedProjectID = nil
+        projectSectionDeleteOptions = [:]
+        projectSectionDeleteOptionsCurrent = false
+        projectSectionDeleteReadyID = nil
+        projectSectionDeleteRequest = nil
+        projectSectionDeleteExpectedID = nil
+        projectSectionDeleteExpectedProjectID = nil
+        morePresented = false
+        selectedSurface = .project
+        busy = true
+        defer { finishOperation() }
+        await readProjectDetail()
+    }
+
+    func closeProject() async {
+        guard await flushProjectNotesEdit() else { return }
+        guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented,
+              !projectRenameEditing && !projectSectionsPresented else { return }
+        projectDateField = nil
+        projectDatePicker = [:]
+        selectedSurface = projectCaller
+        projectCurrent = false
+        projectError = nil
+        await refresh()
+    }
+
+    func loadMoreProject() async {
+        guard await flushProjectNotesEdit() else { return }
+        guard projectActionsEnabled, projectDetail.objects("items").count < projectDetail.number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        let offset = projectDetail.objects("items").count
+        let limit = min(pageSize, projectDetail.number("total") - offset)
+        projectLoadedDepth = offset + limit
+        projectCurrent = false
+        do {
+            let window = try await query("projectDetail", [projectHeader.text("id"), offset, limit, projectDetail.text("revision")])
+            try validateProjectWindow(window, against: projectDetail, count: limit)
+            projectDetail["items"] = projectDetail.objects("items") + window.objects("items")
+            projectCurrent = true
+            projectError = nil
+        } catch {
+            // Restart at zero after a stale or failed window; never append mixed revisions.
+            await readProjectDetail()
+            if projectNotesExpanded && projectCurrent {
+                if projectNotesEditMode {
+                    do { try await readProjectNotesEditOptions() }
+                    catch { projectNotesEditReadError = error.localizedDescription }
+                }
+                await readProjectNotes()
+            }
+        }
+    }
+
+    private func readProjectDetail() async {
+        projectCurrent = false
+        projectError = nil
+        let id = projectHeader.text("id")
+        for attempt in 0..<2 {
+            do {
+                var next = try await query("projectDetail", [id, 0, pageSize, ""])
+                let metadata = next.object("metadata")
+                guard next.text("projectId") == id, !next.text("revision").isEmpty,
+                      !next.text("mutationRevision").isEmpty,
+                      next.number("total") >= 0,
+                      ["hasStartDate", "hasDueDate"].allSatisfy({ key in
+                          (metadata[key] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
+                      }),
+                      next.objects("items").count == min(pageSize, next.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var items = next.objects("items")
+                let target = min(projectLoadedDepth, next.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let window = try await query("projectDetail", [id, items.count, limit, next.text("revision")])
+                    try validateProjectWindow(window, against: next, count: limit)
+                    items += window.objects("items")
+                }
+                next["items"] = items
+                if projectNotes.text("revision") != next.text("mutationRevision") { projectNotesCurrent = false }
+                if projectNotesEditOptions.text("revision") != next.text("mutationRevision") {
+                    projectNotesEditOptionsCurrent = false
+                }
+                if projectStatusOptions.text("revision") != next.text("mutationRevision") {
+                    projectStatusOptionsCurrent = false
+                }
+                if projectDateOptions.text("revision") != next.text("mutationRevision") {
+                    projectDateOptionsCurrent = false
+                }
+                if projectSectionOptions.text("revision") != next.text("mutationRevision") {
+                    projectSectionOptionsCurrent = false
+                }
+                if projectSectionRenameOptions.text("revision") != next.text("mutationRevision") {
+                    projectSectionRenameOptionsCurrent = false
+                }
+                if projectSectionDeleteOptions.text("revision") != next.text("mutationRevision") {
+                    projectSectionDeleteOptionsCurrent = false
+                }
+                projectDetail = next
+                projectCurrent = true
+                return
+            } catch {
+                if attempt == 1 { projectError = error.localizedDescription }
+            }
+        }
+    }
+
+    private func validateProjectWindow(_ window: CoreObject, against snapshot: CoreObject, count: Int) throws {
+        guard window.text("projectId") == snapshot.text("projectId"),
+              window.text("revision") == snapshot.text("revision"),
+              window.text("mutationRevision") == snapshot.text("mutationRevision"),
+              window.number("total") == snapshot.number("total"),
+              window.flag("readOnly") == snapshot.flag("readOnly"),
+              window.objects("items").count == count else { throw CocoaError(.coderReadCorrupt) }
+    }
+
+    func setProjectNotesDraft(_ value: String) {
+        guard projectNotesEditInputEnabled, value != projectNotesDraft else { return }
+        projectNotesDraft = value
+        projectNotesEditError = nil
+    }
+
+    func refreshProjectNotesDraftDirection() async {
+        let id = projectHeader.text("id")
+        let title = projectHeader.text("title")
+        let text = projectNotesDraft
+        guard projectNotesEditLoaded, selectedSurface == .project, !id.isEmpty, !Task.isCancelled else { return }
+        do {
+            let result = try await query("projectNotesDraftDirection", [try json(["projectId": id, "text": text])])
+            guard !Task.isCancelled, selectedSurface == .project, projectHeader.text("id") == id,
+                  projectHeader.text("title") == title, projectNotesDraft == text,
+                  result.count == 1, ["ltr", "rtl"].contains(result.text("direction")) else { return }
+            projectNotesDraftDirection = result.text("direction")
+        } catch {
+            // Presentation reads must not interrupt editing or change write/retry state.
+        }
+    }
+
+    private func readProjectNotesEditOptions() async throws {
+        let id = projectHeader.text("id")
+        guard selectedSurface == .project, projectCurrent, projectDetail.text("projectId") == id,
+              !id.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        for attempt in 0..<2 {
+            let options = try await query("projectNotesEditOptions", [try json(["projectId": id])])
+            let project = options.object("project")
+            guard options.count == 3, !options.text("revision").isEmpty,
+                  let canEdit = options["canEdit"] as? NSNumber,
+                  CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
+                  project.count == 7, project.text("id") == id,
+                  project["title"] is String, !project.text("status").isEmpty,
+                  project["supportNotes"] is String || project["supportNotes"] is NSNull,
+                  project["rev"] is Int || project["rev"] is NSNull,
+                  project["revBy"] is String || project["revBy"] is NSNull,
+                  !project.text("updatedAt").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+            if options.text("revision") != projectDetail.text("mutationRevision") {
+                if attempt == 0 {
+                    await readProjectDetail()
+                    guard projectCurrent, projectHeader.text("id") == id else { throw CocoaError(.coderReadCorrupt) }
+                    continue
+                }
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let raw = project["supportNotes"] as? String
+            if projectNotesEditLoaded && projectNotesDirty && raw != projectNotesEditBaseRaw {
+                projectNotesEditConflict = true
+                projectNotesEditOptionsCurrent = false
+                projectNotesEditError = "Project Notes changed. Discard the draft to reload."
+                return
+            }
+            if !projectNotesEditLoaded || !projectNotesDirty {
+                projectNotesDraft = raw ?? ""
+                projectNotesEditBaseRaw = raw
+            }
+            projectNotesEditLoaded = true
+            projectNotesEditOptions = options
+            projectNotesEditOptionsCurrent = true
+            projectNotesEditConflict = !canEdit.boolValue && projectNotesDirty
+            if projectNotesEditConflict {
+                projectNotesEditError = "Project Notes are no longer editable. Discard the draft to reload."
+            } else if !canEdit.boolValue {
+                projectNotesEditMode = false
+            }
+            projectNotesEditReadError = nil
+            return
+        }
+    }
+
+    func retryProjectNotesEditRead() async {
+        guard ready, selectedSurface == .project, !busy, !retryNeeded,
+              projectNotesWriteRequest == nil, projectNotesExpanded else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readSelectedSurface()
+            guard projectCurrent else { throw CocoaError(.coderReadCorrupt) }
+            if !projectNotesEditOptionsCurrent && !projectNotesEditConflict {
+                try await readProjectNotesEditOptions()
+            }
+            if projectNotesEditReadError != nil { return }
+            if !projectNotesEditConflict { projectNotesEditError = nil }
+            projectNotesEditReadError = nil
+        } catch { projectNotesEditReadError = error.localizedDescription }
+    }
+
+    func discardProjectNotesDraft() async {
+        guard projectNotesCanDiscard else { return }
+        projectNotesEditLoaded = false
+        projectNotesEditOptionsCurrent = false
+        projectNotesEditConflict = false
+        projectNotesEditError = nil
+        projectNotesEditReadError = nil
+        projectNotesDraft = ""
+        projectNotesEditBaseRaw = nil
+        await retryProjectNotesEditRead()
+    }
+
+    func showProjectNotesEditor() async {
+        guard projectActionsEnabled, projectNotesExpanded, !projectDetail.flag("readOnly") else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readProjectNotesEditOptions()
+            if projectNotesEditOptionsCurrent && projectNotesEditOptions.flag("canEdit")
+                && !projectNotesEditConflict { projectNotesEditMode = true }
+        } catch { projectNotesEditReadError = error.localizedDescription }
+    }
+
+    func showProjectNotesPreview() async {
+        guard await flushProjectNotesEdit(), projectActionsEnabled, projectNotesExpanded else { return }
+        projectNotesEditMode = false
+        busy = true
+        defer { finishOperation() }
+        await readProjectNotes()
+    }
+
+    func collapseProjectNotesForDetails() async -> Bool {
+        guard await flushProjectNotesEdit(), projectActionsEnabled else { return false }
+        return true
+    }
+
+    func toggleProjectNotes() async {
+        guard await flushProjectNotesEdit(), projectActionsEnabled,
+              !projectHeader.text("id").isEmpty else { return }
+        if projectNotesExpanded {
+            projectNotesExpanded = false
+            projectNotesEditMode = false
+            return
+        }
+        projectNotesExpanded = true
+        projectNotesEditMode = !projectDetail.flag("readOnly")
+        busy = true
+        defer { finishOperation() }
+        if projectNotesEditMode {
+            do { try await readProjectNotesEditOptions() }
+            catch { projectNotesEditReadError = error.localizedDescription }
+        }
+        await readProjectNotes()
+    }
+
+    func flushProjectNotesEdit() async -> Bool {
+        if let task = projectNotesFlushTask { return await task.value }
+        if !projectNotesExpanded || !projectNotesEditMode || !projectNotesEditLoaded {
+            return projectNotesWriteRequest == nil && !retryNeeded
+        }
+        guard projectNotesEditReadError == nil, !projectNotesEditConflict,
+              projectNotesEditError == nil, projectNotesWriteRequest == nil, !retryNeeded else { return false }
+        guard projectNotesDirty else { return true }
+        let id = UUID()
+        let task = Task { await self.performProjectNotesFlush() }
+        projectNotesFlushID = id
+        projectNotesFlushTask = task
+        let accepted = await task.value
+        if projectNotesFlushID == id {
+            projectNotesFlushTask = nil
+            projectNotesFlushID = nil
+        }
+        return accepted
+    }
+
+    private func performProjectNotesFlush() async -> Bool {
+        guard projectActionsEnabled, projectNotesExpanded, projectNotesEditMode,
+              projectNotesEditLoaded, !busy else { return false }
+        busy = true
+        defer { finishOperation() }
+        let id = projectHeader.text("id")
+        let text = projectNotesDraft
+        do {
+            if !projectNotesEditOptionsCurrent
+                || projectNotesEditOptions.text("revision") != projectDetail.text("mutationRevision") {
+                try await readProjectNotesEditOptions()
+            }
+            guard projectNotesEditOptionsCurrent, !projectNotesEditConflict,
+                  projectNotesEditOptions.flag("canEdit"), projectHeader.text("id") == id,
+                  projectCurrent, projectNotesDraft == text else { return false }
+            let project = projectNotesEditOptions.object("project")
+            let expected: CoreObject = ["title": project.text("title"), "status": project.text("status"),
+                                        "supportNotes": project["supportNotes"]!, "rev": project["rev"]!,
+                                        "revBy": project["revBy"]!, "updatedAt": project.text("updatedAt")]
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "projectId": id,
+                                    "text": text, "expected": expected])
+            projectNotesWriteRequest = request
+            projectNotesExpectedRaw = text
+            let result = try await query("projectNotesWrite", [request])
+            guard try acknowledgeProjectNotesWrite(result) else { return false }
+        } catch {
+            await handleProjectNotesWriteError(error)
+            return false
+        }
+        do {
+            try await readSelectedSurface()
+            guard projectCurrent, projectNotesEditReadError == nil else { throw CocoaError(.coderReadCorrupt) }
+            return true
+        } catch {
+            projectNotesEditReadError = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult private func acknowledgeProjectNotesWrite(_ result: CoreObject) throws -> Bool {
+        guard projectNotesWriteRequest != nil, let expected = projectNotesExpectedRaw else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if result.count == 1 && result["blocked"] as? String == "" {
+            projectNotesWriteRequest = nil
+            projectNotesExpectedRaw = nil
+            projectNotesEditOptionsCurrent = false
+            retryNeeded = false
+            projectNotesEditError = "Project Notes are no longer editable. Discard the draft to reload."
+            return false
+        }
+        guard result.count == 2, result.text("id") == projectHeader.text("id"),
+              result["supportNotes"] as? String == expected else { throw CocoaError(.coderReadCorrupt) }
+        projectNotesEditBaseRaw = expected
+        projectNotesEditLoaded = true
+        projectNotesEditOptionsCurrent = false
+        projectNotesWriteRequest = nil
+        projectNotesExpectedRaw = nil
+        retryNeeded = false
+        projectNotesEditError = nil
+        projectNotesEditReadError = nil
+        error = nil
+        return true
+    }
+
+    private func handleProjectNotesWriteError(_ failure: Error) async {
+        if projectNotesWriteRequest != nil && isDefiniteRejection(failure) {
+            projectNotesWriteRequest = nil
+            projectNotesExpectedRaw = nil
+            projectNotesEditOptionsCurrent = false
+            retryNeeded = false
+            projectNotesEditError = failure.localizedDescription
+            do {
+                try await readSelectedSurface()
+            } catch { projectNotesEditReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectNotesWriteRequest != nil
+            projectNotesEditError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func loadMoreProjectNotes() async {
+        guard projectActionsEnabled, projectNotesExpanded, projectNotesCurrent,
+              projectNotes.objects("blocks").count < projectNotes.number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        let offset = projectNotes.objects("blocks").count
+        let limit = min(pageSize, projectNotes.number("total") - offset)
+        projectNotesLoadedDepth = offset + limit
+        projectNotesCurrent = false
+        do {
+            let window = try await query("projectNotes", [projectHeader.text("id"), offset, limit, projectNotes.text("revision")])
+            try validateProjectNotesWindow(window, against: projectNotes, count: limit)
+            guard projectCurrent, projectHeader.text("id") == window.text("projectId"),
+                  projectDetail.text("mutationRevision") == window.text("revision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            projectNotes["blocks"] = projectNotes.objects("blocks") + window.objects("blocks")
+            projectNotesCurrent = true
+            projectNotesError = nil
+        } catch { projectNotesError = error.localizedDescription }
+    }
+
+    func retryProjectNotes() async {
+        guard projectActionsEnabled, projectNotesExpanded else { return }
+        busy = true
+        defer { finishOperation() }
+        await readProjectNotes()
+    }
+
+    private func readProjectNotes() async {
+        projectNotesCurrent = false
+        projectNotesError = nil
+        let id = projectHeader.text("id")
+        for attempt in 0..<2 {
+            do {
+                guard projectCurrent, projectDetail.text("projectId") == id,
+                      !projectDetail.text("mutationRevision").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                var next = try await query("projectNotes", [id, 0, pageSize, ""])
+                guard next.text("projectId") == id, !next.text("revision").isEmpty,
+                      let total = next["total"] as? Int, total >= 0,
+                      let firstBlocks = next["blocks"] as? [CoreObject],
+                      firstBlocks.count == min(pageSize, total),
+                      let readOnly = next["readOnly"] as? NSNumber,
+                      CFGetTypeID(readOnly) == CFBooleanGetTypeID(),
+                      readOnly.boolValue == projectDetail.flag("readOnly"),
+                      ["ltr", "rtl"].contains(next.text("direction")),
+                      validProjectNotesLabels(next.object("markdownLabels")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                if next.text("revision") != projectDetail.text("mutationRevision") {
+                    if attempt == 0 {
+                        await readProjectDetail()
+                        continue
+                    }
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var blocks = next.objects("blocks")
+                let target = min(projectNotesLoadedDepth, next.number("total"))
+                while blocks.count < target {
+                    let limit = min(pageSize, target - blocks.count)
+                    let window = try await query("projectNotes", [id, blocks.count, limit, next.text("revision")])
+                    try validateProjectNotesWindow(window, against: next, count: limit)
+                    blocks += window.objects("blocks")
+                }
+                guard projectCurrent, projectHeader.text("id") == id,
+                      projectDetail.text("mutationRevision") == next.text("revision") else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                next["blocks"] = blocks
+                projectNotes = next
+                projectNotesCurrent = true
+                return
+            } catch { projectNotesError = error.localizedDescription; return }
+        }
+    }
+
+    private func validProjectNotesLabels(_ labels: CoreObject) -> Bool {
+        labels.count == 3 && ["deletedTask", "deletedProject", "copyCode"].allSatisfy { labels[$0] is String }
+    }
+
+    private func validateProjectNotesWindow(_ window: CoreObject, against snapshot: CoreObject, count: Int) throws {
+        guard window.text("projectId") == snapshot.text("projectId"),
+              window.text("revision") == snapshot.text("revision"),
+              window.number("total") == snapshot.number("total"),
+              let readOnly = window["readOnly"] as? NSNumber,
+              CFGetTypeID(readOnly) == CFBooleanGetTypeID(),
+              readOnly.boolValue == snapshot.flag("readOnly"),
+              window.text("direction") == snapshot.text("direction"),
+              validProjectNotesLabels(window.object("markdownLabels")),
+              ["deletedTask", "deletedProject", "copyCode"].allSatisfy({
+                  window.object("markdownLabels").text($0) == snapshot.object("markdownLabels").text($0)
+              }),
+              window.objects("blocks").count == count else { throw CocoaError(.coderReadCorrupt) }
+    }
+
+    func openSearch() {
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !calendarComposerPresented, !mindSweepPresented, selectedSurface != .search else { return }
+        searchCaller = selectedSurface
+        morePresented = false
+        selectedSurface = .search
+        searchQuery = ""
+        searchFilters = [:]
+        searchView = [:]
+        requestSearch(delay: 0)
+    }
+
+    func closeSearch() async {
+        guard selectedSurface == .search, !busy, !retryNeeded, !taskPresented else { return }
+        selectedSurface = searchCaller
+        invalidateSearch()
+        searchLoading = false
+        searchNeedsRead = false
+        searchError = nil
+        await refresh()
+    }
+
+    func setSearchQuery(_ text: String) {
+        guard selectedSurface == .search, !retryNeeded, !taskPresented, text != searchQuery else { return }
+        searchQuery = text
+        requestSearch()
+    }
+
+    func setSearchFilters(_ filters: CoreObject) {
+        guard selectedSurface == .search, !busy, !retryNeeded, !taskPresented, !filters.isEmpty else { return }
+        searchFilters = filters
+        requestSearch()
+    }
+
+    func removeSearchChip(_ key: String) {
+        guard searchActionsEnabled,
+              let chip = searchView.objects("activeChips").first(where: { $0.text("key") == key }) else { return }
+        setSearchFilters(chip.object("clearedFilters"))
+    }
+
+    func retrySearch() {
+        guard selectedSurface == .search, !busy, !retryNeeded, !taskPresented else { return }
+        requestSearch(delay: 0)
+    }
+
+    func openSearchTask(_ id: String) async {
+        guard searchActionsEnabled,
+              let row = searchView.objects("tasks").first(where: { $0.text("id") == id }),
+              row.flag("inStore"), row.object("tap").text("kind") == "editor" else { return }
+        invalidateSearch()
+        await openTask(row.object("tap").text("id"))
+    }
+
+    func completeSearchTask(_ id: String) async {
+        guard searchActionsEnabled,
+              let row = searchView.objects("tasks").first(where: { $0.text("id") == id }),
+              row.flag("canComplete"), !row.flag("readOnly") else { return }
+        invalidateSearch()
+        error = nil
+        await complete(id)
+    }
+
+    private func invalidateSearch() {
+        searchGeneration += 1
+        searchTask?.cancel()
+        searchNeedsRead = true
+        searchLoading = selectedSurface == .search
+    }
+
+    private func requestSearch(delay: UInt64 = 200_000_000) {
+        invalidateSearch()
+        searchError = nil
+        scheduleSearch(delay: delay)
+    }
+
+    private func scheduleSearch(delay: UInt64 = 200_000_000) {
+        guard ready, selectedSurface == .search, !busy, !retryNeeded, !taskPresented else { return }
+        let generation = searchGeneration
+        searchTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, generation == searchGeneration, !busy, !retryNeeded, !taskPresented,
+                  selectedSurface == .search else { return }
+            await readSearch(generation: generation, ownsOperation: false)
+        }
+    }
+
+    private func readSearch(generation: Int, ownsOperation: Bool) async {
+        let text = searchQuery
+        let filters = searchFilters
+        do {
+            let value = try await query("search", [try json([
+                "query": text, "filters": filters.isEmpty ? NSNull() : filters as Any, "limit": 100])])
+            guard generation == searchGeneration, selectedSurface == .search, !retryNeeded, !taskPresented,
+                  ownsOperation || !busy else { return }
+            // Empty input gets its entire default filter object from core. Never
+            // synthesize defaults or copy an older response over newer input.
+            if searchFilters.isEmpty { searchFilters = value.object("defaultFilters") }
+            searchView = value
+            publishedSearchGeneration = generation
+            searchNeedsRead = false
+            searchLoading = false
+            searchError = nil
+        } catch {
+            guard generation == searchGeneration, selectedSurface == .search, !retryNeeded, !taskPresented,
+                  ownsOperation || !busy else { return }
+            searchNeedsRead = false
+            searchLoading = false
+            searchError = error.localizedDescription
+        }
+    }
+
+    func openAreaPicker() async {
+        guard ready, !busy, !retryNeeded, !capturePresented, !taskPresented,
+              !projectRenameEditing,
+              !calendarComposerPresented, !mindSweepPresented else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            area = try await query("areaFilter")
+            areaPickerPresented = true
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func closeAreaPicker() {
+        guard !busy, !retryNeeded else { return }
+        areaPickerPresented = false
+        if selectedSurface == .board && boardNeedsRead { scheduleBoardRead(delay: 0) }
+        if selectedSurface == .contexts && !contextsCurrent { requestContextsRead(delay: 0) }
+        if selectedSurface == .focus && !focusCurrent { requestFocusRead(delay: 0) }
+    }
+
+    func selectArea(_ next: CoreObject) async {
+        guard ready, areaPickerPresented, !busy, !retryNeeded else { return }
+        busy = true
+        error = nil
+        defer { finishOperation() }
+        do {
+            // This is core's final selection, never a native toggle/cycle.
+            // The host journals it unchanged for exact recovery.
+            _ = try await query("setAreaFilter", [try json(next)])
+        } catch {
+            retryNeeded = !isDefiniteRejection(error)
+            self.error = error.localizedDescription
+            return
+        }
+        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+    }
+
+    func loadMore() async {
+        guard ready, selectedSurface == .inbox, !busy, !retryNeeded, items.count < inbox.number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let next = try await query("inboxView", [try json([
+                "offset": items.count, "limit": pageSize, "revision": inbox.text("revision")])])
+            guard next.text("revision") == inbox.text("revision") else { try await readInbox(); return }
+            inbox["items"] = items + next.objects("items")
+        } catch {
+            // A minute or data revision can expire between windows. Restart the query, never mix revisions.
+            do { try await readInbox() } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    func loadMoreFocus(_ key: String) async {
+        guard focusActionsEnabled, let section = focus.objects("sections").first(where: { $0.text("key") == key }),
+              section.objects("rows").count < section.number("rowTotal") else { return }
+        focusLoadedDepth[key] = section.objects("rows").count + pageSize
+        requestFocusRead(delay: 0)
+    }
+
+    func openTask(_ id: String) async {
+        if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !projectRenameEditing, selectedSurface != .trash else { return }
+        if selectedSurface == .review {
+            guard reviewActionsEnabled, reviewTaskIDs.contains(id) else { return }
+        }
+        if selectedSurface == .board {
+            guard boardActionsEnabled, boardView.objects("columns").contains(where: {
+                $0.objects("cards").contains(where: { $0.object("row").text("id") == id })
+            }) else { return }
+        }
+        if selectedSurface == .calendar { guard calendarActionsEnabled, calendarEditableTask(id) else { return } }
+        if selectedSurface == .focus {
+            guard focusActionsEnabled, focus.objects("sections").contains(where: {
+                $0.objects("rows").contains(where: { $0.text("id") == id })
+            }) else { return }
+        }
+        if selectedSurface == .contexts {
+            guard contextsActionsEnabled, contexts.objects("rows").contains(where: { $0.text("id") == id }) else { return }
+        }
+        if selectedSurface == .history {
+            guard historyActionsEnabled, history.objects("items").contains(where: {
+                $0.text("type") == "task" && $0.object("row").text("id") == id
+            }) else { return }
+        }
+        if selectedSurface == .reference {
+            guard referenceActionsEnabled, reference.objects("items").contains(where: {
+                $0.text("type") == "task" && $0.object("row").text("id") == id
+            }) else { return }
+        }
+        if selectedSurface == .someday {
+            guard somedayActionsEnabled, someday.objects("items").contains(where: {
+                $0.text("type") == "task" && $0.object("row").text("id") == id
+            }) else { return }
+        }
+        if selectedSurface == .waiting {
+            guard waitingActionsEnabled, waiting.objects("rows").contains(where: { $0.text("id") == id }) else { return }
+        }
+        if selectedSurface == .project {
+            guard projectActionsEnabled, projectDetail.objects("items").contains(where: {
+                $0.text("type") == "task" && $0.object("row").text("id") == id
+            }) else { return }
+        }
+        prepareTaskPresentation(id)
+        await readTaskView()
+    }
+
+    private func prepareTaskPresentation(_ id: String, initialTab: String = "view") {
+        resetTaskDestination()
+        resetTaskTokens()
+        resetTaskSchedule()
+        resetTaskChecklistState()
+        viewedTaskID = id
+        taskInitialTab = initialTab
+        taskView = [:]
+        taskEditor = [:]
+        taskOriginalDraft = [:]
+        taskTitleDraft = ""
+        taskNoteDraft = ""
+        taskEstimateInput = ""
+        taskEstimateResolvedInput = ""
+        taskError = nil
+        taskPresented = true
+    }
+
+    func closeTask() {
+        guard !busy, !retryNeeded, !taskSavePending, taskChecklistWriteKind == nil,
+              !taskChecklistReadPending, !taskScheduleUpdating else { return }
+        guard !taskDirty else { return }
+        dismissTask()
+    }
+
+    func discardTask() {
+        guard !busy, !retryNeeded, !taskSavePending, taskChecklistWriteKind == nil,
+              !taskChecklistReadPending, !taskScheduleUpdating else { return }
+        dismissTask()
+    }
+
+    private func dismissTask() {
+        resetTaskDestination()
+        resetTaskTokens()
+        resetTaskSchedule()
+        resetTaskChecklistState()
+        taskPresented = false
+        viewedTaskID = ""
+        // Reset can commit while the editor stays open; Close and Discard must
+        // also refresh the caller, including its status membership and counts.
+        Task { await refresh() }
+    }
+
+    private func resetTaskChecklistState() {
+        taskChecklistSession += 1
+        taskChecklistLoaded = false
+        taskChecklist = []
+        taskOriginalChecklist = []
+        taskChecklistField = [:]
+        taskChecklistInputs = [:]
+        taskChecklistAppendInput = ""
+        taskChecklistFocusIndex = nil
+        taskChecklistWriteKind = nil
+        taskChecklistWriteRequest = nil
+        taskChecklistResetAcknowledgment = nil
+        taskChecklistReadPending = false
+    }
+
+    func setTaskChecklistInput(_ index: Int, text: String) {
+        guard taskPresented, taskChecklistLoaded, !busy, !retryNeeded, !taskSavePending,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending,
+              index >= 0, index < taskChecklist.count else { return }
+        if text == taskChecklist[index].text("title") { taskChecklistInputs.removeValue(forKey: index) }
+        else { taskChecklistInputs[index] = text }
+    }
+
+    private func applyTaskChecklistEdit(_ edit: CoreObject?, id: String, session: Int) async throws -> Bool {
+        guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { throw CancellationError() }
+        var input: CoreObject = ["id": id, "draft": taskDraft, "checklist": taskChecklist]
+        if let edit { input["edit"] = edit }
+        let result = try await query("checklistEdit", [try json(input)])
+        guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { throw CancellationError() }
+        guard !result.object("draft").isEmpty, result["checklist"] is [CoreObject],
+              !result.object("field").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        let editor = try await query("editDraft", [try json([
+            "id": id, "draft": result.object("draft"), "checklist": result.objects("checklist")])])
+        guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { throw CancellationError() }
+        taskEditor = editor
+        taskChecklist = result.objects("checklist")
+        taskChecklistField = result.object("field")
+        if let focusID = result["focusId"] as? String {
+            taskChecklistFocusIndex = taskChecklist.firstIndex { $0.text("id") == focusID }
+        } else { taskChecklistFocusIndex = nil }
+        return result.flag("changed")
+    }
+
+    private func flushTaskChecklistInputs(id: String, session: Int, append: Bool = true) async throws {
+        // Reverse order keeps global indexes stable when a pasted multiline title
+        // inserts rows after its source item.
+        for _ in 0..<8 {
+            for index in taskChecklistInputs.keys.sorted(by: >) {
+                guard let text = taskChecklistInputs[index] else { continue }
+                guard index < taskChecklist.count else { throw CocoaError(.coderReadCorrupt) }
+                _ = try await applyTaskChecklistEdit(["kind": "rename", "index": index, "text": text], id: id, session: session)
+                if taskChecklistInputs[index] == text { taskChecklistInputs.removeValue(forKey: index) }
+            }
+            if append, !taskChecklistAppendInput.isEmpty {
+                let title = taskChecklistAppendInput
+                _ = try await applyTaskChecklistEdit(["kind": "append", "title": title], id: id, session: session)
+                if taskChecklistAppendInput == title { taskChecklistAppendInput = "" }
+            }
+            if taskChecklistInputs.isEmpty && (!append || taskChecklistAppendInput.isEmpty) { return }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    func editTaskChecklist(_ edit: CoreObject, refreshPreview: Bool = false) async {
+        guard taskPresented, taskChecklistLoaded, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
+        let id = viewedTaskID
+        let session = taskChecklistSession
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await flushTaskChecklistInputs(id: id, session: session, append: edit.text("kind") != "append")
+            _ = try await applyTaskChecklistEdit(edit, id: id, session: session)
+            if edit.text("kind") == "append", taskChecklistAppendInput == edit.text("title") {
+                taskChecklistAppendInput = ""
+            }
+            if refreshPreview { Task { await readTaskView() } }
+        } catch {
+            if taskPresented, viewedTaskID == id, taskChecklistSession == session {
+                taskError = error.localizedDescription
+            }
+        }
+    }
+
+    func appendTaskChecklist() async {
+        let title = taskChecklistAppendInput
+        guard !title.isEmpty else { return }
+        await editTaskChecklist(["kind": "append", "title": title], refreshPreview: true)
+    }
+
+    private func validTaskChecklistResetResult(_ result: CoreObject, id: String) -> Bool {
+        result.text("id") == id && result["checklistBase"] is [CoreObject]
+            && (result["status"] as? String)?.isEmpty == false
+            && (result["completedAt"] is String || result["completedAt"] is NSNull)
+            && result["isFocusedToday"] is Bool
+    }
+
+    private func acceptTaskChecklistReset(_ result: CoreObject, id: String, session: Int) async throws {
+        guard taskPresented, viewedTaskID == id, taskChecklistSession == session,
+              validTaskChecklistResetResult(result, id: id),
+              let savedStatus = result["status"] as? String,
+              let focusedToday = result["isFocusedToday"] as? Bool else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let completedAt: String
+        if let storedDate = result["completedAt"] as? String { completedAt = storedDate }
+        else if result["completedAt"] is NSNull { completedAt = "" }
+        else { throw CocoaError(.coderReadCorrupt) }
+        if taskChecklistResetAcknowledgment == nil {
+            let originalStatus = taskOriginalDraft.text("status")
+            var original = taskOriginalDraft
+            original["status"] = savedStatus
+            original["completedAt"] = completedAt
+            original["focusedToday"] = focusedToday
+            taskOriginalDraft = original
+            taskOriginalChecklist = result.objects("checklistBase")
+            if taskDraft.text("status") == originalStatus {
+                var editor = taskEditor
+                var draft = editor.object("draft")
+                draft["status"] = savedStatus
+                draft["completedAt"] = completedAt
+                draft["focusedToday"] = focusedToday
+                editor["draft"] = draft
+                taskEditor = editor
+            }
+            taskChecklistResetAcknowledgment = result
+        }
+        taskChecklistReadPending = true
+        _ = try await applyTaskChecklistEdit(["kind": "uncheckAll"], id: id, session: session)
+        taskChecklistReadPending = false
+        taskChecklistResetAcknowledgment = nil
+        taskError = nil
+        Task { await readTaskView() }
+    }
+
+    func resetTaskChecklist() async {
+        guard taskPresented, taskChecklistLoaded, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
+        let id = viewedTaskID
+        let session = taskChecklistSession
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await flushTaskChecklistInputs(id: id, session: session)
+            let request: CoreObject = ["id": id, "requestId": UUID().uuidString.lowercased(),
+                                       "checklistBase": taskOriginalChecklist]
+            let payload = try json(request)
+            taskChecklistWriteRequest = payload
+            taskChecklistWriteKind = "reset"
+            let result = try await query("checklistReset", [payload])
+            guard validTaskChecklistResetResult(result, id: id) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            taskChecklistWriteKind = nil
+            taskChecklistWriteRequest = nil
+            retryNeeded = false
+            try await acceptTaskChecklistReset(result, id: id, session: session)
+        } catch {
+            if isDefiniteRejection(error) {
+                taskChecklistWriteKind = nil
+                taskChecklistWriteRequest = nil
+            }
+            retryNeeded = taskChecklistWriteKind != nil
+            taskError = error.localizedDescription
+        }
+    }
+
+    func retryTaskChecklistRead() async {
+        guard !busy, taskChecklistReadPending, let result = taskChecklistResetAcknowledgment else { return }
+        busy = true
+        defer { finishOperation() }
+        do { try await acceptTaskChecklistReset(result, id: viewedTaskID, session: taskChecklistSession) }
+        catch { taskError = error.localizedDescription }
+    }
+
+    func saveTask() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              taskChecklistWriteKind == nil, !taskChecklistReadPending else { return }
+        guard taskDirty else { dismissTask(); return }
+        let id = viewedTaskID
+        let session = taskChecklistSession
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await flushTaskChecklistInputs(id: id, session: session)
+            guard !taskEditor.flag("readOnly") else { return }
+            var base: CoreObject = [:]
+            var patch: CoreObject = [:]
+            let current = taskDraft
+            for field in taskSaveFields {
+                let original = taskOriginalDraft.text(field)
+                let edited = current.text(field)
+                if edited != original { base[field] = original; patch[field] = edited }
+            }
+            let associationFields = ["projectId", "areaId", "sectionId"]
+            if associationFields.contains(where: { current.text($0) != taskOriginalDraft.text($0) }) {
+                // A move can clear companion associations. Compare the complete
+                // original tuple so a concurrent section/area edit is not erased.
+                for field in associationFields {
+                    base[field] = taskOriginalDraft.text(field)
+                    patch[field] = current.text(field)
+                }
+            }
+            if !taskDraftValuesEqual(current["relativeStartOffset"], taskOriginalDraft["relativeStartOffset"]) {
+                base["relativeStartOffset"] = taskOriginalDraft["relativeStartOffset"] ?? NSNull()
+                patch["relativeStartOffset"] = current["relativeStartOffset"] ?? NSNull()
+            }
+            let recurrenceChanged = taskRecurrenceFields.contains { !taskDraftValuesEqual(current[$0], taskOriginalDraft[$0]) }
+            if recurrenceChanged {
+                for field in taskRecurrenceFields {
+                    base[field] = taskOriginalDraft[field]
+                    patch[field] = current[field]
+                }
+            }
+            let statusChanged = !taskDraftValuesEqual(current["status"], taskOriginalDraft["status"])
+            if statusChanged {
+                base["status"] = taskOriginalDraft.text("status")
+                patch["status"] = current.text("status")
+            }
+            let checklistChanged = !taskDraftValuesEqual(taskChecklist, taskOriginalChecklist)
+            let checklistSave = checklistChanged || statusChanged
+            guard !patch.isEmpty || checklistSave else { dismissTask(); return }
+            var request: CoreObject = ["id": viewedTaskID, "base": base, "patch": patch]
+            if checklistSave || recurrenceChanged || (taskDateFields + ["relativeStartOffset"]).contains(where: { patch[$0] != nil }) {
+                guard !taskOriginalSchedule.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                request["scheduleBase"] = taskOriginalSchedule
+            }
+            if recurrenceChanged {
+                guard !taskOriginalRecurrence.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                request["recurrenceBase"] = taskOriginalRecurrence
+            }
+            if checklistSave {
+                request["checklist"] = ["base": taskOriginalChecklist, "value": taskChecklist]
+                request["requestId"] = UUID().uuidString.lowercased()
+            }
+            let payload = try json(request)
+            if checklistSave {
+                taskChecklistWriteKind = "save"
+                taskChecklistWriteRequest = payload
+                let result = try await query("checklistSave", [payload])
+                guard result.text("id") == id else { throw CocoaError(.coderReadCorrupt) }
+                taskChecklistWriteKind = nil
+                taskChecklistWriteRequest = nil
+            } else {
+                taskSavePending = true
+                _ = try await query("saveDraft", [payload])
+                taskSavePending = false
+            }
+        } catch {
+            if isDefiniteRejection(error) {
+                taskSavePending = false
+                taskChecklistWriteKind = nil
+                taskChecklistWriteRequest = nil
+            }
+            retryNeeded = taskSavePending || taskChecklistWriteKind != nil
+            taskError = error.localizedDescription
+            return
+        }
+        dismissTask()
+        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+    }
+
+    func editTaskMetadata(_ field: String, value: String) async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              ["priority", "energyLevel", "timeEstimate"].contains(field),
+              taskEditor.object("layout").objects("sections").contains(where: {
+                  ($0["fields"] as? [String] ?? []).contains(field)
+              }) else { return }
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            // Switching an estimate preset replaces its text buffer; other
+            // controls first resolve it through core into the complete draft.
+            try await resolveTaskEditorInputs(estimate: field != "timeEstimate")
+            guard !taskEditor.flag("readOnly") else { return }
+            let editor = try await query("editDraft", [try json(taskEditRequest(
+                ["type": "fields", "patch": [field: value]]))])
+            taskEditor = editor
+            resetTaskEstimateInput()
+            try await refreshTaskDestination()
+        } catch { taskError = error.localizedDescription }
+    }
+
+    func commitTaskEstimateInput() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded, taskEstimatePending else { return }
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await refreshTaskDestination()
+        } catch { taskError = error.localizedDescription }
+    }
+
+    private func resolveTaskEstimateInput() async throws {
+        guard taskEstimatePending else { return }
+        let id = viewedTaskID
+        let session = taskScheduleSession
+        let editor = try await query("editDraft", [try json(taskEditRequest(
+            ["type": "timeEstimate", "text": taskEstimateInput]))])
+        guard taskPresented, viewedTaskID == id, taskScheduleSession == session else { throw CancellationError() }
+        taskEditor = editor
+        resetTaskEstimateInput()
+    }
+
+    private func resetTaskEstimateInput() {
+        taskEstimateInput = taskEditor.object("fields").object("timeEstimate").text("customText")
+        taskEstimateResolvedInput = taskEstimateInput
+    }
+
+    private func taskDraftValuesEqual(_ lhs: Any?, _ rhs: Any?) -> Bool {
+        (try? json(["value": lhs ?? NSNull()])) == (try? json(["value": rhs ?? NSNull()]))
+    }
+
+    private func resetTaskSchedule() {
+        taskScheduleSession += 1
+        taskScheduleTask?.cancel()
+        taskScheduleTask = nil
+        taskScheduleEdits = []
+        taskScheduleFailure = nil
+        taskScheduleFailedID = nil
+        taskScheduleUpdating = false
+        taskSchedulePending = false
+        taskRelativeAmountInput = ""
+        taskRelativeUnitInput = ""
+        taskRelativeInputOwned = false
+        taskRelativeInputCommitRequested = false
+        taskOriginalSchedule = [:]
+        taskOriginalRecurrence = [:]
+        taskRecurrenceInputs = [:]
+        taskRecurrenceInputOwned = []
+        taskRecurrenceInputCommitRequested = []
+    }
+
+    private func taskDateFieldAvailable(_ field: String) -> Bool {
+        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !retryNeeded && !taskSavePending
+            && taskDateFields.contains(field) && taskEditor.object("layout").objects("sections").contains {
+                ($0["fields"] as? [String] ?? []).contains(field)
+            }
+    }
+
+    private func synchronizeTaskRelativeInput() {
+        guard !taskScheduleEdits.contains(where: { $0.control == "relativeStart" }) else { return }
+        let relative = taskEditor.object("fields").object("relativeStart")
+        // A completed blank edit normalizes to zero in core. Feeding that reply
+        // into a focused UITextField can replace the next digit being entered.
+        // Keep raw text until an explicit blur/action AND the relative queue drain.
+        if !taskRelativeInputOwned || taskRelativeInputCommitRequested {
+            let resolvedInput = taskRelativeInputOwned && taskRelativeInputCommitRequested
+            taskRelativeAmountInput = relative.isEmpty ? "" : String(relative.number("amount"))
+            taskRelativeInputOwned = false
+            taskRelativeInputCommitRequested = false
+            if resolvedInput {
+                NSLog("Native iOS relative input resolved releaseCheck=v1.3.3/native-ios-relative-input")
+            }
+        }
+        taskRelativeUnitInput = relative.text("unit")
+    }
+
+    func beginTaskRelativeInput() {
+        guard taskDateFieldAvailable("startTime") else { return }
+        taskRelativeInputOwned = true
+        taskRelativeInputCommitRequested = false
+    }
+
+    func commitTaskRelativeInput() {
+        guard taskRelativeInputOwned else { return }
+        taskRelativeInputCommitRequested = true
+        synchronizeTaskRelativeInput()
+    }
+
+    func setTaskRelativeAmount(_ text: String) {
+        guard taskDateFieldAvailable("startTime"), taskRelativeAmountInput != text else { return }
+        // Claim ownership in the binding setter itself; FocusState onChange may
+        // arrive after this callback. No core reply may win that opening gap.
+        beginTaskRelativeInput()
+        taskRelativeAmountInput = text
+        enqueueTaskScheduleEdit("relativeStart", edit: ["type": "relativeStart", "amount": text, "unit": taskRelativeUnitInput])
+    }
+
+    func setTaskRelativeUnit(_ unit: String) {
+        guard taskDateFieldAvailable("startTime"), !busy,
+              taskEditor.object("fields").object("relativeStart").objects("units").contains(where: { $0.text("unit") == unit }) else { return }
+        taskRelativeUnitInput = unit
+        enqueueTaskScheduleEdit("relativeStart", edit: ["type": "relativeStart", "amount": taskRelativeAmountInput, "unit": unit])
+    }
+
+    func setTaskRelativeMode(_ relative: Bool) {
+        guard taskDateFieldAvailable("startTime"), !busy,
+              !taskEditor.object("fields").object("relativeStart").isEmpty else { return }
+        let edit: CoreObject = relative
+            ? ["type": "relativeStart", "amount": taskRelativeAmountInput, "unit": taskRelativeUnitInput]
+            : ["type": "fields", "patch": ["relativeStartOffset": NSNull()]]
+        enqueueTaskScheduleEdit("relativeStart", edit: edit)
+    }
+
+    func setTaskPickedDate(_ field: String, mode: String, value: String) {
+        guard taskDateFieldAvailable(field), ["date", "time"].contains(mode), mode != "time" || field != "reviewAt" else { return }
+        enqueueTaskScheduleEdit(field + ":" + mode,
+            edit: ["type": mode == "date" ? "pickDate" : "pickTime", "field": field, mode: value])
+    }
+
+    private var taskRecurrenceAvailable: Bool {
+        taskPresented && !taskEditor.isEmpty && !taskEditor.flag("readOnly") && !retryNeeded && !taskSavePending
+            && taskEditor.object("layout").objects("sections").contains {
+                ($0["fields"] as? [String] ?? []).contains("recurrence")
+            }
+    }
+
+    private func synchronizeTaskRecurrenceInputs() {
+        let recurrence = taskEditor.object("fields").object("recurrence")
+        for field in ["interval", "count"] {
+            guard !taskScheduleEdits.contains(where: { $0.control == "recurrence:" + field }) else { continue }
+            if !taskRecurrenceInputOwned.contains(field) || taskRecurrenceInputCommitRequested.contains(field) {
+                taskRecurrenceInputs[field] = String(recurrence.number(field))
+                taskRecurrenceInputOwned.remove(field)
+                taskRecurrenceInputCommitRequested.remove(field)
+            }
+        }
+    }
+
+    func beginTaskRecurrenceInput(_ field: String) {
+        guard taskRecurrenceAvailable, ["interval", "count"].contains(field) else { return }
+        taskRecurrenceInputOwned.insert(field)
+        taskRecurrenceInputCommitRequested.remove(field)
+    }
+
+    func commitTaskRecurrenceInputs() {
+        taskRecurrenceInputCommitRequested.formUnion(taskRecurrenceInputOwned)
+        synchronizeTaskRecurrenceInputs()
+    }
+
+    func setTaskRecurrenceInput(_ field: String, text: String) {
+        guard taskRecurrenceAvailable, ["interval", "count"].contains(field), taskRecurrenceInputs[field] != text else { return }
+        beginTaskRecurrenceInput(field)
+        taskRecurrenceInputs[field] = text
+        enqueueTaskScheduleEdit("recurrence:" + field,
+            edit: ["type": "recurrence", "edit": ["kind": field, "text": text]])
+    }
+
+    func editTaskRecurrence(_ edit: CoreObject) {
+        guard taskRecurrenceAvailable, !busy else { return }
+        enqueueTaskScheduleEdit("recurrence:" + edit.text("kind"),
+            edit: ["type": "recurrence", "edit": edit], coalesces: false)
+    }
+
+    func toggleTaskFutureRecurrence() {
+        guard taskRecurrenceAvailable, !busy else { return }
+        enqueueTaskScheduleEdit("recurrence:showFuture", edit: ["type": "toggleFutureRecurrence"], coalesces: false)
+    }
+
+    func setTaskRecurrenceUntil(_ date: String) {
+        guard taskRecurrenceAvailable else { return }
+        enqueueTaskScheduleEdit("recurrence:until", edit: ["type": "recurrence", "edit": ["kind": "until", "date": date]])
+    }
+
+    func applyTaskMonthlyCustom(_ custom: CoreObject, intervalText: String) async -> Bool {
+        guard taskRecurrenceAvailable, !busy else { return false }
+        enqueueTaskScheduleEdit("recurrence:monthlyCustom",
+            edit: ["type": "monthlyCustom", "custom": custom, "intervalText": intervalText])
+        return await prepareTaskDatePicker()
+    }
+
+    func cancelTaskMonthlyCustom() {
+        guard !busy, !taskScheduleUpdating else { return }
+        if let failed = taskScheduleFailedID,
+           taskScheduleEdits.contains(where: { $0.id == failed && $0.control == "recurrence:monthlyCustom" }) {
+            taskScheduleEdits.removeAll { $0.id == failed }
+            taskScheduleFailedID = nil
+            taskScheduleFailure = nil
+            taskSchedulePending = !taskScheduleEdits.isEmpty
+            taskError = nil
+        }
+    }
+
+    private func enqueueTaskScheduleEdit(_ control: String, edit: CoreObject, coalesces: Bool = true) {
+        taskScheduleSequence += 1
+        let next = TaskScheduleEdit(id: taskScheduleSequence, control: control, edit: edit, coalesces: coalesces)
+        // Correcting a refused control removes that refused edit without moving
+        // the correction ahead of any intervening, dependent control's edit.
+        if coalesces, let failed = taskScheduleFailedID,
+           taskScheduleEdits.contains(where: { $0.id == failed && $0.control == control && $0.coalesces }) {
+            taskScheduleEdits.removeAll { $0.id == failed }
+            taskScheduleFailure = nil
+            taskScheduleFailedID = nil
+        }
+        // Only consecutive edits from the same control can replace each other.
+        if coalesces, taskScheduleEdits.last?.coalesces == true, taskScheduleEdits.last?.control == control {
+            taskScheduleEdits[taskScheduleEdits.count - 1] = next
+        }
+        else { taskScheduleEdits.append(next) }
+        taskSchedulePending = true
+        if taskScheduleFailure == nil { taskError = nil }
+        if !busy { startTaskSchedulePump() }
+    }
+
+    private func startTaskSchedulePump() {
+        guard taskScheduleTask == nil, !taskScheduleEdits.isEmpty, taskScheduleFailure == nil,
+              taskPresented, !taskEditor.flag("readOnly"), !retryNeeded else { return }
+        let session = taskScheduleSession
+        let id = viewedTaskID
+        taskScheduleUpdating = true
+        taskScheduleTask = Task {
+            defer {
+                if taskScheduleSession == session {
+                    taskScheduleTask = nil
+                    taskScheduleUpdating = false
+                    taskSchedulePending = !taskScheduleEdits.isEmpty
+                    if !busy && !retryNeeded {
+                        for field in taskTokenFields where taskTokenNeedsRead.contains(field) { requestTaskTokenRead(field, delay: 0) }
+                    }
+                }
+            }
+            while let operation = taskScheduleEdits.first {
+                do {
+                    try await resolveTaskEstimateInput()
+                    try await resolveTaskTokenInputs()
+                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    let edit = try await taskScheduleCommand(operation.edit)
+                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    let editor = try await query("editDraft", [try json(taskEditRequest(edit))])
+                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    taskEditor = editor
+                    taskScheduleEdits.removeAll { $0.id == operation.id }
+                    synchronizeTaskRelativeInput()
+                    synchronizeTaskRecurrenceInputs()
+                } catch {
+                    guard taskPresented, taskScheduleSession == session, viewedTaskID == id else { return }
+                    // A newer edit of this control explicitly supersedes a
+                    // refused value. Other controls and Save cannot erase it.
+                    if operation.coalesces, taskScheduleEdits.contains(where: { $0.id > operation.id && $0.control == operation.control && $0.coalesces }) {
+                        taskScheduleEdits.removeAll { $0.id == operation.id }
+                        continue
+                    }
+                    taskScheduleFailure = error
+                    taskScheduleFailedID = operation.id
+                    taskError = error.localizedDescription
+                    return
+                }
+            }
+        }
+    }
+
+    private func resolveTaskScheduleEdits() async throws {
+        while !taskScheduleEdits.isEmpty || taskScheduleTask != nil {
+            if let failure = taskScheduleFailure { throw failure }
+            startTaskSchedulePump()
+            guard let pump = taskScheduleTask else { throw CocoaError(.coderReadCorrupt) }
+            await pump.value
+        }
+        if let failure = taskScheduleFailure { throw failure }
+    }
+
+    private func resolveTaskEditorInputs(estimate: Bool = true) async throws {
+        repeat {
+            try await resolveTaskScheduleEdits()
+            if estimate { try await resolveTaskEstimateInput() }
+            try await resolveTaskTokenInputs()
+            // A final native wheel/input callback can arrive during either
+            // awaited normalization. Drain it before capturing a save payload.
+        } while !taskScheduleEdits.isEmpty || taskScheduleTask != nil
+        // Explicit action callers already resigned input. Include any final
+        // binding callback delivered during normalization before reconciling text.
+        commitTaskRelativeInput()
+        commitTaskRecurrenceInputs()
+    }
+
+    func retryTaskSchedule() async {
+        guard taskPresented, !busy, !retryNeeded, !taskEditor.flag("readOnly") else { return }
+        taskScheduleFailure = nil
+        taskScheduleFailedID = nil
+        if await prepareTaskDatePicker() { await readTaskView() }
+    }
+
+    /// Used by picker Open/Done; waits for the final wheel change without adding
+    /// a synthetic change for the initial date shown by a native wheel.
+    func prepareTaskDatePicker() async -> Bool {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded else { return false }
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            return true
+        } catch { taskError = error.localizedDescription; return false }
+    }
+
+    func editTaskDate(_ field: String, action: String, preset: String = "") {
+        guard taskDateFieldAvailable(field), !busy, ["clear", "dateOnly", "quick"].contains(action) else { return }
+        // Resolve DTO values in queue order. A quick chip can toggle its selected
+        // date, so two taps must never coalesce into one.
+        enqueueTaskScheduleEdit(field + ":" + action,
+            edit: ["type": "dateAction", "field": field, "action": action, "preset": preset], coalesces: false)
+    }
+
+    private func taskScheduleCommand(_ input: CoreObject) async throws -> CoreObject {
+        if input.text("type") == "toggleFutureRecurrence" {
+            return ["type": "fields", "patch": ["showFutureRecurrence": !taskDraft.flag("showFutureRecurrence")]]
+        }
+        if input.text("type") == "monthlyCustom" {
+            // Normalize the dialog's raw interval through core within this queue.
+            // Publish only the final custom edit, so a refused Apply keeps its buffer.
+            let normalized = try await query("editDraft", [try json(taskEditRequest(
+                ["type": "recurrence", "edit": ["kind": "interval", "text": input.text("intervalText")]]))])
+            var custom = input.object("custom")
+            custom["interval"] = normalized.object("fields").object("recurrence").number("interval")
+            return ["type": "recurrence", "edit": ["kind": "monthlyCustom", "custom": custom]]
+        }
+        guard input.text("type") == "dateAction" else { return input }
+        let field = input.text("field")
+        let part = taskEditor.object("fields").object(field)
+        let value: String
+        switch input.text("action") {
+        case "clear": value = ""
+        case "dateOnly": value = part.text("dateOnly")
+        case "quick":
+            guard let choice = part.objects("quickDates").first(where: { $0.text("preset") == input.text("preset") }) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            value = choice.text("value")
+        default: throw CocoaError(.coderReadCorrupt)
+        }
+        return ["type": "date", "field": field, "value": value]
+    }
+
+    func reportTaskDatePickerFailure() {
+        taskError = CocoaError(.coderReadCorrupt).localizedDescription
+    }
+
+    func taskTokenChoicesCurrent(_ field: String) -> Bool {
+        taskPresented && !taskEditor.flag("readOnly") && !busy && !retryNeeded
+            && taskTokenSuggestionInputs[field] == taskTokenInputs[field]
+            && taskTokenErrors[field] == nil && taskTokenSuggestions[field] != nil
+    }
+
+    func setTaskTokenInput(_ field: String, text: String) {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !retryNeeded, !taskSavePending,
+              taskTokenFields.contains(field), taskTokenInputs[field] != text else { return }
+        taskTokenInputs[field] = text
+        taskTokenEdited.insert(field)
+        requestTaskTokenRead(field)
+    }
+
+    func taskTokenFocusChanged(_ field: String, focused: Bool) {
+        guard taskTokenFields.contains(field), taskPresented, !taskEditor.flag("readOnly") else { return }
+        if focused { taskTokenCommitDisplay.remove(field) }
+        else { commitTaskTokenInput(field) }
+    }
+
+    func commitTaskTokenInput(_ field: String) {
+        guard taskPresented, !taskEditor.flag("readOnly"), !retryNeeded, taskTokenFields.contains(field) else { return }
+        taskTokenEdited.insert(field)
+        taskTokenCommitDisplay.insert(field)
+        if !busy, taskTokenSuggestionInputs[field] == taskTokenInputs[field],
+           let canonical = taskTokenSuggestions[field]?["draftValue"] as? String {
+            taskTokenCanonical[field] = canonical
+            canonicalizeTaskTokenDisplay(field)
+        } else {
+            taskTokenResolvedInputs[field] = nil
+            requestTaskTokenRead(field, delay: 0)
+        }
+    }
+
+    func retryTaskToken(_ field: String) {
+        guard !busy, !retryNeeded, taskPresented, !taskEditor.flag("readOnly"), taskTokenFields.contains(field) else { return }
+        requestTaskTokenRead(field, delay: 0)
+    }
+
+    func chooseTaskToken(_ field: String, kind: String, value: String) {
+        guard taskTokenChoicesCurrent(field), ["matches", "quick"].contains(kind),
+              let choice = taskTokenSuggestions[field]?.objects(kind).first(where: { $0.text("value") == value }),
+              let text = choice["text"] as? String else { return }
+        // Pure text replacement keeps RN's focused input and never disables it.
+        setTaskTokenInput(field, text: text)
+    }
+
+    private func resetTaskTokens() {
+        for field in taskTokenFields { invalidateTaskTokenRead(field) }
+        taskTokenInputs = [:]
+        taskTokenCanonical = [:]
+        taskTokenResolvedInputs = [:]
+        taskTokenSuggestions = [:]
+        taskTokenSuggestionInputs = [:]
+        taskTokenErrors = [:]
+        taskTokenCommitDisplay = []
+        taskTokenEdited = []
+    }
+
+    private func initializeTaskTokens() {
+        for field in taskTokenFields {
+            let text = taskEditor.object("draft").text(field)
+            taskTokenInputs[field] = text
+            taskTokenCanonical[field] = text
+            taskTokenResolvedInputs[field] = text
+            if !taskEditor.flag("readOnly") { taskTokenNeedsRead.insert(field) }
+        }
+    }
+
+    private func invalidateTaskTokenRead(_ field: String) {
+        taskTokenGeneration += 1
+        taskTokenGenerations[field] = taskTokenGeneration
+        taskTokenReadTasks[field]?.cancel()
+        taskTokenReadTasks[field] = nil
+        taskTokenSuggestionInputs[field] = nil
+        taskTokenNeedsRead.remove(field)
+    }
+
+    private func requestTaskTokenRead(_ field: String, delay: UInt64 = 150_000_000) {
+        invalidateTaskTokenRead(field)
+        taskTokenErrors[field] = nil
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !retryNeeded else { return }
+        taskTokenNeedsRead.insert(field)
+        guard !busy else { return }
+        let generation = taskTokenGenerations[field]
+        let id = viewedTaskID
+        let raw = taskTokenInputs[field] ?? ""
+        taskTokenReadTasks[field] = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, taskTokenGenerations[field] == generation, taskPresented, viewedTaskID == id else { return }
+            guard !busy, !retryNeeded else { return }
+            taskTokenNeedsRead.remove(field)
+            do {
+                let result = try await query("editorSuggestions", [id, field, raw, 4])
+                guard taskPresented, viewedTaskID == id, taskTokenGenerations[field] == generation,
+                      taskTokenInputs[field] == raw else { return }
+                try acceptTaskTokenRead(result, field: field, raw: raw)
+                if taskTokenCommitDisplay.contains(field) { canonicalizeTaskTokenDisplay(field) }
+            } catch {
+                guard taskPresented, viewedTaskID == id, taskTokenGenerations[field] == generation,
+                      taskTokenInputs[field] == raw else { return }
+                taskTokenErrors[field] = error.localizedDescription
+            }
+        }
+    }
+
+    private func acceptTaskTokenRead(_ result: CoreObject, field: String, raw: String) throws {
+        guard let canonical = result["draftValue"] as? String else { throw CocoaError(.coderReadCorrupt) }
+        // Opening a task must not rewrite untouched legacy token spelling.
+        // RN normalizes a field only after editing or committing that input.
+        if taskTokenEdited.contains(field) { taskTokenCanonical[field] = canonical }
+        taskTokenResolvedInputs[field] = raw
+        taskTokenSuggestions[field] = result
+        taskTokenSuggestionInputs[field] = raw
+        taskTokenErrors[field] = nil
+    }
+
+    private func canonicalizeTaskTokenDisplay(_ field: String) {
+        guard let canonical = taskTokenCanonical[field], taskTokenResolvedInputs[field] == taskTokenInputs[field] else { return }
+        taskTokenCommitDisplay.remove(field)
+        guard taskTokenInputs[field] != canonical else { return }
+        taskTokenInputs[field] = canonical
+        taskTokenResolvedInputs[field] = canonical
+        requestTaskTokenRead(field, delay: 0)
+    }
+
+    private func resolveTaskTokenInputs() async throws {
+        guard !taskEditor.flag("readOnly") else { return }
+        let id = viewedTaskID
+        let session = taskScheduleSession
+        // Background reads only publish one canonical field. Whole editor edits
+        // are serialized here, against the latest draft, at an action boundary.
+        while true {
+            for field in taskTokenFields { invalidateTaskTokenRead(field) }
+            let inputs = taskTokenInputs
+            for field in taskTokenFields where taskTokenResolvedInputs[field] != inputs[field] {
+                let raw = inputs[field] ?? ""
+                do {
+                    let result = try await query("editorSuggestions", [id, field, raw, 4])
+                    guard taskPresented, viewedTaskID == id, taskScheduleSession == session else { throw CancellationError() }
+                    if taskTokenInputs[field] == raw { try acceptTaskTokenRead(result, field: field, raw: raw) }
+                } catch {
+                    if taskTokenInputs[field] == raw { taskTokenErrors[field] = error.localizedDescription }
+                    throw error
+                }
+            }
+            guard inputs == taskTokenInputs, taskTokenFields.allSatisfy({ taskTokenResolvedInputs[$0] == inputs[$0] }) else { continue }
+            var patch: CoreObject = [:]
+            for field in taskTokenFields {
+                if let canonical = taskTokenCanonical[field], taskEditor.object("draft").text(field) != canonical {
+                    patch[field] = canonical
+                }
+            }
+            if !patch.isEmpty {
+                let editor = try await query("editDraft", [try json(taskEditRequest(
+                    ["type": "fields", "patch": patch]))])
+                guard taskPresented, viewedTaskID == id, taskScheduleSession == session else { throw CancellationError() }
+                taskEditor = editor
+            }
+            guard inputs == taskTokenInputs, taskTokenFields.allSatisfy({ taskTokenResolvedInputs[$0] == inputs[$0] }) else { continue }
+            for field in taskTokenFields {
+                canonicalizeTaskTokenDisplay(field)
+                if taskTokenSuggestionInputs[field] != taskTokenInputs[field] || taskTokenSuggestions[field] == nil {
+                    taskTokenNeedsRead.insert(field)
+                }
+            }
+            return
+        }
+    }
+
+    func openTaskDestination(_ kind: String) async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              ["destination", "section"].contains(kind),
+              kind == "destination" ? !taskDestination.object("destination").text("fieldId").isEmpty : taskDestination.object("section").flag("visible") else { return }
+        taskDestinationKind = kind
+        taskDestinationQuery = ""
+        invalidateTaskDestinationRead()
+        taskDestinationError = nil
+        // The UI has synchronously resigned its input before this operation.
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await refreshTaskDestination()
+        } catch { taskDestinationError = error.localizedDescription }
+    }
+
+    func closeTaskDestination() {
+        guard !busy, !retryNeeded else { return }
+        taskDestinationKind = ""
+        taskDestinationQuery = ""
+        invalidateTaskDestinationRead()
+        taskDestinationError = nil
+        // The value labels do not depend on query. Next opening fetches fresh choices.
+    }
+
+    func setTaskDestinationQuery(_ text: String) {
+        guard taskPresented, !taskDestinationKind.isEmpty, !retryNeeded, !busy, text != taskDestinationQuery else { return }
+        taskDestinationQuery = text
+        requestTaskDestinationRead()
+    }
+
+    func retryTaskDestination() {
+        guard taskPresented, !taskDestinationKind.isEmpty, !busy, !retryNeeded else { return }
+        requestTaskDestinationRead(delay: 0)
+    }
+
+    func selectTaskDestination(kind: String, id: String) async {
+        guard taskDestinationActionsEnabled else { return }
+        let choice: CoreObject?
+        if taskDestinationKind == "section" {
+            guard kind == "section" else { return }
+            choice = taskDestination.object("section").objects("choices").first { $0.text("id") == id }
+        } else {
+            choice = taskDestination.object("destination").objects("groups").first { $0.text("kind") == kind }?
+                .objects("choices").first { $0.text("id") == id }
+        }
+        guard let choice, !choice.object("patch").isEmpty else { return }
+        let patch = choice.object("patch")
+        let taskID = viewedTaskID
+        busy = true
+        invalidateTaskDestinationRead()
+        taskDestinationError = nil
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            guard taskPresented, viewedTaskID == taskID, !taskEditor.flag("readOnly") else { return }
+            try await applyTaskDestinationPatch(patch, id: taskID)
+            guard taskPresented, viewedTaskID == taskID else { return }
+            taskDestinationKind = ""
+            taskDestinationQuery = ""
+            try await refreshTaskDestination()
+        } catch {
+            if taskDestinationKind.isEmpty { taskError = error.localizedDescription }
+            else { taskDestinationError = error.localizedDescription }
+        }
+    }
+
+    func clearTaskSection() async {
+        guard taskPresented, !taskEditor.isEmpty, !taskEditor.flag("readOnly"), !busy, !retryNeeded,
+              taskDestinationKind.isEmpty, taskDestination.object("section").flag("visible") else { return }
+        let taskID = viewedTaskID
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        do {
+            try await resolveTaskEditorInputs()
+            try await refreshTaskDestination()
+            guard taskPresented, viewedTaskID == taskID, taskDestinationCurrent, !taskDestination.flag("readOnly"), taskDestination.object("section").flag("visible"),
+                  let none = taskDestination.object("section").objects("choices").first(where: { $0.text("id").isEmpty }),
+                  !none.object("patch").isEmpty else { return }
+            try await applyTaskDestinationPatch(none.object("patch"), id: taskID)
+            guard taskPresented, viewedTaskID == taskID else { return }
+            try await refreshTaskDestination()
+        } catch { taskError = error.localizedDescription }
+    }
+
+    private func applyTaskDestinationPatch(_ patch: CoreObject, id: String) async throws {
+        let editor = try await query("editDraft", [try json(taskEditRequest(
+            ["type": "fields", "patch": patch]))])
+        guard taskPresented, viewedTaskID == id else { return }
+        taskEditor = editor
+        resetTaskEstimateInput()
+        // Association labels belong to the old draft until the fresh read succeeds.
+        invalidateTaskDestinationRead()
+        taskDestination = [:]
+    }
+
+    private func resetTaskDestination() {
+        invalidateTaskDestinationRead()
+        taskDestination = [:]
+        taskDestinationKind = ""
+        taskDestinationQuery = ""
+        taskDestinationError = nil
+        taskDestinationDraftIdentity = ""
+    }
+
+    private func invalidateTaskDestinationRead() {
+        taskDestinationGeneration += 1
+        taskDestinationReadTask?.cancel()
+        taskDestinationReadTask = nil
+        taskDestinationCurrent = false
+        taskDestinationNeedsRead = false
+    }
+
+    private func requestTaskDestinationRead(delay: UInt64 = 150_000_000) {
+        invalidateTaskDestinationRead()
+        taskDestinationError = nil
+        guard taskPresented, !taskEditor.isEmpty, !retryNeeded else { return }
+        taskDestinationNeedsRead = true
+        guard !busy else { return }
+        let generation = taskDestinationGeneration
+        taskDestinationReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, generation == taskDestinationGeneration, taskPresented, !retryNeeded else { return }
+            guard !busy else { taskDestinationNeedsRead = true; return }
+            taskDestinationNeedsRead = false
+            do { try await readTaskDestination(generation: generation) }
+            catch {
+                guard generation == taskDestinationGeneration, taskPresented else { return }
+                taskDestinationError = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshTaskDestination() async throws {
+        invalidateTaskDestinationRead()
+        taskDestinationError = nil
+        try await readTaskDestination(generation: taskDestinationGeneration)
+    }
+
+    private func readTaskDestination(generation: Int) async throws {
+        let id = viewedTaskID
+        let queryText = taskDestinationQuery
+        let draft = taskDraft
+        let identity = try json(draft)
+        let next = try await query("destinationPicker", [try json(["id": id, "draft": draft, "query": queryText])])
+        guard taskPresented, viewedTaskID == id, generation == taskDestinationGeneration else { return }
+        guard queryText == taskDestinationQuery, identity == (try json(taskDraft)) else {
+            requestTaskDestinationRead(delay: 0)
+            return
+        }
+        guard next.text("id") == id, next.text("query") == queryText else { throw CocoaError(.coderReadCorrupt) }
+        taskDestination = next
+        taskDestinationDraftIdentity = identity
+        taskDestinationCurrent = true
+    }
+
+    private func readTaskEditorLabels(_ editor: CoreObject) async throws {
+        let options = editor.object("options")
+        var keys = ["common.none", "taskEdit.priorityLabel", "taskEdit.energyLevel", "taskEdit.timeEstimateLabel",
+                    "taskEdit.scheduling", "taskEdit.organization", "taskEdit.details",
+                    "taskEdit.contextsLabel", "taskEdit.contextsPlaceholder", "taskEdit.tagsLabel", "taskEdit.tagsPlaceholder",
+                    "taskEdit.startDateLabel", "taskEdit.dueDateLabel", "taskEdit.reviewDateLabel", "taskEdit.dateOnly",
+                    "taskEdit.startModeAbsolute", "taskEdit.startModeRelative", "taskEdit.relativeStartAmount",
+                    "taskEdit.relativeStartBeforeDue", "task.aria.startTime", "task.aria.dueTime", "calendar.changeTime", "common.done",
+                    "taskEdit.recurrenceLabel", "recurrence.repeatEvery", "recurrence.dayUnit", "recurrence.weekUnit",
+                    "recurrence.monthUnit", "recurrence.yearUnit", "recurrence.monthlyOnDay", "recurrence.custom",
+                    "recurrence.endsLabel", "recurrence.endsNever", "recurrence.endsOnDate", "recurrence.endsAfterCount",
+                    "recurrence.occurrenceUnit", "recurrence.afterCompletion", "recurrence.showFutureInCalendar",
+                    "recurrence.showFutureInCalendarHint", "recurrence.customTitle", "recurrence.onLabel",
+                    "recurrence.lastDay", "recurrence.lastDayOfMonth", "recurrence.onDayOfMonth", "recurrence.onNthWeekday",
+                    "recurrence.weekdayMonFri", "recurrence.ordinal.first", "recurrence.ordinal.second",
+                    "recurrence.ordinal.third", "recurrence.ordinal.fourth", "recurrence.ordinal.last"]
+        keys += options.objects("recurrences").map { $0.text("labelKey") }
+        keys += (options["priorities"] as? [String] ?? []).map { "priority." + $0 }
+        keys += (options["energyLevels"] as? [String] ?? []).map { "energyLevel." + $0 }
+        let translated = try await query("strings", [try json(keys)]).object("strings")
+        strings.merge(translated) { _, new in new }
+    }
+
+    func readTaskView(more: Bool = false) async {
+        guard ready, taskPresented, !busy, !retryNeeded, taskChecklistWriteKind == nil,
+              !taskChecklistReadPending else { return }
+        let id = viewedTaskID
+        let session = taskChecklistSession
+        let loaded = taskView.objects("rows").first { $0.text("type") == "checklist" }?.objects("items").count ?? 0
+        let target = max(pageSize, loaded) + (more ? pageSize : 0)
+        busy = true
+        taskError = nil
+        defer { finishOperation() }
+        var attempt = 0
+        while attempt < 2 {
+            do {
+                if taskEditor.isEmpty {
+                    let editor = try await query("editorModel", [id])
+                    try await readTaskEditorLabels(editor)
+                    guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { return }
+                    taskEditor = editor
+                    taskOriginalDraft = editor.object("draft")
+                    taskOriginalSchedule = editor.object("scheduleBase")
+                    taskOriginalRecurrence = editor.object("recurrenceBase")
+                    synchronizeTaskRelativeInput()
+                    synchronizeTaskRecurrenceInputs()
+                    taskTitleDraft = editor.object("draft").text("title")
+                    taskNoteDraft = editor.object("draft").text("description")
+                    initializeTaskTokens()
+                    resetTaskEstimateInput()
+                }
+                try await resolveTaskEditorInputs()
+                try await refreshTaskDestination()
+                if taskSchedulePending { try await resolveTaskEditorInputs() }
+                if taskChecklistLoaded { try await flushTaskChecklistInputs(id: id, session: session) }
+                var draft = taskDraft
+                var firstInput: CoreObject = ["id": id, "draft": draft, "offset": 0, "limit": pageSize]
+                if taskChecklistLoaded { firstInput["checklist"] = taskChecklist }
+                var next = try await query("taskView", [try json(firstInput)])
+                if !taskChecklistLoaded {
+                    guard taskPresented, viewedTaskID == id, taskChecklistSession == session,
+                          next["checklistBase"] is [CoreObject] else { throw CocoaError(.coderReadCorrupt) }
+                    taskOriginalChecklist = next.objects("checklistBase")
+                    taskChecklist = taskOriginalChecklist
+                    _ = try await applyTaskChecklistEdit(nil, id: id, session: session)
+                    taskChecklistLoaded = true
+                    draft = taskDraft
+                    next = try await query("taskView", [try json([
+                        "id": id, "draft": draft, "checklist": taskChecklist, "offset": 0, "limit": pageSize])])
+                }
+                let checklist = taskChecklist
+                let revision = next.text("revision")
+                var rows = next.objects("rows")
+                if let index = rows.firstIndex(where: { $0.text("type") == "checklist" }) {
+                    var entries = rows[index].objects("items")
+                    let total = rows[index].number("total")
+                    while entries.count < min(target, total) {
+                        let limit = min(pageSize, min(target, total) - entries.count)
+                        let window = try await query("taskView", [try json([
+                            "id": id, "draft": draft, "checklist": checklist,
+                            "offset": entries.count, "limit": limit, "revision": revision])])
+                        let checklist = window.objects("rows").first { $0.text("type") == "checklist" } ?? [:]
+                        let page = checklist.objects("items")
+                        guard window.text("revision") == revision, window.text("id") == id,
+                              checklist.number("total") == total, page.count == limit else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                        entries += page
+                    }
+                    rows[index]["items"] = entries
+                    next["rows"] = rows
+                }
+                guard taskPresented, viewedTaskID == id, taskChecklistSession == session else { return }
+                let draftChanged = (try json(draft)) != (try json(taskDraft))
+                if taskSchedulePending || draftChanged || !taskDraftValuesEqual(checklist, taskChecklist)
+                    || !taskChecklistInputs.isEmpty || !taskChecklistAppendInput.isEmpty {
+                    // A final native input callback may arrive during the view
+                    // or checklist reads. Regenerate before publishing Preview.
+                    try await resolveTaskEditorInputs()
+                    try await flushTaskChecklistInputs(id: id, session: session)
+                    continue
+                }
+                taskView = next
+                return
+            } catch {
+                attempt += 1
+                if attempt == 2, taskPresented, viewedTaskID == id, taskChecklistSession == session {
+                    taskError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func openCapture() async {
+        guard ready, !busy, !retryNeeded, !areaPickerPresented, !taskPresented,
+              !projectRenameEditing,
+              !calendarComposerPresented, !mindSweepPresented, !processInboxPresented else { return }
+        morePresented = false
+        busy = true
+        defer { finishOperation() }
+        do {
+            if capture.isEmpty {
+                capture = try await query("captureOpen")
+                captureID = UUID().uuidString
+                draft = ""
+                noteDraft = capture.object("options").text("note")
+                contextQuery = ""
+                contextPickerPresented = false
+                previewedText = ""
+                if (preferenceDefaults.object(forKey: preference) as? Bool) ?? initialAddAnother {
+                    let result = try await query("captureEdit", [try json([
+                        "text": draft, "options": capture.object("options"),
+                        "edit": ["type": "setAddAnother", "value": true]])])
+                    capture = result.object("view")
+                }
+            }
+            notice = nil
+            capturePresented = true
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func openProcessInbox() async {
+        let caller = selectedSurface
+        let fromInbox = caller == .inbox && !inbox.object("process").text("label").isEmpty
+        let reviewInbox = reviewGuide.object("content")
+        let fromReview = caller == .review && reviewGuidePresented && reviewActionsEnabled
+            && reviewInbox.text("step") == "inbox"
+            && (reviewKind == "daily" ? !reviewInbox.text("processLabel").isEmpty
+                : reviewKind == "weekly" && !reviewInbox.text("countLabel").isEmpty)
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented, !taskPresented,
+              !morePresented, !mindSweepPresented, !processInboxPresented,
+              fromInbox || fromReview else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let started = try await query("inboxStart", ["guided"])
+            guard selectedSurface == caller,
+                  caller != .review || (reviewGuidePresented && ["daily", "weekly"].contains(reviewKind)
+                      && reviewGuide.object("content").text("step") == "inbox") else { return }
+            let session = started.text("sessionId")
+            let view = started.object("view")
+            guard !view.isEmpty ? view.text("sessionId") == session && !session.isEmpty : true else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            processInboxCaller = caller
+            processInboxSessionID = session.isEmpty ? nil : session
+            processInboxView = view
+            processInboxNotice = [:]
+            processInboxToast = ""
+            processInboxError = nil
+            processInboxReadError = nil
+            processInboxPendingEdits = []
+            processInboxRequest = nil
+            processInboxRequestMethod = nil
+            processInboxRequestID = nil
+            processInboxRequestTaskID = nil
+            processInboxAfterRequestID = nil
+            syncProcessInboxInputs()
+            processInboxPresented = true
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func syncProcessInboxInputs() {
+        let draft = processInboxView.object("draft")
+        var inputs: [String: String] = [:]
+        for field in ["title", "description", "tokenInput", "projectSearch", "assignedTo", "delegateWho", "nextAction"] {
+            inputs[field] = draft.text(field)
+        }
+        let extras = draft["extraActions"] as? [String] ?? []
+        for index in extras.indices { inputs["extra-\(index)"] = extras[index] }
+        processInboxInputs = inputs
+    }
+
+    func setProcessInboxInput(_ field: String, _ value: String) {
+        guard processInboxControlsEnabled, value != processInboxInputs[field] else { return }
+        let editable = ["title", "description", "tokenInput", "projectSearch", "assignedTo", "delegateWho", "nextAction"]
+        let edit: CoreObject
+        if editable.contains(field) {
+            edit = ["type": "set", "field": field, "value": value]
+        } else if field.hasPrefix("extra-"), let index = Int(field.dropFirst(6)), index >= 0,
+                  index < processInboxView.object("project").object("conversion").objects("rows").count {
+            edit = ["type": "setExtraAction", "index": index, "value": value]
+        } else { return }
+        processInboxInputs[field] = value
+        // Adjacent text callbacks for one field supersede each other before the
+        // next pure step read. An in-flight edit has already left this queue.
+        if processInboxPendingEdits.last?.text("type") == edit.text("type")
+            && processInboxPendingEdits.last?.text("field") == edit.text("field")
+            && (edit.text("type") != "setExtraAction"
+                || processInboxPendingEdits.last?.number("index") == edit.number("index")) {
+            processInboxPendingEdits[processInboxPendingEdits.count - 1] = edit
+        } else { processInboxPendingEdits.append(edit) }
+        scheduleProcessInboxEdits()
+    }
+
+    private func processInboxStepInput(edit: CoreObject? = nil, mode: String? = nil) throws -> String {
+        guard let session = processInboxSessionID, session == processInboxView.text("sessionId"),
+              !processInboxView.text("taskId").isEmpty, !processInboxView.text("step").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        var input: CoreObject = ["sessionId": session, "taskId": processInboxView.text("taskId"),
+                                 "step": processInboxView.text("step")]
+        if let edit { input["edit"] = edit }
+        if let mode { input["mode"] = mode }
+        return try json(input)
+    }
+
+    private func scheduleProcessInboxEdits() {
+        guard processInboxEditTask == nil, !processInboxPendingEdits.isEmpty else { return }
+        processInboxEditTask = Task {
+            await drainProcessInboxEdits()
+            processInboxEditTask = nil
+        }
+    }
+
+    private func drainProcessInboxEdits() async {
+        while !processInboxPendingEdits.isEmpty && processInboxPresented && processInboxRequest == nil {
+            let edit = processInboxPendingEdits.removeFirst()
+            do {
+                let input = try processInboxStepInput(edit: edit)
+                let next = try await query("inboxStep", [input])
+                guard processInboxPresented, next.text("sessionId") == processInboxSessionID,
+                      next.text("taskId") == processInboxView.text("taskId") else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                processInboxView = next
+                processInboxReadError = nil
+            } catch {
+                // A read may have applied its edit before its reply failed. Retry
+                // first reads the current view, then reapplies only desired text.
+                processInboxReadError = error.localizedDescription
+                return
+            }
+        }
+    }
+
+    private func waitForProcessInboxEdits() async -> Bool {
+        while let task = processInboxEditTask { await task.value }
+        if !processInboxPendingEdits.isEmpty && processInboxReadError == nil {
+            await drainProcessInboxEdits()
+        }
+        return processInboxReadError == nil && processInboxPendingEdits.isEmpty
+    }
+
+    func editProcessInbox(_ edit: CoreObject, conversionAction: String? = nil, index: Int = 0) async {
+        guard processInboxControlsEnabled, !edit.isEmpty || conversionAction != nil else { return }
+        processInboxTransitioning = true
+        busy = true
+        defer { processInboxTransitioning = false; finishOperation() }
+        guard await waitForProcessInboxEdits() else { return }
+        do {
+            var currentEdit = edit
+            if let conversionAction {
+                let conversion = processInboxView.object("project").object("conversion")
+                switch conversionAction {
+                case "nextSubmit": currentEdit = conversion.object("nextActionSubmit")
+                case "add": currentEdit = conversion.object("addAction").object("edit")
+                case "remove":
+                    let rows = conversion.objects("rows")
+                    currentEdit = rows.indices.contains(index) ? rows[index].object("remove") : [:]
+                case "rowSubmit":
+                    let rows = conversion.objects("rows")
+                    currentEdit = rows.indices.contains(index) ? rows[index].object("submit") : [:]
+                default: currentEdit = [:]
+                }
+            }
+            guard !currentEdit.isEmpty else { return }
+            let next = try await query("inboxStep", [try processInboxStepInput(edit: currentEdit)])
+            guard next.text("sessionId") == processInboxSessionID,
+                  next.text("taskId") == processInboxView.text("taskId") else { throw CocoaError(.coderReadCorrupt) }
+            processInboxView = next
+            processInboxReadError = nil
+            processInboxError = nil
+            syncProcessInboxInputs()
+        } catch { processInboxReadError = error.localizedDescription }
+    }
+
+    func changeProcessInboxMode() async {
+        guard processInboxControlsEnabled else { return }
+        processInboxTransitioning = true
+        busy = true
+        defer { processInboxTransitioning = false; finishOperation() }
+        guard await waitForProcessInboxEdits() else { return }
+        let mode = processInboxView.text("mode") == "quick" ? "guided" : "quick"
+        do {
+            let next = try await query("inboxStep", [try processInboxStepInput(mode: mode)])
+            guard next.text("sessionId") == processInboxSessionID,
+                  next.text("taskId") == processInboxView.text("taskId") else { throw CocoaError(.coderReadCorrupt) }
+            processInboxView = next
+            processInboxReadError = nil
+            syncProcessInboxInputs()
+        } catch { processInboxReadError = error.localizedDescription }
+    }
+
+    func decideProcessInbox(_ choice: String) async {
+        let choices = processInboxView.objects("choices").map { $0.text("id") }
+        let conversion = processInboxView.object("project").object("conversion")
+        let search = processInboxView.object("project").object("search")
+        guard processInboxControlsEnabled,
+              choices.contains(choice) || (choice == "back" && !processInboxView.text("back").isEmpty)
+                || (choice == "fileIt" && !processInboxView.text("fileIt").isEmpty)
+                || (choice == "createProject" && !conversion.isEmpty)
+                || (choice == "submitProjectSearch" && !search.isEmpty) else { return }
+        processInboxTransitioning = true
+        busy = true
+        defer { processInboxTransitioning = false; finishOperation() }
+        guard await waitForProcessInboxEdits() else { return }
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            guard let session = processInboxSessionID else { throw CocoaError(.coderReadCorrupt) }
+            let taskID = processInboxView.text("taskId")
+            let request = try json(["sessionId": session, "taskId": taskID,
+                                    "step": processInboxView.text("step"),
+                                    "decision": ["choice": choice], "requestId": requestID])
+            processInboxRequest = request
+            processInboxRequestMethod = "inboxCommit"
+            processInboxRequestID = requestID
+            processInboxRequestTaskID = taskID
+            processInboxError = nil
+            let wrapper = try await query("inboxCommit", [request])
+            try await acceptProcessInboxResponse(wrapper)
+        } catch { handleProcessInboxWriteError(error) }
+    }
+
+    func skipProcessInbox() async {
+        guard processInboxControlsEnabled else { return }
+        processInboxTransitioning = true
+        busy = true
+        defer { processInboxTransitioning = false; finishOperation() }
+        guard await waitForProcessInboxEdits() else { return }
+        do {
+            let requestID = UUID().uuidString.lowercased()
+            guard let session = processInboxSessionID else { throw CocoaError(.coderReadCorrupt) }
+            let taskID = processInboxView.text("taskId")
+            let request = try json(["sessionId": session, "taskId": taskID, "requestId": requestID])
+            processInboxRequest = request
+            processInboxRequestMethod = "inboxSkip"
+            processInboxRequestID = requestID
+            processInboxRequestTaskID = taskID
+            processInboxError = nil
+            let wrapper = try await query("inboxSkip", [request])
+            try await acceptProcessInboxResponse(wrapper)
+        } catch { handleProcessInboxWriteError(error) }
+    }
+
+    private func handleProcessInboxWriteError(_ failure: Error) {
+        if processInboxRequest != nil && isDefiniteRejection(failure) {
+            processInboxRequest = nil
+            processInboxRequestMethod = nil
+            processInboxRequestID = nil
+            processInboxRequestTaskID = nil
+            retryNeeded = false
+            processInboxError = failure.localizedDescription
+        } else {
+            retryNeeded = processInboxRequest != nil
+            processInboxError = failure.localizedDescription
+        }
+    }
+
+    private func installProcessInboxResult(_ result: CoreObject) throws {
+        guard result["view"] != nil else { throw CocoaError(.coderReadCorrupt) }
+        let next = result.object("view")
+        if !next.isEmpty {
+            guard next.text("sessionId") == processInboxSessionID,
+                  !next.text("taskId").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        }
+        processInboxView = next
+        processInboxNotice = result.object("notice")
+        processInboxToast = result.object("toast").text("message")
+        processInboxError = nil
+        processInboxReadError = nil
+        processInboxPendingEdits = []
+        syncProcessInboxInputs()
+    }
+
+    private func acceptProcessInboxResponse(_ wrapper: CoreObject) async throws {
+        switch wrapper.text("kind") {
+        case "flow":
+            // No library write occurred; this flow response may move steps.
+            processInboxRequest = nil
+            processInboxRequestMethod = nil
+            processInboxRequestID = nil
+            processInboxRequestTaskID = nil
+            retryNeeded = false
+            do { try installProcessInboxResult(wrapper.object("result")) }
+            catch { processInboxReadError = error.localizedDescription }
+        case "saved":
+            guard processInboxRequest != nil, let requestID = processInboxRequestID,
+                  wrapper.object("result").text("taskId") == processInboxRequestTaskID else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            // The host has crossed the durable barrier. A failed next-view read
+            // must never make this decision's UUID eligible for submission again.
+            processInboxRequest = nil
+            processInboxRequestMethod = nil
+            processInboxRequestID = nil
+            processInboxRequestTaskID = nil
+            retryNeeded = false
+            processInboxError = nil
+            processInboxAfterRequestID = requestID
+            await readProcessInboxAfterCommit()
+        default: throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    private func readProcessInboxAfterCommit() async {
+        guard let session = processInboxSessionID, let requestID = processInboxAfterRequestID else { return }
+        do {
+            let result = try await query("inboxAfterCommit", [try json(["sessionId": session, "requestId": requestID])])
+            try installProcessInboxResult(result)
+            processInboxAfterRequestID = nil
+        } catch { processInboxReadError = error.localizedDescription }
+    }
+
+    func retryProcessInboxRead() async {
+        guard processInboxPresented, !busy, !retryNeeded, processInboxRequest == nil,
+              processInboxReadError != nil else { return }
+        busy = true
+        defer { finishOperation() }
+        if processInboxAfterRequestID != nil { await readProcessInboxAfterCommit(); return }
+        do {
+            let current = try await query("inboxStep", [try processInboxStepInput()])
+            guard current.text("sessionId") == processInboxSessionID,
+                  current.text("taskId") == processInboxView.text("taskId") else { throw CocoaError(.coderReadCorrupt) }
+            processInboxView = current
+            processInboxReadError = nil
+            processInboxPendingEdits = []
+            for field in ["title", "description", "tokenInput", "projectSearch", "assignedTo", "delegateWho", "nextAction"] {
+                if let desired = processInboxInputs[field], desired != current.object("draft").text(field) {
+                    processInboxPendingEdits.append(["type": "set", "field": field, "value": desired])
+                }
+            }
+            let extras = current.object("draft")["extraActions"] as? [String] ?? []
+            for index in extras.indices {
+                if let desired = processInboxInputs["extra-\(index)"], desired != extras[index] {
+                    processInboxPendingEdits.append(["type": "setExtraAction", "index": index, "value": desired])
+                }
+            }
+            await drainProcessInboxEdits()
+        } catch { processInboxReadError = error.localizedDescription }
+    }
+
+    func closeProcessInbox() async {
+        guard processInboxCloseEnabled else { return }
+        processInboxTransitioning = true
+        busy = true
+        defer { processInboxTransitioning = false; finishOperation() }
+        if let task = processInboxEditTask { await task.value }
+        do {
+            if let session = processInboxSessionID {
+                do { _ = try await query("inboxEnd", [session]) }
+                catch { if !isDefiniteRejection(error) { throw error } }
+            }
+            let caller = processInboxCaller
+            processInboxPresented = false
+            processInboxCaller = nil
+            processInboxSessionID = nil
+            processInboxView = [:]
+            processInboxNotice = [:]
+            processInboxToast = ""
+            processInboxError = nil
+            processInboxReadError = nil
+            processInboxInputs = [:]
+            processInboxPendingEdits = []
+            processInboxAfterRequestID = nil
+            if caller == .inbox {
+                do { try await readInbox() }
+                catch { self.error = error.localizedDescription }
+            }
+            else if caller == .review { await readReview() }
+        } catch { processInboxReadError = error.localizedDescription }
+    }
+
+    func openMindSweep() async {
+        let entry = inbox.object("mindSweep")
+        let caller = selectedSurface
+        let reviewStep = reviewGuide.object("content").text("step")
+        let fromInbox = caller == .inbox && !entry.text("label").isEmpty
+            && ["accessory", "primary"].contains(entry.text("placement"))
+        let fromWeeklyReview = caller == .review && reviewGuidePresented && reviewKind == "weekly"
+            && reviewActionsEnabled && ["inbox", "completed"].contains(reviewStep)
+            && !reviewGuide.object("labels").text("mindSweep").isEmpty
+        guard ready, !busy, !retryNeeded, !capturePresented, !areaPickerPresented,
+              !taskPresented, !morePresented, !mindSweepPresented, !processInboxPresented,
+              fromInbox || fromWeeklyReview else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let guide = try await query("mindSweepGuide", [try json(["scope": "all"])])
+            guard selectedSurface == caller,
+                  caller != .review || (reviewGuidePresented && reviewKind == "weekly"
+                      && reviewGuide.object("content").text("step") == reviewStep) else { return }
+            try validateMindSweepGuide(guide, scope: "all")
+            mindSweepGuide = guide
+            mindSweepRequestedScope = "all"
+            mindSweepStep = -1
+            mindSweepDraft = ""
+            mindSweepCaptured = [:]
+            mindSweepCountedIDs = []
+            mindSweepAddFailed = false
+            mindSweepGuideError = nil
+            mindSweepCaller = caller
+            mindSweepPresented = true
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func setMindSweepScope(_ scope: String) async {
+        guard mindSweepControlsEnabled, mindSweepStep == -1,
+              mindSweepGuide.objects("scopes").contains(where: { $0.text("value") == scope }),
+              scope != mindSweepGuide.text("scope") || mindSweepGuideError != nil else { return }
+        mindSweepRequestedScope = scope
+        await readMindSweepGuide(scope)
+    }
+
+    func retryMindSweepGuide() async {
+        guard mindSweepControlsEnabled, mindSweepStep == -1, mindSweepGuideError != nil else { return }
+        await readMindSweepGuide(mindSweepRequestedScope)
+    }
+
+    private func readMindSweepGuide(_ scope: String) async {
+        busy = true
+        defer { finishOperation() }
+        do {
+            let guide = try await query("mindSweepGuide", [try json(["scope": scope])])
+            guard let caller = mindSweepCaller, mindSweepPresented, selectedSurface == caller else { return }
+            try validateMindSweepGuide(guide, scope: scope)
+            mindSweepGuide = guide
+            mindSweepGuideError = nil
+        } catch { mindSweepGuideError = error.localizedDescription }
+    }
+
+    private func validateMindSweepGuide(_ guide: CoreObject, scope: String) throws {
+        let groups = guide.objects("groups")
+        let scopes = guide.objects("scopes")
+        let ids = groups.map { $0.text("id") }
+        guard guide.text("scope") == scope, !groups.isEmpty, groups.count <= 9,
+              ids.allSatisfy({ !$0.isEmpty }), Set(ids).count == ids.count,
+              groups.allSatisfy({ !$0.text("title").isEmpty && $0["prompts"] is [String] &&
+                  ($0["prompts"] as? [String])?.count == 5 }),
+              Set(scopes.map { $0.text("value") }) == Set(["all", "personal", "work"]),
+              scopes.allSatisfy({ !$0.text("label").isEmpty }), !guide.object("text").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func setMindSweepDraft(_ text: String) {
+        guard mindSweepControlsEnabled, !mindSweepCurrentGroup.isEmpty,
+              text != mindSweepDraft else { return }
+        mindSweepDraft = text
+    }
+
+    func startMindSweep() {
+        guard mindSweepControlsEnabled, mindSweepStep == -1, !mindSweepGuide.objects("groups").isEmpty else { return }
+        mindSweepStep = 0
+    }
+
+    func backMindSweep() {
+        guard mindSweepControlsEnabled, mindSweepStep > 0,
+              mindSweepStep < mindSweepGuide.objects("groups").count else { return }
+        mindSweepStep -= 1
+    }
+
+    func nextMindSweep() {
+        guard mindSweepControlsEnabled, !mindSweepCurrentGroup.isEmpty else { return }
+        mindSweepStep += 1
+    }
+
+    func closeMindSweep() {
+        guard mindSweepControlsEnabled else { return }
+        mindSweepPresented = false
+        mindSweepCaller = nil
+        mindSweepGuide = [:]
+        mindSweepStep = -1
+        mindSweepDraft = ""
+        mindSweepCaptured = [:]
+        mindSweepCountedIDs = []
+        mindSweepAddFailed = false
+        mindSweepGuideError = nil
+    }
+
+    func addMindSweep() async {
+        guard mindSweepCanAdd else { return }
+        let group = mindSweepCurrentGroup.text("id")
+        let requestID = UUID().uuidString.lowercased()
+        let request: String
+        do { request = try json(["requestId": requestID, "title": mindSweepDraft]) }
+        catch { mindSweepAddFailed = true; return }
+        mindSweepRequest = request
+        mindSweepRequestID = requestID
+        mindSweepRequestGroup = group
+        busy = true
+        mindSweepAddFailed = false
+        error = nil
+        defer { finishOperation() }
+        do {
+            let result = try await query("mindSweepAdd", [request])
+            try acknowledgeMindSweep(result)
+            try await readMindSweepCaller()
+        } catch {
+            if mindSweepRequest != nil && isDefiniteRejection(error) {
+                mindSweepRequest = nil
+                mindSweepRequestID = nil
+                mindSweepRequestGroup = nil
+                mindSweepAddFailed = true
+                self.error = nil
+            } else {
+                retryNeeded = mindSweepRequest != nil
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func acknowledgeMindSweep(_ result: CoreObject) throws {
+        guard let id = mindSweepRequestID, let group = mindSweepRequestGroup,
+              result.text("taskId") == id, !result.text("title").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        // The host has crossed the durable barrier. A later caller read cannot
+        // make this UUID eligible for submission again.
+        mindSweepRequest = nil
+        mindSweepRequestID = nil
+        mindSweepRequestGroup = nil
+        retryNeeded = false
+        error = nil
+        if mindSweepCountedIDs.insert(id).inserted {
+            mindSweepCaptured[group, default: []].append(result.text("title"))
+        }
+        mindSweepDraft = ""
+        mindSweepAddFailed = false
+    }
+
+    private func readMindSweepCaller() async throws {
+        guard let caller = mindSweepCaller, selectedSurface == caller else { throw CocoaError(.coderReadCorrupt) }
+        if caller == .inbox { try await readInbox() }
+        else if caller == .review { await readReview() }
+        else { throw CocoaError(.coderReadCorrupt) }
+    }
+
+    func textChanged() {
+        previewGeneration += 1
+        let generation = previewGeneration
+        let text = draft
+        let note = noteDraft
+        let options = capture.object("options")
+        let picker = contextPickerPresented ? ["kind": "context", "query": contextQuery] : nil
+        previewTask?.cancel()
+        guard !busy, !retryNeeded, capturePresented else { return }
+        previewTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 120_000_000)
+                let value = try await readCapture(text: text, note: note, options: options, picker: picker)
+                guard !Task.isCancelled, generation == previewGeneration, !busy, !retryNeeded else { return }
+                capture = value
+                previewedText = text
+            } catch {
+                guard !Task.isCancelled, generation == previewGeneration else { return }
+                notice = error.localizedDescription
+            }
+        }
+    }
+
+    func openContextPicker() {
+        guard capturePresented, !busy, !retryNeeded else { return }
+        contextQuery = ""
+        contextPickerPresented = true
+        textChanged()
+    }
+
+    func closeContextPicker() {
+        guard !busy, !retryNeeded else { return }
+        contextPickerPresented = false
+        textChanged()
+    }
+
+    func editCapture(_ edit: CoreObject, clearContextQuery: Bool = false, closeContextPicker: Bool = false) async {
+        await applyCaptureEdit(edit, clearContextQuery: clearContextQuery, closeContextPicker: closeContextPicker)
+    }
+
+    func submitContextQuery() async {
+        guard contextPickerPresented else { return }
+        await applyCaptureEdit(nil, clearContextQuery: true)
+    }
+
+    private func applyCaptureEdit(_ edit: CoreObject?, clearContextQuery: Bool = false, closeContextPicker: Bool = false) async {
+        guard !busy, !retryNeeded else { return }
+        busy = true
+        invalidatePreview()
+        defer { finishOperation() }
+        let text = draft
+        let note = noteDraft
+        let originalQuery = contextQuery
+        let picker = contextPickerPresented ? ["kind": "context", "query": clearContextQuery ? "" : contextQuery] : nil
+        do {
+            // Apply pending note text through core before changing another option.
+            // Never copy a returned note over the local editor: typing may continue across an await.
+            var options = capture.object("options")
+            var resolvedEdit = edit
+            if options.text("note") != note || edit == nil {
+                // Done can arrive before the debounced preview. Resolve its frozen
+                // query through core now, rather than dropping it or using a stale edit.
+                let currentPicker = edit == nil ? ["kind": "context", "query": originalQuery] : picker
+                let current = try await readCapture(text: text, note: note, options: options, picker: currentPicker)
+                options = current.object("options")
+                if edit == nil {
+                    resolvedEdit = current.object("picker").object("submit")
+                    if resolvedEdit?.isEmpty != false {
+                        capture = current
+                        previewedText = text
+                        return
+                    }
+                }
+            }
+            guard let resolvedEdit else { return }
+            var input: CoreObject = ["text": text, "options": options, "edit": resolvedEdit]
+            if let picker { input["picker"] = picker }
+            let result = try await query("captureEdit", [try json(input)])
+            capture = result.object("view")
+            previewedText = text
+            if clearContextQuery && contextQuery == originalQuery { contextQuery = "" }
+            if closeContextPicker { contextPickerPresented = false }
+            notice = result.object("notice").text("message").nilIfEmpty
+            preferenceDefaults.set(capture.object("options").flag("addAnother"), forKey: preference)
+        } catch { notice = error.localizedDescription }
+    }
+
+    private func readCapture(text: String, note: String, options: CoreObject, picker: [String: String]?) async throws -> CoreObject {
+        var input: CoreObject = ["text": text, "options": options]
+        if let picker { input["picker"] = picker }
+        if options.text("note") != note {
+            input["edit"] = ["type": "setNote", "value": note]
+            return try await query("captureEdit", [try json(input)]).object("view")
+        }
+        return try await query("captureView", [try json(input)])
+    }
+
+    func saveCapture() async {
+        guard canSave else { return }
+        busy = true
+        invalidatePreview()
+        defer { finishOperation() }
+        do {
+            let payload = try json(["text": draft, "options": capture.object("options"),
+                                    "captureId": captureID, "openAfterSave": false])
+            capturePending = true
+            let result = try await query("captureSubmit", [payload])
+            capturePending = false
+            handleCaptureResult(result)
+            try await readSelectedSurface()
+        } catch {
+            // The host owns the durable request. Freeze this exact draft until its outcome is known.
+            if isDefiniteRejection(error) { capturePending = false }
+            retryNeeded = capturePending
+            self.error = error.localizedDescription
+        }
+    }
+
+    func complete(_ id: String) async {
+        if selectedSurface == .project { guard await flushProjectNotesEdit() else { return } }
+        guard ready, !busy, !retryNeeded, !projectRenameEditing,
+              selectedSurface != .history, selectedSurface != .trash else { return }
+        if selectedSurface == .review {
+            guard reviewActionsEnabled, reviewRows.contains(where: {
+                $0.text("id") == id && !$0.flag("readOnly") && !$0.object("meta").text("statusLabel").isEmpty
+            }) else { return }
+        }
+        if selectedSurface == .calendar { guard calendarActionsEnabled, calendarEditableTask(id) else { return } }
+        if selectedSurface == .focus {
+            guard focusActionsEnabled, focus.objects("sections").contains(where: { section in
+                section.objects("rows").contains(where: {
+                    $0.text("id") == id && !$0.flag("readOnly") && !$0.object("meta").text("statusLabel").isEmpty
+                })
+            }) else { return }
+        }
+        if selectedSurface == .contexts {
+            guard contextsActionsEnabled, contexts.objects("rows").contains(where: {
+                $0.text("id") == id && !$0.flag("readOnly") && !$0.object("meta").text("statusLabel").isEmpty
+            }) else { return }
+        }
+        if selectedSurface == .reference {
+            guard referenceActionsEnabled, reference.objects("items").contains(where: {
+                let row = $0.object("row")
+                return $0.text("type") == "task" && row.text("id") == id && !row.flag("readOnly")
+                    && !row.object("meta").text("statusLabel").isEmpty
+            }) else { return }
+        }
+        if selectedSurface == .someday {
+            guard somedayActionsEnabled, someday.objects("items").contains(where: {
+                $0.text("type") == "task" && $0.object("row").text("id") == id
+            }) else { return }
+        }
+        if selectedSurface == .waiting {
+            guard waitingActionsEnabled, waiting.objects("rows").contains(where: { $0.text("id") == id }) else { return }
+        }
+        if selectedSurface == .project {
+            guard projectActionsEnabled, !projectDetail.flag("readOnly"), projectDetail.objects("items").contains(where: {
+                $0.text("type") == "task" && $0.object("row").text("id") == id
+            }) else { return }
+        }
+        busy = true
+        invalidatePreview()
+        defer { finishOperation() }
+        do {
+            _ = try await query("complete", [id])
+        } catch {
+            retryNeeded = !isDefiniteRejection(error)
+            self.error = error.localizedDescription
+            return
+        }
+        do { try await readSelectedSurface() } catch { self.error = error.localizedDescription }
+    }
+
+    func retry() async {
+        guard !busy, !projectRenameEditing || projectRenameRequest != nil else { return }
+        guard ready else { await start(); return }
+        busy = true
+        var boardTaskOpened = false
+        defer {
+            finishOperation()
+            if boardTaskOpened { Task { await readTaskView() } }
+        }
+        do {
+            let acknowledgment = try await host!.retryPending()
+            if let kind = taskChecklistWriteKind {
+                guard let request = taskChecklistWriteRequest else { throw CocoaError(.coderValueNotFound) }
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query(kind == "save" ? "checklistSave" : "checklistReset", [request]) }
+                guard result.text("id") == viewedTaskID else { throw CocoaError(.coderReadCorrupt) }
+                if kind == "reset", !validTaskChecklistResetResult(result, id: viewedTaskID) {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                taskChecklistWriteKind = nil
+                taskChecklistWriteRequest = nil
+                retryNeeded = false
+                taskError = nil
+                if kind == "reset" {
+                    try await acceptTaskChecklistReset(result, id: viewedTaskID, session: taskChecklistSession)
+                    return
+                }
+                dismissTask()
+                try await readSelectedSurface()
+                return
+            }
+            if processInboxRequest != nil {
+                let wrapper: CoreObject
+                if let acknowledgment { wrapper = try decode(acknowledgment) }
+                else if let method = processInboxRequestMethod, let request = processInboxRequest {
+                    wrapper = try await query(method, [request])
+                } else { throw CocoaError(.coderValueNotFound) }
+                try await acceptProcessInboxResponse(wrapper)
+                return
+            }
+            if let request = projectRenameRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectRenameRetryOutcome", [request]) }
+                try acknowledgeProjectRename(result)
+                do { try await refreshProjectRenameAfterWrite() }
+                catch {
+                    projectRenameReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectFlowRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectFlowRetryOutcome", [request]) }
+                try acknowledgeProjectFlow(result)
+                do { try await refreshProjectFlowAfterWrite() }
+                catch {
+                    projectFlowReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectStatusRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectStatusRetryOutcome", [request]) }
+                try acknowledgeProjectStatus(result)
+                do { try await refreshProjectStatusAfterWrite() }
+                catch {
+                    projectStatusReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectDateRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectDateRetryOutcome", [request]) }
+                try acknowledgeProjectDate(result)
+                do { try await refreshProjectDateAfterWrite() }
+                catch {
+                    projectDateReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectSectionRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectSectionCreateRetryOutcome", [request]) }
+                try acknowledgeProjectSection(result)
+                do { try await refreshProjectSectionsAfterWrite() }
+                catch {
+                    projectSectionReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectSectionRenameRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectSectionRenameRetryOutcome", [request]) }
+                try acknowledgeProjectSectionRename(result)
+                do { try await refreshProjectSectionsAfterWrite() }
+                catch {
+                    projectSectionReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectSectionDeleteRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectSectionDeleteRetryOutcome", [request]) }
+                try acknowledgeProjectSectionDelete(result)
+                do { try await refreshProjectSectionsAfterWrite() }
+                catch {
+                    projectSectionReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectNotesWriteRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectNotesWriteRetryOutcome", [request]) }
+                let accepted = try acknowledgeProjectNotesWrite(result)
+                if accepted {
+                    do {
+                        try await readSelectedSurface()
+                        if projectNotesEditReadError != nil { throw CocoaError(.coderReadCorrupt) }
+                    } catch {
+                        projectNotesEditReadError = error.localizedDescription
+                        self.error = error.localizedDescription
+                    }
+                }
+                return
+            }
+            if let request = projectFocusRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectFocusRetryOutcome", [request]) }
+                try acknowledgeProjectFocus(result)
+                do { try await readSelectedSurface() }
+                catch {
+                    projectFocusReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = areaDeleteRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("areaDeleteRetryOutcome", [request]) }
+                try acknowledgeAreaDelete(result)
+                do { try await refreshAreaManagerAfterWrite() }
+                catch {
+                    areaDeleteReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = areaOrderRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("areaOrderRetryOutcome", [request]) }
+                try acknowledgeAreaOrder(result)
+                do { try await refreshAreaManagerAfterWrite() }
+                catch {
+                    areaOrderReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = areaColorRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("areaColorRetryOutcome", [request]) }
+                try acknowledgeAreaColor(result)
+                do {
+                    try await refreshAreaManagerAfterWrite()
+                } catch {
+                    areaColorReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = areaCreateRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("areaCreateRetryOutcome", [request]) }
+                try acknowledgeAreaCreate(result)
+                do {
+                    try await refreshAreaManagerAfterWrite()
+                    areaManagerPresented = false
+                } catch {
+                    areaCreateReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if let request = projectCreateRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectCreateRetryOutcome", [request]) }
+                try acknowledgeProjectCreate(result, retrying: true)
+                do { try await readSelectedSurface() }
+                catch {
+                    projectCreateReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
+            if calendarComposerSaveRequest != nil {
+                guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
+                await acknowledgeCalendarComposerSave(try decode(acknowledgment))
+                return
+            }
+            if boardActionPending {
+                guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
+                boardTaskOpened = await acknowledgeBoardAction(try decode(acknowledgment))
+                return
+            }
+            if mindSweepRequest != nil {
+                guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
+                try acknowledgeMindSweep(try decode(acknowledgment))
+                try await readMindSweepCaller()
+                return
+            }
+            if capturePending {
+                guard let acknowledgment else { throw CocoaError(.coderValueNotFound) }
+                let result = try decode(acknowledgment)
+                capturePending = false
+                handleCaptureResult(result)
+            }
+            if taskSavePending {
+                guard acknowledgment != nil else { throw CocoaError(.coderValueNotFound) }
+                taskSavePending = false
+                taskChecklistWriteKind = nil
+                taskChecklistWriteRequest = nil
+                taskError = nil
+                dismissTask()
+            }
+            if calendarPreferencePending {
+                guard acknowledgment != nil else { throw CocoaError(.coderValueNotFound) }
+                acknowledgeCalendarPreference()
+                installCalendarComposerAnchor()
+            }
+            retryNeeded = false
+            error = nil
+            try await readSelectedSurface()
+            if !calendarPreferencePending { calendarComposerNavigation = nil }
+        } catch {
+            if projectRenameRequest != nil {
+                await handleProjectRenameWriteError(error)
+                return
+            }
+            if projectFlowRequest != nil {
+                await handleProjectFlowWriteError(error)
+                return
+            }
+            if projectStatusRequest != nil {
+                await handleProjectStatusWriteError(error)
+                return
+            }
+            if projectDateRequest != nil {
+                await handleProjectDateWriteError(error)
+                return
+            }
+            if projectSectionRequest != nil {
+                await handleProjectSectionWriteError(error)
+                return
+            }
+            if projectSectionRenameRequest != nil {
+                await handleProjectSectionRenameWriteError(error)
+                return
+            }
+            if projectSectionDeleteRequest != nil {
+                await handleProjectSectionDeleteWriteError(error)
+                return
+            }
+            if projectNotesWriteRequest != nil {
+                await handleProjectNotesWriteError(error)
+                return
+            }
+            if projectFocusRequest != nil {
+                await handleProjectFocusWriteError(error)
+                return
+            }
+            if areaDeleteRequest != nil {
+                await handleAreaDeleteWriteError(error)
+                return
+            }
+            if areaOrderRequest != nil {
+                await handleAreaOrderWriteError(error)
+                return
+            }
+            if areaColorRequest != nil {
+                await handleAreaColorWriteError(error)
+                return
+            }
+            if areaCreateRequest != nil {
+                await handleAreaCreateWriteError(error)
+                return
+            }
+            if projectCreateRequest != nil {
+                await handleProjectCreateWriteError(error)
+                return
+            }
+            let mindSweepRefused = mindSweepRequest != nil && isDefiniteRejection(error)
+            if isDefiniteRejection(error) {
+                if processInboxRequest != nil {
+                    processInboxRequest = nil
+                    processInboxRequestMethod = nil
+                    processInboxRequestID = nil
+                    processInboxRequestTaskID = nil
+                    processInboxError = error.localizedDescription
+                }
+                capturePending = false
+                taskSavePending = false
+                boardActionRequest = nil
+                if mindSweepRequest != nil {
+                    mindSweepRequest = nil
+                    mindSweepRequestID = nil
+                    mindSweepRequestGroup = nil
+                    mindSweepAddFailed = true
+                    self.error = nil
+                }
+                if calendarComposerSaveRequest != nil {
+                    calendarComposerSaveRequest = nil
+                    calendarComposerError = error.localizedDescription
+                    self.error = nil
+                }
+                retryNeeded = false
+                if calendarPreferencePending {
+                    calendarPreferencePending = false
+                    calendarPreferenceTarget = nil
+                    calendarComposerNavigation = nil
+                    calendarCurrent = false
+                    calendarNeedsRead = true
+                }
+            }
+            if taskPresented { taskError = error.localizedDescription }
+            else if calendarComposerPresented {
+                calendarComposerError = error.localizedDescription
+                if retryNeeded { self.error = error.localizedDescription }
+            }
+            else if mindSweepPresented {
+                if !mindSweepRefused { self.error = error.localizedDescription }
+            }
+            else if processInboxPresented {
+                processInboxError = error.localizedDescription
+                if retryNeeded { self.error = error.localizedDescription }
+            }
+            else { self.error = error.localizedDescription }
+        }
+    }
+
+    private func handleCaptureResult(_ result: CoreObject) {
+        switch result.text("kind") {
+        case "saved":
+            notice = nil
+            captureID = UUID().uuidString
+            if result.text("next") == "addAnother" {
+                draft = result.object("reset").text("text")
+                capture["options"] = result.object("reset").object("options")
+                noteDraft = result.object("reset").object("options").text("note")
+                previewedText = "\u{0}"
+            } else {
+                capturePresented = false
+                capture = [:]
+                draft = ""
+                noteDraft = ""
+            }
+        case "refused": notice = result.object("notice").text("message")
+        case "confirmLines":
+            // Bulk import requires the snapshot/file IO contract, outside this foundation.
+            bulkConfirm = result.object("confirm")
+        default: notice = capture.object("failureNotices").object("save").text("message")
+        }
+    }
+
+    private func readInbox() async throws {
+        inbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])])
+    }
+
+    func openFocusPanel(_ name: String) {
+        guard focusControlsEnabled, ["view", "filters"].contains(name) else { return }
+        focusPanel = name
+    }
+
+    func closeFocusPanel() {
+        focusPanel = ""
+        closeFocusPicker()
+    }
+
+    func editFocusControl(_ edit: CoreObject) {
+        guard focusControlsEnabled, !edit.isEmpty else { return }
+        enqueueFocusEdit(["edit": edit])
+        focusLoadedDepth = [:]
+        requestFocusRead(delay: 0)
+    }
+
+    func selectFocusSavedFilter(_ id: String) {
+        guard focusControlsEnabled, focus.object("controls").object("savedFilters").object("chips").objects("items")
+            .contains(where: { $0.text("id") == id }) else { return }
+        // A saved chip's edit changes from apply to clear when selected. Resolve
+        // each queued tap against current core controls, including rapid repeats.
+        enqueueFocusEdit(["savedID": id])
+        focusLoadedDepth = [:]
+        requestFocusRead(delay: 0)
+    }
+
+    func setFocusLocation(_ text: String) {
+        guard selectedSurface == .focus, !retryNeeded, !taskPresented, focusLocationText != text else { return }
+        focusLocationText = text
+        let entry: CoreObject = ["edit": ["type": "filter", "edit": ["type": "setLocation", "value": text]]]
+        enqueueFocusEdit(entry)
+        focusLoadedDepth = [:]
+        requestFocusRead()
+    }
+
+    private func focusFilterEditType(_ entry: CoreObject) -> String {
+        let edit = entry.object("edit")
+        return edit.text("type") == "filter" ? edit.object("edit").text("type") : ""
+    }
+
+    private func enqueueFocusEdit(_ entry: CoreObject) {
+        focusEditSequence += 1
+        var next = entry
+        next["sequence"] = focusEditSequence
+        let kind = focusFilterEditType(next)
+        // Only a core-refused location may be discarded. Put the explicit
+        // correction/Clear after intervening edits, preserving accepted order.
+        if kind == "setLocation" || kind == "clear", let refused = focusRefusedLocationID {
+            focusEdits.removeAll { $0.number("sequence") == refused }
+            focusRefusedLocationID = nil
+        }
+        if kind == "setLocation", let last = focusEdits.last, focusFilterEditType(last) == kind {
+            focusEdits[focusEdits.count - 1] = next
+        } else { focusEdits.append(next) }
+    }
+
+    func openFocusPicker(_ name: String) {
+        guard focusControlsEnabled, ["tokens", "projects"].contains(name) else { return }
+        focusPickerName = name
+        focusPickerQuery = ""
+        focusPickerDepth = 100
+        focusPicker = focus.object("controls").object("filterSheet").object(name)
+        focusPickerPublishedName = name
+        focusPickerPublishedQuery = ""
+        focusPickerCurrent = focusCurrent
+        if !focusCurrent { requestFocusRead(delay: 0) }
+    }
+
+    func closeFocusPicker() {
+        focusPickerName = ""
+        focusPickerQuery = ""
+        focusPickerCurrent = false
+        // A response belonging to the closed picker must not replace a later one.
+        if focusLoading { requestFocusRead(delay: 0) }
+    }
+
+    func setFocusPickerQuery(_ text: String) {
+        guard !focusPickerName.isEmpty, !retryNeeded, text != focusPickerQuery else { return }
+        focusPickerQuery = text
+        focusPickerDepth = 100
+        requestFocusRead()
+    }
+
+    func loadMoreFocusControls(saved: Bool = false) {
+        guard (saved ? focusControlsEnabled : focusPickerActionsEnabled) else { return }
+        let list = saved ? focus.object("controls").object("savedFilters").object("chips") : focusPicker
+        guard list.objects("items").count < list.number("total") else { return }
+        if saved { focusSavedDepth = list.objects("items").count + 100 }
+        else { focusPickerDepth = list.objects("items").count + 100 }
+        requestFocusRead(delay: 0)
+    }
+
+    func retryFocus() {
+        guard selectedSurface == .focus, !busy, !retryNeeded, !taskPresented else { return }
+        requestFocusRead(delay: 0)
+    }
+
+    private func requestFocusRead(delay: UInt64 = 150_000_000) {
+        focusGeneration += 1
+        focusReadTask?.cancel()
+        focusCurrent = false
+        focusPickerCurrent = false
+        focusLoading = true
+        focusError = nil
+        focusNeedsRead = true
+        scheduleFocusRead(delay: delay)
+    }
+
+    private func scheduleFocusRead(delay: UInt64 = 150_000_000) {
+        guard selectedSurface == .focus, !busy, !retryNeeded, !taskPresented, !areaPickerPresented else { return }
+        focusReadTask?.cancel()
+        focusReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, selectedSurface == .focus, !busy, !retryNeeded, !taskPresented, !areaPickerPresented else { return }
+            await readFocus()
+        }
+    }
+
+    private func focusReadAllowed(_ generation: Int, ownsOperation: Bool) -> Bool {
+        !Task.isCancelled && generation == focusGeneration && selectedSurface == .focus && !retryNeeded
+            && !taskPresented && (ownsOperation || (!busy && !areaPickerPresented))
+    }
+
+    private func focusPage(state: CoreObject, edit: CoreObject? = nil) async throws -> CoreObject {
+        #if DEBUG && targetEnvironment(simulator)
+        if focusInitialReadFailures > 0 {
+            focusInitialReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        #endif
+        var input: CoreObject = ["limit": pageSize, "controls": state]
+        if let edit { input["controlEdit"] = edit }
+        return try await query("menuRead", ["focus", try json(input)])
+    }
+
+    private func focusControlList(_ name: String, snapshot: CoreObject, query text: String? = nil,
+                                  depth: Int) async throws -> CoreObject {
+        let state = snapshot.object("controls").object("state")
+        let revision = snapshot.text("revision")
+        var items: [CoreObject] = []
+        var result: CoreObject = [:]
+        repeat {
+            var input: CoreObject = ["controls": state, "list": name, "offset": items.count,
+                                     "limit": 100, "revision": revision]
+            if let text { input["query"] = text }
+            let page = try await query("menuRead", ["focusControls", try json(input)])
+            try Task.checkCancellation()
+            guard page.text("revision") == revision, page.text("list") == name, page.number("total") >= items.count,
+                  page.objects("items").count == min(100, page.number("total") - items.count),
+                  result.isEmpty || page.number("total") == result.number("total") else { throw CocoaError(.coderReadCorrupt) }
+            result = page
+            items += page.objects("items")
+        } while items.count < min(depth, result.number("total"))
+        result["items"] = items
+        return result
+    }
+
+    private func readFocus(ownsOperation: Bool = false) async {
+        let generation = focusGeneration
+        let edits = focusEdits
+        let pickerName = focusPickerName
+        let pickerQuery = focusPickerQuery
+        let pickerDepth = focusPickerDepth
+        let savedDepth = focusSavedDepth
+        let loaded = focusLoadedDepth
+        focusNeedsRead = false
+        focusCurrent = false
+        focusPickerCurrent = false
+        focusLoading = true
+        focusError = nil
+        defer { if generation == focusGeneration { focusLoading = false } }
+        for attempt in 0..<2 {
+            do {
+                var next = try await focusPage(state: focusState)
+                guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                for entry in edits {
+                    var edit = entry.object("edit")
+                    if !entry.text("savedID").isEmpty {
+                        let saved = try await focusControlList("savedFilters", snapshot: next, depth: savedDepth)
+                        guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                        guard let choice = saved.objects("items").first(where: { $0.text("id") == entry.text("savedID") }) else { continue }
+                        edit = choice.object("edit")
+                    }
+                    do {
+                        next = try await focusPage(state: next.object("controls").object("state"), edit: edit)
+                    } catch {
+                        guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                        // This is a pure read: INVALID_INPUT is a definite
+                        // refusal, not an uncertain write or transport failure.
+                        if focusFilterEditType(entry) == "setLocation", error.localizedDescription.hasPrefix("INVALID_INPUT:") {
+                            let sequence = entry.number("sequence")
+                            if edits.contains(where: {
+                                $0.number("sequence") > sequence && ["setLocation", "clear"].contains(focusFilterEditType($0))
+                            }) {
+                                focusEdits.removeAll { $0.number("sequence") == sequence }
+                                continue
+                            }
+                            focusRefusedLocationID = sequence
+                            focusError = error.localizedDescription
+                            return
+                        }
+                        throw error
+                    }
+                    guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                }
+                let revision = next.text("revision")
+                let state = next.object("controls").object("state")
+                guard !revision.isEmpty, !state.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+                var sections = next.objects("sections")
+                for index in sections.indices {
+                    let key = sections[index].text("key")
+                    let total = sections[index].number("rowTotal")
+                    var rows = sections[index].objects("rows")
+                    var groups = sections[index].objects("groups")
+                    guard sections[index]["rowTotal"] is NSNumber, total >= 0,
+                          rows.count == min(pageSize, total) else { throw CocoaError(.coderReadCorrupt) }
+                    let target = min(max(pageSize, loaded[key] ?? pageSize), total)
+                    while rows.count < target {
+                        let limit = min(pageSize, target - rows.count)
+                        let window = try await query("menuRead", ["focusSection", try json([
+                            "key": key, "offset": rows.count, "limit": limit, "revision": revision, "controls": state])])
+                        guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                        guard window.text("revision") == revision, window.text("key") == key,
+                              window.number("total") == sections[index].number("total"), window.number("rowTotal") == total,
+                              window.objects("rows").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                        // Group starts are absolute section indices; never add the window offset.
+                        groups += window.objects("groups")
+                        rows += window.objects("rows")
+                    }
+                    sections[index]["rows"] = rows
+                    if sections[index]["groups"] is [CoreObject] { sections[index]["groups"] = groups }
+                }
+                next["sections"] = sections
+                var controls = next.object("controls")
+                var saved = controls.object("savedFilters")
+                if !saved.isEmpty && saved.object("chips").objects("items").count < min(savedDepth, saved.object("chips").number("total")) {
+                    saved["chips"] = try await focusControlList("savedFilters", snapshot: next, depth: savedDepth)
+                    controls["savedFilters"] = saved
+                    next["controls"] = controls
+                }
+                var picker: CoreObject = [:]
+                if !pickerName.isEmpty {
+                    picker = try await focusControlList(pickerName, snapshot: next, query: pickerQuery, depth: pickerDepth)
+                }
+                guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                focusState = state
+                focusEdits.removeAll()
+                focusRefusedLocationID = nil
+                focusLocationText = controls.object("filterSheet").text("location")
+                focus = next
+                focusCurrent = true
+                if !edits.isEmpty {
+                    NSLog("Native iOS Focus controls applied releaseCheck=v1.3.3/native-ios-focus-controls")
+                }
+                if !pickerName.isEmpty {
+                    focusPicker = picker
+                    focusPickerPublishedName = pickerName
+                    focusPickerPublishedQuery = pickerQuery
+                    focusPickerCurrent = true
+                }
+                return
+            } catch {
+                guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                if attempt == 1 { focusError = error.localizedDescription }
+            }
+        }
+    }
+
+    private func readSelectedSurface() async throws {
+        if selectedSurface == .board {
+            boardReadTask?.cancel()
+            boardGeneration += 1
+            boardCurrent = false
+        }
+        if selectedSurface == .calendar { calendarCurrent = false }
+        if selectedSurface == .review { reviewCurrent = false }
+        if selectedSurface == .focus {
+            focusReadTask?.cancel()
+            focusGeneration += 1
+            focusCurrent = false
+        }
+        if selectedSurface == .project { projectCurrent = false }
+        if selectedSurface == .waiting { waitingCurrent = false }
+        if selectedSurface == .someday { somedayCurrent = false }
+        if selectedSurface == .reference { referenceCurrent = false }
+        if selectedSurface == .history { historyCurrent = false }
+        if selectedSurface == .trash { trashCurrent = false }
+        if selectedSurface == .contexts {
+            contextsReadTask?.cancel()
+            contextsGeneration += 1
+            contextsCurrent = false
+        }
+        area = try await query("areaFilter")
+        moreMenu = try await query("menuRead", ["more", "{}"])
+        switch selectedSurface {
+        case .inbox: try await readInbox()
+        case .focus: await readFocus(ownsOperation: true)
+        case .review: await readReview()
+        case .calendar: await readCalendar()
+        case .board: await readBoard(ownsOperation: true)
+        case .projects: try await readProjectsWithCreateOptions()
+        case .project:
+            await readProjectDetail()
+            if projectNotesExpanded && projectCurrent {
+                if projectNotesEditMode {
+                    do { try await readProjectNotesEditOptions() }
+                    catch { projectNotesEditReadError = error.localizedDescription }
+                }
+                await readProjectNotes()
+            }
+        case .waiting: await readWaiting()
+        case .contexts: await readContexts(ownsOperation: true)
+        case .someday: await readSomeday()
+        case .reference: await readReference()
+        case .history: await readHistory()
+        case .trash: await readTrash()
+        case .search:
+            invalidateSearch()
+            await readSearch(generation: searchGeneration, ownsOperation: true)
+        }
+    }
+
+    private func query(_ method: String, _ args: [Any] = []) async throws -> CoreObject {
+        guard let host else { throw CocoaError(.coderInvalidValue) }
+        let result = try await host.call(method, argumentsJSON: json(args))
+        return try decode(result)
+    }
+
+    private func decode(_ result: String) throws -> CoreObject {
+        guard let object = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? CoreObject else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return object
+    }
+
+    private func json(_ value: Any) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func invalidatePreview() { previewGeneration += 1; previewTask?.cancel() }
+    private func isDefiniteRejection(_ error: Error) -> Bool {
+        error is CoreHostRejection
+    }
+    private func finishOperation() {
+        busy = false
+        if taskPresented && !retryNeeded {
+            startTaskSchedulePump()
+            for field in taskTokenFields where taskTokenNeedsRead.contains(field) { requestTaskTokenRead(field, delay: 0) }
+        }
+        if taskPresented && taskDestinationNeedsRead && !retryNeeded { requestTaskDestinationRead(delay: 0) }
+        if capturePresented && (!captureIsCurrent || (contextPickerPresented && !contextPickerReady)) { textChanged() }
+        if refreshRequested {
+            refreshRequested = false
+            Task { await refresh() }
+        }
+        if selectedSurface == .board && boardNeedsRead && !retryNeeded && !taskPresented { scheduleBoardRead() }
+        if selectedSurface == .calendar && calendarNeedsRead && !retryNeeded && !taskPresented
+            && !calendarComposerPresented { scheduleCalendarRead() }
+        if selectedSurface == .focus && focusNeedsRead && !retryNeeded && !taskPresented { scheduleFocusRead() }
+        if selectedSurface == .contexts && contextsNeedsRead && !retryNeeded && !taskPresented {
+            scheduleContextsRead()
+        }
+        if selectedSurface == .search && searchNeedsRead && !retryNeeded && !taskPresented {
+            scheduleSearch()
+        }
+        if selectedSurface == .someday && (somedayTextNeedsRead || somedayPickerNeedsRead) && !retryNeeded && !taskPresented {
+            scheduleSomedayRead()
+        }
+        if selectedSurface == .history && (historyNeedsRead || historyPickerNeedsRead) && !retryNeeded && !taskPresented {
+            scheduleHistoryRead()
+        }
+        if selectedSurface == .reference && (referenceTextNeedsRead || referencePickerNeedsRead) && !retryNeeded && !taskPresented {
+            scheduleReferenceRead()
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+private struct TaskScheduleEdit {
+    let id: Int
+    let control: String
+    let edit: CoreObject
+    let coalesces: Bool
+}

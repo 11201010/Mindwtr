@@ -1,0 +1,3004 @@
+import Foundation
+import JavaScriptCore
+import Security
+import Darwin
+
+/// Core refused a command before writing, and its pending journal is now clear.
+/// Other errors, even with the same core code, may still require exact retry.
+public struct CoreHostRejection: LocalizedError, Sendable {
+    public let message: String
+    public var errorDescription: String? { message }
+}
+
+/// One off-main owner for the core runtime, database and pending command journal.
+/// Every result is the JSON-encoded core value, with host/core failures thrown.
+public final class CoreHost: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "tech.dongdongbh.mindwtr.native-core", qos: .userInitiated)
+    private let engine: Engine
+
+    public init(databaseURL: URL, bundleURL: URL) {
+        engine = Engine(queue: queue, databaseURL: databaseURL, bundleURL: bundleURL)
+    }
+
+    #if DEBUG
+    public convenience init(databaseURL: URL, bundleURL: URL, legacyStorage: LegacyRNStorage) {
+        self.init(databaseURL: databaseURL, bundleURL: bundleURL, faults: HostIOFaults(), legacyStorage: legacyStorage)
+    }
+
+    init(databaseURL: URL, bundleURL: URL, faults: HostIOFaults, legacyStorage: LegacyRNStorage? = nil) {
+        engine = Engine(queue: queue, databaseURL: databaseURL, bundleURL: bundleURL, legacyStorage: legacyStorage)
+        engine.faults = faults
+    }
+    #endif
+
+    public func start() async throws -> String { try await perform { try $0.start() } }
+
+    public func call(_ method: String, argumentsJSON: String = "[]") async throws -> String {
+        try await perform { try $0.call(method, argumentsJSON: argumentsJSON) }
+    }
+
+    @discardableResult
+    public func retryPending() async throws -> String? { try await perform { try $0.retryPending() } }
+
+    public func close() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [engine] in
+                engine.shutdown()
+                continuation.resume()
+            }
+        }
+    }
+
+    private func perform<T: Sendable>(_ work: @escaping @Sendable (Engine) throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [engine] in
+                do { continuation.resume(returning: try work(engine)) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    deinit { queue.async { [engine] in engine.shutdown() } }
+}
+
+private struct PendingCommand: Codable {
+    let version: Int
+    let method: String
+    let argumentsJSON: String
+    var terminal: TerminalResult? = nil
+}
+
+private enum TerminalResult: Codable {
+    case success(String)
+    case rejected(String)
+
+    func value() throws -> String {
+        switch self {
+        case .success(let value): return value
+        case .rejected(let message): throw CoreHostRejection(message: message)
+        }
+    }
+}
+
+// DispatchQueue may move between threads; every entry point enforces queue
+// ownership. The public facade holds only immutable references and schedules all
+// access here. No JSValue, JSContext or SQLite handle crosses this boundary.
+private final class Engine: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let databaseURL: URL
+    private let bundleURL: URL
+    private let journalURL: URL
+    private let legacyStorage: LegacyRNStorage?
+    private var context: JSContext?
+    private var database: SQLiteBridge?
+    private var lockFD: Int32 = -1
+    private var started = false
+    private var recoveryActivationPending = false
+    private var closed = false
+    private var pending: PendingCommand?
+    private var boardReadLogged = false
+    private var boardActionLogged = false
+    private var startupBoardResult: String?
+    private var startupCalendarResult: String?
+    private var startupMindSweepResult: String?
+    private var startupProjectCreateResult: String?
+    private var startupProjectSectionCreateResult: String?
+    private var startupProjectSectionRenameResult: String?
+    private var startupProjectSectionDeleteResult: String?
+    private var startupAreaCreateResult: String?
+    private var startupAreaColorResult: String?
+    private var startupAreaOrderResult: String?
+    private var startupAreaDeleteResult: String?
+    private var startupProjectFocusResult: String?
+    private var startupProjectRenameResult: String?
+    private var startupProjectFlowResult: String?
+    private var startupProjectNotesWriteResult: String?
+    private var startupProjectStatusResult: String?
+    private var startupProjectDateResult: String?
+    private var startupInboxResult: String?
+    private var startupChecklistResult: String?
+    #if DEBUG
+    var faults: HostIOFaults?
+    #endif
+
+    private static let methods: [String: Int] = [
+        "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
+        "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
+        "language": 2, "strings": 1, "complete": 1, "taskView": 1, "editorModel": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
+        "projects": 0, "projectDetail": 4, "projectNotes": 4, "projectCreateOptions": 0, "projectCreate": 1, "projectCreateRetryOutcome": 1,
+        "projectSectionOptions": 1, "projectSectionCreate": 1, "projectSectionCreateRetryOutcome": 1,
+        "projectSectionRenameOptions": 1, "projectSectionRename": 1, "projectSectionRenameRetryOutcome": 1,
+        "projectSectionDeleteOptions": 1, "projectSectionDelete": 1, "projectSectionDeleteRetryOutcome": 1,
+        "areaCreateOptions": 0, "areaCreateResolve": 1, "areaCreate": 1, "areaCreateRetryOutcome": 1,
+        "areaColorOptions": 0, "areaColor": 1, "areaColorRetryOutcome": 1,
+        "areaOrderOptions": 0, "areaOrder": 1, "areaOrderRetryOutcome": 1,
+        "areaDeleteOptions": 0, "areaDelete": 1, "areaDeleteRetryOutcome": 1,
+        "projectFocusOptions": 1, "projectFocusWrite": 1, "projectFocusRetryOutcome": 1,
+        "projectRenameOptions": 1, "projectRenameWrite": 1, "projectRenameRetryOutcome": 1,
+        "projectFlowOptions": 1, "projectFlowWrite": 1, "projectFlowRetryOutcome": 1,
+        "projectNotesEditOptions": 1, "projectNotesDraftDirection": 1, "projectNotesWrite": 1, "projectNotesWriteRetryOutcome": 1,
+        "projectStatusOptions": 1, "projectStatusWrite": 1, "projectStatusRetryOutcome": 1,
+        "projectDateOptions": 1, "projectDateWrite": 1, "projectDateRetryOutcome": 1,
+        "menuRead": 2, "destinationPicker": 1, "editorSuggestions": 4, "calendarPreference": 1, "boardAction": 1,
+        "calendarComposerOpen": 1, "calendarComposerEdit": 1, "calendarComposerSave": 1,
+        "mindSweepGuide": 1, "mindSweepAdd": 1,
+        "inboxStart": 1, "inboxStep": 1, "inboxEnd": 1,
+        "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
+        "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
+    ]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "areaCreate", "areaColor", "areaOrder", "areaDelete", "projectFocusWrite", "projectRenameWrite", "projectFlowWrite", "projectNotesWrite", "projectStatusWrite", "projectDateWrite"]
+    private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
+    private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
+
+    init(queue: DispatchQueue, databaseURL: URL, bundleURL: URL, legacyStorage: LegacyRNStorage? = nil) {
+        self.queue = queue
+        self.databaseURL = databaseURL
+        self.bundleURL = bundleURL
+        self.legacyStorage = legacyStorage
+        journalURL = databaseURL.appendingPathExtension("pending.json")
+    }
+
+    func start() throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !closed else { throw HostFailure("Core host is closed") }
+        do {
+            if started {
+                return try startupWindow()
+            }
+            let source = try String(contentsOf: bundleURL, encoding: .utf8)
+            guard !source.isEmpty else { throw HostFailure("Core bundle is empty") }
+            try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            try DurableFile.sync(databaseURL.deletingLastPathComponent().deletingLastPathComponent(), directory: true)
+            lockFD = open(databaseURL.appendingPathExtension("host-lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+            guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw HostFailure("Native database is already in use or cannot be locked") }
+            if pending == nil && FileManager.default.fileExists(atPath: journalURL.path) {
+                let saved = try JSONDecoder().decode(PendingCommand.self, from: Data(contentsOf: journalURL))
+                guard saved.version == 2 else { throw HostFailure("Unsupported pending command journal; raw captures cannot be safely replanned") }
+                _ = try journalArguments(saved)
+                switch saved.terminal {
+                case .success(let value):
+                    _ = try JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
+                case .rejected(let message):
+                    guard isDefiniteRejection(message, method: saved.method) else { throw HostFailure("Invalid terminal command journal") }
+                case nil: break
+                }
+                pending = saved
+            }
+            guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
+            context = runtime
+            installBridge(runtime)
+            runtime.evaluateScript(source, withSourceURL: bundleURL)
+            try checkException()
+            guard let host = runtime.objectForKeyedSubscript("MindwtrHost"), !host.isUndefined, !host.isNull else {
+                throw HostFailure("Core bundle has no host contract")
+            }
+            if let command = pending, command.method == "boardCommit" {
+                // Full immutable authority is checked before opening SQLite, even
+                // for terminal journals whose remaining work is only cleanup.
+                _ = try invoke("boardValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateBoardAcknowledgment(command, value: value) }
+            }
+            if let command = pending, ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method) {
+                _ = try invoke(command.method == "calendarComposerCommit" ? "calendarComposerValidate" : "calendarComposerCreateValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateCalendarAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "mindSweepCommit" {
+                _ = try invoke("mindSweepValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateMindSweepAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "inboxPreparedCommit" {
+                _ = try invoke("inboxPreparedValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "checklistPreparedCommit" {
+                _ = try invoke("checklistPreparedValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectCreateCommit" {
+                _ = try invoke("projectCreateValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectCreateAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectSectionCreateCommit" {
+                _ = try invoke("projectSectionCreateValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectSectionCreateAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectSectionRenameCommit" {
+                _ = try invoke("projectSectionRenameValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectSectionRenameAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectSectionDeleteCommit" {
+                _ = try invoke("projectSectionDeleteValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectSectionDeleteAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "areaCreateCommit" {
+                _ = try invoke("areaCreateValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAreaCreateAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "areaColorCommit" {
+                _ = try invoke("areaColorValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAreaColorAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "areaOrderCommit" {
+                _ = try invoke("areaOrderValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAreaOrderAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "areaDeleteCommit" {
+                _ = try invoke("areaDeleteValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateAreaDeleteAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectFocusCommit" {
+                _ = try invoke("projectFocusValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectFocusAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectRenameCommit" {
+                _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectRenameAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectFlowCommit" {
+                _ = try invoke("projectFlowValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectFlowAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectNotesWriteCommit" {
+                _ = try invoke("projectNotesWriteValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectNotesWriteAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectStatusCommit" {
+                _ = try invoke("projectStatusValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectStatusAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "projectDateCommit" {
+                _ = try invoke("projectDateValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateProjectDateAcknowledgment(command, value: value) }
+            }
+            let legacy = try legacyStorage?.bootState()
+            if let legacy {
+                _ = try invoke("legacyCheck", arguments: [legacy.stateJSON, legacy.backupJSON])
+                if !FileManager.default.fileExists(atPath: databaseURL.path), legacyStorage?.hasStoredValues == true {
+                    let state = try JSONSerialization.jsonObject(with: Data(legacy.stateJSON.utf8)) as? [String: Any]
+                    let hadSQLite = state?["jsonAhead"] as? Bool == true || state?["reconciled"] as? Bool == true
+                        || state?["backupVersion"] as? String != nil
+                    // A SQLite-era backup may predate later local writes. Only a
+                    // genuinely JSON-only legacy installation can create this DB.
+                    guard !hadSQLite, !legacy.backupJSON.isEmpty else {
+                        throw HostFailure("Legacy library database is missing; recovery is required")
+                    }
+                }
+            }
+            let sqlite = try SQLiteBridge(url: databaseURL)
+            database = sqlite
+            #if DEBUG
+            sqlite.faults = faults
+            #endif
+            try sqlite.prepareRecovery(at: databaseURL.appendingPathExtension("prewrite"))
+            recoveryActivationPending = pending != nil
+            _ = try invoke(recoveryActivationPending ? "bootRecovery" : "boot", arguments: [legacy?.stateJSON ?? "", legacy?.backupJSON ?? ""])
+            started = true
+            // A durable no-write rejection needs only cleanup, not another failed
+            // startup. The interactive retry still returns its original error.
+            return try startupWindow()
+        } catch {
+            releaseRuntime()
+            throw error
+        }
+    }
+
+    private func startupWindow() throws -> String {
+        let recoveringBoard = pending?.method == "boardCommit"
+        let recoveringCalendarMethod = pending?.method == "calendarComposerCreateCommit" ? "calendarComposerCreateCommit"
+            : pending?.method == "calendarComposerCommit" ? "calendarComposerCommit" : nil
+        let recoveringMindSweep = pending?.method == "mindSweepCommit"
+        let recoveringProjectCreate = pending?.method == "projectCreateCommit"
+        let recoveringProjectSectionCreate = pending?.method == "projectSectionCreateCommit"
+        let recoveringProjectSectionRename = pending?.method == "projectSectionRenameCommit"
+        let recoveringProjectSectionDelete = pending?.method == "projectSectionDeleteCommit"
+        let recoveringAreaCreate = pending?.method == "areaCreateCommit"
+        let recoveringAreaColor = pending?.method == "areaColorCommit"
+        let recoveringAreaOrder = pending?.method == "areaOrderCommit"
+        let recoveringAreaDelete = pending?.method == "areaDeleteCommit"
+        let recoveringProjectFocus = pending?.method == "projectFocusCommit"
+        let recoveringProjectRename = pending?.method == "projectRenameCommit"
+        let recoveringProjectFlow = pending?.method == "projectFlowCommit"
+        let recoveringProjectNotesWrite = pending?.method == "projectNotesWriteCommit"
+        let recoveringProjectStatus = pending?.method == "projectStatusCommit"
+        let recoveringProjectDate = pending?.method == "projectDateCommit"
+        let recoveringInbox = pending?.method == "inboxPreparedCommit"
+        let recoveringChecklist = pending?.method == "checklistPreparedCommit"
+        let terminal = try resolvePending()
+        if recoveringBoard, let terminal, case .success(let value) = terminal { startupBoardResult = value }
+        if recoveringCalendarMethod != nil, let terminal, case .success(let value) = terminal { startupCalendarResult = value }
+        if recoveringMindSweep, let terminal, case .success(let value) = terminal { startupMindSweepResult = value }
+        if recoveringProjectCreate, let terminal, case .success(let value) = terminal { startupProjectCreateResult = value }
+        if recoveringProjectSectionCreate, let terminal, case .success(let value) = terminal { startupProjectSectionCreateResult = value }
+        if recoveringProjectSectionRename, let terminal, case .success(let value) = terminal { startupProjectSectionRenameResult = value }
+        if recoveringProjectSectionDelete, let terminal, case .success(let value) = terminal { startupProjectSectionDeleteResult = value }
+        if recoveringAreaCreate, let terminal, case .success(let value) = terminal { startupAreaCreateResult = value }
+        if recoveringAreaColor, let terminal, case .success(let value) = terminal { startupAreaColorResult = value }
+        if recoveringAreaOrder, let terminal, case .success(let value) = terminal { startupAreaOrderResult = value }
+        if recoveringAreaDelete, let terminal, case .success(let value) = terminal { startupAreaDeleteResult = value }
+        if recoveringProjectFocus, let terminal, case .success(let value) = terminal { startupProjectFocusResult = value }
+        if recoveringProjectRename, let terminal, case .success(let value) = terminal { startupProjectRenameResult = value }
+        if recoveringProjectFlow, let terminal, case .success(let value) = terminal { startupProjectFlowResult = value }
+        if recoveringProjectNotesWrite, let terminal, case .success(let value) = terminal { startupProjectNotesWriteResult = value }
+        if recoveringProjectStatus, let terminal, case .success(let value) = terminal { startupProjectStatusResult = value }
+        if recoveringProjectDate, let terminal, case .success(let value) = terminal { startupProjectDateResult = value }
+        if recoveringInbox, let terminal, case .success(let value) = terminal { startupInboxResult = value }
+        if recoveringChecklist, let terminal, case .success(let value) = terminal { startupChecklistResult = value }
+        try resumeActivationIfNeeded()
+        let value = try invoke("window", arguments: [0, 50, ""])
+        let recoveredAreas = startupAreaCreateResult ?? startupAreaColorResult ?? startupAreaOrderResult ?? startupAreaDeleteResult
+        let recoveredProjectMetadata = startupProjectFlowResult ?? startupProjectNotesWriteResult ?? startupProjectStatusResult ?? startupProjectDateResult
+        let recoveredProjects = startupProjectCreateResult ?? startupProjectSectionCreateResult
+            ?? startupProjectSectionRenameResult ?? startupProjectSectionDeleteResult
+            ?? recoveredAreas ?? startupProjectFocusResult
+            ?? startupProjectRenameResult ?? recoveredProjectMetadata
+        guard let recovered = startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
+            ?? recoveredProjects ?? startupInboxResult ?? startupChecklistResult else { return value }
+        guard var window = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
+            throw HostFailure("Malformed startup window")
+        }
+        let projectRecoveryMethod: String? = [
+            (startupProjectCreateResult, "projectCreateCommit"),
+            (startupProjectSectionCreateResult, "projectSectionCreateCommit"),
+            (startupProjectSectionRenameResult, "projectSectionRenameCommit"),
+            (startupProjectSectionDeleteResult, "projectSectionDeleteCommit"),
+            (startupAreaCreateResult, "areaCreateCommit"),
+            (startupAreaColorResult, "areaColorCommit"),
+            (startupAreaOrderResult, "areaOrderCommit"),
+            (startupAreaDeleteResult, "areaDeleteCommit"),
+            (startupProjectFocusResult, "projectFocusCommit"),
+            (startupProjectRenameResult, "projectRenameCommit"),
+            (startupProjectFlowResult, "projectFlowCommit"),
+            (startupProjectNotesWriteResult, "projectNotesWriteCommit"),
+            (startupProjectStatusResult, "projectStatusCommit"),
+            (startupProjectDateResult, "projectDateCommit"),
+        ].first(where: { $0.0 != nil })?.1
+        window["recovery"] = ["method": startupBoardResult != nil ? "boardCommit"
+            : startupCalendarResult != nil ? (recoveringCalendarMethod ?? "calendarComposerCommit")
+            : startupMindSweepResult != nil ? "mindSweepCommit"
+            : projectRecoveryMethod ?? (startupInboxResult != nil ? "inboxPreparedCommit" : "checklistPreparedCommit"),
+                              "result": try JSONSerialization.jsonObject(with: Data(recovered.utf8))]
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
+        startupBoardResult = nil
+        startupCalendarResult = nil
+        startupMindSweepResult = nil
+        startupProjectCreateResult = nil
+        startupProjectSectionCreateResult = nil
+        startupProjectSectionRenameResult = nil
+        startupProjectSectionDeleteResult = nil
+        startupAreaCreateResult = nil
+        startupAreaColorResult = nil
+        startupAreaOrderResult = nil
+        startupAreaDeleteResult = nil
+        startupProjectFocusResult = nil
+        startupProjectRenameResult = nil
+        startupProjectFlowResult = nil
+        startupProjectNotesWriteResult = nil
+        startupProjectStatusResult = nil
+        startupProjectDateResult = nil
+        startupInboxResult = nil
+        startupChecklistResult = nil
+        return encoded
+    }
+
+    func call(_ method: String, argumentsJSON: String) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
+        let args: [Any]
+        do { args = try arguments(method, argumentsJSON) }
+        catch {
+            // Mind Sweep has no journal or write before argument validation.
+            // Its UI may release an oversized draft only on a definite refusal.
+            // With an older command still owed, keep every error uncertain.
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "areaCreateResolve", "areaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            throw error
+        }
+        guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
+        guard Self.mutations.contains(method) else {
+            if ["projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "projectFocusRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectNotesWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome"].contains(method) {
+                do { return try invoke(method, arguments: args) }
+                catch let failure as HostFailure {
+                    guard failure.message.hasPrefix("STALE_REVISION:") || failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
+                    throw CoreHostRejection(message: failure.message)
+                }
+            }
+            let value = try invoke(method, arguments: args)
+            if method == "inboxStart" {
+#if DEBUG
+                faults?.commandDiagnostic?("processInboxRead")
+#endif
+                NSLog("Native iOS Process Inbox opened releaseCheck=v1.3.3/native-ios-process-inbox-read")
+            }
+            if method == "menuRead", args.first as? String == "focusControls" {
+#if DEBUG
+                faults?.commandDiagnostic?("focusControlsRead")
+#endif
+                NSLog("Native iOS Focus controls read releaseCheck=v1.3.3/native-ios-focus-controls")
+            }
+            if method == "menuRead", args.first as? String == "board", !boardReadLogged {
+                boardReadLogged = true
+#if DEBUG
+                faults?.commandDiagnostic?("boardRead")
+#endif
+                NSLog("Native iOS Board read releaseCheck=v1.3.3/native-ios-board-read")
+            }
+            return value
+        }
+        let command: PendingCommand
+        if method == "projectFocusWrite" {
+            do {
+                let value = try invoke("projectFocusPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let projectID = submitted["projectId"] as? String,
+                      let desired = submitted["focused"] as? Bool else {
+                    throw HostFailure("Malformed Project Focus preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          (kind == "noop"
+                            ? Set(result.keys) == Set(["id", "focused"])
+                                && result["id"] as? String == projectID
+                                && Self.isBoolean(result["focused"])
+                                && result["focused"] as? Bool == desired
+                            : Set(result.keys) == Set(["blocked"])
+                                && result["blocked"] as? String == "") else {
+                        throw HostFailure("Malformed no-write Project Focus result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project Focus")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Focus is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Focus journal is too large") }
+                command = PendingCommand(version: 2, method: "projectFocusCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectFocusValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectRenameWrite" {
+            do {
+                let value = try invoke("projectRenamePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let projectID = submitted["projectId"] as? String,
+                      let expected = submitted["expected"] as? [String: Any],
+                      let currentTitle = expected["title"] as? String else {
+                    throw HostFailure("Malformed Project rename preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          (kind == "noop"
+                            ? Set(result.keys) == Set(["id", "title"])
+                                && result["id"] as? String == projectID
+                                && result["title"] as? String == currentTitle
+                            : Set(result.keys) == Set(["blocked"])
+                                && result["blocked"] as? String == "") else {
+                        throw HostFailure("Malformed no-write Project rename result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project rename")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project rename is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project rename journal is too large") }
+                command = PendingCommand(version: 2, method: "projectRenameCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectFlowWrite" {
+            do {
+                let value = try invoke("projectFlowPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let projectID = submitted["projectId"] as? String else {
+                    throw HostFailure("Malformed Project flow preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          (kind == "noop"
+                            ? Set(result.keys) == Set(["id", "isSequential", "sequentialScope"])
+                                && result["id"] as? String == projectID
+                                && Self.isBoolean(result["isSequential"])
+                                && Self.isProjectFlowScope(result["sequentialScope"])
+                            : Set(result.keys) == Set(["blocked"])
+                                && result["blocked"] as? String == "") else {
+                        throw HostFailure("Malformed no-write Project flow result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project flow")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project flow is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project flow journal is too large") }
+                command = PendingCommand(version: 2, method: "projectFlowCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectFlowValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectNotesWrite" {
+            do {
+                let value = try invoke("projectNotesWritePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let projectID = submitted["projectId"] as? String,
+                      let expected = submitted["expected"] as? [String: Any] else {
+                    throw HostFailure("Malformed Project Notes write preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          (kind == "noop"
+                            ? Set(result.keys) == Set(["id", "supportNotes"])
+                                && result["id"] as? String == projectID
+                                && ((result["supportNotes"] is NSNull && expected["supportNotes"] is NSNull)
+                                    || (result["supportNotes"] is String && expected["supportNotes"] is String
+                                        && (result["supportNotes"] as? String) == (expected["supportNotes"] as? String)))
+                            : Set(result.keys) == Set(["blocked"])
+                                && result["blocked"] as? String == "") else {
+                        throw HostFailure("Malformed no-write Project Notes result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project Notes write")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Notes write is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Notes journal is too large") }
+                command = PendingCommand(version: 2, method: "projectNotesWriteCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectNotesWriteValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectStatusWrite" {
+            do {
+                let value = try invoke("projectStatusPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let projectID = submitted["projectId"] as? String,
+                      let desired = submitted["status"] as? String,
+                      let expected = submitted["expected"] as? [String: Any] else {
+                    throw HostFailure("Malformed Project status preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          (kind == "noop"
+                            ? Set(result.keys) == Set(["id", "status", "isFocused"])
+                                && result["id"] as? String == projectID
+                                && result["status"] as? String == desired
+                                && expected["status"] as? String == desired
+                                && ((result["isFocused"] is NSNull && expected["isFocused"] is NSNull)
+                                    || (Self.isBoolean(result["isFocused"]) && Self.isBoolean(expected["isFocused"])
+                                        && (result["isFocused"] as? Bool) == (expected["isFocused"] as? Bool)))
+                            : Set(result.keys) == Set(["blocked"])
+                                && result["blocked"] as? String == "") else {
+                        throw HostFailure("Malformed no-write Project status result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project status")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project status is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project status journal is too large") }
+                command = PendingCommand(version: 2, method: "projectStatusCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectStatusValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectDateWrite" {
+            do {
+                let value = try invoke("projectDatePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let projectID = submitted["projectId"] as? String,
+                      let field = submitted["field"] as? String else {
+                    throw HostFailure("Malformed Project date preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          (kind == "noop"
+                            ? Set(result.keys) == Set(["id", "field", "value"])
+                                && result["id"] as? String == projectID
+                                && result["field"] as? String == field
+                                && ((result["value"] is NSNull && submitted["value"] is NSNull)
+                                    || (result["value"] is String && submitted["value"] is String
+                                        && (result["value"] as? String) == (submitted["value"] as? String)))
+                            : Set(result.keys) == Set(["blocked"])
+                                && result["blocked"] as? String == "") else {
+                        throw HostFailure("Malformed no-write Project date result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project date")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project date is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project date journal is too large") }
+                command = PendingCommand(version: 2, method: "projectDateCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectDateValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "areaDelete" {
+            do {
+                let value = try invoke("areaDeletePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Area deletion")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area deletion is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area deletion journal is too large") }
+                command = PendingCommand(version: 2, method: "areaDeleteCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("areaDeleteValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "areaOrder" {
+            do {
+                let value = try invoke("areaOrderPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Area order preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          Set(result.keys) == Set(["orderedIds"]),
+                          let ids = result["orderedIds"] as? [String], ids.isEmpty,
+                          let expected = submitted["expectedAreas"] as? [[String: Any]], expected.isEmpty,
+                          let intent = submitted["intent"] as? [String: Any],
+                          ["sortName", "sortColor"].contains(intent["kind"] as? String ?? "") else {
+                        throw HostFailure("Malformed no-write Area order result")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Area order")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area order is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area order journal is too large") }
+                command = PendingCommand(version: 2, method: "areaOrderCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("areaOrderValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "areaColor" {
+            do {
+                let value = try invoke("areaColorPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Area color change")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area color change is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area color journal is too large") }
+                command = PendingCommand(version: 2, method: "areaColorCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("areaColorValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "areaCreate" {
+            do {
+                let value = try invoke("areaCreatePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String, let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Area creation preparation")
+                }
+                if kind == "existing" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed existing Area result")
+                    }
+                    try validateAreaCreateResult(result, request: submitted, created: false)
+#if DEBUG
+                    faults?.commandDiagnostic?("areaCreateDuplicate")
+#endif
+                    NSLog("Native iOS Area duplicate used releaseCheck=v1.3.3/native-ios-area-create outcome=duplicate")
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Area creation")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area creation is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Area journal is too large") }
+                command = PendingCommand(version: 2, method: "areaCreateCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("areaCreateValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectSectionCreate" {
+            do {
+                let value = try invoke("projectSectionCreatePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["kind", "prepared"]),
+                      response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let result = prepared["result"] as? [String: Any],
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project Section creation")
+                }
+                try validateProjectSectionCreateResult(result, request: request)
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Section creation is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Section journal is too large") }
+                command = PendingCommand(version: 2, method: "projectSectionCreateCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectSectionCreateValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectSectionRename" {
+            do {
+                let value = try invoke("projectSectionRenamePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Project Section rename preparation")
+                }
+                if kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed no-write Project Section rename result")
+                    }
+                    try validateProjectSectionRenameResult(result, request: submitted)
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let result = prepared["result"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project Section rename")
+                }
+                try validateProjectSectionRenameResult(result, request: request)
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Section rename is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Section rename journal is too large") }
+                command = PendingCommand(version: 2, method: "projectSectionRenameCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectSectionRenameValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectSectionDelete" {
+            do {
+                let value = try invoke("projectSectionDeletePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["kind", "prepared"]),
+                      response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let result = prepared["result"] as? [String: Any],
+                      let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Project Section deletion")
+                }
+                try validateProjectSectionDeleteResult(result, request: request)
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Section deletion is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Project Section deletion journal is too large") }
+                command = PendingCommand(version: 2, method: "projectSectionDeleteCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectSectionDeleteValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectCreate" {
+            do {
+                let value = try invoke("projectCreatePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String, let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed project creation preparation")
+                }
+                if kind == "existing" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed existing project result")
+                    }
+                    try validateProjectCreateResult(result, request: submitted, created: false)
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared project creation")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared project creation is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared project journal is too large") }
+                command = PendingCommand(version: 2, method: "projectCreateCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("projectCreateValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if ["checklistSave", "checklistReset"].contains(method) {
+            do {
+                let value = try invoke(method == "checklistSave" ? "checklistSavePrepare" : "checklistResetPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String, let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed checklist preparation")
+                }
+                if method == "checklistReset", kind == "unchanged" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed unchanged checklist reset")
+                    }
+                    try validateChecklistResult(result, request: submitted, kind: "reset")
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      Self.isInteger(prepared["version"], equalTo: 1),
+                      prepared["kind"] as? String == (method == "checklistSave" ? "save" : "reset"),
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: submitted, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared checklist write")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared checklist write is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared checklist journal is too large") }
+                command = PendingCommand(version: 2, method: "checklistPreparedCommit", argumentsJSON: encoded)
+                _ = try invoke("checklistPreparedValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if ["inboxCommit", "inboxSkip"].contains(method) {
+            do {
+                let value = try invoke(method == "inboxCommit" ? "inboxCommitPrepare" : "inboxSkipPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String else { throw HostFailure("Malformed Process Inbox preparation") }
+                if kind == "flow" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any],
+                          Set(result.keys) == Set(["view", "notice", "toast"]) else {
+                        throw HostFailure("Malformed Process Inbox flow result")
+                    }
+                    return value
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any], let original = args.first as? String,
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: Data(original.utf8)), options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Process Inbox choice")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "inboxPreparedCommit", argumentsJSON: encoded)
+                _ = try invoke("inboxPreparedValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "mindSweepAdd" {
+            do {
+                let value = try invoke("mindSweepPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any], let original = args.first as? String,
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: Data(original.utf8)), options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Mind Sweep add")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "mindSweepCommit", argumentsJSON: encoded)
+                _ = try invoke("mindSweepValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "calendarComposerSave" {
+            do {
+                guard let original = args.first as? String,
+                      let submitted = try JSONSerialization.jsonObject(with: Data(original.utf8)) as? [String: Any],
+                      let composer = submitted["composer"] as? [String: Any],
+                      let mode = composer["mode"] as? String, ["existing", "new"].contains(mode) else {
+                    throw HostFailure("Malformed Calendar composer request")
+                }
+                let creating = mode == "new"
+                let value = try invoke(creating ? "calendarComposerCreatePrepare" : "calendarComposerPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String else { throw HostFailure("Malformed Calendar preparation") }
+                if kind == "refused" || kind == "noop" {
+                    guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                          Set(result.keys) == Set(["changed", "toast", "next", "scrollToMinutes", "composer", "taskId"]),
+                          result["changed"] as? Bool == false else { throw HostFailure("Malformed Calendar no-write result") }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any], let request = prepared["request"] as? [String: Any],
+                      let submittedID = submitted["requestId"] as? String,
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                        == JSONSerialization.data(withJSONObject: ["requestId": submittedID, "composer": composer], options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Calendar schedule")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: creating ? "calendarComposerCreateCommit" : "calendarComposerCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke(creating ? "calendarComposerCreateValidate" : "calendarComposerValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "boardAction" {
+            do {
+                let value = try invoke("boardPrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String else { throw HostFailure("Malformed Board preparation") }
+                if kind == "noop" {
+                    guard let result = response["result"] as? [String: Any], Set(result.keys) == Set(["changed", "open"]),
+                          Self.isBoolean(result["changed"]), result["changed"] as? Bool == false, result["open"] is NSNull else {
+                        throw HostFailure("Malformed Board no-op")
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any], let original = args[0] as? String,
+                      try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: Data(original.utf8)), options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared Board action")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "boardCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "captureSubmit" {
+            do {
+                let value = try invoke("capturePrepare", arguments: args)
+                guard let response = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String else { throw HostFailure("Malformed capture preparation") }
+                if kind == "refused" || kind == "confirmLines" { return value }
+                guard kind == "prepared", let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any] else { throw HostFailure("Malformed prepared capture") }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "captureCommit", argumentsJSON: encoded)
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "saveDraft",
+                  let inputJSON = args.first as? String,
+                  let input = try JSONSerialization.jsonObject(with: Data(inputJSON.utf8)) as? [String: Any],
+                  input["scheduleBase"] != nil {
+            do {
+                let value = try invoke("draftPrepare", arguments: args)
+                guard let prepared = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      Self.isInteger(prepared["version"], equalTo: 1),
+                      let request = prepared["request"] as? [String: Any],
+                      try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) else {
+                    throw HostFailure("Malformed prepared schedule save")
+                }
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                command = PendingCommand(version: 2, method: "draftCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else {
+            command = PendingCommand(version: 2, method: method, argumentsJSON: argumentsJSON)
+        }
+        pending = command
+        try persist(command)
+        let terminal: TerminalResult
+        do {
+            terminal = .success(try invoke(command.method, arguments: journalArguments(command)))
+        } catch {
+            // These codes prove the first attempt stopped before its write. A
+            // replay rejection cannot prove an earlier uncertain attempt did not.
+            if let failure = error as? HostFailure,
+               isDefiniteRejection(failure.message, method: command.method) { terminal = .rejected(failure.message) }
+            else { throw error }
+        }
+        return try publicValue(finish(command, with: terminal), method: command.method)
+    }
+
+    func retryPending() throws -> String? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let method = pending?.method
+        let terminal = try resolvePending()
+        try resumeActivationIfNeeded()
+        guard let terminal else { return nil }
+        return try publicValue(terminal, method: method)
+    }
+
+    private func publicValue(_ terminal: TerminalResult, method: String?) throws -> String {
+        let value = try terminal.value()
+        guard method == "inboxPreparedCommit" else { return value }
+        let result = try JSONSerialization.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "saved", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func resumeActivationIfNeeded() throws {
+        guard recoveryActivationPending else { return }
+        _ = try invoke("resumeActivation", arguments: [])
+        recoveryActivationPending = false
+        NSLog("Native iOS journal recovery releaseCheck=v1.3.3/native-ios-journal-recovery outcome=recovered")
+    }
+
+    private func resolvePending() throws -> TerminalResult? {
+        guard started, !closed else { throw HostFailure("Core host is not ready; retry startup") }
+        guard let command = pending else { return nil }
+        if let terminal = command.terminal { return try finish(command, with: terminal) }
+        // Also repairs a failed journal promotion before any execution can occur.
+        try persist(command)
+        // A rejection here remains ambiguous: an earlier execution may have
+        // succeeded. Only a successful exact replay establishes its terminal value.
+        let value = try invoke(command.method, arguments: journalArguments(command))
+        return try finish(command, with: .success(value))
+    }
+
+    private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
+        if command.method == "boardCommit" {
+            _ = try invoke("boardValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateBoardAcknowledgment(command, value: value) }
+        }
+        if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method) {
+            _ = try invoke(command.method == "calendarComposerCommit" ? "calendarComposerValidate" : "calendarComposerCreateValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateCalendarAcknowledgment(command, value: value) }
+        }
+        if command.method == "mindSweepCommit" {
+            _ = try invoke("mindSweepValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateMindSweepAcknowledgment(command, value: value) }
+        }
+        if command.method == "inboxPreparedCommit" {
+            _ = try invoke("inboxPreparedValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
+        }
+        if command.method == "checklistPreparedCommit" {
+            _ = try invoke("checklistPreparedValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectCreateCommit" {
+            _ = try invoke("projectCreateValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectCreateAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectSectionCreateCommit" {
+            _ = try invoke("projectSectionCreateValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectSectionCreateAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectSectionRenameCommit" {
+            _ = try invoke("projectSectionRenameValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectSectionRenameAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectSectionDeleteCommit" {
+            _ = try invoke("projectSectionDeleteValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectSectionDeleteAcknowledgment(command, value: value) }
+        }
+        if command.method == "areaCreateCommit" {
+            _ = try invoke("areaCreateValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateAreaCreateAcknowledgment(command, value: value) }
+        }
+        if command.method == "areaColorCommit" {
+            _ = try invoke("areaColorValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateAreaColorAcknowledgment(command, value: value) }
+        }
+        if command.method == "areaOrderCommit" {
+            _ = try invoke("areaOrderValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateAreaOrderAcknowledgment(command, value: value) }
+        }
+        if command.method == "areaDeleteCommit" {
+            _ = try invoke("areaDeleteValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateAreaDeleteAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectFocusCommit" {
+            _ = try invoke("projectFocusValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectFocusAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectRenameCommit" {
+            _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectRenameAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectFlowCommit" {
+            _ = try invoke("projectFlowValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectFlowAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectNotesWriteCommit" {
+            _ = try invoke("projectNotesWriteValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectNotesWriteAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectStatusCommit" {
+            _ = try invoke("projectStatusValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectStatusAcknowledgment(command, value: value) }
+        }
+        if command.method == "projectDateCommit" {
+            _ = try invoke("projectDateValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateProjectDateAcknowledgment(command, value: value) }
+        }
+        var finished = command
+        finished.terminal = terminal
+        // Keep the known answer in memory even if this phase cannot reach disk.
+        // Once persisted, restart can clean up without entering core again.
+        pending = finished
+        try persist(finished)
+        try clearPending()
+        if command.method == "boardCommit", case .success = terminal, !boardActionLogged {
+            boardActionLogged = true
+#if DEBUG
+            faults?.commandDiagnostic?("boardAction")
+#endif
+            NSLog("Native iOS Board action saved releaseCheck=v1.3.3/native-ios-board-action")
+        }
+        if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method), case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("calendarComposerSave")
+#endif
+            if command.method == "calendarComposerCreateCommit" {
+                NSLog("Native iOS Calendar task created releaseCheck=v1.3.3/native-ios-calendar-create")
+            } else {
+                NSLog("Native iOS Calendar schedule saved releaseCheck=v1.3.3/native-ios-calendar-schedule")
+            }
+        }
+        if command.method == "mindSweepCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("mindSweepAdd")
+#endif
+            NSLog("Native iOS Mind Sweep task saved releaseCheck=v1.3.3/native-ios-mind-sweep")
+        }
+        if command.method == "inboxPreparedCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("processInboxWrite")
+#endif
+            NSLog("Native iOS Process Inbox choice saved releaseCheck=v1.3.3/native-ios-process-inbox-write")
+        }
+        if command.method == "checklistPreparedCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("checklistWrite")
+#endif
+            NSLog("Native iOS checklist write saved releaseCheck=v1.3.3/native-ios-checklist-write")
+        }
+        if command.method == "projectCreateCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectCreate")
+#endif
+            NSLog("Native iOS project created releaseCheck=v1.3.3/native-ios-project-create")
+        }
+        if command.method == "projectSectionCreateCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectSectionCreateApplied")
+#endif
+            NSLog("Native iOS Project Section created releaseCheck=v1.3.3/native-ios-project-section-create outcome=applied")
+        }
+        if command.method == "projectSectionRenameCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectSectionRenameApplied")
+#endif
+            NSLog("Native iOS Project Section renamed releaseCheck=v1.3.3/native-ios-project-section-rename outcome=applied")
+        }
+        if command.method == "projectSectionDeleteCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectSectionDeleteApplied")
+#endif
+            NSLog("Native iOS Project Section deleted releaseCheck=v1.3.3/native-ios-project-section-delete outcome=applied")
+        }
+        if command.method == "areaCreateCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("areaCreateApplied")
+#endif
+            NSLog("Native iOS Area saved releaseCheck=v1.3.3/native-ios-area-create outcome=applied")
+        }
+        if command.method == "areaColorCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("areaColorApplied")
+#endif
+            NSLog("Native iOS Area color saved releaseCheck=v1.3.3/native-ios-area-color outcome=applied")
+        }
+        if command.method == "areaOrderCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("areaOrderApplied")
+#endif
+            NSLog("Native iOS Area order saved releaseCheck=v1.3.3/native-ios-area-order outcome=applied")
+        }
+        if command.method == "areaDeleteCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("areaDeleteApplied")
+#endif
+            NSLog("Native iOS Area deleted releaseCheck=v1.3.3/native-ios-area-delete outcome=applied")
+        }
+        if command.method == "projectFocusCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectFocusApplied")
+#endif
+            NSLog("Native iOS Project Focus saved releaseCheck=v1.3.3/native-ios-project-focus outcome=applied")
+        }
+        if command.method == "projectRenameCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectRenameApplied")
+#endif
+            NSLog("Native iOS Project renamed releaseCheck=v1.3.3/native-ios-project-rename outcome=applied")
+        }
+        if command.method == "projectFlowCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectFlowApplied")
+#endif
+            NSLog("Native iOS Project flow saved releaseCheck=v1.3.3/native-ios-project-flow outcome=applied")
+        }
+        if command.method == "projectNotesWriteCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectNotesWriteApplied")
+#endif
+            NSLog("Native iOS Project Notes saved releaseCheck=v1.3.3/native-ios-project-notes-write outcome=applied")
+        }
+        if command.method == "projectStatusCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectStatusApplied")
+#endif
+            NSLog("Native iOS Project status saved releaseCheck=v1.3.3/native-ios-project-status outcome=applied")
+        }
+        if command.method == "projectDateCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("projectDateApplied")
+#endif
+            NSLog("Native iOS Project date saved releaseCheck=v1.3.3/native-ios-project-date outcome=applied")
+        }
+        return terminal
+    }
+
+    private func isDefiniteRejection(_ message: String, method: String) -> Bool {
+        ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
+            || (["saveDraft", "draftCommit", "calendarPreference", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaDeleteCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectNotesWriteCommit", "projectStatusCommit", "projectDateCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+    }
+
+    private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any], let action = request["action"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any], let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["changed", "open"]), Self.isBoolean(result["changed"]), result["changed"] as? Bool == true,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Board acknowledgment")
+        }
+        if action["type"] as? String == "duplicateTask" {
+            guard let open = result["open"] as? [String: Any], Set(open.keys) == Set(["taskId", "projectId", "tab"]),
+                  open["taskId"] as? String == request["requestId"] as? String,
+                  open["tab"] as? String == "task", open["projectId"] is String || open["projectId"] is NSNull else {
+                throw HostFailure("Malformed duplicate acknowledgment")
+            }
+        } else if !(result["open"] is NSNull) { throw HostFailure("Malformed Trash acknowledgment") }
+    }
+
+    private func validateCalendarAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any], let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["changed", "toast", "next", "scrollToMinutes", "composer", "taskId"]),
+              Self.isBoolean(result["changed"]), result["changed"] as? Bool == true,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Calendar acknowledgment")
+        }
+    }
+
+    private func validateMindSweepAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["taskId", "title"]),
+              result["taskId"] as? String == request["requestId"] as? String,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Mind Sweep acknowledgment")
+        }
+    }
+
+    private func validateProjectSectionCreateResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["id", "projectId"]),
+              result["id"] as? String == request["requestId"] as? String,
+              result["projectId"] as? String == request["projectId"] as? String else {
+            throw HostFailure("Malformed Project Section creation result")
+        }
+    }
+
+    private func validateProjectSectionCreateAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project Section creation acknowledgment")
+        }
+        try validateProjectSectionCreateResult(result, request: request)
+    }
+
+    private func validateProjectSectionRenameResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["id", "projectId"]),
+              result["id"] as? String == request["sectionId"] as? String,
+              result["projectId"] as? String == request["projectId"] as? String else {
+            throw HostFailure("Malformed Project Section rename result")
+        }
+    }
+
+    private func validateProjectSectionRenameAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project Section rename acknowledgment")
+        }
+        try validateProjectSectionRenameResult(result, request: request)
+    }
+
+    private func validateProjectSectionDeleteResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["id", "projectId"]),
+              result["id"] as? String == request["sectionId"] as? String,
+              result["projectId"] as? String == request["projectId"] as? String else {
+            throw HostFailure("Malformed Project Section deletion result")
+        }
+    }
+
+    private func validateProjectSectionDeleteAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project Section deletion acknowledgment")
+        }
+        try validateProjectSectionDeleteResult(result, request: request)
+    }
+
+    private func validateProjectCreateResult(_ result: [String: Any], request: [String: Any], created: Bool) throws {
+        guard Set(result.keys) == Set(["id", "created"]),
+              let id = result["id"] as? String, !id.isEmpty,
+              Self.isBoolean(result["created"]), result["created"] as? Bool == created,
+              !created || id == request["requestId"] as? String else {
+            throw HostFailure("Malformed project creation result")
+        }
+    }
+
+    private func validateProjectCreateAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed project creation acknowledgment")
+        }
+        try validateProjectCreateResult(result, request: request, created: true)
+    }
+
+    private func validateAreaCreateResult(_ result: [String: Any], request: [String: Any], created: Bool) throws {
+        guard Set(result.keys) == Set(["id", "created"]),
+              let id = result["id"] as? String, id == request["expectedAreaId"] as? String,
+              Self.isBoolean(result["created"]), result["created"] as? Bool == created else {
+            throw HostFailure("Malformed Area creation result")
+        }
+    }
+
+    private func validateAreaCreateAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Area creation acknowledgment")
+        }
+        try validateAreaCreateResult(result, request: request, created: true)
+    }
+
+    private func validateAreaColorAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "color"]),
+              result["id"] as? String == request["areaId"] as? String,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Area color acknowledgment")
+        }
+    }
+
+    private func validateAreaOrderAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["orderedIds"]),
+              let ids = result["orderedIds"] as? [String], !ids.isEmpty,
+              Set(ids).count == ids.count,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Area order acknowledgment")
+        }
+    }
+
+    private func validateAreaDeleteAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["areaId"]),
+              result["areaId"] as? String == request["areaId"] as? String,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Area deletion acknowledgment")
+        }
+    }
+
+    private func validateProjectFocusAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "focused"]),
+              result["id"] as? String == request["projectId"] as? String,
+              Self.isBoolean(result["focused"]),
+              result["focused"] as? Bool == request["focused"] as? Bool,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project Focus acknowledgment")
+        }
+    }
+
+    private func validateProjectRenameAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "title"]),
+              result["id"] as? String == request["projectId"] as? String,
+              result["title"] is String,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project rename acknowledgment")
+        }
+    }
+
+    private func validateProjectFlowAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "isSequential", "sequentialScope"]),
+              result["id"] as? String == request["projectId"] as? String,
+              Self.isBoolean(result["isSequential"]),
+              Self.isProjectFlowScope(result["sequentialScope"]),
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project flow acknowledgment")
+        }
+    }
+
+    private func validateProjectNotesWriteAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "supportNotes"]),
+              result["id"] as? String == request["projectId"] as? String,
+              let text = request["text"] as? String,
+              result["supportNotes"] as? String == text,
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project Notes write acknowledgment")
+        }
+    }
+
+    private func validateProjectStatusAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "status", "isFocused"]),
+              result["id"] as? String == request["projectId"] as? String,
+              result["status"] as? String == request["status"] as? String,
+              result["isFocused"] is NSNull || Self.isBoolean(result["isFocused"]),
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project status acknowledgment")
+        }
+    }
+
+    private func validateProjectDateAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "field", "value"]),
+              result["id"] as? String == request["projectId"] as? String,
+              result["field"] as? String == request["field"] as? String,
+              ((result["value"] is NSNull && request["value"] is NSNull)
+                || (result["value"] is String && request["value"] is String
+                    && (result["value"] as? String) == (request["value"] as? String))),
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed Project date acknowledgment")
+        }
+    }
+
+    private func validateChecklistResult(_ result: [String: Any], request: [String: Any], kind: String) throws {
+        guard let id = request["id"] as? String, result["id"] as? String == id else {
+            throw HostFailure("Malformed checklist acknowledgment")
+        }
+        if kind == "save" {
+            guard Set(result.keys) == Set(["id"]) else { throw HostFailure("Malformed checklist save acknowledgment") }
+        } else {
+            guard kind == "reset", Set(result.keys) == Set(["id", "checklistBase", "status", "completedAt", "isFocusedToday"]),
+                  result["checklistBase"] is [[String: Any]], result["status"] is String,
+                  result["completedAt"] is NSNull || result["completedAt"] is String,
+                  Self.isBoolean(result["isFocusedToday"]) else {
+                throw HostFailure("Malformed checklist reset acknowledgment")
+            }
+        }
+    }
+
+    private func validatePreparedAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+                == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
+            throw HostFailure("Malformed prepared acknowledgment")
+        }
+        if command.method == "checklistPreparedCommit" {
+            guard let request = envelope["request"] as? [String: Any], let kind = prepared["kind"] as? String else {
+                throw HostFailure("Malformed checklist acknowledgment")
+            }
+            try validateChecklistResult(result, request: request, kind: kind)
+        }
+    }
+
+    private func journalArguments(_ command: PendingCommand) throws -> [Any] {
+        if command.method == "projectSectionCreateCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project Section journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectSectionCreate", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectSectionRenameCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project Section rename journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectSectionRename", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectSectionDeleteCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project Section deletion journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectSectionDelete", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectDateCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project date journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectDateWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectStatusCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project status journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectStatusWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectNotesWriteCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project Notes journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectNotesWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectFlowCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project flow journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectFlowWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectRenameCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project rename journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectRenameWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectFocusCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Project Focus journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectFocusWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "areaDeleteCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Area deletion journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("areaDelete", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "areaOrderCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Area order journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("areaOrder", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "areaColorCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Area color journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("areaColor", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "areaCreateCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Area journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("areaCreate", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "projectCreateCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared project journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("projectCreate", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "checklistPreparedCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  let kind = prepared["kind"] as? String, ["save", "reset"].contains(kind),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared checklist journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments(kind == "save" ? "checklistSave" : "checklistReset",
+                              String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
+        if command.method == "inboxPreparedCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  prepared["result"] is [String: Any], let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Process Inbox journal")
+            }
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [String(decoding: JSONSerialization.data(withJSONObject: request), as: UTF8.self)]), as: UTF8.self)
+            _ = try arguments(request["decision"] == nil ? "inboxSkip" : "inboxCommit", encoded)
+            return args
+        }
+        // These commands store a final state. Text drafts also carry the exact
+        // base values; core accepts an applied edit or refuses an intervening one.
+        if ["complete", "setAreaFilter", "saveDraft", "calendarPreference"].contains(command.method) {
+            // A raw schedule intent was never a supported legacy journal. It
+            // must not be reparsed/reprepared under a different clock or zone.
+            return try arguments(command.method, command.argumentsJSON, allowPreparedDates: false)
+        }
+        if command.method == "boardCommit" {
+            guard let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  Set(prepared.keys) == Set(["version", "request", "before", "after", "deviceIdToInitialize", "result"]),
+                  let before = prepared["before"] as? [String: Any], let after = prepared["after"] as? [String: Any],
+                  [before, after].allSatisfy({ row in
+                      ["id", "title", "status", "createdAt", "updatedAt"].allSatisfy { row[$0] is String }
+                          && !(row["id"] as? String ?? "").isEmpty
+                  }), Self.isInteger(after["rev"]), after["revBy"] is String,
+                  prepared["deviceIdToInitialize"] is NSNull || prepared["deviceIdToInitialize"] is String,
+                  prepared["result"] is [String: Any],
+                  let preparedRequest = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: preparedRequest, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Board journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self)
+            _ = try arguments("boardAction", encoded)
+            return args
+        }
+        if ["calendarComposerCommit", "calendarComposerCreateCommit"].contains(command.method) {
+            guard let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  Set(request.keys) == Set(["requestId", "composer"]), let requestID = request["requestId"] as? String,
+                  UUID(uuidString: requestID) != nil, request["composer"] is [String: Any],
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  prepared["kind"] as? String == (command.method == "calendarComposerCommit" ? "existing" : "new"),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Calendar journal")
+            }
+            return args
+        }
+        if command.method == "mindSweepCommit" {
+            guard let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  Set(request.keys) == Set(["requestId", "title"]),
+                  let id = request["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  request["title"] is String,
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+                    == JSONSerialization.data(withJSONObject: original, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared Mind Sweep journal")
+            }
+            return args
+        }
+        if command.method == "draftCommit" {
+            guard let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]), let request = input["request"] as? [String: Any],
+                  Set(request.keys) == Set(request["recurrenceBase"] == nil
+                    ? ["id", "base", "patch", "scheduleBase"] : ["id", "base", "patch", "scheduleBase", "recurrenceBase"]),
+                  let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+                  let preparedRequest = prepared["request"] as? [String: Any],
+                  try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]) == JSONSerialization.data(withJSONObject: preparedRequest, options: [.sortedKeys]) else {
+                throw HostFailure("Malformed prepared schedule journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self)
+            _ = try arguments("saveDraft", encoded)
+            return args
+        }
+        // This method is deliberately absent from the public whitelist. Native
+        // checks the transport envelope; core validates every prepared row field.
+        guard command.method == "captureCommit",
+              let args = try JSONSerialization.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              let input = try JSONSerialization.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              Set(input.keys) == Set(["request", "prepared"]), input["request"] is [String: Any],
+              let prepared = input["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1) else {
+            throw HostFailure("Malformed prepared capture journal")
+        }
+        return args
+    }
+
+    private static func isInteger(_ value: Any?, equalTo expected: Int? = nil) -> Bool {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite, number.doubleValue.rounded() == number.doubleValue else { return false }
+        return expected.map { number.doubleValue == Double($0) } ?? true
+    }
+
+    private static func isOffset(_ value: Any?) -> Bool {
+        if value is NSNull { return true }
+        guard let offset = value as? [String: Any], Set(offset.keys) == Set(["amount", "unit"]),
+              isInteger(offset["amount"]), offset["unit"] is String else { return false }
+        return true
+    }
+
+    private static func isBoolean(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
+    }
+
+    private static func isProjectFlowScope(_ value: Any?) -> Bool {
+        if value is NSNull { return true }
+        guard let scope = value as? String else { return false }
+        return scope == "project" || scope == "section"
+    }
+
+    private static func isFiniteNumber(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        return number.doubleValue.isFinite
+    }
+
+    private func arguments(_ method: String, _ json: String, allowPreparedDates: Bool = true) throws -> [Any] {
+        if method == "projectNotes" && json.utf8.count > 2_000_000 {
+            throw HostFailure("INVALID_INPUT: Project Notes read is too large")
+        }
+        if ["projectCreate", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "areaCreate", "areaCreateResolve", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome"].contains(method) && json.utf8.count > 12_000_000 {
+            throw HostFailure(method == "projectCreate" ? "INVALID_INPUT: Project creation transport is too large"
+                : ["areaColor", "areaColorRetryOutcome"].contains(method) ? "INVALID_INPUT: Area color transport is too large"
+                : ["areaOrder", "areaOrderRetryOutcome"].contains(method) ? "INVALID_INPUT: Area order transport is too large"
+                : ["areaDelete", "areaDeleteRetryOutcome"].contains(method) ? "INVALID_INPUT: Area deletion transport is too large"
+                : ["projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome"].contains(method) ? "INVALID_INPUT: Project Focus transport is too large"
+                : ["projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome"].contains(method) ? "INVALID_INPUT: Project rename transport is too large"
+                : ["projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome"].contains(method) ? "INVALID_INPUT: Project flow transport is too large"
+                : ["projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome"].contains(method) ? "INVALID_INPUT: Project Notes transport is too large"
+                : ["projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome"].contains(method) ? "INVALID_INPUT: Project status transport is too large"
+                : ["projectDateOptions", "projectDateWrite", "projectDateRetryOutcome"].contains(method) ? "INVALID_INPUT: Project date transport is too large"
+                : ["projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome"].contains(method) ? "INVALID_INPUT: Project Section transport is too large"
+                : ["projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome"].contains(method) ? "INVALID_INPUT: Project Section rename transport is too large"
+                : ["projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome"].contains(method) ? "INVALID_INPUT: Project Section deletion transport is too large"
+                : "INVALID_INPUT: Area creation transport is too large")
+        }
+        if ["checklistEdit", "checklistSave", "checklistReset"].contains(method) && json.utf8.count > 12_000_000 {
+            throw HostFailure("INVALID_INPUT: Checklist transport is too large")
+        }
+        if ["inboxStart", "inboxEnd"].contains(method) && json.utf8.count > 2_048 {
+            throw HostFailure("INVALID_INPUT: Process Inbox input is too large")
+        }
+        if ["inboxCommit", "inboxSkip", "inboxAfterCommit"].contains(method) && json.utf8.count > 16_384 {
+            throw HostFailure("INVALID_INPUT: Process Inbox input is too large")
+        }
+        if method == "inboxStep" && json.utf8.count > 12_000_000 {
+            throw HostFailure("INVALID_INPUT: Process Inbox step is too large")
+        }
+        guard let count = Self.methods[method],
+              let args = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [Any], args.count == count else {
+            throw HostFailure("Invalid or unavailable core method arguments")
+        }
+        // Native validates its transport; the shared contract validates meaning.
+        for (index, argument) in args.enumerated() {
+            if (method == "window" && index < 2) || method == "focus"
+                || (["focusWindow", "projectDetail", "projectNotes"].contains(method) && (index == 1 || index == 2))
+                || (method == "editorSuggestions" && index == 3) {
+                guard Self.isInteger(argument) else {
+                    throw HostFailure("Core numeric arguments must be integers")
+                }
+            } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
+        }
+        if method == "projectNotes" {
+            guard let id = args[0] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let offset = args[1] as? NSNumber, offset.doubleValue >= 0,
+                  offset.doubleValue <= 9_007_199_254_740_991,
+                  let limit = args[2] as? NSNumber, limit.doubleValue >= 1, limit.doubleValue <= 100,
+                  let revision = args[3] as? String, (offset.doubleValue == 0 || !revision.isEmpty) else {
+                throw HostFailure("INVALID_INPUT: Project Notes needs a bounded Project ID, window, and later-page revision")
+            }
+        }
+        if method == "inboxStart" {
+            guard let mode = args.first as? String, ["guided", "quick"].contains(mode) else {
+                throw HostFailure("INVALID_INPUT: Process Inbox mode must be guided or quick")
+            }
+        }
+        if method == "inboxEnd" {
+            guard let session = args.first as? String, session.utf16.count <= 500,
+                  !session.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw HostFailure("INVALID_INPUT: Process Inbox needs a bounded session ID")
+            }
+        }
+        if ["inboxCommit", "inboxSkip", "inboxAfterCommit"].contains(method) {
+            let fields: Set<String> = method == "inboxAfterCommit" ? ["sessionId", "requestId"]
+                : method == "inboxSkip" ? ["sessionId", "taskId", "requestId"]
+                : ["sessionId", "taskId", "requestId", "step", "decision"]
+            guard let encoded = args.first as? String, encoded.utf8.count <= 8_192,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == fields,
+                  fields.subtracting(["decision"]).allSatisfy({ field in
+                      guard let value = input[field] as? String else { return false }
+                      return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && value.utf16.count <= 500
+                  }), let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased() else {
+                throw HostFailure("INVALID_INPUT: Process Inbox needs a bounded request and lowercase UUID")
+            }
+            if method == "inboxCommit" {
+                guard let decision = input["decision"] as? [String: Any], Set(decision.keys) == Set(["choice"]),
+                      let choice = decision["choice"] as? String, !choice.isEmpty, choice.utf16.count <= 500 else {
+                    throw HostFailure("INVALID_INPUT: Process Inbox needs one bounded decision choice")
+                }
+            }
+        }
+        if method == "inboxStep" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys).isSubset(of: Set(["sessionId", "taskId", "step", "edit", "mode"])),
+                  ["sessionId", "taskId", "step"].allSatisfy({ field in
+                      guard let value = input[field] as? String else { return false }
+                      return !value.isEmpty && value.utf16.count <= 500
+                  }),
+                  (input["edit"] == nil || input["edit"] is [String: Any]),
+                  (input["mode"] == nil || (input["mode"] as? String).map({ $0.utf16.count <= 32 }) == true) else {
+                throw HostFailure("INVALID_INPUT: Process Inbox needs a bounded step object")
+            }
+        }
+        if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
+            "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
+            "areaCreateResolve", "areaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome"].contains(method) {
+            guard let json = args.first as? String,
+                  (try JSONSerialization.jsonObject(with: Data(json.utf8))) is [String: Any] else {
+                throw HostFailure("Core input must be a JSON object")
+            }
+        }
+        if method == "projectCreate" || method == "projectCreateRetryOutcome" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "title", "areaId"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let title = input["title"] as? String,
+                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  input["areaId"] is NSNull || (input["areaId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true else {
+                throw HostFailure("INVALID_INPUT: Project creation needs one bounded title, area, and lowercase UUID")
+            }
+        }
+        if method == "projectSectionOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId"]),
+                  let projectID = input["projectId"] as? String,
+                  !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  projectID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project Section options need one bounded Project ID")
+            }
+        }
+        if ["projectSectionCreate", "projectSectionCreateRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "title"]),
+                  let id = input["requestId"] as? String,
+                  id == UUID(uuidString: id)?.uuidString.lowercased(),
+                  let projectID = input["projectId"] as? String,
+                  !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  projectID.utf16.count <= 500,
+                  let title = input["title"] as? String,
+                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  title.utf16.count <= 100_000 else {
+                throw HostFailure("INVALID_INPUT: Project Section creation needs a bounded parent, title, and lowercase UUID")
+            }
+        }
+        if method == "projectSectionRenameOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId", "sectionId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let sectionID = input["sectionId"] as? String, !sectionID.isEmpty, sectionID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project Section rename options need bounded IDs")
+            }
+        }
+        if ["projectSectionRename", "projectSectionRenameRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "sectionId", "title", "expected"]),
+                  let id = input["requestId"] as? String, id == UUID(uuidString: id)?.uuidString.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let sectionID = input["sectionId"] as? String, !sectionID.isEmpty, sectionID.utf16.count <= 500,
+                  let title = input["title"] as? String, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  title.utf16.count <= 100_000,
+                  let expected = input["expected"] as? [String: Any],
+                  expected["id"] as? String == sectionID,
+                  expected["projectId"] as? String == projectID,
+                  expected["title"] is String else {
+                throw HostFailure("INVALID_INPUT: Project Section rename needs a bounded token, title, and lowercase UUID")
+            }
+        }
+        if method == "projectSectionDeleteOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId", "sectionId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let sectionID = input["sectionId"] as? String, !sectionID.isEmpty, sectionID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project Section deletion options need bounded IDs")
+            }
+        }
+        if ["projectSectionDelete", "projectSectionDeleteRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "sectionId", "expected"]),
+                  let id = input["requestId"] as? String, id == UUID(uuidString: id)?.uuidString.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let sectionID = input["sectionId"] as? String, !sectionID.isEmpty, sectionID.utf16.count <= 500,
+                  let expected = input["expected"] as? [String: Any],
+                  expected["id"] as? String == sectionID,
+                  expected["projectId"] as? String == projectID,
+                  expected["title"] is String else {
+                throw HostFailure("INVALID_INPUT: Project Section deletion needs a bounded token and lowercase UUID")
+            }
+        }
+        if method == "projectFocusOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project Focus options need one bounded Project ID")
+            }
+        }
+        if ["projectFocusWrite", "projectFocusRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "focused", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  Self.isBoolean(input["focused"]),
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "isFocused", "rev", "revBy", "updatedAt"]),
+                  let title = expected["title"] as? String, title.utf16.count <= 100_000,
+                  let status = expected["status"] as? String, !status.isEmpty, status.utf16.count <= 100,
+                  Self.isBoolean(expected["isFocused"]),
+                  expected["rev"] is NSNull || Self.isInteger(expected["rev"]),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Project Focus needs a bounded row token and lowercase UUID")
+            }
+        }
+        if method == "projectRenameOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project rename options need one bounded Project ID")
+            }
+        }
+        if ["projectRenameWrite", "projectRenameRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "title", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let title = input["title"] as? String, title.utf16.count <= 100_000,
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "rev", "revBy", "updatedAt"]),
+                  let oldTitle = expected["title"] as? String, oldTitle.utf16.count <= 100_000,
+                  let status = expected["status"] as? String,
+                  ["active", "someday", "waiting", "archived"].contains(status),
+                  expected["rev"] is NSNull || (Self.isInteger(expected["rev"]) && (expected["rev"] as? Int ?? -1) >= 0),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Project rename needs a bounded row token and lowercase UUID")
+            }
+        }
+        if method == "projectDateOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId", "field"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500,
+                  let field = input["field"] as? String, ["startDate", "dueDate"].contains(field) else {
+                throw HostFailure("INVALID_INPUT: Project date options need a bounded Project ID and date field")
+            }
+        }
+        if ["projectDateWrite", "projectDateRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "field", "value", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let field = input["field"] as? String, ["startDate", "dueDate"].contains(field),
+                  input["value"] is NSNull || (input["value"] as? String).map({
+                      $0.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+                  }) == true,
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "startDate", "dueDate", "rev", "revBy", "updatedAt"]),
+                  let title = expected["title"] as? String, title.utf16.count <= 100_000,
+                  let oldStatus = expected["status"] as? String,
+                  ["active", "waiting", "someday", "archived"].contains(oldStatus),
+                  ["startDate", "dueDate"].allSatisfy({ key in
+                      expected[key] is NSNull || (expected[key] as? String).map({ $0.utf16.count <= 100 }) == true
+                  }),
+                  expected["rev"] is NSNull || (Self.isInteger(expected["rev"]) && (expected["rev"] as? Int ?? -1) >= 0),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Project date needs a bounded row token, date field, and lowercase UUID")
+            }
+        }
+        if method == "projectStatusOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project status options need one bounded Project ID")
+            }
+        }
+        if ["projectStatusWrite", "projectStatusRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "status", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let status = input["status"] as? String, ["active", "waiting", "someday"].contains(status),
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "isFocused", "cancelledAt", "rev", "revBy", "updatedAt"]),
+                  let title = expected["title"] as? String, title.utf16.count <= 100_000,
+                  let oldStatus = expected["status"] as? String,
+                  ["active", "waiting", "someday", "archived"].contains(oldStatus),
+                  expected["isFocused"] is NSNull || Self.isBoolean(expected["isFocused"]),
+                  expected["cancelledAt"] is NSNull || (expected["cancelledAt"] as? String).map({ $0.utf16.count <= 100 }) == true,
+                  expected["rev"] is NSNull || (Self.isInteger(expected["rev"]) && (expected["rev"] as? Int ?? -1) >= 0),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Project status needs bounded row token, requested status, and lowercase UUID")
+            }
+        }
+        if method == "projectNotesDraftDirection" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId", "text"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500, input["text"] is String else {
+                throw HostFailure("INVALID_INPUT: Project Notes draft direction needs one bounded Project ID and raw text")
+            }
+        }
+        if method == "projectNotesEditOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project Notes options need one bounded Project ID")
+            }
+        }
+        if ["projectNotesWrite", "projectNotesWriteRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "text", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  input["text"] is String,
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "supportNotes", "rev", "revBy", "updatedAt"]),
+                  let title = expected["title"] as? String, title.utf16.count <= 100_000,
+                  let status = expected["status"] as? String,
+                  ["active", "someday", "waiting", "archived"].contains(status),
+                  expected["supportNotes"] is NSNull || expected["supportNotes"] is String,
+                  expected["rev"] is NSNull || (Self.isInteger(expected["rev"]) && (expected["rev"] as? Int ?? -1) >= 0),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Project Notes write needs bounded raw text, row token, and lowercase UUID")
+            }
+        }
+        if method == "projectFlowOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["projectId"]),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty,
+                  projectID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Project flow options need one bounded Project ID")
+            }
+        }
+        if ["projectFlowWrite", "projectFlowRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "projectId", "action", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
+                  let action = input["action"] as? [String: Any],
+                  let kind = action["kind"] as? String,
+                  (kind == "toggleType" && Set(action.keys) == Set(["kind"]))
+                    || (kind == "setScope" && Set(action.keys) == Set(["kind", "scope"])
+                        && (action["scope"] as? String).map({ ["project", "section"].contains($0) }) == true),
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "isSequential", "sequentialScope", "rev", "revBy", "updatedAt"]),
+                  let title = expected["title"] as? String, title.utf16.count <= 100_000,
+                  let status = expected["status"] as? String,
+                  ["active", "someday", "waiting", "archived"].contains(status),
+                  expected["isSequential"] is NSNull || Self.isBoolean(expected["isSequential"]),
+                  Self.isProjectFlowScope(expected["sequentialScope"]),
+                  expected["rev"] is NSNull || (Self.isInteger(expected["rev"]) && (expected["rev"] as? Int ?? -1) >= 0),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Project flow needs a bounded action, row token, and lowercase UUID")
+            }
+        }
+        if ["areaCreateResolve", "areaCreate", "areaCreateRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == (method == "areaCreateResolve"
+                    ? Set(["requestId", "name"]) : Set(["requestId", "name", "color", "expectedAreaId"])),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  input["name"] is String else {
+                throw HostFailure("INVALID_INPUT: Area creation needs one bounded name and lowercase UUID")
+            }
+            if method != "areaCreateResolve" {
+                guard input["color"] is String, let expected = input["expectedAreaId"] as? String,
+                      !expected.isEmpty, expected.utf16.count <= 500 else {
+                    throw HostFailure("INVALID_INPUT: Area creation needs color and expected ID")
+                }
+            }
+        }
+        if ["areaColor", "areaColorRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "areaId", "color", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let areaID = input["areaId"] as? String, !areaID.isEmpty, areaID.utf16.count <= 500,
+                  input["color"] is NSNull || input["color"] is String,
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["name", "color", "rev", "revBy", "updatedAt"]),
+                  let name = expected["name"] as? String, name.utf16.count <= 10_000,
+                  expected["color"] is NSNull || (expected["color"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  expected["rev"] is NSNull || Self.isInteger(expected["rev"]),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Area color needs a bounded row token and lowercase UUID")
+            }
+        }
+        if ["areaDelete", "areaDeleteRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "areaId", "expected"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let areaID = input["areaId"] as? String, !areaID.isEmpty, areaID.utf16.count <= 500,
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["name", "color", "order", "rev", "revBy", "updatedAt"]),
+                  let name = expected["name"] as? String, name.utf16.count <= 10_000,
+                  expected["color"] is NSNull || (expected["color"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  Self.isFiniteNumber(expected["order"]),
+                  expected["rev"] is NSNull || Self.isInteger(expected["rev"]),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Area deletion needs a bounded row token and lowercase UUID")
+            }
+        }
+        if ["areaOrder", "areaOrderRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "intent", "expectedAreas"]),
+                  let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                  let intent = input["intent"] as? [String: Any],
+                  let kind = intent["kind"] as? String,
+                  (kind == "moveUp"
+                    ? Set(intent.keys) == Set(["kind", "areaId"])
+                        && (intent["areaId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true
+                    : ["sortName", "sortColor"].contains(kind) && Set(intent.keys) == Set(["kind"])),
+                  let expected = input["expectedAreas"] as? [[String: Any]],
+                  expected.allSatisfy({ row in
+                      Set(row.keys) == Set(["id", "name", "color", "order", "rev", "revBy", "updatedAt"])
+                          && (row["id"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true
+                          && (row["name"] as? String).map({ $0.utf16.count <= 10_000 }) == true
+                          && (row["color"] is NSNull || (row["color"] as? String).map({ $0.utf16.count <= 500 }) == true)
+                          && Self.isFiniteNumber(row["order"])
+                          && (row["rev"] is NSNull || Self.isInteger(row["rev"]))
+                          && (row["revBy"] is NSNull || (row["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true)
+                          && (row["updatedAt"] as? String).map({ $0.utf16.count <= 100 }) == true
+                  }),
+                  Set(expected.compactMap { $0["id"] as? String }).count == expected.count else {
+                throw HostFailure("INVALID_INPUT: Area order needs a bounded complete token list and lowercase UUID")
+            }
+        }
+        if ["checklistEdit", "checklistSave", "checklistReset"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  let id = input["id"] as? String, !id.isEmpty, id.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Checklist needs a bounded task ID and JSON object")
+            }
+            if method == "checklistEdit" {
+                guard Set(input.keys) == Set(input["edit"] == nil ? ["id", "draft", "checklist"] : ["id", "draft", "checklist", "edit"]),
+                      input["draft"] is [String: Any], input["checklist"] is [[String: Any]],
+                      input["edit"] == nil || input["edit"] is [String: Any] else {
+                    throw HostFailure("INVALID_INPUT: Checklist edit needs the complete draft and list")
+                }
+            } else {
+                guard let requestID = input["requestId"] as? String, UUID(uuidString: requestID) != nil,
+                      requestID == requestID.lowercased() else {
+                    throw HostFailure("INVALID_INPUT: Checklist write needs a lowercase request UUID")
+                }
+                if method == "checklistReset" {
+                    guard Set(input.keys) == Set(["id", "requestId", "checklistBase"]),
+                          input["checklistBase"] is [[String: Any]] else {
+                        throw HostFailure("INVALID_INPUT: Checklist reset needs the saved list baseline")
+                    }
+                } else {
+                    guard Set(input.keys) == Set(input["recurrenceBase"] == nil
+                        ? ["id", "requestId", "base", "patch", "scheduleBase", "checklist"]
+                        : ["id", "requestId", "base", "patch", "scheduleBase", "recurrenceBase", "checklist"]),
+                          let base = input["base"] as? [String: Any], let patch = input["patch"] as? [String: Any],
+                          Set(base.keys) == Set(patch.keys),
+                          let schedule = input["scheduleBase"] as? [String: Any], Set(schedule.keys) == Self.scheduleFields,
+                          Self.isOffset(schedule["relativeStartOffset"]),
+                          ["startTime", "dueDate", "reviewAt"].allSatisfy({ schedule[$0] is String || schedule[$0] is NSNull }),
+                          let checklist = input["checklist"] as? [String: Any], Set(checklist.keys) == Set(["base", "value"]),
+                          checklist["base"] is [[String: Any]], checklist["value"] is [[String: Any]] else {
+                        throw HostFailure("INVALID_INPUT: Checklist save needs exact baselines and final list")
+                    }
+                    let allowed = Set(["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags", "status"])
+                        .union(Self.scheduleFields).union(Self.recurrenceFields)
+                    guard Set(patch.keys).isSubset(of: allowed), patch.keys.allSatisfy({ field in
+                        if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
+                        if field == "showFutureRecurrence" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }
+                        return base[field] is String && patch[field] is String
+                    }) else { throw HostFailure("INVALID_INPUT: Checklist save contains unsupported draft fields") }
+                    let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)
+                    guard (input["recurrenceBase"] != nil) == hasRecurrence else {
+                        throw HostFailure("INVALID_INPUT: Checklist recurrence baseline is missing or unrequested")
+                    }
+                    if hasRecurrence {
+                        guard Self.recurrenceFields.isSubset(of: Set(patch.keys)),
+                              let recurrence = input["recurrenceBase"] as? [String: Any],
+                              Set(recurrence.keys) == Set(["recurrence", "showFutureRecurrence"]),
+                              recurrence["recurrence"] is NSNull || recurrence["recurrence"] is String || recurrence["recurrence"] is [String: Any],
+                              recurrence["showFutureRecurrence"] is NSNull || Self.isBoolean(recurrence["showFutureRecurrence"]) else {
+                            throw HostFailure("INVALID_INPUT: Checklist recurrence needs its complete raw baseline")
+                        }
+                    }
+                    let associations: Set<String> = ["projectId", "areaId", "sectionId"]
+                    if !associations.isDisjoint(with: patch.keys) && !associations.isSubset(of: Set(patch.keys)) {
+                        throw HostFailure("INVALID_INPUT: Checklist destination needs every association field")
+                    }
+                }
+            }
+        }
+        if ["mindSweepGuide", "mindSweepAdd"].contains(method) {
+            guard let json = args.first as? String, json.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                throw HostFailure("INVALID_INPUT: Mind Sweep needs a bounded JSON object")
+            }
+            if method == "mindSweepGuide" {
+                guard Set(input.keys) == Set(["scope"]),
+                      let scope = input["scope"] as? String, ["all", "personal", "work"].contains(scope) else {
+                    throw HostFailure("INVALID_INPUT: Unsupported Mind Sweep scope")
+                }
+            } else {
+                guard Set(input.keys) == Set(["requestId", "title"]),
+                      let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
+                      input["title"] is String else {
+                    throw HostFailure("INVALID_INPUT: Mind Sweep needs a literal title and lowercase UUID")
+                }
+            }
+        }
+        if ["calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave"].contains(method) {
+            guard let json = args.first as? String, json.utf8.count <= 2_000_000,
+                  let input = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                throw HostFailure("INVALID_INPUT: Native Calendar composer requires a bounded JSON object")
+            }
+            let fields: Set<String> = method == "calendarComposerOpen" ? ["at", "day", "rawMinutes", "scheduleTaskId", "mode", "calendar"]
+                : method == "calendarComposerEdit" ? ["composer", "edit", "calendar"] : ["requestId", "composer", "calendar"]
+            guard Set(input.keys).isSubset(of: fields),
+                  (method != "calendarComposerOpen" || input["rawMinutes"] == nil || (
+                    Self.isFiniteNumber(input["rawMinutes"]) && input["day"] is String
+                    && input["mode"] as? String == "new" && input["at"] == nil && input["scheduleTaskId"] == nil)),
+                  (method != "calendarComposerEdit" || (input["composer"] is [String: Any] && input["edit"] is [String: Any])),
+                  (method != "calendarComposerSave" || (input["composer"] is [String: Any]
+                    && ["existing", "new"].contains((input["composer"] as? [String: Any])?["mode"] as? String ?? "")
+                    && (input["requestId"] as? String).flatMap({ UUID(uuidString: $0) }) != nil)) else {
+                throw HostFailure("INVALID_INPUT: Unsupported native Calendar composer input")
+            }
+        }
+        if method == "boardAction" {
+            guard let json = args.first as? String, json.utf8.count <= 4_096,
+                  let input = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "action"]), let id = input["requestId"] as? String, UUID(uuidString: id) != nil,
+                  let action = input["action"] as? [String: Any], Set(action.keys) == Set(["type", "taskId"]),
+                  let type = action["type"] as? String, ["duplicateTask", "trashTask"].contains(type),
+                  let taskID = action["taskId"] as? String, !taskID.isEmpty, taskID.count <= 500 else {
+                throw HostFailure("Unsupported native Board action")
+            }
+        }
+        if method == "menuRead" {
+            guard let name = args[0] as? String, ["more", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
+                  let json = args[1] as? String,
+                  let input = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+                throw HostFailure("Unsupported native menu read or JSON object input")
+            }
+            if name == "contexts" {
+                let fields = Set(["tokens", "matchMode", "searchQuery", "offset", "limit", "revision"])
+                guard Set(input.keys).isSubset(of: fields) else {
+                    throw HostFailure("Unsupported native Contexts browsing input")
+                }
+            }
+            let focusFields: [String: Set<String>] = [
+                "focus": ["limit", "controls", "controlEdit"],
+                "focusSection": ["key", "offset", "limit", "revision", "controls"],
+                "focusControls": ["list", "offset", "limit", "revision", "controls", "query"],
+            ]
+            if let fields = focusFields[name] {
+                guard input["controls"] is [String: Any], Set(input.keys).isSubset(of: fields) else {
+                    throw HostFailure("Unsupported native Focus read or missing controls object")
+                }
+            }
+            let reviewFields: [String: Set<String>] = [
+                "reviewOverview": ["scope", "expandedAreaIds", "expandedProjectIds", "expansionEdit", "offset", "limit", "revision"],
+                "dailyReview": ["checkpoint", "offset", "limit", "revision"],
+                "weeklyReview": ["checkpoint", "expandedProjectId", "offset", "limit", "revision"],
+                "weeklyReviewList": ["checkpoint", "expandedProjectId", "list", "key", "offset", "limit", "revision"],
+            ]
+            if let fields = reviewFields[name], !Set(input.keys).isSubset(of: fields) {
+                throw HostFailure("Unsupported native Review browsing input")
+            }
+            let calendarFields: [String: Set<String>] = [
+                "calendar": ["state", "scheduleQuery", "offset", "limit", "revision"],
+                "calendarItem": ["taskId", "state"],
+                "calendarPreferences": [],
+            ]
+            if let fields = calendarFields[name], !Set(input.keys).isSubset(of: fields) {
+                throw HostFailure("Unsupported native Calendar browsing input")
+            }
+            if name == "board" || name == "boardList" {
+                let fields: Set<String> = name == "board" ? ["filters", "filterEdit", "limit"]
+                    : ["filters", "list", "status", "offset", "limit", "revision"]
+                guard json.utf8.count <= 1_048_576, Set(input.keys).isSubset(of: fields),
+                      Self.isInteger(input["limit"]), let limit = input["limit"] as? NSNumber,
+                      (1.0...100.0).contains(limit.doubleValue) else {
+                    throw HostFailure("Unsupported native Board browsing input")
+                }
+                if let value = input["filters"] {
+                    let filterFields: Set<String> = ["searchQuery", "tokens", "excludedTokens", "projects", "contextMatchMode", "tagMatchMode", "duePreset"]
+                    guard let filters = value as? [String: Any], Set(filters.keys).isSubset(of: filterFields) else {
+                        throw HostFailure("Unsupported native Board filters")
+                    }
+                    for (field, value) in filters {
+                        if ["tokens", "excludedTokens", "projects"].contains(field) {
+                            guard let values = value as? [String], values.count <= 100,
+                                  values.allSatisfy({ $0.utf16.count <= 500 }) else { throw HostFailure("Unsupported native Board filters") }
+                        } else if field != "duePreset" || !(value is NSNull) {
+                            guard let text = value as? String, text.utf16.count <= (field == "searchQuery" ? 2000 : 500) else {
+                                throw HostFailure("Unsupported native Board filters")
+                            }
+                        }
+                    }
+                }
+                if let value = input["filterEdit"] {
+                    guard let edit = value as? [String: Any], edit["type"] is String,
+                          Set(edit.keys).isSubset(of: ["type", "value", "kind", "preset"]),
+                          edit.values.allSatisfy({ ($0 as? String).map { $0.utf16.count <= 2000 } == true }) else {
+                        throw HostFailure("Unsupported native Board filter edit")
+                    }
+                }
+                if name == "boardList" {
+                    guard let list = input["list"] as? String, list.utf16.count <= 500,
+                          let revision = input["revision"] as? String, revision.utf16.count <= 4096,
+                          Self.isInteger(input["offset"]), let offset = input["offset"] as? NSNumber,
+                          (0.0...9_007_199_254_740_991.0).contains(offset.doubleValue),
+                          input["status"] == nil || (input["status"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                          list != "cards" || input["status"] is String else {
+                        throw HostFailure("Unsupported native Board list input")
+                    }
+                }
+            }
+            if name == "collection" {
+                let collections = ["waiting": ["people", "deferredProjects"],
+                                   "someday": ["tokens", "projects", "sections", "deferredProjects"],
+                                   "reference": ["tokens", "projects"], "done": ["tokens"]]
+                guard let view = input["view"] as? String, let collection = input["collection"] as? String,
+                      collections[view]?.contains(collection) == true else {
+                    throw HostFailure("Unsupported native menu collection")
+                }
+            }
+        }
+        if method == "calendarPreference" {
+            // Types and the static request envelope are checked before journaling
+            // and again before startup replay. Core owns option/range/conflict policy.
+            guard let json = args.first as? String,
+                  let input = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "field", "before", "value"]),
+                  let requestID = input["requestId"] as? String, UUID(uuidString: requestID) != nil,
+                  let field = input["field"] as? String else {
+                throw HostFailure("INVALID_INPUT: Native Calendar preference requires an exact request object and UUID")
+            }
+            let valid: Bool
+            switch field {
+            case "viewMode": valid = input["before"] is String && input["value"] is String
+            case "showCompleted": valid = Self.isBoolean(input["before"]) && Self.isBoolean(input["value"])
+            case "weekVisibleDays": valid = Self.isInteger(input["before"]) && Self.isInteger(input["value"])
+            default: valid = false
+            }
+            guard valid else { throw HostFailure("INVALID_INPUT: Unsupported native Calendar preference field or value type") }
+        }
+        if method == "saveDraft" {
+            // Deliberate draft-field subset. Validate again on journal replay;
+            // dates/recurrence additionally require their original raw tuples and
+            // enter only the prepared commit journal path.
+            guard let json = args.first as? String,
+                  let input = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                  input["id"] is String,
+                  let base = input["base"] as? [String: Any], let patch = input["patch"] as? [String: Any],
+                  !patch.isEmpty, Set(base.keys) == Set(patch.keys) else {
+                throw HostFailure("INVALID_INPUT: Native editor requires matching supported draft fields")
+            }
+            let hasSchedule = !Self.scheduleFields.isDisjoint(with: patch.keys)
+            let hasRecurrence = !Self.recurrenceFields.isDisjoint(with: patch.keys)
+            let isPrepared = hasSchedule || hasRecurrence
+            let allowed = Set(["title", "description", "priority", "energyLevel", "timeEstimate", "projectId", "areaId", "sectionId", "contexts", "tags"])
+                .union(allowPreparedDates ? Self.scheduleFields.union(Self.recurrenceFields) : [])
+            var inputFields: Set<String> = ["id", "base", "patch"]
+            if isPrepared && allowPreparedDates { inputFields.insert("scheduleBase") }
+            if hasRecurrence && allowPreparedDates { inputFields.insert("recurrenceBase") }
+            guard Set(patch.keys).isSubset(of: allowed),
+                  Set(input.keys) == inputFields,
+                  patch.keys.allSatisfy({ field in
+                      if field == "relativeStartOffset" { return Self.isOffset(base[field]) && Self.isOffset(patch[field]) }
+                      if field == "showFutureRecurrence" { return Self.isBoolean(base[field]) && Self.isBoolean(patch[field]) }
+                      return base[field] is String && patch[field] is String
+                  }) else { throw HostFailure("INVALID_INPUT: Native editor requires matching supported draft fields") }
+            if isPrepared {
+                guard allowPreparedDates, let schedule = input["scheduleBase"] as? [String: Any], Set(schedule.keys) == Self.scheduleFields,
+                      Self.isOffset(schedule["relativeStartOffset"]),
+                      ["startTime", "dueDate", "reviewAt"].allSatisfy({ schedule[$0] is String || schedule[$0] is NSNull }) else {
+                    throw HostFailure("INVALID_INPUT: Native schedule save requires a complete raw schedule baseline")
+                }
+            }
+            if hasRecurrence {
+                guard Self.recurrenceFields.isSubset(of: Set(patch.keys)),
+                      let recurrence = input["recurrenceBase"] as? [String: Any],
+                      Set(recurrence.keys) == Set(["recurrence", "showFutureRecurrence"]),
+                      recurrence["recurrence"] is NSNull || recurrence["recurrence"] is String || recurrence["recurrence"] is [String: Any],
+                      recurrence["showFutureRecurrence"] is NSNull || Self.isBoolean(recurrence["showFutureRecurrence"]) else {
+                    throw HostFailure("INVALID_INPUT: Native recurrence save requires its complete draft tuple and raw baseline")
+                }
+            }
+            // A move can clear its section/area. Guard unchanged companions too,
+            // so an intervening writer's assignment cannot be silently cleared.
+            let associations: Set<String> = ["projectId", "areaId", "sectionId"]
+            if !associations.isDisjoint(with: patch.keys) {
+                let complete = associations.isSubset(of: Set(patch.keys))
+                NSLog("Native iOS destination guard releaseCheck=v1.3.3/native-ios-destination-guard outcome=%@", complete ? "validated" : "rejected")
+                guard complete else {
+                    throw HostFailure("INVALID_INPUT: Native destination save requires all association fields")
+                }
+            }
+        }
+        return args
+    }
+
+    private func persist(_ command: PendingCommand) throws {
+        #if DEBUG
+        try faults?.journalWrite?()
+        #endif
+        try DurableFile.write(JSONEncoder().encode(command), to: journalURL)
+    }
+
+    private func clearPending() throws {
+        #if DEBUG
+        try faults?.journalRemove?()
+        #endif
+        try DurableFile.remove(journalURL)
+        pending = nil
+    }
+
+    private func invoke(_ method: String, arguments: [Any]) throws -> String {
+        guard let context, let host = context.objectForKeyedSubscript("MindwtrHost") else { throw HostFailure("Core runtime unavailable") }
+        context.exception = nil
+        let ticket = host.invokeMethod(method, withArguments: arguments)
+        try checkException()
+        guard let ticket, ticket.isString, let id = ticket.toString(), Int(id).map({ $0 > 0 }) == true else {
+            throw HostFailure("Malformed core request ticket")
+        }
+        // No timeout abandons a command while its durable result is unknown.
+        // Promise jobs drain whenever JSC returns from a call; timers share this queue.
+        while true {
+            _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+            try checkException()
+            let reply = host.invokeMethod("poll", withArguments: [id])
+            try checkException()
+            if let reply, !reply.isNull, !reply.isUndefined {
+                guard reply.isString, let json = reply.toString(),
+                      let envelope = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                      let ok = envelope["ok"] as? Bool else { throw HostFailure("Malformed core response") }
+                if !ok { throw HostFailure(envelope["error"] as? String ?? "Core command failed") }
+                guard let value = envelope["value"] else { throw HostFailure("Core response has no value") }
+                return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]), as: UTF8.self)
+            }
+            let delay = context.objectForKeyedSubscript("__nextTimerDelay")?.call(withArguments: [])?.toDouble() ?? 1
+            try checkException()
+            Thread.sleep(forTimeInterval: delay.isFinite && delay > 0 ? min(delay, 10) / 1_000 : 0.001)
+        }
+    }
+
+    private func checkException() throws {
+        if let exception = context?.exception {
+            let message = exception.toString() ?? "JavaScriptCore exception"
+            context?.exception = nil
+            throw HostFailure(message)
+        }
+    }
+
+    private func installBridge(_ context: JSContext) {
+        let run: @convention(block) (String, String) -> String? = { [weak self] sql, parameters in
+            guard let self else { return "!MindwtrNativeError:Native database unavailable" }
+            return self.guarded { _ = try self.requireDatabase().execute(sql, parametersJSON: parameters); return nil }
+        }
+        let all: @convention(block) (String, String) -> String = { [weak self] sql, parameters in
+            guard let self else { return "!MindwtrNativeError:Native database unavailable" }
+            return self.guarded { try self.requireDatabase().execute(sql, parametersJSON: parameters) } ?? "[]"
+        }
+        let exec: @convention(block) (String) -> String? = { [weak self] sql in
+            guard let self else { return "!MindwtrNativeError:Native database unavailable" }
+            return self.guarded { _ = try self.requireDatabase().execute(sql); return nil }
+        }
+        let now: @convention(block) () -> Double = { ProcessInfo.processInfo.systemUptime * 1_000 }
+        let random: @convention(block) (Int) -> String = { length in
+            guard (0...65_536).contains(length) else { return "!MindwtrNativeError:Invalid random byte count" }
+            if length == 0 { return "[]" }
+            var bytes = [UInt8](repeating: 0, count: length)
+            let result = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, length, $0.baseAddress!) }
+            guard result == errSecSuccess else { return "!MindwtrNativeError:Secure random failed" }
+            return String(decoding: (try? JSONEncoder().encode(bytes)) ?? Data(), as: UTF8.self)
+        }
+        let rnState: @convention(block) (String) -> String? = { [weak self] change in
+            guard let self, let legacy = self.legacyStorage else {
+                return "!MindwtrNativeError:Legacy app storage is unavailable in the foundation"
+            }
+            return self.guarded {
+                try legacy.commit(changeJSON: change, checkpointURL: self.databaseURL.appendingPathExtension("rn-state.prewrite"))
+                return nil
+            }
+        }
+        let log: @convention(block) (String) -> Void = { [weak self] line in
+            // Accept only the fixed, field-allowlisted release check. Generic JS
+            // console output can contain task content and must not leave the host.
+            guard let at = line.firstIndex(of: "{"),
+                  let payload = try? JSONSerialization.jsonObject(with: Data(line[at...].utf8)) as? [String: Any] else { return }
+            if payload["scope"] as? String == "native-host",
+               let encoded = payload["context"] as? String,
+               let context = try? JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any] {
+                if context["releaseCheck"] as? String == "v1.3.3/native-readonly-completion" {
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("readOnlyCompletion")
+                    #endif
+                    NSLog("Native completion refused for a read-only project releaseCheck=v1.3.3/native-readonly-completion")
+                } else if context["releaseCheck"] as? String == "v1.3.3/native-token-replay",
+                          context["outcome"] as? String == "matched" {
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("tokenReplay")
+                    #endif
+                    NSLog("Native canonical token retry matched releaseCheck=v1.3.3/native-token-replay outcome=matched")
+                } else if context["releaseCheck"] as? String == "v1.3.3/native-prepared-date-save",
+                          let outcome = context["outcome"] as? String, ["applied", "replayed"].contains(outcome) {
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("dateSave")
+                    #endif
+                    NSLog("Native prepared date save releaseCheck=v1.3.3/native-prepared-date-save outcome=%@", outcome)
+                } else if context["releaseCheck"] as? String == "v1.3.3/native-prepared-recurrence-save",
+                          let outcome = context["outcome"] as? String, ["applied", "replayed"].contains(outcome) {
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("recurrenceSave:" + outcome)
+                    #endif
+                    NSLog("Native prepared recurrence save releaseCheck=v1.3.3/native-prepared-recurrence-save outcome=%@", outcome)
+                } else if context["releaseCheck"] as? String == "v1.3.3/native-calendar-preference",
+                          let outcome = context["outcome"] as? String, ["applied", "replayed"].contains(outcome) {
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("calendarPreference:" + outcome)
+                    #endif
+                    NSLog("Native Calendar preference releaseCheck=v1.3.3/native-calendar-preference outcome=%@", outcome)
+                }
+                return
+            }
+            guard payload["scope"] as? String == "native-ios",
+                  let encodedExtra = payload["extra"] as? String,
+                  let extra = try? JSONSerialization.jsonObject(with: Data(encodedExtra.utf8)) as? [String: Any] else { return }
+            if extra["releaseCheck"] as? String == "v1.3.3/native-ios-legacy-json-import" {
+                guard let outcome = extra["outcome"] as? String, ["imported", "abandoned", "none"].contains(outcome),
+                      let rnState = extra["rnState"] as? String, ["updated", "unchanged", "failed"].contains(rnState) else { return }
+                NSLog("Native iOS legacy JSON import releaseCheck=v1.3.3/native-ios-legacy-json-import outcome=%@ rnState=%@", outcome, rnState)
+                return
+            }
+            guard extra["releaseCheck"] as? String == "v1.3.3/native-ios-dev-task-command",
+                  let operation = extra["operation"] as? String, ["quickCapture", "complete", "areaFilter", "saveTaskDraft"].contains(operation),
+                  let outcome = extra["outcome"] as? String, ["saved", "failed"].contains(outcome) else { return }
+            #if DEBUG
+            self?.faults?.commandDiagnostic?(operation)
+            #endif
+            NSLog("Native iOS task command releaseCheck=v1.3.3/native-ios-dev-task-command operation=%@ outcome=%@", operation, outcome)
+        }
+        let bridge = JSValue(newObjectIn: context)!
+        for (name, block) in ["sqlRun": run as Any, "sqlAll": all as Any, "sqlExec": exec as Any,
+                              "nowMs": now as Any, "randomBytes": random as Any, "rnStateCommit": rnState as Any, "log": log as Any] {
+            bridge.setObject(block, forKeyedSubscript: name as NSString)
+        }
+        context.setObject(bridge, forKeyedSubscript: "__mindwtrNative" as NSString)
+    }
+
+    private func requireDatabase() throws -> SQLiteBridge {
+        guard let database else { throw HostFailure("Native database unavailable") }
+        return database
+    }
+
+    private func guarded(_ work: () throws -> String?) -> String? {
+        do { return try work() }
+        catch { return "!MindwtrNativeError:" + error.localizedDescription }
+    }
+
+    func shutdown() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        closed = true
+        releaseRuntime()
+    }
+
+    private func releaseRuntime() {
+        started = false
+        recoveryActivationPending = false
+        startupBoardResult = nil
+        startupCalendarResult = nil
+        startupMindSweepResult = nil
+        startupInboxResult = nil
+        startupChecklistResult = nil
+        context = nil
+        database?.close()
+        database = nil
+        if lockFD >= 0 { flock(lockFD, LOCK_UN); Darwin.close(lockFD); lockFD = -1 }
+    }
+}

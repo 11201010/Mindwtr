@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -450,7 +450,7 @@ test("desktop Rust pull requests check and test the native library on Windows", 
 test("manual native CI selects one platform or all platforms", () => {
   const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
   const platforms = ["ios", "android", "macos", "windows"];
-  const outputs = [...platforms, "android_client"];
+  const outputs = [...platforms, "android_client", "ios_client"];
   expect(workflow.on.workflow_dispatch.inputs.platform.default).toBe("all");
   const script = workflow.jobs.changes.steps.find((step) => step.id === "filter").run;
   const directory = mkdtempSync(join(tmpdir(), "mindwtr-native-dispatch-"));
@@ -462,12 +462,45 @@ test("manual native CI selects one platform or all platforms", () => {
       });
       const actual = Object.fromEntries(readFileSync(output, "utf8").trim().split("\n").map((line) => line.split("=")));
       expect(actual).toEqual(Object.fromEntries(outputs.map((platform) => [
-        platform, String(selection === "all" || selection === platform || (platform === "android_client" && selection === "android")),
+        platform, String(selection === "all" || selection === platform
+          || (platform === "android_client" && selection === "android")
+          || (platform === "ios_client" && selection === "ios")),
       ])));
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("SwiftUI client changes and shared host changes select the isolated Apple build", () => {
+  const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
+  for (const event of ["push", "pull_request"]) {
+    expect(workflow.on[event].paths).toContain("apps/ios-native/**");
+  }
+  const script = workflow.jobs.changes.steps.find((step) => step.id === "filter").run;
+  const directory = mkdtempSync(join(tmpdir(), "mindwtr-ios-client-filter-"));
+  try {
+    for (const [path, expected] of [
+      ["apps/ios-native/App/InboxView.swift", true],
+      ["apps/android-native/bundle/host-entry.ts", true],
+      ["packages/core/src/native-host-contract.ts", true],
+      ["apps/mobile/app.config.ts", false],
+      ["docs/README.md", false],
+    ]) {
+      const output = join(directory, "output");
+      writeFileSync(output, "");
+      writeFileSync(join(directory, "native-changed-paths.txt"), path + "\n");
+      execFileSync("bash", ["-euc", script.slice(script.indexOf("android=false"))], {
+        env: { ...process.env, RUNNER_TEMP: directory, GITHUB_OUTPUT: output },
+      });
+      expect(readFileSync(output, "utf8")).toContain(`ios_client=${expected}`);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+  const job = workflow.jobs["ios-client"];
+  expect(job.if).toContain("needs.changes.outputs.ios_client == 'true'");
+  expect(job.if).toContain("needs.changes.outputs.macmini != 'true'");
+  expect(job.steps.some((step) => step.run === "bash apps/ios-native/scripts/validate.sh")).toBe(true);
+  expect(workflow.jobs["ios-macmini"].if).toContain("needs.changes.outputs.ios_client == 'true'");
 });
 
 test("macOS native CI links the release Rust and Swift bridges", () => {

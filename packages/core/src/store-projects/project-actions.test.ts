@@ -351,4 +351,68 @@ describe('project actions', () => {
         const copiedNext = copiedTasks.find((task) => task.title === 'Next task');
         expect(copiedNext).toMatchObject({ status: 'next', sectionId: copiedSectionId });
     });
+
+    it('moves a Project to the destination Area and appends a cleared Project to No Area', async () => {
+        const { addArea, addProject, updateProject } = useTaskStore.getState();
+        const alpha = await addArea('Alpha');
+        const beta = await addArea('Beta');
+        if (!alpha || !beta) throw new Error('Area setup failed');
+        const moving = await addProject('Moving', '#3b82f6', { areaId: alpha.id, order: 4,
+            supportNotes: 'keep raw notes' });
+        const inBeta = await addProject('Existing Beta', '#22c55e', { areaId: beta.id, order: 7 });
+        const noArea = await addProject('Existing No Area', '#ef4444', { order: 9 });
+        if (!moving || !inBeta || !noArea) throw new Error('Project setup failed');
+        const otherBefore = [inBeta.id, noArea.id].map((id) =>
+            structuredClone(useTaskStore.getState()._allProjects.find((row) => row.id === id)!));
+
+        expect(await updateProject(moving.id, { areaId: beta.id })).toEqual({ success: true });
+        await flushPendingSave();
+        const moved = useTaskStore.getState()._allProjects.find((row) => row.id === moving.id);
+        expect(moved).toMatchObject({ areaId: beta.id, areaTitle: 'Beta', order: 8,
+            supportNotes: 'keep raw notes' });
+        expect(latestSavedData().projects.find((row) => row.id === moving.id)).toEqual(moved);
+
+        expect(await updateProject(moving.id, { areaId: undefined })).toEqual({ success: true });
+        await flushPendingSave();
+        const cleared = useTaskStore.getState()._allProjects.find((row) => row.id === moving.id);
+        expect(cleared?.areaId).toBeUndefined();
+        expect(cleared?.areaTitle).toBeUndefined();
+        expect(cleared?.order).toBe(10);
+        expect(cleared?.supportNotes).toBe('keep raw notes');
+        expect(latestSavedData().projects.find((row) => row.id === moving.id)).toEqual(cleared);
+        expect([inBeta.id, noArea.id].map((id) =>
+            useTaskStore.getState()._allProjects.find((row) => row.id === id))).toEqual(otherBefore);
+    });
+
+    it('does not treat an omitted Area patch or a same-Area selection as a move', async () => {
+        const { addArea, addProject, updateProject } = useTaskStore.getState();
+        const area = await addArea('Alpha');
+        if (!area) throw new Error('Area setup failed');
+        const project = await addProject('Project', '#3b82f6', { areaId: area.id, order: 4 });
+        if (!project) throw new Error('Project setup failed');
+        useTaskStore.setState((state) => ({
+            _allProjects: state._allProjects.map((row) => row.id === project.id
+                ? { ...row, areaTitle: 'legacy title' } : row),
+        }));
+        expect(await updateProject(project.id, { title: 'Renamed' })).toEqual({ success: true });
+        const afterOmitted = useTaskStore.getState()._allProjects.find((row) => row.id === project.id);
+        expect(afterOmitted).toMatchObject({ title: 'Renamed', areaId: area.id,
+            areaTitle: 'legacy title', order: 4 });
+        expect(await updateProject(project.id, { areaId: area.id })).toEqual({ success: true });
+        const afterSame = useTaskStore.getState()._allProjects.find((row) => row.id === project.id);
+        expect(afterSame).toMatchObject({ areaId: area.id, areaTitle: 'Alpha', order: 4 });
+
+        const noArea = await addProject('Already unassigned', '#22c55e', { order: 9 });
+        if (!noArea) throw new Error('No Area setup failed');
+        useTaskStore.setState((state) => ({
+            _allProjects: state._allProjects.map((row) => row.id === noArea.id
+                ? { ...row, areaTitle: 'old stale title' } : row),
+        }));
+        expect(await updateProject(noArea.id, { areaId: undefined })).toEqual({ success: true });
+        const afterNoArea = useTaskStore.getState()._allProjects.find((row) => row.id === noArea.id);
+        expect(afterNoArea?.areaTitle).toBeUndefined();
+        expect(afterNoArea?.areaId).toBeUndefined();
+        expect(afterNoArea?.order).toBe(9);
+    });
+
 });

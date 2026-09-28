@@ -771,7 +771,29 @@ function parseDateCommand(
 
     const dateText = match[1].trim();
     const defaultTimeMode: DateDefaultTimeMode = command === 'due' ? 'now' : 'startOfDay';
-    const parsedNaturalDate = parseNaturalDate(dateText, now, defaultTimeMode);
+    let parsedNaturalDate = parseNaturalDate(dateText, now, defaultTimeMode);
+    let commandText = match[0];
+    if (!parsedNaturalDate) {
+        // Keep complete dates (including spaced UTC offsets such as +0200)
+        // ahead of inline controls, then try the longest valid date prefix.
+        const boundaries = [...match[1].matchAll(new RegExp(QUICK_ADD_INLINE_CONTROL_BOUNDARY, 'gi'))];
+        for (const boundary of boundaries.reverse()) {
+            if (boundary.index === match[1].length) continue;
+            const candidate = match[1].slice(0, boundary.index).trim();
+            if (!candidate) continue;
+            parsedNaturalDate = parseNaturalDate(candidate, now, defaultTimeMode);
+            if (parsedNaturalDate) {
+                // A failed numeric offset after an explicit time must not
+                // become a project; numeric project names can be quoted.
+                if (parsedNaturalDate.hasExplicitTime && /^\s+\+\d[\d:]*(?=\s|$)/.test(match[1].slice(boundary.index))) {
+                    parsedNaturalDate = null;
+                    break;
+                }
+                commandText = match[0].slice(0, match[0].length - match[1].length + boundary.index);
+                break;
+            }
+        }
+    }
     const parsed = parsedNaturalDate && command !== 'due'
         ? applyDefaultScheduleTime(parsedNaturalDate, options.defaultScheduleTime)
         : parsedNaturalDate;
@@ -781,7 +803,7 @@ function parseDateCommand(
             invalidCommand: `/${command}:${dateText}`,
         };
     }
-    const nextWorking = stripToken(working, match[0]);
+    const nextWorking = stripToken(working, commandText);
     return {
         // Timeless values stay date-only for every command — a blank default
         // schedule time must not stamp midnight on /start: or /review: (#797),

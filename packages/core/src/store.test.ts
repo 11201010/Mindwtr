@@ -10,13 +10,14 @@ import {
     setStorageAdapter,
 } from './store';
 import { buildEntityMap } from './store-helpers';
+import { planTaskUpdateEffects } from './store-tasks';
 import { computeSyncPayloadFingerprint } from './sync-helpers';
 import { mergeAppData } from './sync';
 import { mockAppData } from './sync-test-utils';
 import { shouldShowTaskForStart, sortTasksByBoardOrder } from './task-utils';
 import { generateUUID } from './uuid';
 import type { StorageAdapter } from './storage';
-import type { AppData, Area, Project, Task } from './types';
+import type { AppData, Area, Project, Section, Task } from './types';
 import { runDataTransferTransaction, runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
 import { collectProjectTaskLinks, undoProjectDelete } from './undo-project-delete';
 
@@ -75,6 +76,126 @@ const createStoreArea = (id: string, overrides: Partial<Area> = {}): Area => ({
     rev: 1,
     revBy: 'device-a',
     ...overrides,
+});
+
+describe('planTaskUpdateEffects', () => {
+    const now = '2026-07-01T12:00:00.000Z';
+    const deviceId = 'device-b';
+
+    it('copies recurring children once and excludes an existing matching follow-up', () => {
+        const source = createStoreTask('recurring-source', {
+            title: 'Daily handoff',
+            status: 'next',
+            recurrence: 'daily',
+            dueDate: '2026-07-01T09:00:00.000Z',
+            checklist: [{ id: 'old-check', title: 'Confirm handoff', isCompleted: true }],
+            attachments: [{
+                id: 'old-file', kind: 'file', title: 'Handoff', uri: '/home/dd/handoff.pdf',
+                cloudKey: 'attachments/handoff.pdf',
+                createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z',
+            }],
+        });
+        const unrelated = createStoreTask('unrelated');
+        const allTasks = [source, unrelated];
+        const originalRows = structuredClone(allTasks);
+        let nextId = 0;
+        const plan = () => planTaskUpdateEffects({
+            task: source,
+            preparedUpdates: { status: 'done' },
+            allTasks,
+            allProjects: [],
+            allSections: [],
+            now,
+            deviceId,
+            createId: () => `new-${++nextId}`,
+        });
+
+        const first = plan();
+        expect(first.updatedTask).toMatchObject({ id: source.id, status: 'done', completedAt: now, rev: 2, revBy: deviceId });
+        expect(first.recurringFollowUpTask).toMatchObject({
+            status: 'next', dueDate: '2026-07-02T09:00:00.000Z', rev: 1, revBy: deviceId,
+        });
+        expect(first.recurringFollowUpTask?.id).toMatch(/^new-/);
+        expect(first.recurringFollowUpTask?.checklist).toEqual([
+            { id: expect.stringMatching(/^new-/), title: 'Confirm handoff', isCompleted: false },
+        ]);
+        expect(first.recurringFollowUpTask?.attachments).toEqual([
+            expect.objectContaining({ id: expect.stringMatching(/^new-/), cloudKey: 'attachments/handoff.pdf' }),
+        ]);
+        expect(first.tasks).toEqual([first.updatedTask, unrelated, first.recurringFollowUpTask]);
+        expect(first.tasks[1]).toBe(unrelated);
+        expect(first.projects).toEqual([]);
+        expect(first.sections).toEqual([]);
+        expect(first.reactivatedProjectIds).toEqual([]);
+        expect(allTasks).toEqual(originalRows);
+
+        const existingFollowUp = first.recurringFollowUpTask!;
+        const withExisting = [source, unrelated, existingFollowUp];
+        const second = planTaskUpdateEffects({
+            task: source,
+            preparedUpdates: { status: 'done' },
+            allTasks: withExisting,
+            allProjects: [],
+            allSections: [],
+            now,
+            deviceId,
+            createId: () => `retry-${++nextId}`,
+        });
+        expect(second.recurringFollowUpTask).toBeNull();
+        expect(second.tasks).toHaveLength(3);
+        expect(second.tasks[2]).toBe(existingFollowUp);
+        expect(withExisting).toEqual([source, unrelated, existingFollowUp]);
+    });
+
+    it('reactivates an archived project, its section and sibling without changing unrelated rows', () => {
+        const archivedAt = '2026-06-30T10:00:00.000Z';
+        const project = createStoreProject('archived-project', { status: 'archived' });
+        const otherProject = createStoreProject('other-project');
+        const source = createStoreTask('reopen-source', {
+            status: 'done', projectId: project.id, completedAt: archivedAt,
+            projectArchivedAt: archivedAt, statusBeforeProjectArchive: 'next',
+        });
+        const sibling = createStoreTask('archived-sibling', {
+            status: 'done', projectId: project.id, completedAt: archivedAt,
+            projectArchivedAt: archivedAt, statusBeforeProjectArchive: 'waiting',
+        });
+        const unrelated = createStoreTask('unrelated', { projectId: otherProject.id });
+        const section: Section = {
+            id: 'archived-section', projectId: project.id, title: 'Steps', order: 0,
+            createdAt: '2026-04-01T00:00:00.000Z', updatedAt: archivedAt,
+            deletedAt: archivedAt, projectArchivedAt: archivedAt, rev: 2, revBy: 'device-a',
+        };
+        const otherSection: Section = { ...section, id: 'other-section', projectId: otherProject.id,
+            deletedAt: undefined, projectArchivedAt: undefined };
+        const allTasks = [source, sibling, unrelated];
+        const allProjects = [project, otherProject];
+        const allSections = [section, otherSection];
+        const originals = structuredClone({ allTasks, allProjects, allSections });
+
+        const effects = planTaskUpdateEffects({
+            task: source,
+            preparedUpdates: { status: 'next' },
+            allTasks, allProjects, allSections, now, deviceId,
+        });
+
+        expect(effects.updatedTask).toMatchObject({ id: source.id, status: 'next', rev: 2, revBy: deviceId });
+        expect(effects.updatedTask.completedAt).toBeUndefined();
+        expect(effects.recurringFollowUpTask).toBeNull();
+        expect(effects.reactivatedProjectIds).toEqual([project.id]);
+        expect(effects.tasks.map((task) => task.id)).toEqual([source.id, sibling.id, unrelated.id]);
+        expect(effects.tasks[0]).toBe(effects.updatedTask);
+        expect(effects.tasks[1]).toMatchObject({ id: sibling.id, status: 'done', rev: 2, revBy: deviceId });
+        expect(effects.tasks[1].projectArchivedAt).toBeUndefined();
+        expect(effects.tasks[1].statusBeforeProjectArchive).toBeUndefined();
+        expect(effects.tasks[2]).toBe(unrelated);
+        expect(effects.projects[0]).toMatchObject({ id: project.id, status: 'active', rev: 2, revBy: deviceId });
+        expect(effects.projects[1]).toBe(otherProject);
+        expect(effects.sections[0]).toMatchObject({ id: section.id, rev: 3, revBy: deviceId });
+        expect(effects.sections[0].deletedAt).toBeUndefined();
+        expect(effects.sections[0].projectArchivedAt).toBeUndefined();
+        expect(effects.sections[1]).toBe(otherSection);
+        expect({ allTasks, allProjects, allSections }).toEqual(originals);
+    });
 });
 
 describe('TaskStore', () => {
@@ -2739,6 +2860,82 @@ describe('TaskStore', () => {
         }
     });
 
+    it('refreshes normalized focus after the local day changes without replacing unchanged tasks', async () => {
+        const currentDay = new Date(2026, 8, 27, 12);
+        const nowIso = currentDay.toISOString();
+        vi.setSystemTime(currentDay);
+        let stored: AppData = {
+            tasks: [
+                createStoreTask('waiting-focus', {
+                    status: 'waiting', startTime: '2026-09-27', reviewAt: '2026-09-27',
+                    isFocusedToday: true, focusOrder: 0,
+                }),
+                createStoreTask('next-focus', {
+                    status: 'next', startTime: '2026-09-27', isFocusedToday: true, focusOrder: 1,
+                }),
+                createStoreTask('unchanged', { status: 'next' }),
+            ],
+            projects: [createStoreProject('project-1')],
+            sections: [], areas: [], people: [],
+            settings: {
+                deviceId: 'device-a', analyticsProfileId: 'profile-a',
+                migrations: { version: 9999, lastAutoArchiveAt: nowIso, lastTombstoneCleanupAt: nowIso },
+                gtd: { taskEditor: { defaultsVersion: 9999 }, focusGroupByDefaultsVersion: 1 },
+            },
+        };
+        mockStorage.getData = vi.fn(async () => structuredClone(stored));
+        mockStorage.saveData = vi.fn(async (data) => { stored = structuredClone(data); });
+        await useTaskStore.getState().fetchData({ silent: true });
+        await flushPendingSave();
+        vi.mocked(mockStorage.saveData).mockClear();
+        const loaded = useTaskStore.getState();
+        const originalWaiting = loaded._tasksById.get('waiting-focus');
+        expect(originalWaiting?.isFocusedToday).toBe(true);
+        expect(originalWaiting?.focusOrder).toBe(0);
+        const unchangedTask = loaded._tasksById.get('unchanged');
+        const unchangedProject = loaded._projectsById.get('project-1');
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+        // A timezone or clock change can make the same persisted start date future again.
+        vi.setSystemTime(new Date(2026, 8, 26, 12));
+        await loaded.fetchData({ silent: true });
+        await flushPendingSave();
+        const normalized = useTaskStore.getState();
+        expect(normalized._tasksById.get('waiting-focus')).toMatchObject({
+            isFocusedToday: false, focusOrder: undefined, rev: originalWaiting?.rev,
+            updatedAt: originalWaiting?.updatedAt,
+        });
+        expect(normalized._tasksById.get('next-focus')).toMatchObject({ isFocusedToday: true, focusOrder: undefined });
+        expect(normalized._tasksById.get('unchanged')).toBe(unchangedTask);
+        expect(normalized._projectsById.get('project-1')).toBe(unchangedProject);
+        expect(mockStorage.saveData).not.toHaveBeenCalled();
+        expect(stored.tasks[0]).toMatchObject({ isFocusedToday: true, focusOrder: 0 });
+        const diagnostic = infoSpy.mock.calls.find(([message]) => message === 'Reload refreshed normalized task focus');
+        expect(parseLoggedContext(diagnostic?.[1]?.context)).toEqual({
+            releaseCheck: 'v1.3.3/reload-focus-normalization', count: 2,
+        });
+
+        const listener = vi.fn();
+        const unsubscribe = useTaskStore.subscribe(listener);
+        try {
+            await normalized.fetchData({ silent: true });
+            expect(useTaskStore.getState()).toBe(normalized);
+            expect(listener).not.toHaveBeenCalled();
+            expect(infoSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            unsubscribe();
+        }
+
+        vi.setSystemTime(currentDay);
+        await normalized.fetchData({ silent: true });
+        await flushPendingSave();
+        const restored = useTaskStore.getState();
+        expect(restored._tasksById.get('waiting-focus')).toMatchObject({ isFocusedToday: true, focusOrder: 0 });
+        expect(restored._tasksById.get('next-focus')).toMatchObject({ isFocusedToday: true, focusOrder: 1 });
+        expect(restored._tasksById.get('unchanged')).toBe(unchangedTask);
+        expect(mockStorage.saveData).not.toHaveBeenCalled();
+    });
+
     it('advances lastDataChangeAt when a load migration mutates synced entities', async () => {
         // dedupe-areas-by-name tombstones a duplicate area and remaps the projects pointing at
         // it. That is a synced-entity mutation, so a sync in flight during the load has to see
@@ -4495,26 +4692,64 @@ describe('TaskStore', () => {
         expect(updatedProject?.color).toBe('#ef4444');
     });
 
-    it('returns null when restoring a deleted area fails', async () => {
-        const { addArea, deleteArea } = useTaskStore.getState();
-        const area = await addArea('Work');
-        expect(area).not.toBeNull();
-        if (!area) return;
-
-        await deleteArea(area.id);
-
-        const originalRestoreArea = useTaskStore.getState().restoreArea;
+    it('publishes tombstone restoration and legacy descendants in one Area addition', async () => {
+        const deletedAt = '2026-04-01T12:10:00.000Z';
+        const area = createStoreArea('restore-area', { name: 'Work', color: '#3b82f6', deletedAt, rev: 2 });
+        const unrelatedArea = createStoreArea('other-area', { name: 'Home', order: 1 });
+        const project = createStoreProject('restore-project', {
+            areaId: area.id, areaTitle: 'Work', color: '#3b82f6', deletedAt, rev: 2,
+        });
+        const unrelatedProject = createStoreProject('other-project', { areaId: unrelatedArea.id });
+        const section: Section = {
+            id: 'restore-section', projectId: project.id, title: 'Planning', order: 0,
+            createdAt: '2026-04-01T00:00:00.000Z', updatedAt: deletedAt,
+            deletedAt, rev: 2, revBy: 'device-a',
+        };
+        const directTask = createStoreTask('direct-task', { areaId: area.id, deletedAt, rev: 2 });
+        const projectTask = createStoreTask('project-task', {
+            projectId: project.id, sectionId: section.id, deletedAt, rev: 2,
+        });
+        const unrelatedTask = createStoreTask('other-task', { projectId: unrelatedProject.id });
         useTaskStore.setState({
-            restoreArea: async () => ({ success: false, error: 'Failed to restore area' }),
+            settings: { deviceId: 'device-a' },
+            _allAreas: [area, unrelatedArea],
+            _allProjects: [project, unrelatedProject],
+            _allSections: [section],
+            _allTasks: [directTask, projectTask, unrelatedTask],
         });
 
+        const published: Array<{ areas: Area[]; projects: Project[]; sections: Section[]; tasks: Task[] }> = [];
+        const unsubscribe = useTaskStore.subscribe((state) => published.push({
+            areas: state._allAreas, projects: state._allProjects,
+            sections: state._allSections, tasks: state._allTasks,
+        }));
         try {
-            const restored = await useTaskStore.getState().addArea('Work');
-            expect(restored).toBeNull();
-            expect(useTaskStore.getState().error).toBe('Failed to restore area');
+            const restored = await useTaskStore.getState().addArea(' work ', { color: '#ef4444' });
+            expect(restored).toMatchObject({ id: area.id, name: 'work', color: '#ef4444', rev: 4 });
         } finally {
-            useTaskStore.setState({ restoreArea: originalRestoreArea });
+            unsubscribe();
         }
+
+        expect(published).toHaveLength(1);
+        const state = published[0];
+        expect(state.areas.find((row) => row.id === area.id)?.deletedAt).toBeUndefined();
+        expect(state.projects.find((row) => row.id === project.id)).toMatchObject({
+            deletedAt: undefined, areaId: area.id, areaTitle: 'work', color: '#ef4444', rev: 4,
+        });
+        expect(state.sections.find((row) => row.id === section.id)).toMatchObject({ deletedAt: undefined, rev: 3 });
+        expect(state.tasks.find((row) => row.id === directTask.id)).toMatchObject({ deletedAt: undefined, rev: 3 });
+        expect(state.tasks.find((row) => row.id === projectTask.id)).toMatchObject({
+            deletedAt: undefined, sectionId: section.id, rev: 3,
+        });
+        expect(state.areas.find((row) => row.id === unrelatedArea.id)).toBe(unrelatedArea);
+        expect(state.projects.find((row) => row.id === unrelatedProject.id)).toBe(unrelatedProject);
+        expect(state.tasks.find((row) => row.id === unrelatedTask.id)).toBe(unrelatedTask);
+        await flushPendingSave();
+        const saved = vi.mocked(mockStorage.saveData).mock.calls.at(-1)?.[0] as AppData;
+        expect(saved.areas.find((row) => row.id === area.id)).toEqual(state.areas.find((row) => row.id === area.id));
+        expect(saved.projects.find((row) => row.id === project.id)).toEqual(state.projects.find((row) => row.id === project.id));
+        expect(saved.sections.find((row) => row.id === section.id)).toEqual(state.sections.find((row) => row.id === section.id));
+        expect(saved.tasks.find((row) => row.id === projectTask.id)).toEqual(state.tasks.find((row) => row.id === projectTask.id));
     });
 
     it('returns action failure when updateArea targets a missing area', async () => {

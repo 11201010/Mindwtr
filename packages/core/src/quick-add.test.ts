@@ -324,6 +324,130 @@ describe('quick-add', () => {
         expect(result.props.dueDate).toBe('2025-01-08');
     });
 
+    describe('date commands beside project tokens', () => {
+        const now = new Date(2026, 8, 27, 10);
+        const projects = [
+            { id: 'p1', title: 'Project', status: 'active' } as Project,
+            { id: 'p2', title: 'Project Name', status: 'active' } as Project,
+        ];
+
+        it.each([
+            ['+Project', 'Task', 'p1', undefined],
+            ['+Project Name', 'Task', 'p2', undefined],
+            ['+Project Name extra', 'Task extra', 'p2', undefined],
+            ['+New Project', 'Task', undefined, 'New Project'],
+            ['+"New Project" extra', 'Task extra', undefined, 'New Project'],
+            ["+'New Project' extra", 'Task extra', undefined, 'New Project'],
+            ['+“New Project” extra', 'Task extra', undefined, 'New Project'],
+            ['/project:p1', 'Task', 'p1', undefined],
+        ])('keeps review dates independent of project order: %s', (token, title, projectId, projectTitle) => {
+            for (const input of [`Task /review:today ${token}`, `Task ${token} /review:today`]) {
+                const result = parseQuickAdd(input, projects, now);
+                expect(result.invalidDateCommands).toBeUndefined();
+                expect(result.title).toBe(title);
+                expect(result.props).toEqual({ reviewAt: '2026-09-27', ...(projectId ? { projectId } : {}) });
+                expect(result.projectTitle).toBe(projectTitle);
+            }
+        });
+
+        it.each([
+            ['start', 'startTime'],
+            ['due', 'dueDate'],
+            ['review', 'reviewAt'],
+        ] as const)('keeps multi-word /%s dates with and without a project', (command, field) => {
+            for (const suffix of ['', ' +Project']) {
+                const result = parseQuickAdd(`Task /${command}:in 3 days${suffix}`, projects, now);
+                expect(result.title).toBe('Task');
+                expect(result.invalidDateCommands).toBeUndefined();
+                expect(result.props).toEqual({ [field]: '2026-09-30', ...(suffix ? { projectId: 'p1' } : {}) });
+            }
+        });
+
+        it('keeps explicit times and the following slash commands after a project', () => {
+            const result = parseQuickAdd('Task /review:tomorrow at 3pm +Project /due:in 3 days /next', projects, now, undefined, {
+                defaultScheduleTime: '09:30',
+            });
+            expect(result.title).toBe('Task');
+            expect(result.invalidDateCommands).toBeUndefined();
+            expect(result.props).toEqual({
+                reviewAt: new Date(2026, 8, 28, 15).toISOString(),
+                dueDate: '2026-09-30',
+                projectId: 'p1',
+                status: 'next',
+            });
+        });
+
+        it.each([
+            ['+0200', '2026-09-27T13:00:00.000Z'],
+            ['+02:00', '2026-09-27T13:00:00.000Z'],
+            ['+05:30', '2026-09-27T09:30:00.000Z'],
+            ['-0400', '2026-09-27T19:00:00.000Z'],
+            // Preserve Chrono's existing acceptance rather than adding offset validation.
+            ['+02:99', '2026-09-27T11:21:00.000Z'],
+        ])('keeps an accepted UTC offset %s before a project', (offset, reviewAt) => {
+            for (const suffix of ['', ' +Project']) {
+                const result = parseQuickAdd(`Task /review:today at 3pm ${offset}${suffix}`, projects, now);
+                expect(result.title).toBe('Task');
+                expect(result.invalidDateCommands).toBeUndefined();
+                expect(result.props).toEqual({ reviewAt, ...(suffix ? { projectId: 'p1' } : {}) });
+            }
+        });
+
+        it.each([
+            ['start', 'startTime'],
+            ['due', 'dueDate'],
+            ['review', 'reviewAt'],
+        ] as const)('rejects malformed numeric offsets in /%s instead of treating them as projects', (command, field) => {
+            for (const offset of ['+2500', '+9999', '+02:0', '+02:']) {
+                for (const suffix of ['', ' +Project']) {
+                    const value = `today at 3pm ${offset}${suffix}`;
+                    const result = parseQuickAdd(`Task /${command}:${value}`, projects, now);
+                    expect(result.props[field]).toBeUndefined();
+                    expect(result.invalidDateCommands).toEqual([`/${command}:${value}`]);
+                }
+            }
+        });
+
+        it('keeps numeric project names when the date has no explicit time or the project is delimited', () => {
+            const dateOnly = parseQuickAdd('Task /review:today +2500', projects, now);
+            expect(dateOnly.invalidDateCommands).toBeUndefined();
+            expect(dateOnly.props.reviewAt).toBe('2026-09-27');
+            expect(dateOnly.projectTitle).toBe('2500');
+            expect(dateOnly.title).toBe('Task');
+
+            const quoted = parseQuickAdd('Task /review:today at 3pm +"2500"', projects, now);
+            expect(quoted.invalidDateCommands).toBeUndefined();
+            expect(quoted.props.reviewAt).toBe(new Date(2026, 8, 27, 15).toISOString());
+            expect(quoted.projectTitle).toBe('2500');
+            expect(quoted.title).toBe('Task');
+
+            const explicit = parseQuickAdd('Task /review:today at 3pm /project:2500', projects, now);
+            expect(explicit.invalidDateCommands).toBeUndefined();
+            expect(explicit.props).toEqual({ reviewAt: new Date(2026, 8, 27, 15).toISOString(), projectId: '2500' });
+            expect(explicit.title).toBe('Task');
+        });
+
+        it.each(['+Project', '@home', '#urgent', '!Area', '%Person', '/next'])('leaves %s intact in the date-only parser', (token) => {
+            const result = parseQuickAddDateCommands(`Task /review:today ${token}`, now);
+            expect(result.title).toBe(`Task ${token}`);
+            expect(result.props).toEqual({ reviewAt: '2026-09-27' });
+            expect(result.invalidDateCommands).toBeUndefined();
+        });
+
+        it('still rejects an invalid date before a project or an escaped project marker', () => {
+            const invalid = parseQuickAdd('Task /review:today garbage +Project', projects, now);
+            expect(invalid.props.reviewAt).toBeUndefined();
+            expect(invalid.invalidDateCommands).toEqual(['/review:today garbage +Project']);
+            const missing = parseQuickAdd('Task /review: +Project', projects, now);
+            expect(missing.props.reviewAt).toBeUndefined();
+            expect(missing.invalidDateCommands).toEqual(['/review:+Project']);
+            const escaped = parseQuickAddDateCommands(String.raw`Task /review:today \+Project`, now);
+            expect(escaped.title).toBe('Task /review:today +Project');
+            expect(escaped.props).toEqual({});
+            expect(escaped.invalidDateCommands).toHaveLength(1);
+        });
+    });
+
     it('uses default schedule time for start and review commands without explicit time', () => {
         const now = new Date('2025-01-01T10:00:00Z');
         const result = parseQuickAdd(

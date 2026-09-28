@@ -1,0 +1,249 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createAreaDeleteMethods, type NativeAreaDeleteRequest } from './native-host-contract-area-delete';
+import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import type { AppData, Area, Project, Section, Task } from './types';
+import { mergeAppData } from './sync';
+import { sameAreaAdditionRow } from './store-projects/area-actions';
+import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from './task-sync-schema';
+
+const now = '2026-09-27T15:00:00.000Z';
+const area = (id = 'work', overrides: Partial<Area> = {}): Area => ({
+    id, name: 'Work', color: '#3b82f6', order: 0, rev: 3, revBy: 'old-device',
+    createdAt: now, updatedAt: now, ...overrides,
+});
+const task = (id: string, overrides: Partial<Task> = {}): Task => ({
+    id, title: `Task ${id}`, status: 'next', tags: ['#test'], contexts: ['@home'], areaId: 'work',
+    description: 'Keep this metadata', dueDate: '2026-10-01',
+    checklist: [{ id: `${id}-check`, title: 'Check', isCompleted: true }],
+    attachments: [{ id: `${id}-attachment`, kind: 'link', title: 'Source', uri: 'https://example.test/',
+        createdAt: now, updatedAt: now }],
+    rev: 5, revBy: 'old-device', createdAt: now, updatedAt: now, ...overrides,
+});
+const project = (id: string, overrides: Partial<Project> = {}): Project => ({
+    id, title: id, status: 'active', color: '#3b82f6', order: 0, tagIds: [], areaId: 'work',
+    areaTitle: 'Work', rev: 4, revBy: 'old-device', createdAt: now, updatedAt: now, ...overrides,
+});
+
+async function open(initial: Partial<AppData> = {}, fail?: () => boolean) {
+    await flushPendingSave(); resetForTests();
+    let data: AppData = { tasks: [], projects: [], sections: [], areas: [area()], people: [],
+        settings: { deviceId: 'area-device' }, ...initial };
+    let saves = 0;
+    setStorageAdapter({ getData: async () => data, saveData: async (next) => {
+        if (fail?.()) throw new Error('disk unavailable');
+        data = structuredClone(next); saves++;
+    } });
+    useTaskStore.setState({ _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+        settings: {}, error: null, persistenceFailure: null, isLoading: false, lastDataChangeAt: 0 } as never);
+    await useTaskStore.getState().fetchData({ throwOnError: true });
+    const methods = createAreaDeleteMethods({ readiness: () => ({ ok: true, value: null }),
+        save: async () => {
+            try { await flushPendingSave(); return { ok: true as const, value: null }; }
+            catch (error) { return { ok: false as const, error: { code: 'SAVE_FAILED' as const,
+                message: error instanceof Error ? error.message : String(error) } }; }
+        }, revision: () => 'revision',
+        sortedAreas: () => [...useTaskStore.getState()._allAreas].filter((row) => !row.deletedAt)
+            .sort((a, b) => a.order !== b.order ? a.order - b.order : a.name.localeCompare(b.name)),
+    });
+    const request = (): NativeAreaDeleteRequest => {
+        const options = methods.getAreaDeleteOptions();
+        if (!options.ok) throw new Error(JSON.stringify(options.error));
+        const selected = options.value.areas.find((row) => row.id === 'work')!;
+        const { id: _id, projectCount: _count, canDelete: _canDelete, ...expected } = selected;
+        return { requestId: '03f9120c-cf05-4711-9b1e-7fcbeb055382', areaId: selected.id, expected };
+    };
+    return { methods, request, data: () => data, saves: () => saves };
+}
+
+afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
+
+describe('prepared native Area delete', () => {
+    it('accepts a Foundation-style sorted-key journal for a rich linked Task', async () => {
+        const first = task('linked');
+        const linked = { ...first, attachments: [first.attachments![0],
+            { ...first.attachments![0], id: 'second-attachment' }] };
+        const attachmentIndex = TASK_SQLITE_COLUMNS.indexOf('attachments');
+        const attachmentText = taskToSqliteRow(linked)[attachmentIndex];
+        const { methods, request, data, saves } = await open({ tasks: [linked] });
+        const input = request();
+        const plan = methods.prepareAreaDelete(input);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        const sortKeys = (value: unknown): unknown => Array.isArray(value) ? value.map(sortKeys)
+            : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value)
+                .sort(([a], [b]) => a.localeCompare(b)).map(([key, nested]) => [key, sortKeys(nested)])) : value;
+        const frozen = JSON.parse(JSON.stringify(sortKeys({ request: input, prepared: plan.value.prepared }))) as
+            { request: typeof input; prepared: typeof plan.value.prepared };
+        expect(sameAreaAdditionRow.task(linked, sortKeys(linked) as Task)).toBe(true);
+        expect(sameAreaAdditionRow.task(linked, { ...linked,
+            attachments: [...linked.attachments].reverse() })).toBe(false);
+        expect(sameAreaAdditionRow.task(linked, { ...linked,
+            attachments: [{ ...linked.attachments[0], uri: 'https://changed.test/' }, linked.attachments[1]] }))
+            .toBe(false);
+        expect(methods.validatePreparedAreaDelete(frozen)).toMatchObject({ ok: true });
+        expect(await methods.commitPreparedAreaDelete(frozen))
+            .toMatchObject({ ok: true, value: { areaId: 'work' } });
+        expect(data().tasks[0].areaId).toBeUndefined();
+        expect(taskToSqliteRow(data().tasks[0])[attachmentIndex]).toBe(attachmentText);
+        const count = saves();
+        useTaskStore.setState((state) => ({ _allTasks: [...state._allTasks, task('new')] }));
+        expect(await methods.commitPreparedAreaDelete(frozen)).toMatchObject({ ok: true,
+            value: { areaId: 'work' } });
+        expect(saves()).toBe(count);
+    });
+
+    it('counts all live Project statuses but excludes tombstones, matching RN manager policy', async () => {
+        const { methods, request, saves } = await open({ projects: [
+            project('archived', { status: 'archived' }), project('deferred', { status: 'someday' }),
+            project('deleted', { deletedAt: now }),
+        ] });
+        expect(methods.getAreaDeleteOptions()).toMatchObject({ ok: true, value: {
+            areas: [{ id: 'work', projectCount: 2, canDelete: false }] } });
+        expect(methods.prepareAreaDelete(request())).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(saves()).toBe(0);
+    });
+
+    it('detaches direct and trashed Tasks, preserving rich metadata and unrelated rows', async () => {
+        const linked = task('linked');
+        const trashed = task('trashed', { deletedAt: now });
+        const nested = task('nested', { areaId: undefined, projectId: 'deleted', sectionId: 'section' });
+        const deleted = project('deleted', { deletedAt: now });
+        const section: Section = { id: 'section', projectId: 'deleted', title: 'Section', order: 0,
+            createdAt: now, updatedAt: now };
+        const { methods, request, data } = await open({ tasks: [linked, trashed, nested],
+            projects: [deleted], sections: [section] });
+        const nestedBefore = useTaskStore.getState()._allTasks.find((row) => row.id === 'nested');
+        const sectionBefore = useTaskStore.getState()._allSections.find((row) => row.id === 'section');
+        const input = request();
+        const plan = methods.prepareAreaDelete(input);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        expect(plan.value.prepared.scope.tasks.map((row) => row.id)).toEqual(['linked', 'trashed']);
+        expect(plan.value.prepared.scope.liveProjects).toEqual([]);
+        expect(await methods.commitPreparedAreaDelete({ request: input, prepared: plan.value.prepared }))
+            .toEqual({ ok: true, value: { areaId: 'work' } });
+        expect(data().areas[0].deletedAt).toBeDefined();
+        expect(data().projects[0]).toEqual(deleted);
+        expect(data().tasks.map((row) => row.id)).toEqual(['linked', 'trashed', 'nested']);
+        for (const { before, after } of plan.value.prepared.effect.tasks) {
+            const persisted = data().tasks.find((row) => row.id === before.id)!;
+            expect(persisted).toEqual(after);
+            expect(persisted).toMatchObject({ title: before.title, tags: before.tags,
+                contexts: before.contexts, checklist: before.checklist, attachments: before.attachments,
+                dueDate: before.dueDate });
+            expect(persisted.deletedAt).toBe(before.deletedAt);
+        }
+        expect(data().tasks[2]).toEqual(nestedBefore);
+        expect(data().sections.find((row) => row.id === 'section')).toEqual(sectionBefore);
+        const canonical = mergeAppData(data(), data(), { nowIso: now });
+        expect(mergeAppData(canonical, data(), { nowIso: now })).toEqual(canonical);
+    });
+
+    it('keeps direct deleteArea broad for a linked live Project', async () => {
+        const { data } = await open({ projects: [project('active')], tasks: [task('direct')] });
+        expect((await useTaskStore.getState().deleteArea('work')).success).toBe(true);
+        await flushPendingSave();
+        expect(data().projects[0].areaId).toBeUndefined();
+        expect(data().projects[0].areaTitle).toBeUndefined();
+        expect(data().tasks[0].areaId).toBeUndefined();
+        expect(data().areas[0].deletedAt).toBeDefined();
+    });
+
+    it('refuses changed linked Task membership, Task content, and new live Project before first apply', async () => {
+        const original = task('linked');
+        const { methods, request, saves } = await open({ tasks: [original] });
+        const input = request();
+        const plan = methods.prepareAreaDelete(input);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        const envelope = { request: input, prepared: plan.value.prepared };
+        useTaskStore.setState({ _allTasks: [original, task('new')] });
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allTasks: [task('linked', { title: 'Changed' })] });
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allTasks: [original], _allProjects: [project('new')] });
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(saves()).toBe(0);
+    });
+
+    it('retries failed persistence exactly, then receipts before changed membership guards', async () => {
+        let failed = true;
+        const { methods, request, data, saves } = await open({ tasks: [task('linked')] }, () => failed);
+        const input = request();
+        const plan = methods.prepareAreaDelete(input);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        const envelope = { request: input, prepared: plan.value.prepared };
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'SAVE_FAILED' } });
+        expect(data().areas[0].deletedAt).toBeUndefined();
+        failed = false;
+        expect(await methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: true });
+        expect(data().tasks.find((row) => row.id === 'linked')?.updatedAt)
+            .toBe(plan.value.prepared.updateAt);
+        const saved = structuredClone(data());
+        const second = await open(saved);
+        await flushPendingSave();
+        const before = second.saves();
+        expect(sameAreaAdditionRow.area(useTaskStore.getState()._allAreas.find((row) => row.id === 'work')!,
+            plan.value.prepared.effect.area.after)).toBe(true);
+        expect(useTaskStore.getState()._allTasks.find((row) => row.id === 'linked'))
+            .toEqual(plan.value.prepared.effect.tasks[0].after);
+        expect(sameAreaAdditionRow.task(useTaskStore.getState()._allTasks.find((row) => row.id === 'linked')!,
+            plan.value.prepared.effect.tasks[0].after)).toBe(true);
+        useTaskStore.setState({ _allTasks: [...useTaskStore.getState()._allTasks, task('new')],
+            _allProjects: [project('new')] });
+        expect(await second.methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: true });
+        expect(second.saves()).toBe(before);
+        useTaskStore.setState({ _allTasks: useTaskStore.getState()._allTasks.map((row) => row.id === 'linked'
+            ? { ...row, title: 'Later edit', rev: (row.rev ?? 0) + 1 } : row) });
+        expect(await second.methods.commitPreparedAreaDelete(envelope)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(second.saves()).toBe(before);
+        expect(saves()).toBeGreaterThan(0);
+    });
+
+    it('applies a cold prepared request with a missing device ID only once', async () => {
+        const first = await open({ tasks: [task('linked')], settings: {} });
+        useTaskStore.setState({ settings: {} });
+        const input = first.request();
+        const plan = first.methods.prepareAreaDelete(input);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        expect(plan.value.prepared.deviceIdBefore).toBeNull();
+        expect(plan.value.prepared.deviceIdToInitialize).toMatch(/^[0-9a-f]{8}-/);
+        const snapshot = structuredClone(first.data());
+        const second = await open(snapshot);
+        await flushPendingSave();
+        useTaskStore.setState({ settings: {} });
+        expect(await second.methods.commitPreparedAreaDelete({ request: input, prepared: plan.value.prepared }))
+            .toMatchObject({ ok: true, value: { areaId: 'work' } });
+        expect(second.data().settings.deviceId).toBe(plan.value.prepared.deviceIdToInitialize);
+        expect(second.data().tasks[0].areaId).toBeUndefined();
+        expect(second.data().areas[0].deletedAt).toBe(plan.value.prepared.updateAt);
+    });
+
+    it('rejects forged/incomplete/oversized payloads and probes nil pending without a write', async () => {
+        const { methods, request, saves } = await open({ tasks: [task('linked')] });
+        const input = request();
+        const plan = methods.prepareAreaDelete(input);
+        if (!plan.ok) throw new Error(JSON.stringify(plan));
+        const envelope = { request: input, prepared: plan.value.prepared };
+        const forged = structuredClone(envelope);
+        forged.prepared.scope.liveProjects = [project('active')];
+        expect(methods.validatePreparedAreaDelete(forged)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const incomplete = structuredClone(envelope);
+        (incomplete.prepared.scope.tasks[0] as Partial<Task>).tags = undefined;
+        expect(methods.validatePreparedAreaDelete(incomplete)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        const changed = structuredClone(envelope);
+        changed.prepared.effect.tasks[0].after.title = 'Forged';
+        expect(methods.validatePreparedAreaDelete(changed)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(methods.prepareAreaDelete({ ...input, areaId: 'x'.repeat(2_000_001) }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(methods.probeAreaDeleteOutcome(input)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(saves()).toBe(0);
+    });
+});

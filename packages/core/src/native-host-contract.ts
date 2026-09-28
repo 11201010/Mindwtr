@@ -2,10 +2,10 @@ import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
-import { logInfo } from './logger';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { getProjectSectionsForView, getSequentialProjectTaskCues, isSelectableProjectForTaskAssignment, type ProjectSequenceTaskCue } from './project-utils';
+import { getProjectDetailsPresentation, type ProjectDetailsMetadata } from './project-details-presentation';
 import {
     buildProjectTaskListModel,
     getProjectDetailTaskListOptions,
@@ -16,10 +16,11 @@ import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
 import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { isRecurrenceRule, parseRRuleString } from './recurrence';
-import { createTaskDraft, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
+import { createTaskDraft, isTaskDraftDateInputBaseline, resolveTaskDraftTitle, serializeTaskDraftTokens, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
 import { getRetainedTaskContexts } from './task-token-usage';
 import {
     applyTaskDraftPatch,
+    buildTaskDraftDestinationPicker,
     buildTaskEditorModel,
     buildTaskEditUpdatePatch,
     clearInvalidTaskDraftSection,
@@ -29,6 +30,7 @@ import {
     TASK_EDITOR_STATUS_OPTIONS,
     type TaskEditorModel,
     type TaskEditorSuggestions,
+    type TaskDraftDestinationPicker,
 } from './task-editor-model';
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import { computeGlobalSearchResults, type DuePreset, type GlobalSearchScope } from './global-search-filter';
@@ -77,12 +79,23 @@ import { isTaskCancelled, isTaskFinished } from './task-status';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup, type TaskRowMeta, type TaskRowMetaInput } from './task-row-meta';
 import type { ProjectDeadlineBoost } from './task-utils';
 import { getEnglishI18nValue, getTranslator, tFallback } from './i18n';
+import { logInfo, logWarn } from './logger';
 import { isSupportedLanguage } from './i18n/i18n-constants';
 import { loadTranslations } from './i18n/i18n-loader';
 import { resolveLanguageFromLocale } from './i18n/i18n-storage';
 import type { Language } from './i18n/i18n-types';
 import type { Area, ChecklistItem, Project, RecurrenceWeekday, RelativeStartOffsetUnit, Task, TaskPriority, TaskStatus, TimeEstimate } from './types';
 import { generateUUID } from './uuid';
+import {
+    isNativeInboxWriteRequest,
+    prepareNativeInboxWrite,
+    readNativePreparedInboxWrite,
+    type NativeInboxCommitRequest,
+    type NativeInboxSkipRequest,
+    type NativeInboxWriteRequest,
+    type NativeInboxDurableResult,
+    type NativePreparedInboxWrite,
+} from './native-host-contract-process-inbox';
 import { isCustomTimeEstimate as isCustomInboxTimeEstimate, TIME_ESTIMATE_OPTIONS as INBOX_TIME_ESTIMATES } from './calendar-scheduling';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
 import {
@@ -95,6 +108,7 @@ import {
     formatProcessInboxCommitMessage,
     formatProcessInboxProgressLabel,
     getProcessInboxProgress,
+    getProcessInboxNotice,
     getProcessInboxProjectChoices,
     INITIAL_PROCESS_INBOX_ANSWERS,
     PROCESS_INBOX_ENERGY_LEVEL_OPTIONS,
@@ -110,8 +124,10 @@ import {
     type ProcessInboxStepView,
 } from './process-inbox-model';
 import {
+    advanceProcessInboxSession,
     getProcessInboxCurrentCandidate,
     getProcessInboxRemainingCandidates,
+    skipCurrentProcessInboxTask,
     startProcessInboxSession,
     type ProcessInboxSession,
 } from './process-inbox-session';
@@ -167,11 +183,13 @@ import {
 } from './contexts-view-model';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { applyListFilterEdit, resolveListFilterState, type ListFilterEdit, type ListFilterState } from './list-filter-state';
-import type { ListFilterOptions } from './menu-views-model';
+import { isStatusListTaskReadOnly, type ListFilterOptions } from './menu-views-model';
 import { getProjectAccentColor } from './task-accent-color';
 import { formatListItemCount } from './list-count';
 import type { ContextOrTagMatchMode } from './hierarchy-utils';
 import { getInlineMarkdownPreview } from './markdown';
+import { createMarkdownLinkLookup, resolveMarkdownBlocks, type ResolvedMarkdownBlock } from './markdown-blocks';
+import { resolveAutoTextDirection } from './text-direction';
 import { taskMatchesFilterSelections } from './task-filter-selections';
 import type { TaskGroupItem } from './task-group-sections';
 import { DONE_TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
@@ -208,6 +226,23 @@ import {
 } from './native-host-contract-menu-views';
 import { createReviewViewMethods } from './native-host-contract-review-views';
 import { createQuickCaptureMethods } from './native-host-contract-quick-capture';
+import { createMindSweepMethods } from './native-host-contract-mind-sweep';
+import { createTaskDraftSaveMethods, getNativeTaskScheduleBase, getNativeTaskRecurrenceBase, type NativeTaskScheduleBase, type NativeTaskRecurrenceBase } from './native-host-contract-task-save';
+import { createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
+import { createProjectCreateMethods } from './native-host-contract-project-create';
+import { createProjectFocusMethods } from './native-host-contract-project-focus';
+import { createProjectRenameMethods } from './native-host-contract-project-rename';
+import { createProjectFlowMethods } from './native-host-contract-project-flow';
+import { createProjectNotesWriteMethods } from './native-host-contract-project-notes';
+import { createProjectStatusMethods } from './native-host-contract-project-status';
+import { createProjectDateMethods } from './native-host-contract-project-date';
+import { createProjectSectionMethods } from './native-host-contract-project-section';
+import { createProjectSectionRenameMethods } from './native-host-contract-project-section-rename';
+import { createProjectSectionDeleteMethods } from './native-host-contract-project-section-delete';
+import { createAreaCreateMethods } from './native-host-contract-area-create';
+import { createAreaColorMethods } from './native-host-contract-area-color';
+import { createAreaOrderMethods } from './native-host-contract-area-order';
+import { createAreaDeleteMethods } from './native-host-contract-area-delete';
 import { createCalendarViewMethods } from './native-host-contract-calendar';
 import { createBoardViewMethods } from './native-host-contract-board';
 import { createInboxViewMethods } from './native-host-contract-inbox-view';
@@ -223,8 +258,7 @@ import {
 import { createSettingsMethods } from './native-host-contract-settings';
 import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 export { NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
-import { createTaskViewMethods, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
-import { createMindSweepMethods } from './native-host-contract-mind-sweep';
+import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 
@@ -263,6 +297,15 @@ export type NativeTaskEditorModel = TaskEditorModel & {
     /** createTaskDraft(task). Fields whose value is undefined are absent over JSON. */
     draft: TaskDraft;
     focusStar: FocusStarAction & { queued: boolean; blockedText: string | null };
+    /** Keep the opening raw baseline through edit refreshes; never rebuild it from display strings. */
+    scheduleBase: NativeTaskScheduleBase;
+    recurrenceBase: NativeTaskRecurrenceBase;
+};
+
+export type NativeTaskDraftDestinationPicker = TaskDraftDestinationPicker & {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    id: string;
+    readOnly: boolean;
 };
 
 const CAPTURE_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
@@ -288,6 +331,8 @@ export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
     revealDate: string | null;
     revealLabel: string | null;
     laterToday: boolean;
+    /** Focus Today footer, already formatted with the user's clock preference. */
+    laterTodayLabel?: string | null;
     /**
      * The React Native row's labels and meta line, formatted with the user's date
      * settings and language. Render `meta.parts` in order. Inbox and project detail
@@ -404,13 +449,26 @@ export type NativeProjectDetailItem =
 export type NativeProjectDetail = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
+    mutationRevision: string;
     projectId: string;
     readOnly: boolean;
+    metadata: ProjectDetailsMetadata;
     total: number;
     items: NativeProjectDetailItem[];
 };
+export type NativeProjectNotes = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    projectId: string;
+    readOnly: boolean;
+    direction: 'ltr' | 'rtl';
+    total: number;
+    blocks: ResolvedMarkdownBlock[];
+    markdownLabels: { deletedTask: string; deletedProject: string; copyCode: string };
+};
 type ProjectDetailCache = {
     readOnly: boolean;
+    metadata: ProjectDetailsMetadata;
     items: ProjectTaskListItem[];
     cues: Map<string, ProjectSequenceTaskCue>;
     projectTitles: Map<string, string>;
@@ -597,11 +655,13 @@ const isMonthlyCustom = (value: unknown): value is TaskEditorMonthlyCustom => (
 
 /** A whole draft from a host: every field present and valid (JSON drops unset fields, or sends null). */
 const readTaskDraft = (value: unknown): TaskDraft | null => {
-    if (!isObjectRecord(value) || Object.keys(value).some((field) => !DRAFT_FIELD_SET.has(field))) return null;
+    if (!isObjectRecord(value) || Object.keys(value).some((field) => !DRAFT_FIELD_SET.has(field) && field !== 'dateInputBaseline')) return null;
+    if (Object.prototype.hasOwnProperty.call(value, 'dateInputBaseline') && !isTaskDraftDateInputBaseline(value.dateInputBaseline)) return null;
     const draft = toDraftValues(value) as TaskDraft;
     return TASK_DRAFT_FIELD_KEYS.every((field) => (
         (Object.prototype.hasOwnProperty.call(value, field) || UNSET_DRAFT_FIELDS.has(field))
-        && DRAFT_VALUE_CHECKS[field](draft[field])
+        // Stored history must round-trip without making Archived an editable status.
+        && ((field === 'status' && draft.status === 'archived') || DRAFT_VALUE_CHECKS[field](draft[field]))
     )) ? draft : null;
 };
 
@@ -739,6 +799,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         cachedContextHistory = { tasks, tokens };
         return tokens;
     };
+    let cachedProjectNotesKey = '';
+    let cachedProjectNotesBlocks: ResolvedMarkdownBlock[] | null = null;
     // ponytail: title/area dedupe survives process death, but a renamed, moved, archived, or deleted project can be recreated; persist a capture ID if those retries become required.
     const createdProjects = new Map<string, string>();
     // Per task, the last draft save the store accepted and the task it produced. The
@@ -796,6 +858,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     );
 
     const focusRevision = (now: Date) => `${revision()}:${displayRevision(now)}`;
+    // Time refreshes row labels without invalidating an unchanged Project control.
+    const projectMutationRevision = () => `${revision()}:${settingsRevision()}:${language}`;
 
     // The configuration mobile's root layout applies to its dates.
     const dateFormatting = (): DateFormattingConfig => {
@@ -924,6 +988,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         const formatDate = createDateFormatter(dateFormatting());
         return section.items.slice(offset, offset + limit).map((task) => {
             const appearsAt = section.key === 'upcoming' ? cachedRevealDates.get(task.id) : undefined;
+            const laterToday = section.key === 'schedule' && cachedLaterTodayIds.has(task.id);
             return {
                 ...toNativeTaskRow(task, cachedFocusProjectTitles, rowMeta(task, now, {
                     projectDeadlineLabel: getProjectDeadlineBoostLabel(
@@ -933,7 +998,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 })),
                 revealDate: appearsAt ? formatLocalDate(appearsAt) : null,
                 revealLabel: appearsAt ? formatDate(appearsAt, 'P') : null,
-                laterToday: section.key === 'schedule' && cachedLaterTodayIds.has(task.id),
+                laterToday,
+                laterTodayLabel: laterToday ? formatDate(task.startTime, 'p') : null,
             };
         });
     };
@@ -976,8 +1042,15 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             completedCollapsed: false,
             t: translate,
         });
+        const area = state.areas.find((candidate) => candidate.id === project.areaId);
         cachedProjectDetail = {
             readOnly: options.readOnly,
+            metadata: getProjectDetailsPresentation(project, {
+                isArchivedProject: project.status === 'archived',
+                areaName: area?.name || tFallback(translate, 'projects.noArea', 'No Area'),
+                sections: getProjectSectionsForView(project, state.sections, state._allSections),
+                t: translate,
+            }),
             items: model.items,
             // Same input as mobile's ProjectDetailModal: the project's tasks and its sections.
             cues: projectSortBy === 'default'
@@ -1032,6 +1105,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             readOnly: isInArchivedProject(task),
             draft,
             focusStar: { ...focusStar, blockedText: getFocusStarBlockedText(translate, focusStar, focusTaskLimit) },
+            scheduleBase: getNativeTaskScheduleBase(task),
+            recurrenceBase: getNativeTaskRecurrenceBase(task),
             ...buildTaskEditorModel({
                 task,
                 draft,
@@ -1078,6 +1153,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
 
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
+        ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
+        ...createTaskChecklistSaveMethods({ readiness, save,
+            validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
         ...createInboxProcessingMethods({
             readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
             revision: (now) => `${revision()}:${displayRevision(now)}`,
@@ -1196,6 +1274,48 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             },
         }),
 
+        ...createProjectCreateMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
+            sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas), t: () => translate }),
+
+        ...createProjectFocusMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}` }),
+
+        ...createProjectRenameMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}` }),
+
+        ...createProjectFlowMethods({ readiness, save,
+            revision: projectMutationRevision }),
+
+        ...createProjectNotesWriteMethods({ readiness, save,
+            revision: projectMutationRevision }),
+        ...createProjectStatusMethods({ readiness, save,
+            revision: projectMutationRevision }),
+        ...createProjectDateMethods({ readiness, save,
+            revision: projectMutationRevision }),
+        ...createProjectSectionMethods({ readiness, save,
+            revision: projectMutationRevision }),
+        ...createProjectSectionRenameMethods({ readiness, save,
+            revision: projectMutationRevision }),
+        ...createProjectSectionDeleteMethods({ readiness, save,
+            revision: projectMutationRevision }),
+
+        ...createAreaCreateMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
+            sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas) }),
+
+        ...createAreaColorMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
+            sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas) }),
+
+        ...createAreaOrderMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
+            sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas) }),
+
+        ...createAreaDeleteMethods({ readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
+            sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas) }),
+
         getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -1303,12 +1423,17 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             return { ok: true, value: { language, strings, missing } };
         },
 
-        /** Call only after the host validates its adapter and any required recovery checkpoint. */
-        async activate(input: { writeSafetyReady: boolean }): Promise<NativeHostResult<null>> {
+        /** Call only after adapter/checkpoint validation. recoveryLoad is internal to
+         * an exclusive native owner resolving a durable journal; normal activation
+         * must follow journal cleanup before the host exposes UI or other writes. */
+        async activate(input: { writeSafetyReady: boolean; recoveryLoad?: boolean }): Promise<NativeHostResult<null>> {
             readyAdapter = null;
             const adapter = getStorageAdapter();
             if (!input || input.writeSafetyReady !== true || adapter === noopStorage) {
                 return fail('NOT_READY', 'Native storage and write safety must be validated first');
+            }
+            if (input.recoveryLoad !== undefined && typeof input.recoveryLoad !== 'boolean') {
+                return fail('INVALID_INPUT', 'recoveryLoad must be a boolean');
             }
             const pending = getPersistenceStatus();
             if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed
@@ -1321,6 +1446,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             try {
                 await useTaskStore.getState().fetchData({
                     throwOnError: true,
+                    ...(input.recoveryLoad === true ? { recoveryLoad: true } : {}),
                     isResultStillRelevant: () => {
                         relevanceChecks += 1;
                         if (getStorageAdapter() !== adapter || useTaskStore.getState().lastDataChangeAt !== loadStartedAt) {
@@ -1606,8 +1732,10 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision: currentRevision,
+                    mutationRevision: projectMutationRevision(),
                     projectId: input.projectId,
                     readOnly: detail.readOnly,
+                    metadata: detail.metadata,
                     total: detail.items.length,
                     items: detail.items.slice(input.offset, input.offset + input.limit).map((item): NativeProjectDetailItem => (
                         item.type === 'section'
@@ -1626,6 +1754,70 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                     )),
                 },
             };
+        },
+
+        getProjectNotes(input: { projectId: string; offset: number; limit: number; revision?: string }): NativeHostResult<NativeProjectNotes> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.projectId !== 'string' || !input.projectId.trim()
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || (input.offset > 0 && typeof input.revision !== 'string')
+                || (input.revision !== undefined && typeof input.revision !== 'string')
+                || !isNativeJsonWithinBytes(input)) {
+                return fail('INVALID_INPUT', 'A Project ID, valid offset, bounded limit, and revision for later Notes pages are required');
+            }
+            const currentRevision = projectMutationRevision();
+            if (input.revision !== undefined && input.revision !== currentRevision) {
+                return fail('STALE_REVISION', 'Project Notes changed; restart paging from offset zero');
+            }
+            const state = useTaskStore.getState();
+            const project = state._allProjects.find((candidate) => candidate.id === input.projectId);
+            if (!project || project.deletedAt || project.purgedAt) return fail('TASK_NOT_FOUND', 'Project not found');
+            const raw = project.supportNotes ?? '';
+            if (typeof raw !== 'string' || !isNativeJsonWithinBytes(raw)) {
+                return fail('INVALID_INPUT', 'Project Notes exceed the bounded native read');
+            }
+            const key = `${currentRevision}\u0000${project.id}`;
+            if (cachedProjectNotesKey !== key || !cachedProjectNotesBlocks) {
+                cachedProjectNotesBlocks = raw.trim()
+                    ? resolveMarkdownBlocks(raw, createMarkdownLinkLookup(state._allTasks, state._allProjects)) : [];
+                cachedProjectNotesKey = key;
+            }
+            const value: NativeProjectNotes = {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision: currentRevision,
+                projectId: project.id,
+                readOnly: getProjectDetailTaskListOptions(project).readOnly,
+                direction: resolveAutoTextDirection(`${project.title ?? ''}\n${raw}`.trim(), language),
+                total: cachedProjectNotesBlocks.length,
+                blocks: cachedProjectNotesBlocks.slice(input.offset, input.offset + input.limit),
+                markdownLabels: {
+                    deletedTask: tFallback(translate, 'markdown.referenceDeletedTask', 'deleted task'),
+                    deletedProject: tFallback(translate, 'markdown.referenceDeletedProject', 'deleted project'),
+                    copyCode: tFallback(translate, 'markdown.copyCode', 'Copy code'),
+                },
+            };
+            return isNativeJsonWithinBytes(value) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'Project Notes page exceeds the bounded native read');
+        },
+
+        getProjectNotesDraftDirection(input: { projectId: string; text: string }): NativeHostResult<{ direction: 'ltr' | 'rtl' }> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input !== 'object' || Array.isArray(input)
+                || Object.keys(input).length !== 2 || !Object.prototype.hasOwnProperty.call(input, 'projectId')
+                || !Object.prototype.hasOwnProperty.call(input, 'text') || typeof input.projectId !== 'string'
+                || !input.projectId || input.projectId.length > 500 || typeof input.text !== 'string'
+                || !isNativeJsonWithinBytes(input)) {
+                return fail('INVALID_INPUT', 'A bounded Project Notes draft is required');
+            }
+            const project = useTaskStore.getState()._projectsById.get(input.projectId);
+            if (!project || project.deletedAt || project.purgedAt)
+                return fail('STALE_REVISION', 'Project is unavailable; refresh before editing Notes');
+            return { ok: true, value: {
+                direction: resolveAutoTextDirection(`${project.title ?? ''}\n${input.text}`.trim(), language),
+            } };
         },
 
         /** A later window of one Focus section's rows. Send the `controls.state` the Focus read returned. */
@@ -1844,6 +2036,31 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             return { ok: true, value: taskEditorModel(task, createTaskDraft(task), new Date()) };
         },
 
+        /** Existing destination/section choices. Apply the returned patch with editTaskDraft; this read writes nothing. */
+        getTaskDraftDestinationPicker(input: { id: string; draft: TaskDraft; query: string }): NativeHostResult<NativeTaskDraftDestinationPicker> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).some((key) => key !== 'id' && key !== 'draft' && key !== 'query')
+                || typeof input.id !== 'string' || !input.id.trim() || typeof input.query !== 'string') {
+                return fail('INVALID_INPUT', 'A task ID, whole draft and query string are required');
+            }
+            const draft = readTaskDraft(input.draft);
+            if (!draft) return fail('INVALID_INPUT', 'draft must hold every task draft field with a valid value');
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            const editor = taskEditorModel(task, draft, new Date());
+            return { ok: true, value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                id: task.id,
+                readOnly: editor.readOnly,
+                ...buildTaskDraftDestinationPicker({
+                    draft, layout: editor.layout, projects: state.projects, sections: state.sections, areas: state.areas,
+                    query: input.query, t: translate,
+                }),
+            } };
+        },
+
         /**
          * Suggestions for a context, tag or person input, from its whole text as typed.
          * The React Native editor shows 4 matches (`limit`). Store `draftValue` in the draft.
@@ -1949,6 +2166,12 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 if (!valid) return fail('INVALID_INPUT', `${field} is not a valid value`);
             }
 
+            if ((patch.status ?? task.status) === 'reference') {
+                for (const field of ['priority', 'timeEstimate'] as const) {
+                    if (patch[field]) return fail('INVALID_INPUT', `${field} cannot be set while status is reference`);
+                }
+            }
+
             const key = JSON.stringify([input.base, input.patch, checklistHalf ?? null]);
             const lastSave = draftSaves.get(input.id);
             if (lastSave && lastSave.task !== task) draftSaves.delete(input.id);
@@ -1956,14 +2179,38 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             let updates: Partial<Task> | null = {};
             if (!isRetry) {
                 const current = createTaskDraft(task);
-                const conflicts: string[] = fields.filter((field) => !isSameDraftValue(current[field], base[field])
-                    && !isSameDraftValue(current[field], patch[field]));
+                // A lost reply must compare the title the shared serializer saved.
+                // Blank input falls back to the original base, never a concurrent title.
+                const nextTitle = typeof patch.title === 'string' && typeof base.title === 'string'
+                    ? resolveTaskDraftTitle(patch.title, base.title)
+                    : patch.title;
+                let canonicalTokenReplayMatched = false;
+                const conflicts: string[] = fields.filter((field) => {
+                    if (isSameDraftValue(current[field], base[field])) return false;
+                    // Compare only the requested tokens to their serialized value;
+                    // current data and the original base must remain exact.
+                    const isTokenField = field === 'contexts' || field === 'tags';
+                    const nextValue = field === 'title' ? nextTitle
+                        : isTokenField ? serializeTaskDraftTokens(patch[field] as string, field).join(', ')
+                            : patch[field];
+                    const matches = isSameDraftValue(current[field], nextValue);
+                    if (isTokenField && matches && !isSameDraftValue(patch[field], nextValue)) {
+                        canonicalTokenReplayMatched = true;
+                    }
+                    return !matches;
+                });
                 const savedChecklist = toChecklist(task.checklist);
                 const nextChecklist = checklistHalf?.value.filter((item) => item.title.trim() !== '');
                 const checklistChanges = checklistHalf && nextChecklist && !sameChecklist(savedChecklist, nextChecklist) ? checklistHalf : null;
                 if (checklistChanges && !sameChecklist(savedChecklist, checklistChanges.base)) conflicts.push('checklist');
                 if (conflicts.length > 0) {
                     return fail('STALE_REVISION', `Task changed while editing: ${conflicts.join(', ')}`);
+                }
+                if (canonicalTokenReplayMatched) {
+                    logInfo('Native canonical token retry matched', {
+                        scope: 'native-host', category: 'validation',
+                        context: { releaseCheck: 'v1.3.3/native-token-replay', outcome: 'matched' },
+                    });
                 }
                 // A field that already holds its new value is left alone.
                 const pending = Object.fromEntries(fields
@@ -2039,7 +2286,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             const draft = readTaskDraft(input.draft);
             if (!draft) return fail('INVALID_INPUT', 'draft must hold every task draft field with a valid value');
             const checklist = input.checklist === undefined ? undefined : readChecklist(input.checklist);
-            if (checklist === null) return fail('INVALID_INPUT', 'checklist must be a checklist of at most 1,000 items');
+            if (checklist === null || (input.checklist !== undefined && !isNativeJsonWithinBytes(input.checklist))) {
+                return fail('INVALID_INPUT', 'checklist must be a bounded complete editor list of at most 1,000 items');
+            }
             const state = useTaskStore.getState();
             const task = state._tasksById.get(input.id);
             if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
@@ -2051,7 +2300,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 defaultScheduleTime: normalizeClockTimeInput(state.settings.gtd?.defaultScheduleTime) || '',
             });
             if (!edited) return fail('INVALID_INPUT', 'edit is not a valid editor edit');
-            return { ok: true, value: taskEditorModel(task, edited, now, checklist) };
+            return { ok: true, value: taskEditorModel(checklist === undefined ? task : { ...task, checklist }, edited, now, checklist) };
         },
 
         /** Reuse captureId for retries so a failed save cannot create a duplicate. */
@@ -2183,6 +2432,13 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 if (task.status === 'done' && state.persistenceFailure) {
                     await state.retryPersistence();
                 } else if (task.status !== 'done') {
+                    if (isStatusListTaskReadOnly(task, state._allProjects)) {
+                        logWarn('Native completion refused for a read-only project', {
+                            scope: 'native-host', category: 'validation',
+                            context: { releaseCheck: 'v1.3.3/native-readonly-completion' },
+                        });
+                        return fail('INVALID_INPUT', 'Task is read-only while its project is archived or deleted');
+                    }
                     const result = await state.updateTask(input.id, { status: 'done' });
                     if (!result.success) {
                         const failure = useTaskStore.getState().persistenceFailure;
@@ -2238,11 +2494,22 @@ type InboxProcessingEntry = {
     draft: ProcessInboxDraft;
     /** The task's content when it opened; a change by another writer makes the session stale. */
     taskRevision: string;
-    latchedTotal: number;
+    progress: { total: number; processed: number };
     /** The queue is done. Kept until evicted or ended, so the last decision can still be retried. */
     ended: boolean;
     /** Completed requests: an exact retry returns the same outcome without writing again. */
     requests: Map<string, { key: string; notice: ProcessInboxNotice | null; toast: NativeInboxProcessingResult['toast']; saved: boolean }>;
+    prepared: Map<string, {
+        request: NativeInboxWriteRequest;
+        preparedJSON: string;
+        result: NativeInboxDurableResult;
+        saved: boolean;
+        advanced: boolean;
+        nextSession: ProcessInboxSession | null;
+        selectedProjectId: string | null;
+        committed: Parameters<typeof formatProcessInboxCommitMessage>[1] | null;
+        title: string;
+    }>;
 };
 
 const INBOX_PROCESSING_MODES = new Set(['guided', 'quick']);
@@ -2308,11 +2575,14 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
     // Add an idle expiry if hosts leave sessions open.
     const sessions = new Map<string, InboxProcessingEntry>();
     const busy = () => fail('ACTION_FAILED', 'Earlier Process Inbox changes are not saved yet. Retry them first.');
-    const owesSave = (entry: InboxProcessingEntry) => Array.from(entry.requests.values()).some((done) => !done.saved);
+    const owesSave = (entry: InboxProcessingEntry) => Array.from(entry.requests.values()).some((done) => !done.saved)
+        || Array.from(entry.prepared.values()).some((done) => !done.saved);
+    const awaitingNextView = (entry: InboxProcessingEntry) => Array.from(entry.prepared.values()).some((done) => !done.advanced);
     /** A successful save stores every earlier write too. */
     const markAllSaved = () => {
         for (const entry of sessions.values()) {
             for (const done of entry.requests.values()) done.saved = true;
+            for (const done of entry.prepared.values()) done.saved = true;
         }
     };
     let similarity: { tasks: Task[]; index: TaskSimilarityIndex } | null = null;
@@ -2348,8 +2618,8 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
         if (similarity?.tasks !== state._allTasks) {
             similarity = { tasks: state._allTasks, index: createTaskSimilarityIndex(state._allTasks) };
         }
-        const progress = getProcessInboxProgress(entry.latchedTotal, getProcessInboxRemainingCandidates(entry.session, queue).length);
-        entry.latchedTotal = progress.total;
+        const progress = getProcessInboxProgress(entry.progress, getProcessInboxRemainingCandidates(entry.session, queue).length, entry.session);
+        entry.progress = progress;
         return {
             version: NATIVE_HOST_CONTRACT_VERSION,
             revision: deps.revision(now),
@@ -2515,9 +2785,10 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                 answers: { ...INITIAL_PROCESS_INBOX_ANSWERS },
                 draft: createProcessInboxDraft(queue[0]),
                 taskRevision: inboxTaskRevision(queue[0]),
-                latchedTotal: 0,
+                progress: { total: 0, processed: 0 },
                 ended: false,
                 requests: new Map(),
+                prepared: new Map(),
             };
             sessions.set(entry.id, entry);
             return { ok: true, value: { sessionId: entry.id, queue: { total: queue.length, taskIds }, view: buildView(entry)! } };
@@ -2542,6 +2813,8 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                 || (input.mode !== undefined && !INBOX_PROCESSING_MODES.has(input.mode))) {
                 return fail('INVALID_INPUT', 'A session, task, step, and a valid edit or mode are required');
             }
+            const pendingEntry = sessions.get(input.sessionId);
+            if (pendingEntry && awaitingNextView(pendingEntry)) return busy();
             const checked = current(input);
             if (!checked.ok) return checked;
             const { entry } = checked.value;
@@ -2571,6 +2844,7 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
             if (!entry) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
             const key = JSON.stringify([input.taskId, input.step, input.decision.choice]);
             return once(entry, input.requestId, key, async () => {
+                if (awaitingNextView(entry)) return busy();
                 const checked = current(input);
                 if (!checked.ok) return checked;
                 const { task } = checked.value;
@@ -2623,12 +2897,187 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
             const entry = sessions.get(input.sessionId);
             if (!entry) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
             return once(entry, input.requestId, JSON.stringify([input.taskId, 'skip']), async () => {
+                if (awaitingNextView(entry)) return busy();
                 // Skip sits in the header, so every step offers it.
                 const step = resolveProcessInboxStep(entry.answers, entry.mode, context().plan);
                 const checked = current({ ...input, step });
                 if (!checked.ok) return checked;
                 return commitKind(entry, checked.value.task, 'skip', null);
             });
+        },
+
+        /** Pure pre-journal Process Inbox choice. Only flow responses change the session. */
+        inboxCommitPrepare(input: NativeInboxCommitRequest): NativeHostResult<
+            { kind: 'flow'; result: NativeInboxProcessingResult }
+            | { kind: 'prepared'; prepared: NativePreparedInboxWrite }
+        > {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isNativeInboxWriteRequest(input, 'commit')) return fail('INVALID_INPUT', 'A bounded Inbox decision request is required');
+            const entry = sessions.get(input.sessionId);
+            if (!entry) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
+            if (entry.prepared.has(input.requestId)) return fail('INVALID_INPUT', 'Request ID already belongs to an Inbox write');
+            if (awaitingNextView(entry)) return busy();
+            const checked = current(input);
+            if (!checked.ok) return checked;
+            const { task } = checked.value;
+            const { state, plan, parseTitle } = context();
+            if (input.decision.choice === 'submitProjectSearch') {
+                if (!plan.visibleFields.project || entry.draft.convertToProject) {
+                    return fail('INVALID_INPUT', 'This step does not offer project search');
+                }
+                const exact = getProcessInboxProjectChoices(state.projects, entry.draft.areaId,
+                    entry.draft.projectSearch).exactMatch;
+                const submit = resolveProcessInboxProjectSearchSubmit(entry.draft.projectSearch, exact ?? undefined, entry.draft.areaId);
+                if (submit.type === 'none') return { ok: true, value: { kind: 'flow', result: result(entry, null, null) } };
+                if (submit.type === 'select') {
+                    entry.draft = applyProcessInboxDraftEdit(entry.draft, { type: 'selectProject', value: submit.projectId }, plan);
+                    return { ok: true, value: { kind: 'flow', result: result(entry, null, null) } };
+                }
+                try {
+                    const preparation = prepareNativeInboxWrite({ request: input, source: task, state,
+                        mode: entry.mode, answers: entry.answers, draft: entry.draft, plan,
+                        committed: null, decisionKind: null, parseTitle });
+                    if (preparation.kind !== 'prepared') return fail('INVALID_INPUT', 'Project creation could not be prepared');
+                    return { ok: true, value: preparation };
+                } catch (error) {
+                    return fail('INVALID_INPUT', error instanceof Error ? error.message : 'Project creation could not be prepared');
+                }
+            }
+            const answer = answerProcessInboxStep({ choice: input.decision.choice, answers: entry.answers,
+                draft: entry.draft, mode: entry.mode, plan, task, parseTitle });
+            if (answer.type === 'invalid') return fail('INVALID_INPUT', 'This step does not offer that choice');
+            if (answer.type === 'flow') {
+                entry.answers = answer.answers;
+                entry.draft = answer.draft;
+                return { ok: true, value: { kind: 'flow', result: result(entry, null, null) } };
+            }
+            try {
+                const preparation = prepareNativeInboxWrite({ request: input, source: task, state,
+                    mode: entry.mode, answers: entry.answers, draft: entry.draft, plan,
+                    committed: answer.committed, decisionKind: answer.kind, parseTitle });
+                if (preparation.kind === 'notice' && preparation.reason === 'no-title') {
+                    return fail('INVALID_INPUT', 'Inbox title is required');
+                }
+                if (preparation.kind === 'notice') return { ok: true, value: { kind: 'flow',
+                    result: result(entry, getProcessInboxNotice(deps.t(), preparation.reason as Exclude<typeof preparation.reason, 'no-title'>,
+                        preparation.invalidDateCommands ? { invalidDateCommands: preparation.invalidDateCommands } : undefined), null) } };
+                if (preparation.kind !== 'prepared') return fail('INVALID_INPUT', 'Inbox decision could not be prepared');
+                return { ok: true, value: preparation };
+            } catch (error) {
+                return fail('INVALID_INPUT', error instanceof Error ? error.message : 'Inbox decision could not be prepared');
+            }
+        },
+
+        /** Pure pre-journal Skip, retaining edits made on the current draft. */
+        inboxSkipPrepare(input: NativeInboxSkipRequest): NativeHostResult<{ kind: 'prepared'; prepared: NativePreparedInboxWrite }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isNativeInboxWriteRequest(input, 'skip')) return fail('INVALID_INPUT', 'A bounded Inbox Skip request is required');
+            const entry = sessions.get(input.sessionId);
+            if (!entry) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
+            if (entry.prepared.has(input.requestId)) return fail('INVALID_INPUT', 'Request ID already belongs to an Inbox write');
+            if (awaitingNextView(entry)) return busy();
+            const { state, plan, parseTitle } = context();
+            const checked = current({ ...input, step: resolveProcessInboxStep(entry.answers, entry.mode, plan) });
+            if (!checked.ok) return checked;
+            try {
+                const preparation = prepareNativeInboxWrite({ request: input, source: checked.value.task, state,
+                    mode: entry.mode, answers: entry.answers, draft: entry.draft, plan,
+                    committed: null, decisionKind: 'skip', parseTitle });
+                return preparation.kind === 'prepared' ? { ok: true, value: preparation }
+                    : fail('INVALID_INPUT', 'Inbox Skip could not be prepared');
+            } catch (error) {
+                return fail('INVALID_INPUT', error instanceof Error ? error.message : 'Inbox Skip could not be prepared');
+            }
+        },
+
+        /** Journal authority check; terminal recovery calls this without opening SQLite. */
+        inboxPreparedValidate(input: { request: NativeInboxWriteRequest; prepared: NativePreparedInboxWrite }): NativeHostResult<NativeInboxDurableResult> {
+            const prepared = readNativePreparedInboxWrite(input);
+            return prepared ? { ok: true, value: prepared.result }
+                : fail('INVALID_INPUT', 'Prepared Inbox request or journal does not match');
+        },
+
+        /** Atomic publication and durability barrier; never builds the next localized view. */
+        async inboxPreparedCommit(input: { request: NativeInboxWriteRequest; prepared: NativePreparedInboxWrite }): Promise<NativeHostResult<NativeInboxDurableResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const prepared = readNativePreparedInboxWrite(input);
+            if (!prepared) return fail('INVALID_INPUT', 'Prepared Inbox request or journal does not match');
+            const entry = sessions.get(prepared.request.sessionId);
+            const previous = entry?.prepared.get(prepared.request.requestId);
+            if (previous && (JSON.stringify(previous.request) !== JSON.stringify(prepared.request)
+                || previous.preparedJSON !== JSON.stringify(prepared))) {
+                return fail('INVALID_INPUT', 'Request ID already belongs to another Inbox change');
+            }
+            // Freeze the warm transition while the pre-write queue still contains
+            // the source. A replay with no session relies on the durable row receipt.
+            let nextSession: ProcessInboxSession | null = null;
+            let selectedProjectId: string | null = null;
+            if (entry && !previous && !awaitingNextView(entry)) {
+                const { queue } = context();
+                if (getProcessInboxCurrentCandidate(entry.session, queue)?.id === prepared.request.taskId) {
+                    nextSession = prepared.kind === 'skip'
+                        ? skipCurrentProcessInboxTask(entry.session, queue)
+                        : prepared.kind === 'projectCreate' ? null : advanceProcessInboxSession(entry.session, queue);
+                    selectedProjectId = prepared.kind === 'projectCreate' ? prepared.result.createdProjectId ?? null : null;
+                }
+            }
+            const applied = await useTaskStore.getState().commitPreparedInboxEffect(prepared.effect);
+            if (!applied.success) return fail('STALE_REVISION', applied.error ?? 'Prepared Inbox change conflicts with current data');
+            if (entry && !previous && (nextSession || selectedProjectId)) {
+                if (entry.prepared.size >= 20) {
+                    const oldest = Array.from(entry.prepared.entries()).find(([, receipt]) => receipt.saved && receipt.advanced)?.[0];
+                    if (oldest) entry.prepared.delete(oldest);
+                }
+                entry.prepared.set(prepared.request.requestId, {
+                    request: prepared.request, result: prepared.result, saved: false, advanced: false,
+                    preparedJSON: JSON.stringify(prepared),
+                    nextSession, selectedProjectId, committed: prepared.witness.committed,
+                    title: prepared.witness.draft.title.trim() || prepared.witness.source.title,
+                });
+            }
+            try {
+                if (useTaskStore.getState().persistenceFailure) await useTaskStore.getState().retryPersistence();
+                const saved = await deps.save();
+                if (!saved.ok) return saved;
+                markAllSaved();
+            } catch (error) {
+                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+            }
+            logInfo('Native prepared Process Inbox saved', { scope: 'native-host', category: 'storage',
+                context: { releaseCheck: 'v1.3.3/native-prepared-process-inbox',
+                    outcome: applied.outcome ?? 'applied', action: prepared.kind } });
+            return { ok: true, value: prepared.result };
+        },
+
+        /** A read/flow step after the durable acknowledgment; it never publishes data. */
+        inboxAfterCommit(input: { sessionId: string; requestId: string }): NativeHostResult<NativeInboxProcessingResult> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).length !== 2
+                || typeof input.sessionId !== 'string' || typeof input.requestId !== 'string') {
+                return fail('INVALID_INPUT', 'A session and request ID are required');
+            }
+            const entry = sessions.get(input.sessionId);
+            const receipt = entry?.prepared.get(input.requestId);
+            if (!entry || !receipt) return fail('STALE_REVISION', 'Process Inbox session ended; start again');
+            if (!receipt.saved) return busy();
+            if (!receipt.advanced) {
+                receipt.advanced = true;
+                if (receipt.selectedProjectId) {
+                    entry.draft = applyProcessInboxDraftEdit(entry.draft,
+                        { type: 'selectProject', value: receipt.selectedProjectId }, context().plan);
+                } else if (receipt.nextSession) {
+                    entry.session = receipt.nextSession;
+                    if (!openCurrent(entry, context().queue)) entry.ended = true;
+                }
+            }
+            const t = deps.t();
+            return { ok: true, value: result(entry, null, receipt.committed
+                ? { message: formatProcessInboxCommitMessage(t, receipt.committed, receipt.title),
+                    undoLabel: tFallback(t, 'common.undo', 'Undo') } : null) };
         },
 
         /** Close the session. Nothing is written; a write still waiting for its save stays retryable. */

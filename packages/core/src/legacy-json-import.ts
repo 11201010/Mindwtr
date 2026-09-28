@@ -1,4 +1,5 @@
 import { areaToSqliteRow } from './area-sync-schema';
+import { validateBackupJson } from './backup-transfer';
 import { personToSqliteRow } from './person-sync-schema';
 import { projectToSqliteRow } from './project-sync-schema';
 import { sectionToSqliteRow } from './section-sync-schema';
@@ -71,6 +72,33 @@ export function parseLegacyJsonBackup(json: string): AppData {
         people: Array.isArray(data.people) ? data.people : [],
         settings: data.settings && typeof data.settings === 'object' ? data.settings : {},
     };
+}
+
+/**
+ * A replacement client must not turn unreadable backup authority into an empty
+ * library. Run before opening its database. RN's existing recovery policy below
+ * stays unchanged; the native upgrade refuses sources requiring lossy repair.
+ */
+export function assertNativeLegacyBackupSafe(state: Pick<LegacyJsonImportState, 'jsonAhead' | 'backupJson'>): void {
+    if (state.backupJson === null && !state.jsonAhead) return;
+    try {
+        if (state.backupJson === null) throw new Error();
+        const raw = JSON.parse(state.backupJson);
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.tasks)) throw new Error();
+        const validated = validateBackupJson(state.backupJson);
+        if (!validated.valid || !validated.data) throw new Error();
+        const original = parseLegacyJsonBackup(state.backupJson);
+        for (const table of ['tasks', 'projects', 'sections', 'areas', 'people'] as const) {
+            if (raw[table] !== undefined && !Array.isArray(raw[table])) throw new Error();
+            const rows = original[table] ?? [];
+            if (rows.length !== (validated.data[table] ?? []).length
+                || new Set(rows.map((row) => row.id)).size !== rows.length) throw new Error();
+        }
+        if (legacyImportMismatch(original, validated.data)) throw new Error();
+    } catch {
+        // Never include backup contents or parser errors in the native UI/log.
+        throw new Error('Legacy backup requires recovery before native upgrade');
+    }
 }
 
 /** RN's `sqliteHasAnyData`: any row in any of {@link LEGACY_JSON_IMPORT_DATA_TABLES}. */
