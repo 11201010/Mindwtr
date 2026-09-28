@@ -95,4 +95,19 @@ describe('sync settings transport', () => {
         expect(syncs).toEqual([]);
         expect(storage.size).toBe(0);
     });
+
+    it('warns once about insecure HTTP when a form is saved, not once for the save and again for its first sync', async () => {
+        const { transport, toasts, storage } = setup([]);
+        await transport.load().done;
+        await transport.handleSaveWebDavSettings({ ...fields, url: 'http://dav.example.com', allowInsecureHttp: true });
+        await transport.handleSaveSelfHostedSettings({ allowInsecureHttp: true, token: 'abcdefghijklmnopqrstuvwxyz012345', url: 'http://cloud.example.com' });
+        expect(toasts.map((toast) => toast.title)).toEqual([
+            'settings.syncMobile.insecureHttpEnabled', 'common.success',
+            'settings.syncMobile.insecureHttpEnabled', 'common.success',
+        ]);
+        expect(storage.get(SYNC_BACKEND_KEY)).toBe('cloud');
+        // Sync now on a form still warns: that tap has no save before it.
+        await transport.handleSync({ backend: 'cloud', cloudProvider: 'selfhosted', cloud: { allowInsecureHttp: true, token: 'abcdefghijklmnopqrstuvwxyz012345', url: 'http://cloud.example.com' } });
+        expect(toasts.slice(4).map((toast) => toast.title)).toEqual(['settings.syncMobile.insecureHttpEnabled', 'common.success']);
+    });
 });

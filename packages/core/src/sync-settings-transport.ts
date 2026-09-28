@@ -353,7 +353,14 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         }
     };
 
-    const validateSyncHttpUrl = (p: SyncSettingsTransportParams, url: string, allowInsecureHttp: boolean, label: 'WebDAV' | 'self-hosted'): boolean => {
+    /** `warnInsecure` is false when the same action already warned about this URL. */
+    const validateSyncHttpUrl = (
+        p: SyncSettingsTransportParams,
+        url: string,
+        allowInsecureHttp: boolean,
+        label: 'WebDAV' | 'self-hosted',
+        warnInsecure = true,
+    ): boolean => {
         if (!url || !isValidSyncHttpUrl(url)) {
             p.showSettingsWarning(
                 p.tr('settings.syncMobile.invalidUrl'),
@@ -374,7 +381,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             );
             return false;
         }
-        if (isManualInsecureOverride(url, allowInsecureHttp)) {
+        if (warnInsecure && isManualInsecureOverride(url, allowInsecureHttp)) {
             p.showSettingsWarning(
                 p.tr('settings.syncMobile.insecureHttpEnabled'),
                 p.tr('settings.syncMobile.onlyUseThisOnTrustedNetworksSyncDataWillBe'),
@@ -753,7 +760,8 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             syncBackend: 'webdav',
         });
         hasPendingSyncConfiguration = true;
-        await handleSync({
+        // The save just warned about an insecure URL; its first sync does not again.
+        await runSync(p, {
             backend: 'webdav',
             webdav: {
                 allowInsecureHttp: nextSettings.allowInsecureHttp,
@@ -761,7 +769,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 url: trimmedUrl,
                 username: trimmedUsername,
             },
-        });
+        }, { insecureWarned: true });
     };
 
     const handleSaveSelfHostedSettings = async (nextSettings: SyncSettingsSelfHostedFields) => {
@@ -791,7 +799,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             });
             return;
         }
-        await handleSync({
+        await runSync(p, {
             backend: 'cloud',
             cloudProvider: 'selfhosted',
             cloud: {
@@ -799,7 +807,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 token: nextSettings.token,
                 url: trimmedUrl,
             },
-        });
+        }, { insecureWarned: true });
     };
 
     const commitProvenSyncConfiguration = async (p: SyncSettingsTransportParams, config: MobileSyncConfigOverride) => {
@@ -847,8 +855,11 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
 
     const handleSync = (options?: SyncSettingsActionOptions): Promise<void> => runSync(host.params(), options);
 
-    /** `p` is the screen as the action that asked for this sync saw it. */
-    const runSync = async (p: SyncSettingsTransportParams, options?: SyncSettingsActionOptions) => {
+    /**
+     * `p` is the screen as the action that asked for this sync saw it;
+     * `insecureWarned` says that action already warned about an insecure URL.
+     */
+    const runSync = async (p: SyncSettingsTransportParams, options?: SyncSettingsActionOptions, flags: { insecureWarned?: boolean } = {}) => {
         const { t, tr, showToast, showSettingsWarning, showSettingsErrorToast } = p;
         const {
             syncBackend, cloudAllowInsecureHttp, cloudToken, cloudUrl, cloudProvider, syncPath, syncPathBookmark,
@@ -922,7 +933,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     showSettingsWarning(tr('common.notice'), tr('settings.syncMobile.pleaseSetAWebdavUrlFirst'));
                     return;
                 }
-                if (!validateSyncHttpUrl(p, trimmedWebDavUrl, effectiveWebdav.allowInsecureHttp, 'WebDAV')) {
+                if (!validateSyncHttpUrl(p, trimmedWebDavUrl, effectiveWebdav.allowInsecureHttp, 'WebDAV', !flags.insecureWarned)) {
                     return;
                 }
                 const trimmedWebDavUsername = effectiveWebdav.username.trim();
@@ -975,7 +986,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                         showSettingsWarning(tr('common.notice'), tr('settings.syncMobile.pleaseSetASelfHostedUrlFirst'));
                         return;
                     }
-                    if (!validateSyncHttpUrl(p, trimmedCloudUrl, effectiveCloud.allowInsecureHttp, 'self-hosted')) {
+                    if (!validateSyncHttpUrl(p, trimmedCloudUrl, effectiveCloud.allowInsecureHttp, 'self-hosted', !flags.insecureWarned)) {
                         return;
                     }
                     if (!validateCloudToken(p, effectiveCloud.token.trim())) {

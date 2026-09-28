@@ -7,6 +7,7 @@ import {
     getSyncBackendGroups,
     getSyncBackendOptions,
     getSyncFailureMessage,
+    getSyncFolderLabel,
     getSyncLastErrorText,
     getSyncLastStatusLine,
     getSyncPreferenceValues,
@@ -83,5 +84,13 @@ describe('sync settings model', () => {
     it('syncs GTD settings unless turned off, and writes one option without dropping the others', () => {
         expect(getSyncPreferenceValues(undefined)).toMatchObject({ gtd: true, appearance: false });
         expect(buildSyncPreferencesUpdate({ gtd: false, ai: true }, { appearance: true })).toEqual({ syncPreferences: { gtd: false, ai: true, appearance: true } });
+    });
+
+    it('names an Android document by its own name, not its percent-encoded document ID', () => {
+        const document = 'content://com.android.externalstorage.documents/tree/primary%3ASync/document/primary%3ASync%2Fdata.json';
+        expect(getSyncFolderLabel(document, t)).toBe('data.json');
+        expect(getSyncFolderLabel('content://com.android.externalstorage.documents/tree/primary%3AMy%20Sync', t)).toBe('My Sync');
+        expect(getSyncFolderLabel('file:///var/mobile/Containers/Shared/Sync/data.json', t)).toBe('data.json');
+        expect(getSyncFolderLabel(null, t)).toBe('common.notSet');
     });
 });

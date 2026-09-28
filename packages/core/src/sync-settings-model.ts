@@ -11,6 +11,7 @@
  * Dates come from the host's `formatDateTime`: React Native keeps
  * `toLocaleString`, the contract builds the same English text from a pattern.
  */
+import { decodeUriSafe } from './async-utils';
 import { resolveI18nText, translateWithFallback, type I18nTemplateValues } from './i18n';
 import { classifySyncFailure } from './mobile-sync-utils';
 import { isSettingsSyncGroupEnabled } from './settings-options';
@@ -393,7 +394,14 @@ export const getSyncSelfHostedFormState = (url: string, token: string, isValidTo
     return { urlError, tokenError, canUseActions: url.trim().length > 0 && !urlError && !tokenError };
 };
 
-/** The File Sync panel's folder line: the last part of the stored location. */
-export const getSyncFolderLabel = (syncPath: string | null, t: Translate): string | undefined => (
-    syncPath ? syncPath.split('/').pop() : t('common.notSet')
-);
+/**
+ * The File Sync panel's folder line: the name of the stored location's last part.
+ * An Android document URI ends in its percent-encoded document ID
+ * ("primary%3ASync%2Fdata.json"); its name is the ID's last path part.
+ */
+export const getSyncFolderLabel = (syncPath: string | null, t: Translate): string | undefined => {
+    if (!syncPath) return t('common.notSet');
+    const leaf = syncPath.split('/').pop() ?? '';
+    const name = decodeUriSafe(leaf).split('/').pop() ?? leaf;
+    return (syncPath.startsWith('content://') ? name.slice(name.lastIndexOf(':') + 1) : name) || leaf;
+};
