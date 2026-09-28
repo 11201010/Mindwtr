@@ -243,6 +243,7 @@ describe('sync-service test utils', () => {
         const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
             if (command === 'get_sync_backend') return 'file';
             if (command === 'acquire_file_sync_lease') return 'external-resolution-lease';
+            if (command === 'get_data') return currentData;
             if (command === 'read_sync_file') {
                 expect(args?.leaseToken).toBe('external-resolution-lease');
                 events.push('resolution:read-external');
@@ -314,6 +315,7 @@ describe('sync-service test utils', () => {
         const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
             if (command === 'get_sync_backend') return 'file';
             if (command === 'acquire_file_sync_lease') return 'external-resolution-lease';
+            if (command === 'get_data') return emptyAppData();
             if (command === 'read_sync_file') {
                 expect(args?.leaseToken).toBe('external-resolution-lease');
                 events.push('resolution:read:start');
@@ -364,6 +366,50 @@ describe('sync-service test utils', () => {
             'resolution:persist',
             'ordinary:write',
         ]);
+    });
+
+    it('replaces local data with the external file only if local data is still what it read first', async () => {
+        const localData = {
+            ...emptyAppData(),
+            tasks: [{
+                id: 'local-task', title: 'Local task', status: 'next' as const, tags: [], contexts: [],
+                createdAt: '2026-09-28T10:00:00.000Z', updatedAt: '2026-09-28T10:00:00.000Z',
+            }],
+        } satisfies AppData;
+        const events: string[] = [];
+        const invoke = vi.fn(async (command: string) => {
+            events.push(command);
+            if (command === 'get_sync_backend') return 'file';
+            if (command === 'acquire_file_sync_lease') return 'external-resolution-lease';
+            if (command === 'get_data') return localData;
+            if (command === 'read_sync_file') return emptyAppData();
+            if (command === 'release_file_sync_lease') return undefined;
+            // Native refuses: an MCP capture landed while the external file was read.
+            if (command === 'save_data') throw new Error('Local data changed during restore. Please try again.');
+            throw new Error(`unexpected command: ${command}`);
+        });
+        const fetchData = vi.fn(async () => undefined);
+        __syncServiceTestUtils.setDependenciesForTests({
+            flushPendingSave: vi.fn(async () => undefined),
+            getStoreState: () => ({ fetchData, lastDataChangeAt: 0, settings: {} }) as any,
+            invoke: invoke as unknown as <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
+            isTauriRuntime: () => true,
+            markLocalSqliteWrite: vi.fn(),
+            markLocalWrite: vi.fn(),
+        });
+        setPendingExternalSyncChangeForTests();
+
+        const result = await SyncService.resolveExternalSyncChange('use-external');
+
+        expect(invoke).toHaveBeenCalledWith('save_data', {
+            data: expect.anything(),
+            mode: 'exact',
+            expectedData: localData,
+        });
+        expect(events.indexOf('get_data')).toBeLessThan(events.indexOf('read_sync_file'));
+        expect(result).toEqual({ success: false, error: expect.stringContaining('Local data changed') });
+        expect(fetchData).not.toHaveBeenCalled();
+        expect(SyncService.getPendingExternalSyncChange()).not.toBeNull();
     });
 
     it('waits for an active data transfer before keeping the local sync file', async () => {

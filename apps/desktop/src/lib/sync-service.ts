@@ -626,11 +626,11 @@ const releaseFileSyncLease = async (token: string): Promise<void> => {
     }
 };
 
-type LocalDataSaveOptions = {
-    baseline?: AppData;
-    mode?: 'exact';
-    expectedData?: AppData;
-};
+// An exact save replaces every local row, so it must name the data it
+// replaces; native refuses it otherwise.
+type LocalDataSaveOptions =
+    | { baseline?: AppData; mode?: undefined; expectedData?: undefined }
+    | { baseline?: undefined; mode: 'exact'; expectedData: AppData };
 
 async function persistLocalDataForSync(
     data: AppData,
@@ -3148,11 +3148,15 @@ export class SyncService {
                 await syncServiceDependencies.flushPendingSave();
                 const leaseToken = await acquireFileSyncLease();
                 try {
+                    // Read local data first: native replaces it only if it is
+                    // unchanged, so a capture (MCP, Local API) that lands
+                    // while the external file is read survives.
+                    const expectedData = await invokeSyncNative<AppData>('get_data');
                     const externalData = normalizeAppData(await invokeSyncNative<AppData>(
                         'read_sync_file',
                         { leaseToken },
                     ));
-                    await persistLocalDataForSync(externalData, { mode: 'exact' });
+                    await persistLocalDataForSync(externalData, { mode: 'exact', expectedData });
                     await getStoreState().fetchData({ silent: true });
                     const now = new Date().toISOString();
                     const nextHistory = appendSyncHistory(getStoreState().settings, {
@@ -3413,7 +3417,10 @@ export class SyncService {
                     };
                 },
                 createRecoverySnapshot: () => invokeSyncNative<string>('create_data_snapshot'),
-                persistData: (data) => persistLocalDataForSync(data, { mode: 'exact', expectedData }).then(() => undefined),
+                persistData: async (data) => {
+                    if (!expectedData) throw new Error('Snapshot restore did not read local data first.');
+                    await persistLocalDataForSync(data, { mode: 'exact', expectedData });
+                },
                 refreshData: () => getStoreState().fetchData({ silent: true, throwOnError: true }),
             }));
             void syncServiceDependencies.logInfo('Recovery snapshot restore committed', {

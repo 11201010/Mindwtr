@@ -3210,8 +3210,59 @@ fn merge_data_snapshots_reporting_kept_at(
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
         );
+    } else if let Some(settings) = merged.get_mut("settings") {
+        let kept = keep_omitted_live_saved_filters(current.get("settings"), settings);
+        if kept > 0 {
+            kept_live.push(("saved_filters", kept));
+        }
     }
     (Value::Object(merged), kept_live)
+}
+
+/// Core parity (sqlite-adapter saved_filters): saved filters delete by
+/// tombstone, so a settings write that omits a live saved filter came from a
+/// stale snapshot. Append each such filter after the incoming list, verbatim
+/// and in stored order; an omitted tombstone filter is dropped. Returns how
+/// many filters it kept.
+fn keep_omitted_live_saved_filters(current_settings: Option<&Value>, settings: &mut Value) -> usize {
+    let Some(stored) = current_settings
+        .and_then(|settings| settings.get("savedFilters"))
+        .and_then(Value::as_array)
+    else {
+        return 0;
+    };
+    let Some(settings) = settings.as_object_mut() else {
+        return 0;
+    };
+    let incoming_ids = settings
+        .get("savedFilters")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|filter| filter.get("id").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    let kept = stored
+        .iter()
+        .filter(|filter| {
+            !entity_is_deleted(filter)
+                && filter
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty() && !incoming_ids.contains(id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let count = kept.len();
+    if count == 0 {
+        return 0;
+    }
+    match settings.get_mut("savedFilters") {
+        Some(Value::Array(filters)) => filters.extend(kept),
+        _ => {
+            settings.insert("savedFilters".to_string(), Value::Array(kept));
+        }
+    }
+    count
 }
 
 fn normalize_revision_metadata_in_data(data: &mut Value) {
@@ -3634,7 +3685,8 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
 
 #[cfg(test)]
 fn replace_json_in_sqlite(conn: &mut Connection, data: &Value) -> Result<Value, String> {
-    replace_json_in_sqlite_if_unchanged(conn, data, None)
+    let current = read_sqlite_data(conn)?;
+    replace_json_in_sqlite_if_unchanged(conn, data, Some(&current))
 }
 
 fn replace_json_in_sqlite_if_unchanged(
@@ -3646,11 +3698,17 @@ fn replace_json_in_sqlite_if_unchanged(
         .map_err(|e| e.to_string())?;
     let result = (|| {
         // Native/API writers bypass the renderer's write barrier. Check under
-        // the SQLite writer lock so a restore cannot erase a later commit.
-        if let Some(expected) = expected_data {
-            if &read_sqlite_data(conn)? != expected {
-                return Err("Local data changed during restore. Please try again.".to_string());
-            }
+        // the SQLite writer lock so a restore cannot erase a later commit. An
+        // exact replacement erases every row it does not carry, so a caller
+        // that did not name the data it replaces is refused.
+        let Some(expected) = expected_data else {
+            return Err(
+                "Refusing an exact replacement without the data it replaces; local data left untouched"
+                    .to_string(),
+            );
+        };
+        if &read_sqlite_data(conn)? != expected {
+            return Err("Local data changed during restore. Please try again.".to_string());
         }
         let canonical = replace_data_in_transaction(conn, data.clone())?;
         conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
@@ -5969,6 +6027,22 @@ mod tests {
             let again = merge_json_to_sqlite(&mut conn, &actual, None).unwrap();
             assert_eq!(again, actual, "second save must converge: {scenario}");
         }
+    }
+
+    // An exact replacement erases every row it does not carry, so it must
+    // name the data it replaces; no caller can skip the check.
+    #[test]
+    fn exact_replacement_without_the_data_it_replaces_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut conn = open_sqlite_path(&temp.path().join("exact-unguarded.db")).unwrap();
+        let seed = serde_json::json!({"tasks":[{"id":"capture","title":"MCP capture","rev":1}],
+            "projects":[],"sections":[],"areas":[],"people":[],"settings":{}});
+        let current = replace_json_in_sqlite(&mut conn, &seed).unwrap();
+        let external = serde_json::json!({"tasks":[],"projects":[],"sections":[],"areas":[],
+            "people":[],"settings":{}});
+        replace_json_in_sqlite_if_unchanged(&mut conn, &external, None)
+            .expect_err("an exact replacement needs the data it replaces");
+        assert_eq!(read_sqlite_data(&conn).unwrap(), current);
     }
 
     #[test]
@@ -8901,6 +8975,75 @@ mod tests {
         assert_eq!(ids("areas"), ["area-live", "area-held", "area-held-by-deleted"]);
         assert_eq!(ids("people"), ["person-live"]);
         assert_eq!(merged["tasks"][0], current["tasks"][0], "a kept live row is unchanged");
+    }
+
+    #[test]
+    fn omission_removes_a_tombstone_chain_in_one_save() {
+        let gone = "2026-06-01T00:00:00Z";
+        let current = serde_json::json!({
+            "tasks": [{"id": "task-gone", "title": "Gone", "rev": 2, "deletedAt": gone,
+                       "projectId": "project-gone", "sectionId": "section-gone", "areaId": "area-gone"}],
+            "projects": [{"id": "project-gone", "title": "Gone", "rev": 2, "deletedAt": gone,
+                          "areaId": "area-gone"}],
+            "sections": [{"id": "section-gone", "projectId": "project-gone", "title": "Gone",
+                          "rev": 2, "deletedAt": gone}],
+            "areas": [{"id": "area-gone", "name": "Gone", "rev": 2, "deletedAt": gone}],
+            "people": [],
+            "settings": {}
+        });
+        let mut baseline = serde_json::json!({});
+        for key in ENTITY_TABLES {
+            baseline[key] = current[key].clone();
+        }
+        let target = serde_json::json!({
+            "tasks": [], "projects": [], "sections": [], "areas": [], "people": [],
+            "settings": {}
+        });
+
+        let merged = merge_data_snapshots(&current, &target, Some(&baseline));
+
+        for key in ENTITY_TABLES {
+            assert_eq!(merged[key], serde_json::json!([]), "{key} tombstone must go with its child");
+        }
+    }
+
+    // Core parity (sqlite-adapter saved_filters): a settings write that omits a
+    // live saved filter keeps it; an omitted tombstone filter is removed.
+    #[test]
+    fn settings_write_keeps_omitted_live_saved_filters() {
+        let live = serde_json::json!({"id": "filter-live", "name": "Live",
+            "criteria": {"futureField": [3, 1]}, "unknownField": "kept"});
+        let current = serde_json::json!({
+            "tasks": [], "projects": [], "areas": [], "sections": [], "people": [],
+            "settings": {
+                "theme": "dark",
+                "savedFilters": [
+                    {"id": "filter-edited", "name": "Before"},
+                    live.clone(),
+                    {"id": "filter-deleted", "name": "Gone", "deletedAt": "2026-06-01T00:00:00Z"}
+                ]
+            }
+        });
+        let baseline = serde_json::json!({ "settings": current["settings"].clone() });
+        let edited = serde_json::json!({"id": "filter-edited", "name": "After"});
+        let target = serde_json::json!({
+            "tasks": [], "projects": [], "areas": [], "sections": [], "people": [],
+            "settings": { "theme": "light", "savedFilters": [edited.clone()] }
+        });
+
+        let merged = merge_data_snapshots(&current, &target, Some(&baseline));
+        assert_eq!(merged["settings"]["theme"], "light");
+        assert_eq!(merged["settings"]["savedFilters"], serde_json::json!([edited, live]));
+
+        let without_list = serde_json::json!({
+            "tasks": [], "projects": [], "areas": [], "sections": [], "people": [],
+            "settings": { "theme": "light" }
+        });
+        let merged = merge_data_snapshots(&current, &without_list, Some(&baseline));
+        assert_eq!(
+            merged["settings"]["savedFilters"],
+            serde_json::json!([current["settings"]["savedFilters"][0].clone(), live])
+        );
     }
 
     #[test]
