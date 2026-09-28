@@ -16,6 +16,7 @@ import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime }
 import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { isRecurrenceRule, parseRRuleString } from './recurrence';
 import { createTaskDraft, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
+import { getRetainedTaskContexts } from './task-token-usage';
 import {
     applyTaskDraftPatch,
     buildTaskEditorModel,
@@ -724,6 +725,13 @@ export function createNativeHostContract() {
     let cachedProjects: NativeProjectsView | null = null;
     let cachedProjectDetailKey = '';
     let cachedProjectDetail: ProjectDetailCache | null = null;
+    let cachedContextHistory: { tasks: Task[]; tokens: string[] } | null = null;
+    const retainedContexts = (tasks: Task[]): string[] => {
+        if (cachedContextHistory?.tasks === tasks) return cachedContextHistory.tokens;
+        const tokens = getRetainedTaskContexts(tasks);
+        cachedContextHistory = { tasks, tokens };
+        return tokens;
+    };
     // ponytail: title/area dedupe survives process death, but a renamed, moved, archived, or deleted project can be recreated; persist a capture ID if those retries become required.
     const createdProjects = new Map<string, string>();
     // Per task, the last draft save the store accepted and the task it produced. The
@@ -1833,7 +1841,7 @@ export function createNativeHostContract() {
                     field: input.field,
                     text: input.query,
                     limit: input.limit,
-                    knownTokens: input.field === 'tags' ? derived.allTags : derived.allContexts,
+                    knownTokens: input.field === 'tags' ? derived.allTags : retainedContexts(state._allTasks),
                     usage: input.field === 'tags' ? derived.tagTokenUsage : derived.contextTokenUsage,
                     people: state.people,
                     tasks: state.tasks,

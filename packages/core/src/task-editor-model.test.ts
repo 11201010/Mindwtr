@@ -285,7 +285,7 @@ describe('task editor model parity: Someday sections and suggestions', () => {
         }));
         expect(tokens).toEqual(snapshot.tokens);
         // Case, prefix and the typed-token rules, spelled out.
-        expect(tokens['contexts|@o'][1].map(([value]) => value)).toEqual(['@office', '@home', '@phone', '@office-2']);
+        expect(tokens['contexts|@o'][1].map(([value]) => value)).toEqual(['@office', '@office-2', '@outdoors', '@home']);
         expect(tokens['contexts|'][1]).toEqual([]);
         expect(tokens['contexts|@O'][1].map(([value]) => value)).toEqual(tokens['contexts|@o'][1].map(([value]) => value));
         expect(toggleTaskEditorToken('@home, @o', '@home', '@')).toBe('@o');

@@ -37,7 +37,7 @@ import { buildQuickAddPreviewEntries, formatQuickAddHelp, parseQuickAdd, splitQu
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import type { StoreActionResult } from './store-types';
 import { getQuickDateLabel } from './task-editor-schedule';
-import { getUsedTaskTokens } from './task-token-usage';
+import { getRetainedTaskContexts, getTaskContextMatches } from './task-token-usage';
 import type { AppSettings, Area, Project, Task, TaskPriority } from './types';
 
 /** What the popup's controls choose, besides the typed text. */
@@ -130,7 +130,7 @@ const normalizeInitialContexts = (contexts?: readonly string[]): string[] => Arr
 /** The context picker's choices: every context in use, then the opener's preset contexts. */
 export function getQuickCaptureContextChoices(tasks: readonly Task[], initialContexts?: readonly string[]): string[] {
     return Array.from(new Set(
-        [...getUsedTaskTokens(tasks as Task[], (task) => task.contexts, { prefix: '@' }), ...normalizeInitialContexts(initialContexts)]
+        [...getRetainedTaskContexts(tasks as Task[]), ...normalizeInitialContexts(initialContexts)]
             .map((item) => normalizeQuickCaptureContext(String(item || '')))
             .filter(Boolean),
     ));
@@ -139,14 +139,14 @@ export function getQuickCaptureContextChoices(tasks: readonly Task[], initialCon
 const sameToken = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 
 /** The context picker's list for its query, and whether "Add" would add anything. */
-export function getQuickCaptureContextPicker(choices: readonly string[], query: string, selected: readonly string[]): {
+export function getQuickCaptureContextPicker(choices: readonly string[], query: string, selected: readonly string[], history: readonly string[] = []): {
     items: string[];
     addable: boolean;
 } {
     const tokens = parseQuickCaptureContextQuery(query);
-    const filter = tokens[0]?.toLowerCase() ?? '';
+    const filter = normalizeQuickCaptureContext(query.split(',').pop() ?? '').toLowerCase();
     return {
-        items: filter ? choices.filter((token) => token.toLowerCase().includes(filter)) : [...choices],
+        items: filter ? getTaskContextMatches([...choices, ...history], filter, 8) : [...choices],
         addable: tokens.some((token) => !selected.some((chosen) => sameToken(chosen, token))),
     };
 }
@@ -817,9 +817,9 @@ export function buildQuickCaptureAreaPicker(options: QuickCaptureOptions, contex
 }
 
 /** The context picker for its search text. */
-export function buildQuickCaptureContextPicker(options: QuickCaptureOptions, context: Pick<QuickCaptureContext, 't'>, query: string, choices: readonly string[]) {
+export function buildQuickCaptureContextPicker(options: QuickCaptureOptions, context: Pick<QuickCaptureContext, 't'>, query: string, choices: readonly string[], history: readonly string[] = []) {
     const { t } = context;
-    const { items, addable } = getQuickCaptureContextPicker(choices, query, options.contexts);
+    const { items, addable } = getQuickCaptureContextPicker(choices, query, options.contexts, history);
     const trimmed = query.trim();
     const isSelected = (token: string) => options.contexts.some((item) => sameToken(item, token));
     return {

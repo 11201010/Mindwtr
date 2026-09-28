@@ -214,12 +214,13 @@ export default function CaptureScreen() {
   const params = useLocalSearchParams<CaptureSearchParams>();
   const router = useRouter();
   const navigation = useNavigation();
-  const { addProject, addTask, addTasks, projects, tasks, settings, areas, people } = useTaskStore((state) => ({
+  const { addProject, addTask, addTasks, projects, tasks, allTasks, settings, areas, people } = useTaskStore((state) => ({
     addProject: state.addProject,
     addTask: state.addTask,
     addTasks: state.addTasks,
     projects: state.projects,
     tasks: state.tasks,
+    allTasks: state._allTasks,
     settings: state.settings,
     areas: state.areas,
     people: state.people,
@@ -331,8 +332,8 @@ export default function CaptureScreen() {
     return getUsedTaskTokens(tasks, (task) => task.tags, { prefix: '#' });
   }, [tasks]);
   const quickAddParseOptions = React.useMemo(
-    () => buildQuickAddParseOptions(settings, { tasks, people }),
-    [people, settings, tasks]
+    () => buildQuickAddParseOptions(settings, { tasks, _allTasks: allTasks, people }),
+    [allTasks, people, settings, tasks]
   );
 
   // The parse the save path runs, one keystroke early. Same options object, so

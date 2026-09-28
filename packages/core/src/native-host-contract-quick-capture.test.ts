@@ -80,6 +80,23 @@ describe('native host contract: the capture popup', () => {
         });
     });
 
+    it('keeps archived contexts out of blank capture choices but finds them when typed', async () => {
+        const { host } = await openHost();
+        const state = useTaskStore.getState();
+        const base = state._allTasks[0]!;
+        useTaskStore.setState({ _allTasks: [
+            ...state._allTasks,
+            { ...base, id: 'archived-only', status: 'archived', contexts: ['@archived-only'] },
+            { ...base, id: 'deleted-only', deletedAt: '2026-09-27T00:00:00.000Z', contexts: ['@deleted-only'] },
+        ] });
+        const options = value(host.openQuickCapture()).options;
+        const picker = (query: string) => value(host.getQuickCaptureView({ text: 'Plan', options, picker: { kind: 'context', query } })).picker;
+        expect(picker('')?.items.some((item) => item.label === '@archived-only')).toBe(false);
+        expect(picker('arch')?.items).toMatchObject([{ label: '@archived-only' }]);
+        expect(picker('@home office, arch')?.items).toMatchObject([{ label: '@archived-only' }]);
+        expect(picker('dele')?.items).toEqual([]);
+    });
+
     it('formats dates with the user\'s settings, never the global configuration', async () => {
         const { host } = await openHost('base');
         await useTaskStore.getState().updateSettings({ dateFormat: 'ymd' });

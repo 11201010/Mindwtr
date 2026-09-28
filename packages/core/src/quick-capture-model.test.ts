@@ -13,6 +13,7 @@ import {
     applyQuickCaptureEdit,
     buildQuickCaptureView,
     createQuickCaptureOptions,
+    getQuickCaptureContextPicker,
     normalizeQuickCaptureContext,
     parseQuickCaptureContextQuery,
     saveQuickCapture,
@@ -76,6 +77,16 @@ describe('capture popup parity with the frozen React Native fixture', () => {
 });
 
 describe('capture popup model', () => {
+    it('matches the current comma-separated context while keeping Add semantics', () => {
+        const choices = ['@home'];
+        const history = ['@archived'];
+        expect(getQuickCaptureContextPicker(choices, '@home, arch', [], history)).toEqual({
+            items: ['@archived'], addable: true,
+        });
+        expect(getQuickCaptureContextPicker(choices, '@home, ', [], history)).toEqual({
+            items: ['@home'], addable: true,
+        });
+    });
     const context = {
         settings: {}, focusedCount: 0, defaultAreaId: 'a-home', contextChoices: ['@Phone'], t: (key: string) => key, now: new Date(2026, 8, 23, 10, 0),
     };

@@ -10,6 +10,7 @@ import { Task,
     type TaskStatus,
     buildTaskEditorMonthlyCustomRRule,
     getTaskEditorMonthlyCustom,
+    getRetainedTaskContexts,
     isTaskEditorTimeSpentEnabled,
     resolveAutoTextDirection,
     DEFAULT_PROJECT_COLOR,
@@ -176,6 +177,7 @@ function TaskEditModalInner({
     const { showToast } = useToast();
     const {
         tasks,
+        allTasks,
         projects,
         allProjects,
         sections,
@@ -202,6 +204,7 @@ function TaskEditModalInner({
         const derived = state.getDerivedState();
         return {
             tasks: state.tasks,
+            allTasks: state._allTasks,
             projects: state.projects,
             allProjects: state._allProjects,
             sections: state.sections,
@@ -226,6 +229,10 @@ function TaskEditModalInner({
             tagTokenUsage: derived.tagTokenUsage,
         };
     }, shallow);
+    const contextHistory = useMemo(
+        () => getRetainedTaskContexts(allTasks),
+        [allTasks],
+    );
     const { t, language } = useLanguage();
     // Already identity-stable: resolveThemeTokens caches its result on the theme,
     // so this only changes when a colour actually does (#766).
@@ -438,7 +445,7 @@ function TaskEditModalInner({
         editedTags: draftTags,
         contextInputDraft,
         tagInputDraft,
-        allContexts,
+        contextHistory,
         allTags,
         contextTokenUsage,
         tagTokenUsage,

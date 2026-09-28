@@ -21,6 +21,7 @@ import { buildProjectOrderMap,
     parseQuickAdd,
     getDefaultTaskAreaMode,
     getPersonOptionNames,
+    getRetainedTaskContexts,
     getUsedTaskTokens,
     resolveDefaultNewTaskAreaId,
     formatQuickAddHelp,
@@ -168,6 +169,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         highlightTaskId: state.highlightTaskId,
     }), shallow);
     const settings = useTaskStore((state) => state.settings);
+    const retainedQuickAddTasks = useTaskStore((state) => statusFilter === 'inbox' ? state._allTasks : null);
     const {
         updateSettings,
         addTask,
@@ -377,9 +379,13 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         () => getPersonOptionNames(people, tasks),
         [people, tasks],
     );
+    const quickAddContextHistory = useMemo(
+        () => retainedQuickAddTasks ? getRetainedTaskContexts(retainedQuickAddTasks) : [],
+        [retainedQuickAddTasks],
+    );
     const quickAddParseOptions = useMemo(
-        () => buildQuickAddParseOptions(settings, { tasks, people }),
-        [people, tasks, settings],
+        () => buildQuickAddParseOptions(settings, { tasks, _allTasks: retainedQuickAddTasks ?? undefined, people }),
+        [people, retainedQuickAddTasks, tasks, settings],
     );
 
     const {
@@ -1464,6 +1470,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                 projects={projects}
                                 areas={areas}
                                 contexts={allTokens}
+                                contextHistory={quickAddContextHistory}
                                 people={personOptionNames}
                                 t={t}
                                 dense={densityMode !== 'comfortable'}

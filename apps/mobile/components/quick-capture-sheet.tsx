@@ -449,8 +449,10 @@ export function QuickCaptureSheet({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showDueTimePicker, setShowDueTimePicker] = useState(false);
   const [contextOptions, setContextOptions] = useState<string[]>([]);
+  const [contextHistory, setContextHistory] = useState<string[]>([]);
   const [contextOptionsLoading, setContextOptionsLoading] = useState(false);
   const [showContextPicker, setShowContextPicker] = useState(false);
+  const contextSourceRevision = useTaskStore((state) => showContextPicker ? state._allTasks : null);
   const [contextQuery, setContextQuery] = useState('');
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [projectQuery, setProjectQuery] = useState('');
@@ -701,9 +703,12 @@ export function QuickCaptureSheet({
     contextOptionsLoadTimerRef.current = setTimeout(() => {
       contextOptionsLoadTimerRef.current = null;
       try {
-        const nextOptions = getQuickCaptureContextChoices(useTaskStore.getState().tasks, initialProps?.contexts);
+        const state = useTaskStore.getState();
+        const nextOptions = getQuickCaptureContextChoices(state.tasks, initialProps?.contexts);
+        const nextHistory = getQuickCaptureContextChoices(state._allTasks);
         if (contextOptionsRequestRef.current === requestId) {
           setContextOptions(nextOptions);
+          setContextHistory(nextHistory);
         }
       } catch (error) {
         logCaptureWarn('Failed to load quick capture context suggestions', error);
@@ -715,9 +720,13 @@ export function QuickCaptureSheet({
     }, 0);
   }, [clearContextOptionsLoad, initialProps?.contexts]);
 
+  useEffect(() => {
+    if (showContextPicker) loadContextOptions();
+  }, [contextSourceRevision, loadContextOptions, showContextPicker]);
+
   const contextPicker = useMemo(
-    () => getQuickCaptureContextPicker(contextOptions, contextQuery, contextTags),
-    [contextOptions, contextQuery, contextTags],
+    () => getQuickCaptureContextPicker(contextOptions, contextQuery, contextTags, contextHistory),
+    [contextOptions, contextQuery, contextTags, contextHistory],
   );
 
   const addContextFromQuery = useCallback(() => {
@@ -796,6 +805,7 @@ export function QuickCaptureSheet({
     clearContextOptionsLoad();
     contextOptionsRequestRef.current += 1;
     setContextOptions(getQuickCaptureContextChoices([], initialProps?.contexts));
+    setContextHistory([]);
     setContextOptionsLoading(false);
     setContextQuery('');
     setShowContextPicker(false);
@@ -1262,8 +1272,7 @@ export function QuickCaptureSheet({
 
   const openContextPicker = useCallback(() => {
     setShowContextPicker(true);
-    loadContextOptions();
-  }, [loadContextOptions]);
+  }, []);
 
   const closeContextPicker = useCallback(() => {
     setShowContextPicker(false);

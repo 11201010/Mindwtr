@@ -15,6 +15,7 @@ type ListQuickAddProps = {
     projects: Project[];
     areas: Area[];
     contexts: string[];
+    contextHistory: readonly string[];
     people: readonly string[];
     onResetCopilot: () => void;
     dense?: boolean;
@@ -31,6 +32,7 @@ export function ListQuickAdd({
     projects,
     areas,
     contexts,
+    contextHistory,
     people,
     onResetCopilot,
     dense = false,
@@ -56,6 +58,7 @@ export function ListQuickAdd({
                 value={value}
                 projects={projects}
                 contexts={contexts}
+                contextHistory={contextHistory}
                 areas={areas}
                 people={people}
                 onCreateProject={onCreateProject}

@@ -21,6 +21,7 @@ import {
     isTaskInCalendarHistoryProject,
     isProjectedRecurringTask,
     buildQuickAddParseOptions,
+    getRetainedTaskContexts,
     hasTimeComponent,
     resolveAreaFilterSelection,
     resolveCalendarSystemSetting,
@@ -132,8 +133,8 @@ export function useDesktopCalendarController() {
     );
     const { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled } = resolveFeatureFlags(settings);
     const quickAddParseOptions = useMemo(
-        () => buildQuickAddParseOptions(settings, { tasks, people }),
-        [people, settings, tasks],
+        () => buildQuickAddParseOptions(settings, { tasks, _allTasks: allTasks, people }),
+        [allTasks, people, settings, tasks],
     );
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     // The identity color a task chip's left bar carries — project first, then
@@ -195,6 +196,7 @@ export function useDesktopCalendarController() {
         () => Array.from(new Set([...allContexts, ...allTags])).sort(),
         [allContexts, allTags]
     );
+    const quickAddContextHistory = useMemo(() => getRetainedTaskContexts(allTasks), [allTasks]);
 
     useEffect(() => {
         if (!perf.enabled) return;
@@ -752,6 +754,7 @@ export function useDesktopCalendarController() {
         planningTasks,
         projects,
         quickAddSuggestionTokens,
+        quickAddContextHistory,
         resolveText,
         saveTaskComposer: composer.saveTaskComposer,
         scheduleCandidates: selectedDay.scheduleCandidates,

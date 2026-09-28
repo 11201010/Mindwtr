@@ -14,6 +14,7 @@ import {
     getQuickAddProjectInitialProps,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
+    getRetainedTaskContexts,
     parseQuickAdd,
     normalizeFocusTaskLimit,
     getDefaultTaskAreaMode,
@@ -186,11 +187,16 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
     const setEditingTaskId = useUiStore((state) => state.setEditingTaskId);
     const showToast = useUiStore((state) => state.showToast);
     const [isOpen, setIsOpen] = useState(false);
+    const retainedTasks = useTaskStore((state) => isOpen ? state._allTasks : null);
     const derivedState = isOpen ? getDerivedState() : EMPTY_QUICK_ADD_DERIVED;
     const { allContexts, allTags } = derivedState;
     const suggestionTokens = useMemo(
         () => Array.from(new Set([...allContexts, ...allTags])).sort(),
         [allContexts, allTags]
+    );
+    const contextHistory = useMemo(
+        () => retainedTasks ? getRetainedTaskContexts(retainedTasks) : [],
+        [retainedTasks],
     );
     const { t } = useLanguage();
     const [value, setValue] = useState('');
@@ -251,7 +257,7 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
     // Read lazily on each open: the modal does not subscribe to tasks/people.
     const quickAddParseOptions = useMemo(
         () => buildQuickAddParseOptions(settings, isOpen ? useTaskStore.getState() : {}),
-        [isOpen, settings],
+        [isOpen, retainedTasks, settings],
     );
     const parsedInput = useMemo(
         () => parseQuickAdd(value, projects, new Date(), areas, quickAddParseOptions),
@@ -1274,6 +1280,7 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
                                 autoFocus={captureMode === 'text'}
                                 projects={projects}
                                 contexts={suggestionTokens}
+                                contextHistory={contextHistory}
                                 areas={areas}
                                 people={quickAddParseOptions.knownPeople}
                                 onCreateProject={async (title) => {

@@ -28,6 +28,7 @@ type CalendarTaskComposerModalController = Pick<
     | 'closeTaskComposer'
     | 'projects'
     | 'quickAddSuggestionTokens'
+    | 'quickAddContextHistory'
     | 'resolveText'
     | 'saveTaskComposer'
     | 'selectTaskComposerTask'
@@ -127,6 +128,7 @@ export function CalendarTaskComposerModal({ controller }: CalendarTaskComposerMo
         closeTaskComposer,
         projects,
         quickAddSuggestionTokens,
+        quickAddContextHistory,
         resolveText,
         saveTaskComposer,
         selectTaskComposerTask,
@@ -220,6 +222,7 @@ export function CalendarTaskComposerModal({ controller }: CalendarTaskComposerMo
                                 onChange={updateTaskComposerTitle}
                                 projects={projects}
                                 contexts={quickAddSuggestionTokens}
+                                contextHistory={quickAddContextHistory}
                                 areas={areas}
                                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-normal focus:outline-none focus:ring-2 focus:ring-primary/30"
                                 placeholder={t('calendar.addTask')}

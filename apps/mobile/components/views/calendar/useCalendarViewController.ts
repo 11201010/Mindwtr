@@ -154,8 +154,8 @@ export function useCalendarViewController() {
   const { t, language } = useLanguage();
   const { areaById, projectById, resolvedAreaFilter, visibleTasks: areaVisibleTasks } = useVisibleTaskContext();
   const quickAddParseOptions = useMemo(
-    () => buildQuickAddParseOptions(settings, { tasks, people }),
-    [people, settings, tasks],
+    () => buildQuickAddParseOptions(settings, { tasks, _allTasks: allTasks, people }),
+    [allTasks, people, settings, tasks],
   );
 
   const toRgba = (hex: string, alpha: number) => {

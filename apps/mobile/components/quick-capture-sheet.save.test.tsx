@@ -56,6 +56,7 @@ const {
     projects: [],
     settings: {},
     tasks: [],
+    _allTasks: [],
     getDerivedState,
     getFocusedCount,
   };
@@ -346,6 +347,7 @@ describe('QuickCaptureSheet save handling', () => {
     selectStore.getState().areas = [];
     selectStore.getState().projects = [];
     selectStore.getState().tasks = [];
+    selectStore.getState()._allTasks = selectStore.getState().tasks;
     selectStore.getState().settings = {};
     selectedAreaIdForNewTasksMock.current = undefined;
     audioHookMock.params = null;
@@ -610,7 +612,13 @@ describe('QuickCaptureSheet save handling', () => {
 
   it('loads context autocomplete only after the context picker opens', async () => {
     vi.useFakeTimers();
-    selectStore.getState().tasks = [{ id: 'desk', title: 'Desk work', status: 'next', contexts: ['@computer'], tags: [] }] as never;
+    const active = { id: 'active', title: 'Active', status: 'next', contexts: ['@active-only'], tags: [] };
+    const done = { id: 'done', title: 'Done', status: 'done', contexts: ['@done-only'], tags: [] };
+    const archived = { id: 'archived', title: 'Archived', status: 'archived', contexts: ['@archived-only'], tags: [] };
+    const bare = { id: 'bare', title: 'Bare', status: 'archived', contexts: ['Seasonal Planning'], tags: [] };
+    const deleted = { id: 'deleted', title: 'Deleted', status: 'next', contexts: ['@deleted-only'], tags: [], deletedAt: '2026-09-27T00:00:00.000Z' };
+    selectStore.getState().tasks = [active, done] as never;
+    selectStore.getState()._allTasks = [active, done, archived, bare, deleted] as never;
 
     let tree!: ReturnType<typeof create>;
     await act(async () => {
@@ -644,8 +652,23 @@ describe('QuickCaptureSheet save handling', () => {
     expect(contextScans()).toBe(1);
     const pickers = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetPickers')[0];
     if (!pickers) throw new Error('QuickCaptureSheetPickers not found');
-    expect(pickers.props.filteredContexts).toEqual(['@computer']);
+    expect(pickers.props.filteredContexts).toEqual(['@active-only', '@done-only']);
     expect(pickers.props.contextOptionsLoading).toBe(false);
+    await act(async () => {
+      pickers.props.onContextQueryChange('arch');
+      await Promise.resolve();
+    });
+    expect(pickers.props.filteredContexts).toEqual(['@archived-only']);
+    await act(async () => {
+      pickers.props.onContextQueryChange('Seas');
+      await Promise.resolve();
+    });
+    expect(pickers.props.filteredContexts).toEqual(['@Seasonal Planning']);
+    await act(async () => {
+      pickers.props.onContextQueryChange('dele');
+      await Promise.resolve();
+    });
+    expect(pickers.props.filteredContexts).toEqual([]);
   });
 
   it('previews the draft with the exact parse configuration its save runs', async () => {

@@ -295,6 +295,14 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
         };
     };
     const contextChoices = () => getQuickCaptureContextChoices(useTaskStore.getState().tasks);
+    let cachedContextHistory: { tasks: Task[]; choices: string[] } | null = null;
+    const contextHistory = () => {
+        const tasks = useTaskStore.getState()._allTasks;
+        if (cachedContextHistory?.tasks === tasks) return cachedContextHistory.choices;
+        const choices = getQuickCaptureContextChoices(tasks);
+        cachedContextHistory = { tasks, choices };
+        return choices;
+    };
     const freshOptions = (addAnother: boolean) => {
         const state = useTaskStore.getState();
         return createQuickCaptureOptions({
@@ -311,7 +319,7 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
         if (picker?.kind === 'project') shown = { kind: 'project', query: picker.query ?? '', ...windowed(buildQuickCaptureProjectPicker(options, ctx, picker.query ?? '')) };
         if (picker?.kind === 'area') shown = { kind: 'area', query: picker.query ?? '', ...windowed(buildQuickCaptureAreaPicker(options, ctx, picker.query ?? '')) };
         if (picker?.kind === 'context') {
-            shown = { kind: 'context', query: picker.query ?? '', ...windowed(buildQuickCaptureContextPicker(options, ctx, picker.query ?? '', contextChoices())) };
+            shown = { kind: 'context', query: picker.query ?? '', ...windowed(buildQuickCaptureContextPicker(options, ctx, picker.query ?? '', contextChoices(), (picker.query ?? '').trim() ? contextHistory() : [])) };
         }
         if (picker?.kind === 'priority') {
             if (!built.priority) return fail('INVALID_INPUT', 'The priority picker is off while Priorities are off');

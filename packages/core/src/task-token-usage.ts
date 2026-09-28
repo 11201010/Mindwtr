@@ -104,6 +104,28 @@ export const getUsedTaskTokensFromUsage = (usage: readonly TaskTokenUsage[]): st
         .map((entry) => entry.token)
         .sort((a, b) => baseTextCollator.compare(a, b));
 
+/** Context labels on retained records, including legacy bare labels, without changing stored data. */
+export const getRetainedTaskContexts = (tasks: Task[]): string[] => Array.from(new Set(
+    getUsedTaskTokens(tasks, (task) => task.contexts)
+        .map((token) => token.replace(/^[@#＠]+/, '').trim())
+        .filter(Boolean)
+        .map((label) => `@${label}`),
+)).sort((a, b) => baseTextCollator.compare(a, b));
+
+/** Typed context matches from retained task tokens; an empty query never surfaces history. */
+export const getTaskContextMatches = (tokens: readonly string[], query: string, limit: number): string[] => {
+    const needle = query.trim().replace(/^@/, '').toLowerCase();
+    if (!needle || limit <= 0) return [];
+    const quality = (token: string): number => {
+        const label = token.slice(1).toLowerCase();
+        return label === needle ? 0 : label.startsWith(needle) ? 1 : 2;
+    };
+    return Array.from(new Set(tokens))
+        .filter((token) => token.startsWith('@') && token.slice(1).toLowerCase().includes(needle))
+        .sort((a, b) => quality(a) - quality(b) || baseTextCollator.compare(a, b))
+        .slice(0, limit);
+};
+
 export const getFrequentTaskTokens = (
     tasks: Task[],
     selector: TaskTokenSelector,

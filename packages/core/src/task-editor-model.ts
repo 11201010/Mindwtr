@@ -49,7 +49,7 @@ import {
     type TaskEditorReminders,
     type TaskEditorTimeEstimate,
 } from './task-editor-schedule';
-import { getFrequentTaskTokensFromUsage, type TaskTokenUsage } from './task-token-usage';
+import { getFrequentTaskTokensFromUsage, getTaskContextMatches, type TaskTokenUsage } from './task-token-usage';
 import { compareAreasByOrder } from './task-utils';
 import { resolveTaskViewSection, setTaskViewSectionId, sortViewSectionDefinitions } from './view-sections';
 import type {
@@ -454,6 +454,9 @@ export function getTaskEditorTokenMatches(
     const query = getTaskEditorActiveTokenQuery(value, tokenPrefix);
     if (!query) return [];
     const selected = new Set(parseTaskEditorTokenList(value, tokenPrefix));
+    if (tokenPrefix === '@') {
+        return getTaskContextMatches(pool.filter((token) => !selected.has(token)), query, limit);
+    }
     return pool
         .filter((token) => token.slice(1).toLowerCase().includes(query))
         .filter((token) => !selected.has(token))

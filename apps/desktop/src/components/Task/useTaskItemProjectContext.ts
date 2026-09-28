@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Project, Section, Task, TaskDraftSetter, Area } from '@mindwtr/core';
-import { getFrequentTaskTokens, getPersonOptionNames, getUsedTaskTokens, useTaskStore,
+import { getFrequentTaskTokens, getPersonOptionNames, getRetainedTaskContexts, getUsedTaskTokens, useTaskStore,
     baseTextCollator,
 } from '@mindwtr/core';
 
@@ -74,10 +74,11 @@ export function useTaskItemProjectContext({
     const [allContexts, setAllContexts] = useState<string[]>([]);
     const [popularContextOptions, setPopularContextOptions] = useState<string[]>([]);
     const [assignedToOptions, setAssignedToOptions] = useState<string[]>([]);
+    const retainedTaskRevision = useTaskStore((state) => loadTokenOptions ? state._allTasks : null);
 
     useEffect(() => {
         if (!isEditing && !loadTokenOptions) return;
-        const { tasks: storeTasks, projects: storeProjects, people: storePeople } = useTaskStore.getState();
+        const { tasks: storeTasks, _allTasks: retainedTasks, projects: storeProjects, people: storePeople } = useTaskStore.getState();
         if (isEditing) {
             if (editProjectId) {
                 setField('areaId', '');
@@ -109,7 +110,7 @@ export function useTaskItemProjectContext({
             '#'
         );
         const allContextOptions = uniquePrefixedTokenOptions(
-            getUsedTaskTokens(storeTasks, (candidate) => candidate.contexts),
+            getRetainedTaskContexts(retainedTasks),
             '@'
         );
         const frequentContextOptions = uniquePrefixedTokenOptions(
@@ -121,7 +122,7 @@ export function useTaskItemProjectContext({
         setAllContexts(sortTokenOptions(allContextOptions));
         setPopularContextOptions(frequentContextOptions);
         setAssignedToOptions(getPersonOptionNames(storePeople, storeTasks));
-    }, [editProjectId, isEditing, loadTokenOptions, project, setField, task.id, task.projectId]);
+    }, [editProjectId, isEditing, loadTokenOptions, project, retainedTaskRevision, setField, task.id, task.projectId]);
 
     return {
         sectionsByProject,

@@ -83,6 +83,8 @@ export {
     collectTaskTokenUsage,
     getUsedTaskTokens,
     getUsedTaskTokensFromUsage,
+    getTaskContextMatches,
+    getRetainedTaskContexts,
     getFrequentTaskTokens,
     getFrequentTaskTokensFromUsage,
     getRecentTaskTokens,

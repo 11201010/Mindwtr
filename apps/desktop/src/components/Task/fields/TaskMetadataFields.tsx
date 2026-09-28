@@ -18,6 +18,7 @@ import { TASK_STATUS_ICONS } from '../../../lib/task-status-icons';
 import {
     createCustomTimeEstimate,
     formatTimeEstimateLabel,
+    getTaskContextMatches,
     isCustomTimeEstimate,
     parseTimeEstimateInput,
     tFallback,
@@ -305,6 +306,7 @@ function ToggleTokenField({
     labelToken,
     options,
     suggestions = options,
+    rankContextSuggestions = false,
     placeholder,
     value,
     onChange,
@@ -316,6 +318,7 @@ function ToggleTokenField({
     labelToken?: string;
     options: string[];
     suggestions?: string[];
+    rankContextSuggestions?: boolean;
     placeholder: string;
     value: string;
     onChange: (value: string) => void;
@@ -337,12 +340,13 @@ function ToggleTokenField({
     const filteredSuggestions = useMemo(() => {
         if (!focused || !query) return [];
         const trimmedQuery = query.trim().toLowerCase();
-        return suggestionOptions
-            .filter((option) => matchesOption(option, query))
+        return (rankContextSuggestions
+            ? getTaskContextMatches(suggestionOptions, query, suggestionOptions.length)
+            : suggestionOptions.filter((option) => matchesOption(option, query)))
             .filter((option) => option.trim().toLowerCase() !== trimmedQuery)
             .filter((option) => !otherTokenKeys.has(canonicalToken(option)))
             .slice(0, 6);
-    }, [focused, otherTokenKeys, query, suggestionOptions]);
+    }, [focused, otherTokenKeys, query, rankContextSuggestions, suggestionOptions]);
 
     useEffect(() => {
         setActiveIndex(0);
@@ -870,6 +874,7 @@ export function ContextsField({
             labelToken={QUICK_ADD_FIELD_TOKENS.contexts}
             options={options}
             suggestions={suggestions}
+            rankContextSuggestions
             placeholder={t('taskEdit.contextsPlaceholder')}
             value={value}
             onChange={onChange}

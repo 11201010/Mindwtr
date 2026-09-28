@@ -7,7 +7,7 @@ import { normalizeTaskStatus } from './task-status';
 import { normalizeLinkAttachmentInput } from './attachment-link-utils';
 import { getActiveLanguage, getMonthNamesForLanguage, isActiveDateFormatDayFirst, normalizeClockTimeInput } from './date';
 import type { Language } from './i18n/i18n-types';
-import { getUsedTaskTokens } from './task-token-usage';
+import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
 import { getPersonOptionNames } from './people';
 
 // The live capture preview rides this module's barrel line
@@ -80,6 +80,7 @@ export interface QuickAddParseSettings {
 /** Everything the bag is derived from; `useTaskStore.getState()` satisfies it. */
 export interface QuickAddParseSource {
     tasks?: Task[];
+    _allTasks?: Task[];
     people?: readonly Person[];
 }
 
@@ -95,7 +96,7 @@ export function buildQuickAddParseOptions(
 ): QuickAddParseOptions {
     const tasks = source.tasks ?? [];
     return {
-        knownContexts: getUsedTaskTokens(tasks, (task) => task.contexts, { prefix: '@' }),
+        knownContexts: getRetainedTaskContexts(source._allTasks ?? tasks),
         knownTags: getUsedTaskTokens(tasks, (task) => task.tags, { prefix: '#' }),
         knownPeople: getPersonOptionNames(source.people, tasks),
         defaultScheduleTime: normalizeClockTimeInput(settings?.gtd?.defaultScheduleTime) || undefined,

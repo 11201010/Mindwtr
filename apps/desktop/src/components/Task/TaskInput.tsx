@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClipboardEventHandler, KeyboardEventHandler, RefObject } from 'react';
-import { resolveFeatureFlags, useTaskStore, type Area, type Project, type TaskPriority } from '@mindwtr/core';
+import { getTaskContextMatches, resolveFeatureFlags, useTaskStore, type Area, type Project, type TaskPriority } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
 import {
     compareAutocompleteLabels,
@@ -88,6 +88,7 @@ interface TaskInputProps {
     onChange: (value: string) => void;
     projects: Project[];
     contexts: readonly string[];
+    contextHistory?: readonly string[];
     areas?: Area[];
     people?: readonly string[];
     onCreateProject?: (title: string) => Promise<string | null>;
@@ -260,6 +261,7 @@ export function TaskInput({
     onChange,
     projects,
     contexts,
+    contextHistory,
     areas = [],
     people = [],
     onCreateProject,
@@ -337,6 +339,14 @@ export function TaskInput({
             }));
         }
         const expectedPrefix = trigger.type === 'tag' ? '#' : '@';
+        if (trigger.type === 'context' && query) {
+            const normalized = normalizeAutocompleteTokens([...contexts, ...(contextHistory ?? [])], '@');
+            return getTaskContextMatches(normalized, query, 8).map((token) => ({
+                kind: 'context' as const,
+                label: token,
+                value: token,
+            }));
+        }
         const normalizedTokens = normalizeAutocompleteTokens(contexts, expectedPrefix);
         const matches = normalizedTokens
             .filter((token) => matchesAutocompleteQuery(token.slice(1), query))
@@ -346,7 +356,7 @@ export function TaskInput({
             label: token,
             value: token,
         }));
-    }, [trigger, projects, contexts, areas, people, prioritiesEnabled]);
+    }, [trigger, projects, contexts, contextHistory, areas, people, prioritiesEnabled]);
 
     const closeTrigger = () => {
         setTrigger(null);

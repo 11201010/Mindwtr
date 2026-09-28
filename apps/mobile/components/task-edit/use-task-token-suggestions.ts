@@ -14,7 +14,7 @@ type UseTaskTokenSuggestionsParams = {
     editedTags?: string[];
     contextInputDraft: string;
     tagInputDraft: string;
-    allContexts: string[];
+    contextHistory: string[];
     allTags: string[];
     contextTokenUsage: TaskTokenUsage[];
     tagTokenUsage: TaskTokenUsage[];
@@ -25,14 +25,14 @@ export const useTaskTokenSuggestions = ({
     editedTags,
     contextInputDraft,
     tagInputDraft,
-    allContexts,
+    contextHistory,
     allTags,
     contextTokenUsage,
     tagTokenUsage,
 }: UseTaskTokenSuggestionsParams) => {
     const contextSuggestionPool = useMemo(
-        () => getTaskEditorTokenPool(editedContexts, allContexts, '@'),
-        [allContexts, editedContexts]
+        () => getTaskEditorTokenPool(editedContexts, contextHistory, '@'),
+        [contextHistory, editedContexts]
     );
 
     const tagSuggestionPool = useMemo(

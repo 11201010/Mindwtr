@@ -190,8 +190,39 @@ describe('TaskEditModal', () => {
       taskEditStore.current._allProjects = taskEditStore.current.projects;
       taskEditStore.current.sections = [];
       taskEditStore.current._allSections = [];
+      taskEditStore.current.tasks = [];
       taskEditStore.current._allTasks = [];
+      taskEditStore.current.getDerivedState = () => ({ allContexts: [], allTags: [], contextTokenUsage: [], tagTokenUsage: [] });
     }
+  });
+
+  it('finds an archived context while editing without adding it to quick chips', async () => {
+    const timestamp = '2026-09-27T00:00:00.000Z';
+    const task = (id: string, status: Task['status'], contexts: string[], deletedAt?: string): Task => ({
+      id, title: id, status, contexts, tags: [], createdAt: timestamp, updatedAt: timestamp, deletedAt,
+    });
+    const editing = task('editing', 'next', ['@arch']);
+    const active = task('active', 'next', ['@active-only']);
+    const done = task('done', 'done', ['@done-only']);
+    const archived = task('archived', 'archived', ['@archived-only']);
+    const bare = task('bare', 'archived', ['Seasonal Planning']);
+    const deleted = task('deleted', 'next', ['@deleted-only'], timestamp);
+    taskEditStore.current!.tasks = [editing, active, done];
+    taskEditStore.current!._allTasks = [editing, active, done, archived, bare, deleted];
+    taskEditStore.current!.getDerivedState = () => ({
+      allContexts: ['@active-only', '@arch', '@done-only'], allTags: [],
+      contextTokenUsage: [{ token: '@active-only', count: 1, lastUsedAt: 0 }], tagTokenUsage: [],
+    });
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={editing} onClose={vi.fn()} onSave={vi.fn()} />);
+      await Promise.resolve();
+    });
+    const form = tree.root.findByType('TaskEditFormTab' as any);
+    const contextField = form.props.renderField('contexts');
+    expect(contextField.props.contextTokenSuggestions).toEqual(['@archived-only']);
+    expect(contextField.props.frequentContextSuggestions).toEqual(['@active-only']);
   });
 
   it('does not focus an editor field without recovered Activity input state', () => {

@@ -132,6 +132,30 @@ beforeEach(() => {
 });
 
 describe('QuickAddModal', () => {
+    it('offers retained contexts only after a typed query', async () => {
+        const timestamp = '2026-09-27T00:00:00.000Z';
+        const task = (id: string, status: Task['status'], deletedAt?: string): Task => ({
+            id, title: id, status, contexts: [`@${id}-only`], tags: [], createdAt: timestamp, updatedAt: timestamp, deletedAt,
+        });
+        act(() => useTaskStore.setState({ _allTasks: [
+            task('active', 'next'), task('done', 'done'), task('archived', 'archived'), task('deleted', 'next', timestamp),
+            { ...task('bare', 'archived'), contexts: ['Seasonal Planning'] },
+        ] }));
+        renderQuickAddModal();
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:quick-add'));
+        });
+        const input = screen.getByRole('combobox');
+        fireEvent.change(input, { target: { value: '@' } });
+        expect(screen.queryByRole('option', { name: '@archived-only' })).not.toBeInTheDocument();
+        fireEvent.change(input, { target: { value: '@arch' } });
+        expect(await screen.findByRole('option', { name: '@archived-only' })).toBeVisible();
+        fireEvent.change(input, { target: { value: '@dele' } });
+        expect(screen.queryByRole('option', { name: '@deleted-only' })).not.toBeInTheDocument();
+        fireEvent.change(input, { target: { value: '@Seas' } });
+        expect(await screen.findByRole('option', { name: '@Seasonal Planning' })).toBeVisible();
+    });
+
     it('blocks sandbox audio and private-file capture before native access', async () => {
         sandboxState.enabled = true;
         renderQuickAddModal();

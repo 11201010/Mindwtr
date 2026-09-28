@@ -1472,6 +1472,9 @@ describe('native host contract', () => {
             getData.mockResolvedValue(editorData([
                 editTask({ contexts: ['@office'] }),
                 task('home', '2026-09-01T00:00:00.000Z', { contexts: ['@home'], tags: ['#launch'], assignedTo: 'Sam' }),
+                task('archived', '2026-09-01T00:00:00.000Z', { status: 'archived', contexts: ['@offsite'] }),
+                task('bare', '2026-09-01T00:00:00.000Z', { status: 'archived', contexts: ['Seasonal Planning'] }),
+                task('deleted', '2026-09-01T00:00:00.000Z', { deletedAt: '2026-09-02T00:00:00.000Z', contexts: ['@offer'] }),
             ]));
             expect(await host.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
 
@@ -1479,14 +1482,21 @@ describe('native host contract', () => {
             const derived = state.getDerivedState();
             const contexts = host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: '@o', limit: 4 });
             expect(contexts).toEqual({ ok: true, value: getTaskEditorSuggestions({
-                field: 'contexts', text: '@o', limit: 4, knownTokens: derived.allContexts, usage: derived.contextTokenUsage,
+                field: 'contexts', text: '@o', limit: 4, knownTokens: ['@home', '@office', '@offsite', '@Seasonal Planning'], usage: derived.contextTokenUsage,
                 people: state.people, tasks: state.tasks,
             }) });
-            // Known contexts come from the store in its order.
+            // Typed matches include retained history, ranked before substring matches.
             expect(contexts.ok && contexts.value.matches).toEqual([
-                { value: '@home', text: '@home, ' },
                 { value: '@office', text: '@office, ' },
+                { value: '@offsite', text: '@offsite, ' },
+                { value: '@home', text: '@home, ' },
+                { value: '@Seasonal Planning', text: '@Seasonal Planning, ' },
             ]);
+            expect(contexts.ok && contexts.value.quick.map((item) => item.value)).not.toContain('@offsite');
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: '@offer', limit: 4 }))
+                .toMatchObject({ ok: true, value: { matches: [] } });
+            expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'contexts', query: 'Seas', limit: 4 }))
+                .toMatchObject({ ok: true, value: { matches: [{ value: '@Seasonal Planning', text: '@Seasonal Planning, ' }] } });
             expect(contexts.ok && contexts.value.draftValue).toBe('@o');
             expect(host.getTaskEditorSuggestions({ id: 'edit', field: 'tags', query: '', limit: 4 }))
                 .toMatchObject({ ok: true, value: { matches: [], quick: [{ value: '#launch', selected: false, text: '#launch' }] } });

@@ -303,6 +303,27 @@ describe('ListView', () => {
     expect(queryByText('Try: Call mom /due:tomorrow 5pm @phone #family')).not.toBeInTheDocument();
   });
 
+  it('finds an archived bare context in Inbox Quick Add while blank choices stay visible-only', () => {
+    useTaskStore.setState({
+      _allTasks: [
+        makeTask('active', { status: 'inbox', contexts: ['@active-only'] }),
+        makeTask('archived', { status: 'archived', contexts: ['Seasonal Planning'] }),
+        makeTask('deleted', { status: 'next', contexts: ['@deleted-only'], deletedAt: now }),
+      ],
+      lastDataChangeAt: 1,
+    });
+    const view = renderListView('inbox', 'Inbox');
+    const input = view.getByPlaceholderText(/Add Task/i);
+    fireEvent.change(input, { target: { value: '@' } });
+    expect(view.queryByRole('option', { name: '@Seasonal Planning' })).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: '@Seas' } });
+    expect(view.getByRole('option', { name: '@Seasonal Planning' })).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'Plan @Seasonal Planning' } });
+    expect(view.getByTestId('quick-add-preview')).toHaveTextContent('@Seasonal Planning');
+    fireEvent.change(input, { target: { value: '@dele' } });
+    expect(view.queryByRole('option', { name: '@deleted-only' })).not.toBeInTheDocument();
+  });
+
   it('keeps Mind Sweep open when the first capture populates an empty inbox', async () => {
     const addTask = vi.fn(async (title: string, initialProps?: Partial<Task>) => {
       const task = makeTask('captured', {

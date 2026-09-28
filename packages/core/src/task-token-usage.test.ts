@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectTaskTokenUsage, createTaskTokenUsageAccumulator, getFrequentTaskTokens, getRecentTaskTokens, getUsedTaskTokens, getUsedTaskTokensFromUsage } from './task-token-usage';
+import { collectTaskTokenUsage, createTaskTokenUsageAccumulator, getFrequentTaskTokens, getRecentTaskTokens, getRetainedTaskContexts, getTaskContextMatches, getUsedTaskTokens, getUsedTaskTokensFromUsage } from './task-token-usage';
 import type { Task } from './types';
 
 const buildTask = (overrides: Partial<Task>): Task => ({
@@ -73,6 +73,30 @@ describe('task token usage', () => {
             '@home',
             '@work',
         ]);
+    });
+
+    it('matches retained active, done and archived contexts by quality within the limit', () => {
+        const tasks = [
+            buildTask({ id: 'active', status: 'next', contexts: ['@computer'] }),
+            buildTask({ id: 'done', status: 'done', contexts: ['@office'] }),
+            buildTask({ id: 'archived', status: 'archived', contexts: ['@offsite'] }),
+            buildTask({ id: 'deleted', deletedAt: '2026-03-03T00:00:00.000Z', contexts: ['@offer'] }),
+        ];
+        const tokens = getUsedTaskTokens(tasks, (task) => task.contexts, { prefix: '@' });
+        expect(getTaskContextMatches(tokens, '', 4)).toEqual([]);
+        expect(getTaskContextMatches(tokens, 'off', 2)).toEqual(['@office', '@offsite']);
+        expect(getTaskContextMatches(['@coffee', '@office', '@off'], '@off', 2)).toEqual(['@off', '@office']);
+        expect(getTaskContextMatches(tokens, 'offer', 4)).toEqual([]);
+    });
+
+    it('normalizes bare retained contexts before matching and drops deleted sources', () => {
+        const tasks = [
+            buildTask({ status: 'archived', contexts: ['Seasonal Planning', '@office'] }),
+            buildTask({ deletedAt: '2026-03-03T00:00:00.000Z', contexts: ['Lost Label'] }),
+        ];
+        const contexts = getRetainedTaskContexts(tasks);
+        expect(getTaskContextMatches(contexts, 'seas', 4)).toEqual(['@Seasonal Planning']);
+        expect(contexts).not.toContain('@Lost Label');
     });
 
     it('offers hierarchy ancestors only when requested for filtering', () => {
