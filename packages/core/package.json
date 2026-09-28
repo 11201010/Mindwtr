@@ -7,6 +7,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./share-card": "./src/share-card.ts",
+    "./theme-presets": "./src/theme-presets.ts",
+    "./focus-widget-filter": "./src/focus-widget-filter.ts",
+    "./widget-completion-token": "./src/widget-completion-token.ts",
+    "./widget-lists": "./src/widget-lists.ts",
+    "./widget-payload": "./src/widget-payload.ts",
+    "./widget-list-destination": "./src/widget-list-destination.ts",
     "./task-draft": "./src/task-draft.ts",
     "./task-filter-selections": "./src/task-filter-selections.ts",
     "./process-inbox-workflow": "./src/process-inbox-workflow.ts",

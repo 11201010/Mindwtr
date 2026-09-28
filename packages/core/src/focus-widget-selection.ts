@@ -1,6 +1,6 @@
 /**
  * The one home for the "Today" list the widget payload builders render:
- * `apps/mobile/lib/widget-data.ts` (Android widget, iOS widget, and the
+ * `widget-payload.ts` (Android widget, iOS widget, and the
  * Shortcuts snapshot's "focus" list, #980) and
  * `apps/desktop/src/lib/macos-widget-data.ts` (the macOS WidgetKit widget,
  * #1054). Both used to carry their own copy of this selection, and the copies
@@ -10,9 +10,8 @@
  * step 3 was due today showed step 3 in Focus and step 1 on the widget.
  *
  * Focus order is ONE contract across surfaces (#1090): this module applies the
- * Focus screens' rule, and the builders keep only their payload shaping (which
- * needs `react-native-android-widget` / AsyncStorage on mobile and neither on
- * desktop, hence no shared builder).
+ * Focus screens' rule, and the builders keep only their payload shaping (the
+ * mobile and macOS payloads have different shapes, hence no shared builder).
  *
  * `now` is a parameter, never `Date.now()`, so the selection is deterministic
  * in tests and one payload build sees one instant.

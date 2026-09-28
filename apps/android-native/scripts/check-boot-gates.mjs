@@ -933,8 +933,11 @@ const kotlinPalette = (name) => hexes(new RegExp(`${name} palette\\(([^)]*)\\)`)
 const FIELDS = ['bg', 'cardBg', 'taskItemBg', 'text', 'secondaryText', 'icon', 'border', 'tint', 'onTint', 'tabIconDefault',
     'tabIconSelected', 'inputBg', 'danger', 'success', 'warning', 'filterBg'];
 assert.match(themeKt, new RegExp(`data class ThemeColors\\(\\s*${FIELDS.map((field) => `val ${field}: Color,`).join('\\s*')}\\s*\\)`), 'ThemeColors has RN\'s fields in order');
-const presetSource = readFileSync(resolve(mobile, 'constants/theme-presets.ts'), 'utf8');
-for (const [, preset, body] of presetSource.matchAll(/^ {4}'?([\w-]+)'?: \{\n([\s\S]*?)\n {4}\},/gm)) {
+// RN's constants/theme-presets.ts re-exports core's table.
+const presetSource = readFileSync(resolve(app, '../../packages/core/src/theme-presets.ts'), 'utf8');
+const presetBlocks = [...presetSource.matchAll(/^ {4}'?([\w-]+)'?: \{\n([\s\S]*?)\n {4}\},/gm)];
+assert.equal(presetBlocks.length, 6, 'every bespoke theme preset is read');
+for (const [, preset, body] of presetBlocks) {
     const values = Object.fromEntries([...body.matchAll(/(\w+): '(#[0-9A-Fa-f]{6})'/g)].map(([, field, hex]) => [field, hex.toUpperCase()]));
     assert.deepEqual(kotlinPalette(`"${preset}" to`), FIELDS.map((field) => values[field]), `preset ${preset} matches RN`);
 }

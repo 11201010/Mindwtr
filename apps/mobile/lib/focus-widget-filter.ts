@@ -1,40 +1,12 @@
-import { DEFAULT_FOCUS_SORT_BY, type FilterCriteria, type SortField } from '@mindwtr/core';
+// The Focus screen's widget selection lives in core (focus-widget-filter.ts),
+// which the widget payload builder reads; this app's Focus screen sets it.
+import {
+    focusWidgetFilterKey,
+    getFocusWidgetFilter,
+    NO_FOCUS_WIDGET_FILTER,
+    resetFocusWidgetFilter,
+    setFocusWidgetFilter,
+} from '@mindwtr/core/focus-widget-filter';
 
-/**
- * What the Focus screen is filtering and sorting by right now, so the widget's
- * Focus list can show the same rows (#1173). The screen holds these in React
- * state, not on disk: they last exactly as long as the process does. This
- * module matches that lifetime deliberately — a copy on disk would keep the
- * widget filtered after a restart cleared the screen's own selections, which
- * is the one way the two could disagree with nobody able to see why.
- */
-export interface FocusWidgetFilter {
-    criteria: FilterCriteria;
-    sortBy: SortField;
-    /** The active saved filter's direction, when it has one. */
-    sortOrder?: 'asc' | 'desc';
-}
-
-export const NO_FOCUS_WIDGET_FILTER: FocusWidgetFilter = { criteria: {}, sortBy: DEFAULT_FOCUS_SORT_BY };
-
-let current: FocusWidgetFilter = NO_FOCUS_WIDGET_FILTER;
-
-/** Identity of a selection, for the change check and the widget render fingerprint. */
-export function focusWidgetFilterKey(filter: FocusWidgetFilter): string {
-    return JSON.stringify([filter.criteria, filter.sortBy, filter.sortOrder ?? null]);
-}
-
-export function getFocusWidgetFilter(): FocusWidgetFilter {
-    return current;
-}
-
-/** Stores the screen's current selection; true when it differs from the last one. */
-export function setFocusWidgetFilter(next: FocusWidgetFilter): boolean {
-    if (focusWidgetFilterKey(next) === focusWidgetFilterKey(current)) return false;
-    current = next;
-    return true;
-}
-
-export function resetFocusWidgetFilter(): void {
-    current = NO_FOCUS_WIDGET_FILTER;
-}
+export type { FocusWidgetFilter } from '@mindwtr/core/focus-widget-filter';
+export { focusWidgetFilterKey, getFocusWidgetFilter, NO_FOCUS_WIDGET_FILTER, resetFocusWidgetFilter, setFocusWidgetFilter };

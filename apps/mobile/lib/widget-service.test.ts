@@ -1,4 +1,4 @@
-import { type AppData, loadTranslations, resolveAreaFilterSelection } from '@mindwtr/core';
+import { type AppData, loadTranslations } from '@mindwtr/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildWidgetPayload, createWidgetPayloadProjection } from './widget-data';
@@ -62,7 +62,6 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@mindwtr/core')>();
     return {
         ...actual,
-        resolveAreaFilterSelection: vi.fn(actual.resolveAreaFilterSelection),
         useTaskStore: { getState: mockUseTaskStoreGetState },
     };
 });
@@ -150,7 +149,6 @@ describe('widget-service', () => {
         mockUseTaskStoreGetState.mockReturnValue({ settings: {} });
         vi.mocked(buildWidgetPayload).mockClear();
         vi.mocked(createWidgetPayloadProjection).mockClear();
-        vi.mocked(resolveAreaFilterSelection).mockClear();
         resetFocusWidgetFilter();
         resetMobileWidgetRenderCache();
     });
@@ -490,16 +488,16 @@ describe('widget-service', () => {
         expect(await updateMobileWidgetFromData(data)).toBe(true);
 
         expect(mockIosWidgetSetItem).toHaveBeenCalledTimes(6);
-        expect(vi.mocked(resolveAreaFilterSelection)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
 
         mockIosWidgetSetItem.mockClear();
-        vi.mocked(resolveAreaFilterSelection).mockClear();
+        vi.mocked(createWidgetPayloadProjection).mockClear();
         expect(await updateMobileWidgetFromData({
             ...data,
             tasks: data.tasks.map((task) => ({ ...task })),
         })).toBe(true);
         expect(mockIosWidgetSetItem).not.toHaveBeenCalled();
-        expect(vi.mocked(resolveAreaFilterSelection)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
     });
 
     it('retries all iOS families after a failed family write without republishing Shortcuts', async () => {
