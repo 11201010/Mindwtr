@@ -2,7 +2,19 @@
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_CAPTURE_MODAL=1 MINDWTR_CAPTURE_CAPTURE_MODAL_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run tests/capture-modal.parity.test.tsx",
   "capturedAt": "68cb12ba8f31f6d2b50b58aea8f68ada56c8aaf8",
-  "rendering": "Platform.OS is android. CaptureScreen renders under react-test-renderer with the real core store; timers are fake and each step advances them 1 s, so the copilot's 800 ms wait ends. The AI key is stored and required; createAIProvider answers from the scenario's suggestions."
+  "rendering": "Platform.OS is android. CaptureScreen renders under react-test-renderer with the real core store; timers are fake and each step advances them 1 s, so the copilot's 800 ms wait ends. The AI key is stored and required; createAIProvider answers from the scenario's suggestions.",
+  "recaptured": [
+   {
+    "commit": "d6a0c1a313409bc85dfe5a7e790d71adecb5e387",
+    "reason": "RN bugs fixed in core (maintainer: fix every RN bug found): the description field is saved as it shows it (dc190cc92), a bad line refuses the batch before any project is created (a0a1d75f5), and the Applied line spaces every part (d6a0c1a31).",
+    "scenarios": [
+     "a share with a subject, a body and a link; Save & edit opens the editor",
+     "an invalid date command warns and writes nothing, alone or in a line",
+     "the copilot: one part, then all, typing clears what was applied",
+     "the copilot with time estimates off: an estimate alone suggests nothing"
+    ]
+   }
+  ]
  },
  "timeZone": "UTC",
  "now": "2026-09-28T14:00:00.000Z",
@@ -1246,8 +1258,8 @@
       "Subject",
       {
        "status": "inbox",
-       "description": "Body with https://example.com/doc\nBody with https://example.com/doc\nhttps://example.com/doc",
-       "areaId": "<undefined>"
+       "areaId": "<undefined>",
+       "description": "Body with https://example.com/doc"
       }
      ],
      [
@@ -1257,8 +1269,8 @@
         "title": "Subject",
         "initialProps": {
          "status": "inbox",
-         "description": "Body with https://example.com/doc\nBody with https://example.com/doc\nhttps://example.com/doc",
-         "areaId": "<undefined>"
+         "areaId": "<undefined>",
+         "description": "Body with https://example.com/doc"
         }
        }
       ]
@@ -3447,14 +3459,7 @@
     }
    },
    {
-    "writes": [
-     [
-      "addProject",
-      "Garden plan",
-      "#94a3b8",
-      "<undefined>"
-     ]
-    ],
+    "writes": [],
     "toasts": [
      [
       "warning",
@@ -3491,14 +3496,14 @@
        "id": "title",
        "kind": "title",
        "label": "Title",
-       "value": "Plan beds Pay rent /due:whenever",
+       "value": "Plan beds /due:whenever",
        "tone": "default"
       },
       {
        "id": "project",
        "kind": "project",
        "label": "Project",
-       "value": "Garden plan",
+       "value": "Garden plan Pay rent",
        "tone": "default"
       }
      ],
@@ -4579,7 +4584,7 @@
       "#urgent",
       "Apply all",
       "Tap to apply",
-      "Applied @phone ",
+      "Applied @phone",
       "Cancel",
       "Save & edit",
       "Save"
@@ -4636,7 +4641,7 @@
      "texts": [
       "Add Task",
       "?",
-      "Applied @phone 15min#finance #urgent",
+      "Applied @phone 15min #finance #urgent",
       "Cancel",
       "Save & edit",
       "Save"
@@ -4988,7 +4993,7 @@
       "#finance",
       "Apply all",
       "Tap to apply",
-      "Applied 15min#urgent",
+      "Applied 15min #urgent",
       "Cancel",
       "Save & edit",
       "Save"
@@ -5250,7 +5255,7 @@
      "texts": [
       "Add Task",
       "?",
-      "Applied @computer ",
+      "Applied @computer",
       "Cancel",
       "Save & edit",
       "Save"
