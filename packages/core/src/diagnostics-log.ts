@@ -158,7 +158,8 @@ export function createDiagnosticsLog(options: { isEnabled: () => boolean; files:
         if (!file.size || !await file.exists()) return;
         if (!afterAppend && writes > 0 && writes % LOG_ROTATION_CHECK_INTERVAL !== 0) return;
         if (await file.size() <= MAX_LOG_FILE_BYTES) return;
-        const current = await file.read().catch(() => '');
+        // A failed read throws: trimming '' would erase the log.
+        const current = await file.read();
         await file.write(current.slice(-ROTATED_LOG_RETAIN_CHARS));
     };
 
@@ -171,7 +172,8 @@ export function createDiagnosticsLog(options: { isEnabled: () => boolean; files:
             await trimIfNeeded(file, true);
             return path;
         }
-        const current = await file.exists() ? await file.read().catch(() => '') : '';
+        // A failed read throws, so the line goes to the next file or is dropped: rewriting from '' would erase the log.
+        const current = await file.exists() ? await file.read() : '';
         let next = current + line;
         if (next.length > MAX_LOG_FILE_BYTES) {
             next = next.slice(-ROTATED_LOG_RETAIN_CHARS);

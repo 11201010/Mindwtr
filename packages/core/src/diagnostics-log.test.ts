@@ -144,6 +144,25 @@ describe('diagnostics log', () => {
         expect(state.text.endsWith(formatDiagnosticsLogLine(entry('two')))).toBe(true);
     });
 
+    it('never erases the log when the file cannot be read: the line is dropped instead', async () => {
+        // RN's app-log.ts read '' after a failed read and rewrote the whole log as the one new line.
+        const rewrite = fakeFile({ append: false });
+        const log = createDiagnosticsLog({ isEnabled: () => enabled, files: [rewrite.file] });
+        await log.append(entry('kept'));
+        rewrite.file.read = async () => { throw new Error('read failed'); };
+        await expect(log.append(entry('dropped'))).resolves.toBeNull();
+        expect(rewrite.state.text).toBe(formatDiagnosticsLogLine(entry('kept')));
+
+        // And its trim after an append wrote '' (an empty log) when the read failed.
+        const appending = fakeFile();
+        const trimmed = createDiagnosticsLog({ isEnabled: () => enabled, files: [appending.file] });
+        await trimmed.append(entry('first'));
+        appending.state.text = 'z'.repeat(MAX_LOG_FILE_BYTES);
+        appending.file.read = async () => { throw new Error('read failed'); };
+        await trimmed.append(entry('second'));
+        expect(appending.state.text).toBe(`${'z'.repeat(MAX_LOG_FILE_BYTES)}${formatDiagnosticsLogLine(entry('second'))}`);
+    });
+
     it('hands every operation to the next file when one is unavailable or fails', async () => {
         const missing = fakeFile({ path: null });
         const broken = fakeFile();
