@@ -66,7 +66,10 @@ vi.mock('@mindwtr/core', async () => {
             _allTasks: storeMocks.taskStoreState._allTasks ?? storeMocks.taskStoreState.tasks,
         } as typeof storeMocks.taskStoreState),
         {
-            getState: () => storeMocks.taskStoreState,
+            getState: () => ({
+                ...storeMocks.taskStoreState,
+                _allTasks: storeMocks.taskStoreState._allTasks ?? storeMocks.taskStoreState.tasks,
+            }),
             subscribe: vi.fn(),
         }
     );

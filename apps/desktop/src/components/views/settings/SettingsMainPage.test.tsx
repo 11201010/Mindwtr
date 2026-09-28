@@ -1,4 +1,4 @@
-import { fireEvent, render, within } from '@testing-library/react';
+import { act, fireEvent, render, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 const fontMocks = vi.hoisted(() => ({
@@ -206,6 +206,57 @@ describe('SettingsMainPage', () => {
         fireEvent.focus(input);
         fireEvent.mouseDown(within(getByRole('listbox')).getByRole('option', { name: 'App default' }));
         expect(onFontFamilyChange).toHaveBeenLastCalledWith('');
+    });
+
+    it('opens the full installed-font list when it loads after the field was focused', async () => {
+        let resolveFonts!: (fonts: string[]) => void;
+        fontMocks.canListInstalledFonts.mockReturnValue(true);
+        fontMocks.loadInstalledFontFamilies.mockReturnValue(new Promise((resolve) => { resolveFonts = resolve; }));
+        const onFontFamilyChange = vi.fn();
+        const { getByRole, findByRole } = render(
+            <SettingsMainPage {...baseProps} fontFamily="Inter" onFontFamilyChange={onFontFamilyChange} />,
+        );
+
+        const input = getByRole('combobox', { name: 'Font' }) as HTMLInputElement;
+        fireEvent.focus(input);
+        expect(input).toHaveValue('Inter');
+        await act(async () => { resolveFonts(['Inter', 'Roboto']); });
+
+        expect(await findByRole('option', { name: 'Roboto' })).toBeInTheDocument();
+        expect(input).toHaveValue('');
+        expect(input.placeholder).toBe('Inter');
+        expect(onFontFamilyChange).not.toHaveBeenCalled();
+    });
+
+    it('keeps typed text or a saved font when the list loads after typing or blur', async () => {
+        let resolveFonts!: (fonts: string[]) => void;
+        fontMocks.canListInstalledFonts.mockReturnValue(true);
+        fontMocks.loadInstalledFontFamilies.mockReturnValue(new Promise((resolve) => { resolveFonts = resolve; }));
+        const onFontFamilyChange = vi.fn();
+        const view = render(
+            <SettingsMainPage {...baseProps} fontFamily="Inter" onFontFamilyChange={onFontFamilyChange} />,
+        );
+
+        const input = view.getByRole('combobox', { name: 'Font' }) as HTMLInputElement;
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: 'rob' } });
+        await act(async () => { resolveFonts(['Inter', 'Roboto']); });
+        expect(input).toHaveValue('rob');
+        expect(view.getByRole('option', { name: 'Roboto' })).toBeInTheDocument();
+        expect(onFontFamilyChange).not.toHaveBeenCalled();
+        view.unmount();
+
+        fontMocks.loadInstalledFontFamilies.mockReturnValue(new Promise((resolve) => { resolveFonts = resolve; }));
+        const blurred = render(
+            <SettingsMainPage {...baseProps} fontFamily="Inter" onFontFamilyChange={onFontFamilyChange} />,
+        );
+        const blurredInput = blurred.getByRole('combobox', { name: 'Font' }) as HTMLInputElement;
+        fireEvent.focus(blurredInput);
+        fireEvent.blur(blurredInput);
+        await act(async () => { resolveFonts(['Inter', 'Roboto']); });
+        expect(blurredInput).toHaveValue('Inter');
+        expect(blurred.queryByRole('listbox')).toBeNull();
+        expect(onFontFamilyChange).not.toHaveBeenCalled();
     });
 
     it('keeps a chosen font that the list no longer offers (#1244)', async () => {

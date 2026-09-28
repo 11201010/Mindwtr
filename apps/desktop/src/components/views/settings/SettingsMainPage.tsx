@@ -6,7 +6,7 @@ import {
 } from '../../../lib/global-quick-add-shortcut';
 import { normalizeWeekStartSetting, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
 import type { DesktopThemeMode } from '../../../lib/theme';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Switch } from '../../ui/Switch';
@@ -542,6 +542,7 @@ function FontFamilyControl({
 }) {
     const [installedFonts, setInstalledFonts] = useState<string[] | null>(null);
     const [draft, setDraft] = useState(value);
+    const pendingListFocus = useRef(false);
     useEffect(() => {
         setDraft(value);
     }, [value]);
@@ -552,7 +553,10 @@ function FontFamilyControl({
         }
         let active = true;
         void loadInstalledFontFamilies().then((families) => {
-            if (active) setInstalledFonts(families);
+            if (!active) return;
+            setInstalledFonts(families);
+            if (pendingListFocus.current && families.length > 0) setDraft('');
+            pendingListFocus.current = false;
         });
         return () => {
             active = false;
@@ -566,6 +570,7 @@ function FontFamilyControl({
         return installedFonts?.find((family) => family.toLowerCase() === key) ?? null;
     };
     const handleChange = (next: string) => {
+        pendingListFocus.current = false;
         if (hasList && next === defaultLabel) {
             setDraft('');
             if (value !== '') onChange('');
@@ -599,9 +604,16 @@ function FontFamilyControl({
                 showAllWhenEmpty
                 style={previewFamily ? { fontFamily: `"${previewFamily}", ui-sans-serif, sans-serif` } : undefined}
                 onFocus={() => {
-                    if (hasList) setDraft('');
+                    if (hasList) {
+                        setDraft('');
+                    } else {
+                        pendingListFocus.current = installedFonts === null && canListInstalledFonts();
+                    }
                 }}
-                onBlur={commitDraft}
+                onBlur={() => {
+                    pendingListFocus.current = false;
+                    commitDraft();
+                }}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                         e.preventDefault();
