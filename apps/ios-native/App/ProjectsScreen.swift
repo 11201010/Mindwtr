@@ -1636,6 +1636,9 @@ private struct ProjectAreaSelectionSheet: View {
                     .accessibilityLabel(model.label("common.close"))
                     .accessibilityIdentifier("project-area-close")
                 }
+                if model.projectAreaCreatePresented {
+                    ProjectAreaCreateForm(model: model, palette: palette)
+                } else {
                 if let message = model.projectAreaError {
                     Text(message).rnFont(13).foregroundStyle(palette.danger)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1668,11 +1671,25 @@ private struct ProjectAreaSelectionSheet: View {
                     .accessibilityIdentifier("project-area-read-retry")
                 }
                 if !model.projectAreaOptions.isEmpty {
+                    if model.projectAreaCreatedStatusVisible {
+                        Text(model.label("projects.areaAvailableSelectToAssign"))
+                            .rnFont(14).foregroundStyle(palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("project-area-created-status")
+                    }
                     let noneSelected = model.projectAreaSelectedID == nil
                     areaChoice(model.projectAreaOptions.text("noAreaLabel"), color: nil,
                                selected: noneSelected, identifier: "project-area-none") {
                         Task { await model.chooseProjectArea(nil, name: nil) }
                     }
+                    Button { Task { await model.openProjectAreaCreate() } } label: {
+                        Label(model.label("common.add") + " " + model.label("projects.areaLabel"),
+                              systemImage: "plus")
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 12).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectAreaAddEnabled)
+                    .accessibilityIdentifier("project-area-add")
                     let areas = model.projectAreaOptions.objects("areas")
                     ForEach(areas.indices, id: \.self) { index in
                         let area = areas[index]
@@ -1686,6 +1703,7 @@ private struct ProjectAreaSelectionSheet: View {
                     }
                 } else if model.projectAreaReadError == nil {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 48)
+                }
                 }
             }
             .padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -1719,5 +1737,104 @@ private struct ProjectAreaSelectionSheet: View {
         .buttonStyle(.plain).disabled(!model.projectAreaChoiceEnabled)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier(identifier)
+    }
+}
+
+private struct ProjectAreaCreateForm: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var nameFocused: Bool
+
+    private var colors: [String] { model.areaCreateOptions["colors"] as? [String] ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.label("common.add") + " " + model.label("projects.areaLabel"))
+                .rnFont(16, .semibold).foregroundStyle(palette.text)
+                .accessibilityAddTraits(.isHeader)
+            TextField(model.label("projects.areaLabel"), text: Binding(
+                get: { model.projectAreaCreateName }, set: { model.setProjectAreaCreateName($0) }))
+                .focused($nameFocused).submitLabel(.done)
+                .onSubmit { submit() }
+                .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(!model.projectAreaCreateInputEnabled)
+                .accessibilityLabel(model.label("projects.areaLabel"))
+                .accessibilityIdentifier("project-area-create-name")
+            if model.projectAreaCreateNameTaken {
+                Text(model.label("areas.nameExists")).rnFont(13).foregroundStyle(palette.danger)
+                    .accessibilityIdentifier("project-area-create-name-taken")
+            }
+            if model.projectAreaCreateNameChecking {
+                ProgressView().accessibilityIdentifier("project-area-create-name-checking")
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 10)], spacing: 10) {
+                ForEach(colors, id: \.self) { color in
+                    Button { model.selectProjectAreaCreateColor(color) } label: {
+                        Circle().fill(Color(hex: color)).frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)
+                            .overlay(Circle().stroke(model.projectAreaCreateColor == color
+                                ? palette.tint : palette.border,
+                                lineWidth: model.projectAreaCreateColor == color ? 3 : 1))
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectAreaCreateInputEnabled)
+                    .accessibilityLabel(color)
+                    .accessibilityAddTraits(model.projectAreaCreateColor == color ? .isSelected : [])
+                    .accessibilityIdentifier("project-area-create-color-" + color)
+                }
+            }
+            if let message = model.areaCreateError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("project-area-create-error")
+                if model.areaCreatePending && model.retryNeeded {
+                    Button { Task { await model.retry() } } label: {
+                        Text(model.label("common.retry"))
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy)
+                    .accessibilityIdentifier("project-area-create-retry")
+                }
+            }
+            if let message = model.areaCreateReadError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("project-area-create-read-error")
+                Button { Task { await model.retryProjectAreaCreateRead() } } label: {
+                    Text(model.label("common.retry"))
+                        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                .accessibilityIdentifier("project-area-create-read-retry")
+            }
+            if model.busy { ProgressView().frame(maxWidth: .infinity, minHeight: 48) }
+            HStack(spacing: 12) {
+                Button { model.cancelProjectAreaCreate() } label: {
+                    Text(model.label("common.cancel"))
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .disabled(model.busy || model.retryNeeded || model.areaCreatePending)
+                .accessibilityIdentifier("project-area-create-cancel")
+                Button { submit() } label: {
+                    Text(model.label("common.add"))
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .disabled(!model.projectAreaCreateCanSubmit)
+                .accessibilityIdentifier("project-area-create-save")
+            }
+            .buttonStyle(.plain).rnFont(15, .semibold).foregroundStyle(palette.tint)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("project-area-create-form")
+    }
+
+    private func submit() {
+        guard model.projectAreaCreateCanSubmit else { return }
+        nameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.addArea() }
     }
 }

@@ -776,6 +776,7 @@ export const en: Record<string, string> = {
         'projects.sectionNotesPlaceholder': 'Add notes for this section...',
         'projects.reviewAt': 'Review Date',
         'projects.areaLabel': 'Area',
+        'projects.areaAvailableSelectToAssign': 'The Area is available. Select it to assign it to this project.',
         'projects.areaPlaceholder': 'e.g. Work',
         'projects.sectionsLabel': 'Sections',
         'projects.addSection': 'Add Section',

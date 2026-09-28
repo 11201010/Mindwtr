@@ -6955,6 +6955,17 @@ final class CoreHostTests: XCTestCase {
         ["requestId": requestID, "name": name, "color": color, "expectedAreaId": expectedID ?? requestID]
     }
 
+    private func projectAddAreaCreateRequest(_ core: CoreHost, name: String,
+                                             color: String = "#3b82f6") async throws -> [String: Any] {
+        let requestID = UUID().uuidString.lowercased()
+        let resolution = try object(await core.call("areaCreateResolve",
+                                                   argumentsJSON: json([json(["requestId": requestID, "name": name])])))
+        XCTAssertEqual(resolution["taken"] as? Bool, false)
+        let expectedID = try XCTUnwrap(resolution["expectedAreaId"] as? String)
+        XCTAssertEqual(expectedID, requestID)
+        return areaCreateRequest(requestID, name: name, color: color, expectedID: expectedID)
+    }
+
     private func seedAreaColorRows() async throws {
         let bootstrap = host()
         _ = try await bootstrap.start()
@@ -13067,5 +13078,162 @@ final class CoreHostTests: XCTestCase {
         XCTAssertThrowsError(try sqlite.execute("SELECT CAST(X'80' AS TEXT) AS raw")) { error in
             XCTAssertEqual((error as? HostFailure)?.message, "Invalid SQLite text")
         }
+    }
+
+    func testProjectAddAreaFreshCreateThenAssignPreservesRichRows() async throws {
+        try await seedProjectRenameRows()
+        let core = host()
+        _ = try await core.start()
+        let targetBefore = try XCTUnwrap(projectRows("focus-target").first)
+        let peersBefore = try json(projectRows().filter { $0["id"] as? String != "focus-target" })
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+
+        let create = try await projectAddAreaCreateRequest(core, name: "  Details Area  ", color: "#ef4444")
+        let areaID = try XCTUnwrap(create["requestId"] as? String)
+        let created = try object(await core.call("areaCreate", argumentsJSON: json([json(create)])))
+        XCTAssertEqual(created["id"] as? String, areaID)
+        XCTAssertEqual(created["created"] as? Bool, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), try json(targetBefore))
+        let area = try XCTUnwrap(areaRows(areaID).first)
+        XCTAssertEqual(area["name"] as? String, "Details Area")
+        XCTAssertEqual(area["color"] as? String, "#ef4444")
+
+        let assign = try await projectAreaRequest(core, areaID: areaID)
+        let witness = try XCTUnwrap(assign["selectedArea"] as? [String: Any])
+        XCTAssertEqual(witness["id"] as? String, areaID)
+        XCTAssertEqual(witness["name"] as? String, "Details Area")
+        let assigned = try object(await core.call("projectAreaWrite", argumentsJSON: json([json(assign)])))
+        XCTAssertEqual(assigned["areaId"] as? String, areaID)
+        XCTAssertEqual(assigned["areaTitle"] as? String, "Details Area")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let targetAfter = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(targetAfter["areaId"] as? String, areaID)
+        XCTAssertEqual(targetAfter["areaTitle"] as? String, "Details Area")
+        XCTAssertEqual(targetAfter["rev"] as? Int, (targetBefore["rev"] as? Int ?? 0) + 1)
+        for (field, value) in targetBefore where !["areaId", "areaTitle", "orderNum", "rev", "revBy", "updatedAt"].contains(field) {
+            XCTAssertEqual(try json([targetAfter[field] ?? NSNull()]), try json([value]), field)
+        }
+        XCTAssertEqual(try json(projectRows().filter { $0["id"] as? String != "focus-target" }), peersBefore)
+        let saved = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(saved)
+        saved.close()
+        for index in before.indices where index != 1 && index != 2 { XCTAssertEqual(after[index], before[index]) }
+        await core.close()
+
+        let reopened = host()
+        _ = try await reopened.start()
+        XCTAssertEqual(try projectRows("focus-target").first?["areaId"] as? String, areaID)
+        XCTAssertEqual(try areaRows(areaID).count, 1)
+        await reopened.close()
+    }
+
+    func testProjectAddAreaFailedCreateColdRecoveryLeavesOneUnassignedArea() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let targetBefore = try json(XCTUnwrap(projectRows("focus-target").first))
+        let create = try await projectAddAreaCreateRequest(writer, name: "Cold Details Area")
+        let areaID = try XCTUnwrap(create["requestId"] as? String)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected composed Area create failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("areaCreate", argumentsJSON: json([json(create)]))
+        }
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "areaCreateCommit")
+        XCTAssertTrue(try areaRows(areaID).isEmpty)
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), targetBefore)
+        await writer.close()
+
+        let reopened = host()
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "areaCreateCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, areaID)
+        XCTAssertEqual(try areaRows(areaID).count, 1)
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("focus-target").first)), targetBefore)
+        XCTAssertTrue(try XCTUnwrap(projectRows("focus-target").first)["areaId"] is NSNull)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let options = try object(await reopened.call("projectAreaOptions", argumentsJSON: json(["focus-target"])))
+        XCTAssertTrue(try XCTUnwrap(options["areas"] as? [[String: Any]]).contains { $0["id"] as? String == areaID })
+        await reopened.close()
+    }
+
+    func testProjectAddAreaFailedAssignmentColdRecoveryAppliesOnce() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let create = try await projectAddAreaCreateRequest(writer, name: "Retry Details Area")
+        let areaID = try XCTUnwrap(create["requestId"] as? String)
+        let created = try object(await writer.call("areaCreate", argumentsJSON: json([json(create)])))
+        XCTAssertEqual(created["created"] as? Bool, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let assign = try await projectAreaRequest(writer, areaID: areaID)
+        let targetBefore = try XCTUnwrap(projectRows("focus-target").first)
+        let baseline = try SQLiteBridge(url: database)
+        let afterCreate = try nineTableSnapshot(baseline)
+        baseline.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected composed Project Area failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectAreaWrite", argumentsJSON: json([json(assign)]))
+        }
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "projectAreaCommit")
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), afterCreate)
+        rolledBack.close()
+        await writer.close()
+
+        let reopened = host()
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectAreaCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["areaId"] as? String, areaID)
+        XCTAssertEqual(try areaRows(areaID).count, 1)
+        let targetAfter = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(targetAfter["areaId"] as? String, areaID)
+        XCTAssertEqual(targetAfter["rev"] as? Int, (targetBefore["rev"] as? Int ?? 0) + 1)
+        let saved = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(saved)
+        saved.close()
+        for index in afterCreate.indices where index != 1 { XCTAssertEqual(after[index], afterCreate[index]) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testProjectAddAreaProjectAssociationChangeKeepsCreatedAreaWithoutOverwrite() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let opening = try object(await core.call("projectAreaOptions", argumentsJSON: json(["focus-target"])))
+        let openingProject = try XCTUnwrap(opening["project"] as? [String: Any])
+        let create = try await projectAddAreaCreateRequest(core, name: "Retained Details Area")
+        let areaID = try XCTUnwrap(create["requestId"] as? String)
+        let created = try object(await core.call("areaCreate", argumentsJSON: json([json(create)])))
+        XCTAssertEqual(created["created"] as? Bool, true)
+        let competing = try await projectAreaRequest(core, areaID: "rename-area")
+        let competingResult = try object(await core.call("projectAreaWrite", argumentsJSON: json([json(competing)])))
+        XCTAssertEqual(competingResult["areaId"] as? String, "rename-area")
+        var stale = try await projectAreaRequest(core, areaID: areaID)
+        stale["expected"] = openingProject.filter { $0.key != "id" }
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1 }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectAreaWrite", argumentsJSON: json([json(stale)]))
+        }
+        XCTAssertEqual(journalWrites, 0)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try areaRows(areaID).count, 1)
+        XCTAssertEqual(try projectRows("focus-target").first?["areaId"] as? String, "rename-area")
+        await core.close()
     }
 }

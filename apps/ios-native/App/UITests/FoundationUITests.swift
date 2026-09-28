@@ -3735,6 +3735,205 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testProjectAddAreaAndNotes() {
+        projectAddAreaFlow(library: "e97d0d0a-14b4-46d8-82b7-c24cd0a8756b")
+    }
+
+    func testProjectAddAreaLargestText() {
+        projectAddAreaFlow(library: "02add2f6-6904-4d51-82c5-7546a51fe06b")
+    }
+
+    private func projectAddAreaFlow(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        let target = "776dd5c5-1926-4da1-96ff-5d5096971050"
+        let title = "Added Project Area"
+        func scroll() -> XCUIElement {
+            if app.scrollViews["project-area-sheet"].exists { return app.scrollViews["project-area-sheet"] }
+            if app.scrollViews["area-manager-scroll"].exists { return app.scrollViews["area-manager-scroll"] }
+            return app.scrollViews.firstMatch
+        }
+        func tap(_ id: String, minimum: CGFloat = 48) {
+            let button = app.buttons[id]
+            revealPagedElement(app, button, in: scroll(), outerEdge: true)
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, minimum)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        func fill(_ id: String, _ text: String) {
+            let field = app.textFields[id]
+            revealPagedElement(app, field, in: scroll(), outerEdge: true)
+            boardEnabled(field); field.tap()
+            field.typeKey("a", modifierFlags: .command)
+            field.typeText(text)
+            XCTAssertEqual(field.value as? String, text)
+        }
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        func open() {
+            let row = app.buttons["project-open-" + target]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardTap(app, "project-details-toggle")
+        }
+        func closed(_ id: String) {
+            let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons[id])
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 15), .completed)
+        }
+        projects()
+        fill("projects-create-title", "Retained Add Area project draft")
+        boardTap(app, "projects-manage-areas")
+        fill("area-create-name", "Retained manager Area draft")
+        revealPagedElement(app, app.buttons["area-create-color-#ef4444"], in: scroll(), outerEdge: true)
+        boardTap(app, "area-create-color-#ef4444")
+        boardTap(app, "area-manager-close")
+        boardTap(app, "area-open")
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        boardTap(app, "area-option-__none__")
+        boardEnabled(app.buttons["area-option-__none__"])
+        XCTAssertTrue(app.buttons["area-option-__none__"].isSelected)
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        open()
+        revealPagedElement(app, app.buttons["project-notes-toggle"], in: scroll(), outerEdge: true)
+        boardTap(app, "project-notes-toggle")
+        let notes = app.textViews["project-notes-input"]
+        revealPagedElement(app, notes, in: scroll(), outerEdge: true)
+        replaceProjectNotesText(notes, with: "Notes before Add Area\n")
+        tap("project-area-open"); tap("project-area-add")
+        XCTAssertFalse(app.buttons["project-area-create-save"].isEnabled)
+        tap("project-area-create-cancel")
+        XCTAssertTrue(app.buttons["project-area-none"].isSelected)
+        tap("project-area-add")
+        fill("project-area-create-name", "   ")
+        let checkedName = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+            object: app.descendants(matching: .any).matching(identifier: "project-area-create-name-checking").firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [checkedName], timeout: 10), .completed)
+        XCTAssertFalse(app.buttons["project-area-create-save"].isEnabled)
+        XCTAssertFalse(app.buttons["project-area-create-read-retry"].exists)
+        fill("project-area-create-name", "Metadata Area")
+        XCTAssertTrue(app.staticTexts["project-area-create-name-taken"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["project-area-create-save"].isEnabled)
+        fill("project-area-create-name", "  " + title + "  ")
+        tap("project-area-create-color-#10b981", minimum: 44)
+        tap("project-area-create-save")
+        closed("project-area-close")
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, title)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Created Area assigned with Notes preserved"
+        capture.lifetime = .keepAlways; add(capture)
+        tap("project-area-open")
+        let choice = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "project-area-choice-", title))
+        XCTAssertEqual(choice.count, 1)
+        XCTAssertTrue(choice.firstMatch.isSelected)
+        tap(choice.firstMatch.identifier); closed("project-area-close")
+        boardTap(app, "project-back")
+        XCTAssertEqual(app.textFields["projects-create-title"].value as? String, "Retained Add Area project draft")
+        XCTAssertTrue(app.buttons["projects-create-area-none"].isSelected)
+        XCTAssertFalse(app.buttons["project-open-" + target].exists)
+        boardTap(app, "area-open")
+        XCTAssertTrue(app.buttons["area-option-__none__"].isSelected)
+        boardTap(app, "area-option-__all__"); boardEnabled(app.buttons["area-option-__all__"])
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        boardTap(app, "projects-manage-areas")
+        XCTAssertEqual(app.textFields["area-create-name"].value as? String, "Retained manager Area draft")
+        let red = app.buttons["area-create-color-#ef4444"]
+        revealPagedElement(app, red, in: scroll(), outerEdge: true)
+        XCTAssertTrue(red.isSelected)
+        boardTap(app, "area-manager-close")
+        app.terminate(); app.launch(); projects(); open()
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, title)
+        tap("project-area-open")
+        XCTAssertEqual(choice.count, 1); XCTAssertTrue(choice.firstMatch.isSelected)
+        tap("project-area-close")
+        revealPagedElement(app, app.buttons["project-notes-toggle"], in: scroll(), outerEdge: true)
+        boardTap(app, "project-notes-toggle")
+        XCTAssertEqual(notes.value as? String, "Notes before Add Area\n")
+        app.terminate()
+    }
+
+    func testProjectAddAreaCreateFailure() {
+        projectAddAreaRecovery(createPhase: true, expectFailure: true)
+    }
+
+    func testProjectAddAreaCreateColdRecovery() {
+        projectAddAreaRecovery(createPhase: true, expectFailure: false)
+    }
+
+    func testProjectAddAreaAssignmentFailure() {
+        projectAddAreaRecovery(createPhase: false, expectFailure: true)
+    }
+
+    func testProjectAddAreaAssignmentColdRecovery() {
+        projectAddAreaRecovery(createPhase: false, expectFailure: false)
+    }
+
+    private func projectAddAreaRecovery(createPhase: Bool, expectFailure: Bool) {
+        let app = XCUIApplication()
+        let library = createPhase ? "1c42be0d-eb75-4e5e-b6c9-6f773e9208a8" : "05f235e0-3a86-4105-aa49-f0e48280210f"
+        let title = createPhase ? "Recover Created Area" : "Recover Assigned Area"
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        if expectFailure {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        } else { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        let row = app.buttons["project-open-776dd5c5-1926-4da1-96ff-5d5096971050"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        row.tap(); boardTap(app, "project-details-toggle")
+        func tap(_ id: String, minimum: CGFloat = 48) {
+            let button = app.buttons[id]
+            let sheet = app.scrollViews["project-area-sheet"]
+            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch, outerEdge: true)
+            boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, minimum)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        tap("project-area-open")
+        if expectFailure {
+            tap("project-area-add")
+            let name = app.textFields["project-area-create-name"]
+            revealPagedElement(app, name, in: app.scrollViews["project-area-sheet"], outerEdge: true)
+            boardEnabled(name); name.tap(); name.typeText(title)
+            tap("project-area-create-color-#10b981", minimum: 44)
+            tap("project-area-create-save")
+            let error = app.staticTexts[createPhase ? "project-area-create-error" : "project-area-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(app.buttons["project-area-close"].isEnabled)
+                if createPhase {
+                    XCTAssertFalse(name.isEnabled)
+                    XCTAssertEqual(name.value as? String, title)
+                    XCTAssertFalse(app.buttons["project-area-create-save"].isEnabled)
+                    XCTAssertFalse(app.buttons["project-area-create-cancel"].isEnabled)
+                    tap("project-area-create-retry"); boardEnabled(app.buttons["project-area-create-retry"])
+                } else {
+                    let choice = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                        "project-area-choice-", title)).firstMatch
+                    XCTAssertTrue(choice.isSelected); XCTAssertFalse(choice.isEnabled)
+                    XCTAssertFalse(app.buttons["project-area-none"].isEnabled)
+                    tap("project-area-retry"); boardEnabled(app.buttons["project-area-retry"])
+                }
+                XCTAssertTrue(error.exists)
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = createPhase ? "Area creation failure keeps exact draft" : "Area assignment failure keeps created Area"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            let choice = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                "project-area-choice-", title))
+            XCTAssertEqual(choice.count, 1)
+            XCTAssertEqual(choice.firstMatch.isSelected, !createPhase)
+            XCTAssertEqual(app.buttons["project-area-none"].isSelected, createPhase)
+            XCTAssertFalse(app.staticTexts["project-area-error"].exists)
+            tap("project-area-close")
+        }
+        app.terminate()
+    }
+
     func testProjectAreaAndNotes() {
         projectAreaSelection(library: "a7085484-e69d-4193-8041-bd496971e640")
     }
