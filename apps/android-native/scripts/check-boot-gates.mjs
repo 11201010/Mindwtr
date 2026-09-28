@@ -2493,4 +2493,8 @@ console.log('Review organize and picker search: row and batch Mark reviewed and 
 console.log('Settings and the editor\'s View tab: core\'s settings and task views through CoreHost, writes through perform with exact requests, device writes under RN\'s keys, checklist edits as core\'s edits in the one save');
 console.log('Mind Sweep and saved searches: core\'s views through CoreHost, captures and Bulk organize creates on disk first, stale windows read again whole, Focus picker search, no Kotlin policy');
 console.log('App lock: core\'s General row read at boot and after a failed save, locked on each leave but a rotation, no recents picture while on, AndroidX BiometricPrompt with Expo\'s credential fallback, General\'s switch on only after a yes, a scrolling lock screen in core\'s words, and a phone check that swaps the database atomically and restores loudly');
+// One run per phone: every device check waits for its phone's lock before anything else (device-lock.mjs).
+for (const file of ['device.mjs', 'check-net-device.mjs']) {
+    assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);
+}
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

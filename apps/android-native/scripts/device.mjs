@@ -1,6 +1,8 @@
 // adb helpers shared by the native Android device checks. Every call goes to
 // one serial. UI input happens only while `pkg` is in front, and a launch
 // happens only from the launcher or `pkg` itself.
+// First: wait for the phone (one run per serial; see device-lock.mjs).
+import './device-lock.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';

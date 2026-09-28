@@ -18,6 +18,8 @@
 // never launches over another app, and on exit, Ctrl-C or SIGTERM clears its debug properties, removes the port
 // mapping, stops the server and force-stops the app. Leave the device on its home screen before running.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped, 130 or 143 = interrupted.
+// First: wait for the phone (one run per serial; see device-lock.mjs).
+import './device-lock.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
