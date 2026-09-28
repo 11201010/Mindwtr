@@ -1,5 +1,13 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { dismissOnboarding, seedAppData, seedTheme } from './seed';
+
+const navigateWithinApp = async (page: Page, view: string) => {
+    await page.evaluate((nextView) => {
+        window.dispatchEvent(new CustomEvent('mindwtr:navigate', { detail: { view: nextView } }));
+    }, view);
+    await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe(view);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+};
 
 for (const theme of ['dark', 'light']) {
     test(`desktop presentation controls are direct and responsive (${theme})`, async ({ page }, testInfo) => {
@@ -16,12 +24,12 @@ for (const theme of ['dark', 'light']) {
             ],
             settings: { appearance: { density: 'compact' }, gtd: { autoArchiveDays: 0 } },
         });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto('/?view=agenda');
+        await page.locator('#main-content').waitFor({ state: 'visible', timeout: 15_000 });
         for (const route of ['agenda', 'inbox', 'next', 'someday', 'waiting', 'done', 'archived', 'reference', 'contexts', 'review']) {
             await page.setViewportSize({ width: 1440, height: 900 });
-            await page.goto(`/?view=${route}`);
-            // A full navigation reloads Vite's module graph. Wait for the app
-            // shell before applying the normal five-second control assertions.
-            await page.locator('#main-content').waitFor({ state: 'visible', timeout: 15_000 });
+            if (route !== 'agenda') await navigateWithinApp(page, route);
             const sort = page.getByRole('combobox', { name: 'Sort', exact: true });
             const group = page.getByRole('combobox', { name: route === 'agenda' ? 'Group next actions by' : 'Group', exact: true });
             await expect(sort).toBeVisible();
@@ -49,7 +57,7 @@ for (const theme of ['dark', 'light']) {
                 }
             }
         }
-        await page.goto('/?view=agenda');
+        await navigateWithinApp(page, 'agenda');
         const focusSort = page.getByRole('combobox', { name: 'Sort', exact: true });
         await focusSort.click();
         await page.locator('[role="option"][data-value="due"]').click();
