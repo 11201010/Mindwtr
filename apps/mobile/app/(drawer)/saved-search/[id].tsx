@@ -3,8 +3,8 @@ import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, Ale
 import { useLocalSearchParams, router } from 'expo-router';
 import {
   buildSavedSearchScreenText,
+  deleteSavedSearchById,
   findSavedSearch,
-  removeSavedSearch,
   selectSavedSearchTasks,
   shallow,
   useTaskStore,
@@ -32,7 +32,6 @@ export default function SavedSearchScreen() {
     updateTask,
     deleteTask,
     fetchData,
-    updateSettings,
   } = useTaskStore((state) => ({
     tasks: state.tasks,
     projects: state.projects,
@@ -41,7 +40,6 @@ export default function SavedSearchScreen() {
     updateTask: state.updateTask,
     deleteTask: state.deleteTask,
     fetchData: state.fetchData,
-    updateSettings: state.updateSettings,
   }), shallow);
   const { t } = useLanguage();
   const { isDark } = useTheme();
@@ -90,14 +88,15 @@ export default function SavedSearchScreen() {
           text: deleteAction.confirm.confirmLabel,
           style: 'destructive',
           onPress: async () => {
-            const updated = removeSavedSearch(savedSearches, id);
-            await updateSettings({ savedSearches: updated });
+            // Delete by ID against the saved searches as they are now: one added or
+            // changed while the confirmation was open stays.
+            await deleteSavedSearchById(id);
             goBackOrInbox();
           },
         },
       ]
     );
-  }, [deleteAction, id, savedSearches, updateSettings, goBackOrInbox]);
+  }, [deleteAction, id, goBackOrInbox]);
 
   const emptyMessage = screenText.empty.message;
 
@@ -144,6 +143,7 @@ export default function SavedSearchScreen() {
             <TouchableOpacity
               onPress={handleDeleteSearch}
               style={styles.deleteButton}
+              accessibilityRole="button"
               accessibilityLabel={deleteAction.label}
             >
               <Trash2 size={20} color="#EF4444" />

@@ -19,7 +19,7 @@ const fixture = loadScreenFixture<Fixture>('focus-checklist');
 
 /** The page as the mobile harness observes it, built from the model. */
 function observe(page: FocusChecklistPageModel) {
-    if (page.title === null) return { texts: [page.missingText], buttons: [], inputs: [] };
+    if (page.title === null) return { texts: [page.missingText], buttons: [['button', page.backLabel, null, false, 0]], inputs: [] };
     return {
         texts: [page.title, ...(page.emptyText ? [page.emptyText] : []), page.addLabel],
         buttons: [

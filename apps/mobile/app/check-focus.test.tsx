@@ -131,6 +131,18 @@ describe('FocusChecklistPage', () => {
         expect(flattenStyle(message.props.style)).toMatchObject({ color: themeColors.text });
     });
 
+    it('offers the header Back on the missing-task state', () => {
+        storeState.tasks = [];
+
+        const tree = renderScreen();
+        const back = tree.root.findByProps({ accessibilityLabel: 'Zurück', accessibilityRole: 'button' });
+        act(() => {
+            back.props.onPress();
+        });
+
+        expect(routerBackMock).toHaveBeenCalledTimes(1);
+    });
+
     it('labels checklist editing, completion, and item-specific deletion', () => {
         storeState.tasks = [makeTask({
             checklist: [{ id: 'check-1', title: 'Pack cables', isCompleted: true }],

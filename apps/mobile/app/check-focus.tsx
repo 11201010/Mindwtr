@@ -77,8 +77,24 @@ export default function FocusChecklistPage() {
     const handleUpdateItem = (index: number, text: string) => edit({ kind: 'rename', index, text });
     const handleDeleteItem = (index: number) => edit({ kind: 'remove', index });
 
+    // The route has no navigation header: the missing-task state needs this Back too.
+    const header = (
+        <View style={[styles.header, { borderBottomColor: tc.border }]}>
+            <TouchableOpacity
+                onPress={() => router.back()}
+                style={styles.backBtn}
+                accessibilityRole="button"
+                accessibilityLabel={page.backLabel}
+                hitSlop={10}
+            >
+                <Ionicons name="chevron-back" color={tc.text} size={24} />
+            </TouchableOpacity>
+        </View>
+    );
+
     if (!task) return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]}>
+            {header}
             <Text style={[styles.missingText, { color: tc.text }]}>
                 {page.missingText}
             </Text>
@@ -87,17 +103,7 @@ export default function FocusChecklistPage() {
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]}>
-            <View style={[styles.header, { borderBottomColor: tc.border }]}>
-                <TouchableOpacity
-                    onPress={() => router.back()}
-                    style={styles.backBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel={page.backLabel}
-                    hitSlop={10}
-                >
-                    <Ionicons name="chevron-back" color={tc.text} size={24} />
-                </TouchableOpacity>
-            </View>
+            {header}
 
             <View style={styles.titleContainer}>
                 <Text style={[styles.taskTitle, { color: tc.text }]}>{task.title}</Text>

@@ -7,7 +7,7 @@ import {
     type ProjectTaskListItem,
     type ProjectTaskListModelInput,
 } from './project-task-list-model';
-import { getSequentialProjectTaskCues } from './project-utils';
+import { getProjectSectionsForView, getSequentialProjectTaskCues } from './project-utils';
 import { selectVisibleTasks } from './store-helpers';
 import type { Project, Section, Task, TaskSortBy } from './types';
 
@@ -52,7 +52,9 @@ const buildLikeMobile = (scenario: Scenario, overrides: Partial<ProjectTaskListM
         t,
         ...overrides,
     });
-    const cues = scenario.sortBy === 'default' ? getSequentialProjectTaskCues(project, projectTasks) : new Map();
+    const cues = scenario.sortBy === 'default'
+        ? getSequentialProjectTaskCues(project, projectTasks, getProjectSectionsForView(project, visibleSections, fixture.sections))
+        : new Map();
     return { model, cues };
 };
 

@@ -15,6 +15,8 @@ const makeTask = (id: string, title: string): Task => ({
   updatedAt: now,
 } as Task);
 
+const alerts = vi.hoisted(() => [] as { text: string; onPress?: () => unknown }[][]);
+
 const storeState = vi.hoisted(() => ({
   tasks: [] as Task[],
   projects: [],
@@ -93,6 +95,7 @@ vi.mock('react-native', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-native')>();
   return {
     ...actual,
+    Alert: { alert: (_title: string, _message: string, buttons: (typeof alerts)[number]) => { alerts.push(buttons); } },
     RefreshControl: (props: any) => React.createElement('RefreshControl', props),
     FlatList: ({ data = [], renderItem, keyExtractor, ListEmptyComponent, ...props }: any) => (
       React.createElement(
@@ -138,5 +141,46 @@ describe('SavedSearchScreen', () => {
     expect(after[1].task).toBe(before[1].task);
     expect(after[1].actions).toBe(before[1].actions);
     expect(after[1].tc).toBe(before[1].tc);
+  });
+
+  it('labels the Delete icon as a button', async () => {
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<SavedSearchScreen />);
+    });
+
+    const [deleteButton] = tree.root.findAll((node) => (
+      typeof node.type === 'string' && node.findAll((child) => (child.type as unknown) === 'Trash2').length > 0
+      && node.props.onPress !== undefined
+    ));
+    expect(deleteButton.props.accessibilityRole).toBe('button');
+    expect(deleteButton.props.accessibilityLabel).toBeTruthy();
+  });
+
+  // The confirmation may stay open while another device or screen changes the
+  // saved searches: Delete removes this one from the list as it is then.
+  it('deletes against the current saved searches, not the list from render', async () => {
+    const core = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
+    const added = { id: 'search-2', name: 'Added meanwhile', query: 'meanwhile' };
+    const updateSettings = vi.fn(async () => undefined);
+    core.useTaskStore.setState({
+      settings: { savedSearches: [...storeState.settings.savedSearches, added] },
+      updateSettings,
+    } as never);
+    alerts.length = 0;
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<SavedSearchScreen />);
+    });
+    const deleteButton = tree.root.find((node) => (
+      typeof node.type === 'string' && node.props.accessibilityLabel !== undefined
+      && node.findAll((child) => (child.type as unknown) === 'Trash2').length > 0
+    ));
+    await act(async () => { deleteButton.props.onPress(); });
+    const confirm = alerts[0].at(-1)!;
+    await act(async () => { await confirm.onPress?.(); });
+
+    expect(updateSettings).toHaveBeenCalledWith({ savedSearches: [added] });
   });
 });

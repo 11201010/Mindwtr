@@ -46,7 +46,8 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
   const { intro, group, summary } = view;
 
   const handleAdd = async () => {
-    const title = getMindSweepCaptureTitle(draft);
+    const submitted = draft;
+    const title = getMindSweepCaptureTitle(submitted);
     if (!title || !group) return;
     try {
       // Count the item only once the store accepted it, so the summary never
@@ -58,7 +59,8 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
         return;
       }
       setCapturedByGroup((current) => addMindSweepCapture(current, group.id, title));
-      setDraft('');
+      // Clear only what was added: text typed while the add ran stays.
+      setDraft((current) => (current === submitted ? '' : current));
       setAddFailed(false);
     } catch {
       // Keep the draft so the capture is not lost; the user can retry.
@@ -103,6 +105,7 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
                       testID={`mind-sweep-scope-${option.value}`}
                       onPress={() => setScope(option.value)}
                       accessibilityRole="button"
+                      accessibilityState={{ selected }}
                       style={[
                         styles.scopeButton,
                         { borderColor: tc.border },

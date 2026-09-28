@@ -1,5 +1,7 @@
 import type { Project, Section, Task, TaskSortBy } from './types';
 import { isTaskActionable } from './task-status';
+// task-utils imports this file too; both only call across at run time, so the cycle is safe.
+import { getSequentialFirstTaskIds, isSequentialChainStatus } from './task-utils';
 
 export function normalizeProjectSequentialScope(value: unknown): Project['sequentialScope'] {
     if (value === 'section' || value === 'project') return value;
@@ -74,36 +76,38 @@ export function getProjectSectionsForView(
 
 export type ProjectSequenceTaskCue = 'available' | 'later';
 
+/**
+ * The "available next" / "later in sequence" cue on a sequential project's
+ * Next tasks: the task's turn in the sequence. The available task is the one
+ * getSequentialFirstTaskIds picks (the Next list's rule, also used by Review:
+ * manual order within section order, and a waiting step holds its slot), so
+ * the cue never depends on the order the caller lists the tasks in. Pass the
+ * project's sections so section order ranks as it does there.
+ *
+ * Focus is different on purpose: getFocusSequentialFirstTaskIds lets a task
+ * due today or starred take the project's Focus slot out of turn, so Focus
+ * may show a task this cue marks "later".
+ */
 export function getSequentialProjectTaskCues(
-    project: Pick<Project, 'isSequential' | 'sequentialScope'> | null | undefined,
-    tasks: Task[],
-    options: { sectionIds?: string[] } = {}
+    project: Pick<Project, 'id' | 'isSequential' | 'sequentialScope'> | null | undefined,
+    tasks: readonly Task[],
+    sections: readonly Section[],
 ): Map<string, ProjectSequenceTaskCue> {
     const cues = new Map<string, ProjectSequenceTaskCue>();
     if (!project?.isSequential) return cues;
 
-    const scope = normalizeProjectSequentialScope(project.sequentialScope) ?? 'project';
-    const validSectionIds = options.sectionIds ? new Set(options.sectionIds) : null;
-    let projectHasAvailableNext = false;
-    const sectionsWithAvailableNext = new Set<string>();
-
+    const projectIds = new Set([project.id]);
+    const firstTaskIds = getSequentialFirstTaskIds(
+        tasks.filter((task) => !task.deletedAt && isSequentialChainStatus(task.status)),
+        projectIds,
+        {
+            sectionScopedProjectIds: normalizeProjectSequentialScope(project.sequentialScope) === 'section' ? projectIds : undefined,
+            sections,
+        },
+    );
     tasks.forEach((task) => {
-        if (task.deletedAt || task.status !== 'next') return;
-
-        if (scope === 'section') {
-            const sectionKey =
-                task.sectionId && (!validSectionIds || validSectionIds.has(task.sectionId))
-                    ? task.sectionId
-                    : '__unsectioned__';
-            const cue = sectionsWithAvailableNext.has(sectionKey) ? 'later' : 'available';
-            cues.set(task.id, cue);
-            sectionsWithAvailableNext.add(sectionKey);
-            return;
-        }
-
-        const cue = projectHasAvailableNext ? 'later' : 'available';
-        cues.set(task.id, cue);
-        projectHasAvailableNext = true;
+        if (task.deletedAt || task.status !== 'next' || task.projectId !== project.id) return;
+        cues.set(task.id, firstTaskIds.has(task.id) ? 'available' : 'later');
     });
 
     return cues;

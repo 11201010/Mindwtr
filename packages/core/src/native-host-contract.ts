@@ -4,7 +4,7 @@ import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
-import { getSequentialProjectTaskCues, isSelectableProjectForTaskAssignment, type ProjectSequenceTaskCue } from './project-utils';
+import { getProjectSectionsForView, getSequentialProjectTaskCues, isSelectableProjectForTaskAssignment, type ProjectSequenceTaskCue } from './project-utils';
 import {
     buildProjectTaskListModel,
     getProjectDetailTaskListOptions,
@@ -964,8 +964,10 @@ export function createNativeHostContract() {
         cachedProjectDetail = {
             readOnly: options.readOnly,
             items: model.items,
-            // Same input as mobile's ProjectDetailModal: the project's tasks in store order.
-            cues: projectSortBy === 'default' ? getSequentialProjectTaskCues(project, projectTasks) : new Map(),
+            // Same input as mobile's ProjectDetailModal: the project's tasks and its sections.
+            cues: projectSortBy === 'default'
+                ? getSequentialProjectTaskCues(project, projectTasks, getProjectSectionsForView(project, state.sections, state._allSections))
+                : new Map(),
             projectTitles: new Map(state.projects.map((candidate) => [candidate.id, candidate.title])),
         };
         cachedProjectDetailKey = key;

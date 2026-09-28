@@ -750,10 +750,8 @@ export function ProjectWorkspace({
     }, [completedProjectTasks, orderedProjectTasks, projectSections.length, sectionTaskGroups.sections, sectionTaskGroups.unsectioned]);
     const projectTaskSequenceCues = useMemo<Map<string, ProjectSequenceTaskCue>>(() => {
         if (!selectedProject || projectTaskSortBy !== 'default') return new Map();
-        return getSequentialProjectTaskCues(selectedProject, orderedProjectTaskList, {
-            sectionIds: projectSections.map((section) => section.id),
-        });
-    }, [orderedProjectTaskList, projectSections, projectTaskSortBy, selectedProject]);
+        return getSequentialProjectTaskCues(selectedProject, selectedProjectTasks, projectSections);
+    }, [projectSections, projectTaskSortBy, selectedProject, selectedProjectTasks]);
     const availableSequenceLabel = resolveText('projects.availableNextAction', 'Available next action');
     const laterSequenceLabel = resolveText('projects.laterInSequence', 'Later in sequence');
     const visibleProjectTaskList = useMemo(() => {
