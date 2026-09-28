@@ -475,10 +475,14 @@ try {
 
     // (b) The bar's Mark reviewed on two selected rows: one write, both cleared.
     const selectedLine = (current) => current.find((node) => /^\d+ /.test(node.text ?? '') && node.text.endsWith(` ${en['bulk.selected']}`))?.text;
+    const rowSelected = (title) => (current) => current.some((node) => node.text === title && node.checked === 'true');
+    // The bar is the list's first item and scrolls with it (RN's too), so a row far down leaves it off screen: read it from the top.
+    const barShows = (want, description) => revealNode((current) => current.find((node) => want(selectedLine([node]) ?? '')), description);
     await revealRow(names.tasks[2]);
     await longPress(names.tasks[2]);
-    await waitFor('selection mode', (current) => Boolean(selectedLine(current)), 10_000);
-    nodes = await tapExpecting(await revealRow(names.tasks[3]), (current) => selectedLine(current)?.startsWith('2 '), 'two rows selected');
+    await waitFor('selection mode', rowSelected(names.tasks[2]), 10_000);
+    await tapExpecting(await revealRow(names.tasks[3]), rowSelected(names.tasks[3]), 'the second row selected');
+    await barShows((line) => line.startsWith('2 '), 'two rows selected');
     before = seen.tasks;
     let writes = commands('reviewAction');
     nodes = await device.toTop();
@@ -493,7 +497,8 @@ try {
     check(seen.review?.foldEnds === true, 'core ends a selection whose row a fold hides');
     await revealRow(names.tasks[4]);
     await longPress(names.tasks[4]);
-    nodes = await waitFor('one row selected', (current) => selectedLine(current) === seen.review.oneCount, 10_000);
+    await waitFor('one row selected', rowSelected(names.tasks[4]), 10_000);
+    await barShows((line) => line === seen.review.oneCount, 'one row selected');
     const fold = await revealNode((current) => withDescription(current, seen.review.area), 'the area header');
     nodes = await tapExpecting(withDescription(fold, seen.review.area), (current) => !selectedLine(current) && !rowTitles(current).includes(names.tasks[4]), 'the fold');
     check(!selectedLine(nodes), `(c) folding ${names.areaX} ended the selection, as core does`);
@@ -505,8 +510,9 @@ try {
     const organize = seen.review.organize ?? fail('core offers no Organize for the two rows');
     await revealRow(names.tasks[4]);
     await longPress(names.tasks[4]);
-    await waitFor('one row selected', (current) => Boolean(selectedLine(current)), 10_000);
-    nodes = await tapExpecting(await revealRow(names.tasks[5]), (current) => selectedLine(current) === seen.review.bar.count, 'two rows selected');
+    await waitFor('one row selected', rowSelected(names.tasks[4]), 10_000);
+    await tapExpecting(await revealRow(names.tasks[5]), rowSelected(names.tasks[5]), 'the second row selected');
+    await barShows((line) => line === seen.review.bar.count, 'two rows selected');
     nodes = await device.toTop();
     const dialogOpen = (current) => Boolean(withDescription(current, organize.apply));
     /** The Organize sheet's control described [label], its fields scrolled up (from just above Apply) until it shows. */
