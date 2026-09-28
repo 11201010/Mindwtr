@@ -32,14 +32,16 @@
  * Shared files (initialProps.attachments) are left out: this host has no
  * managed attachments folder until the attachments pass (A2).
  *
- * Saves retry exactly (native-request-receipts.ts). After a restart, the task
- * a capture UUID created answers the retry when it matches the draft; lines
- * already saved answer from their tasks and only missing lines are written.
+ * Saves retry exactly (native-request-receipts.ts): on the native host a
+ * landed request's receipt is on disk, so a replay after a restart answers its
+ * first reply, and the same UUID with another draft is refused. With no
+ * receipt, the task a capture UUID created answers only when it is what the
+ * draft writes (isTaskOfDraft).
  *
  * Only functions read this module's imports from native-host-contract.ts, so
  * the import cycle between the two files is safe.
  */
-import { executeCaptureTransaction } from './capture';
+import { executeCaptureTransaction, type CaptureTaskPlan } from './capture';
 import {
     buildCaptureModalRequest,
     buildCaptureModalView,
@@ -148,6 +150,20 @@ const readDraftValue = (value: unknown): CaptureModalDraft | null => {
         && isCopilotRecord(value.applied, true);
     return valid ? value as CaptureModalDraft : null;
 };
+/** The fields a draft sets that isTaskOfPlan leaves out. */
+const DRAFT_FIELDS = ['description', 'startTime', 'reviewAt', 'assignedTo', 'energyLevel', 'timeEstimate'] as const;
+const sameValue = (left: unknown, right: unknown) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+/**
+ * Whether a stored task is what this draft writes: isTaskOfPlan, and the
+ * description, dates, person, energy, estimate and links the draft sets. The
+ * check for a capture UUID reused when no receipt answers it.
+ */
+const isTaskOfDraft = (task: Task, plan: CaptureTaskPlan, requestId: string): boolean => (
+    isTaskOfPlan(task, plan, requestId)
+    && DRAFT_FIELDS.every((field) => sameValue(task[field], plan.props[field]))
+    && sameValue(task.attachments?.map((attachment) => attachment.uri), plan.props.attachments?.map((attachment) => attachment.uri))
+);
+
 const isEdit = (edit: unknown): edit is CaptureModalEdit => {
     if (!isObjectRecord(edit)) return false;
     switch (edit.type) {
@@ -341,7 +357,7 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                     const existing = useTaskStore.getState()._allTasks.find((task) => task.id === captureId.toLowerCase());
                     if (existing) {
                         const plan = planCaptureModalRequest(request);
-                        return plan.success && isTaskOfPlan(existing, plan, captureId)
+                        return plan.success && isTaskOfDraft(existing, plan, captureId)
                             ? saved(existing.id, existing.projectId)
                             : fail('INVALID_INPUT', 'Capture ID already belongs to another task');
                     }
@@ -403,7 +419,7 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                             continue;
                         }
                         const plan = planCaptureModalRequest(requestFor(params, draft, lines[index], state.projects));
-                        if (!plan.success || !isTaskOfPlan(existing, plan, ids[0])) return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
+                        if (!plan.success || !isTaskOfDraft(existing, plan, ids[0])) return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
                     }
                     if (missing.length === 0) return { ok: true, value: { kind: 'saved', taskIds, close } };
                     try {

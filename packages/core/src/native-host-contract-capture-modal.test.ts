@@ -4,7 +4,7 @@ import type { CaptureModalCopilotSuggestion, CaptureModalDraft, CaptureModalPara
 import { configureDateFormatting } from './date';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeCaptureModalClose, NativeCaptureModalSubmitResult, NativeCaptureModalView } from './native-host-contract-capture-modal';
-import { openScreenHost, requestId, restartScreenHost, value } from './screen-parity.replay';
+import { openScreenHost, openSqliteHost, requestId, restartScreenHost, value } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppSettings, Area, Project, Task } from './types';
 
@@ -260,6 +260,13 @@ async function replay(scenario: Scenario): Promise<Observation[]> {
     return observations;
 }
 
+/** A capture link naming a note, a tag and a project no project carries. */
+const linkParams: CaptureModalParams = {
+    initialValue: 'Plan%20trip',
+    initialProps: encodeURIComponent(JSON.stringify({ description: 'Book flights', tags: ['#travel'] })),
+    project: 'Shopping',
+};
+
 describe('native host contract: the capture confirmation screen', () => {
     const originalTz = process.env.TZ;
     beforeAll(() => {
@@ -298,11 +305,6 @@ describe('native host contract: the capture confirmation screen', () => {
         const before = storeData();
         const result = await run(host);
         return { result, wrote: storeData().some((entry, index) => entry !== before[index]) };
-    };
-    const linkParams: CaptureModalParams = {
-        initialValue: 'Plan%20trip',
-        initialProps: encodeURIComponent(JSON.stringify({ description: 'Book flights', tags: ['#travel'] })),
-        project: 'Shopping',
     };
 
     it('reads the same screen after a restart and writes nothing: open, view, edit and discard', async () => {
@@ -350,6 +352,25 @@ describe('native host contract: the capture confirmation screen', () => {
         // The same UUID with another draft is another capture.
         const other = await afterRestart((restarted) => restarted.submitCaptureModal({ ...input, draft: { ...draft, text: 'Plan a different trip' } }));
         expect(other).toMatchObject({ result: { ok: false, error: { code: 'INVALID_INPUT' } }, wrote: false });
+    });
+
+    // Review blocker 1: a capture UUID reused after a restart with another draft (same title) answered saved.
+    it('without a receipt on disk, a reused capture UUID answers saved only for the draft that made its task', async () => {
+        const host = await openScreenHost({ data, record: {}, log: [] });
+        const { draft } = value(host.openCaptureModal({ params: linkParams }));
+        const input = { params: linkParams, draft: { ...draft, text: 'Plan trip /start:tomorrow %Ann' }, captureId: requestId() };
+        const saved = value(await host.submitCaptureModal(input));
+        expect(await afterRestart((restarted) => restarted.submitCaptureModal(input))).toEqual({ result: { ok: true, value: saved }, wrote: false });
+        const changed = [
+            { ...input.draft, description: 'Book hotels' },
+            { ...input.draft, applied: { tags: [], timeEstimate: '30min' as const } },
+            { ...input.draft, text: 'Plan trip /start:friday %Ann' },
+            { ...input.draft, text: 'Plan trip /start:tomorrow %Bob' },
+        ];
+        for (const other of changed) {
+            expect(await afterRestart((restarted) => restarted.submitCaptureModal({ ...input, draft: other })))
+                .toMatchObject({ result: { ok: false, error: { code: 'INVALID_INPUT' } }, wrote: false });
+        }
     });
 
     it('finishes a save that failed to persist on retry, without a second task', async () => {
@@ -457,5 +478,30 @@ describe('native host contract: the capture confirmation screen', () => {
         expect(late.draft.suggestion).toBeNull();
         const current = value(host.editCaptureModal({ params, draft, edit: { type: 'setSuggestion', title: 'Call the bank', suggestion: { tags: ['#finance'] } } }));
         expect(current.view.copilot.suggested?.parts).toEqual([{ label: '#finance', edit: { type: 'applyCopilot', parts: [{ kind: 'tag', value: '#finance' }] } }]);
+    });
+});
+
+/** The native host over a real SQLite file with its receipts, booted as the app boots it; `replay` is a replay after process death. */
+describe('native host contract: the capture confirmation screen over SQLite', () => {
+    let env: Awaited<ReturnType<typeof openSqliteHost>> | null = null;
+    const open = async () => {
+        env = await openSqliteHost({ tasks: fixture.tasks, projects: fixture.projects, areas: fixture.areas });
+        return env;
+    };
+    afterEach(async () => {
+        await env?.close();
+        env = null;
+    });
+
+    it('a capture UUID reused after process death answers its first reply, and refuses another draft', async () => {
+        const env = await open();
+        const { draft } = value(env.host.openCaptureModal({ params: linkParams }));
+        const input = { params: linkParams, draft, captureId: requestId() };
+        const first = await env.host.submitCaptureModal(input);
+        expect(first).toMatchObject({ ok: true, value: { kind: 'saved', taskId: input.captureId } });
+        expect(await env.receiptIds()).toEqual([input.captureId]);
+        expect(await env.replay((restarted) => restarted.submitCaptureModal(input))).toEqual({ result: first, wrote: false, receipts: false });
+        expect(await env.replay((restarted) => restarted.submitCaptureModal({ ...input, draft: { ...draft, description: 'Book hotels' } })))
+            .toMatchObject({ result: { ok: false, error: { code: 'INVALID_INPUT' } }, wrote: false, receipts: false });
     });
 });
