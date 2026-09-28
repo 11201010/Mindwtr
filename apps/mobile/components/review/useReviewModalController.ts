@@ -95,7 +95,7 @@ export function useReviewModalController({
     const { tasks, projects, people, areas, updateTask, deleteTask, settings, batchUpdateTasks, addTask } = useTaskStore();
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const { isDark } = useTheme();
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const { openQuickCapture } = useQuickCapture();
     const [reviewSession, setReviewSession] = useState<StoredReviewStepSession<ReviewStep>>(() => ({
         step: 'inbox',
@@ -357,7 +357,7 @@ export function useReviewModalController({
         }
         setAiLoading(true);
         try {
-            const provider = createAIProvider(buildAIConfig(settings, apiKey));
+            const provider = createAIProvider(buildAIConfig(settings, apiKey, language));
             const response = await provider.analyzeReview({ items: staleItems });
             // Filter here, not in the apply path, so what is displayed and what
             // can be written never diverge.
@@ -373,7 +373,7 @@ export function useReviewModalController({
         } finally {
             setAiLoading(false);
         }
-    }, [aiEnabled, aiProvider, settings, staleItems]);
+    }, [aiEnabled, aiProvider, language, settings, staleItems]);
 
     const applyAiSuggestions = useCallback(async () => {
         const updates = buildReviewSuggestionUpdates(aiSuggestions, aiSelectedIds, new Date());

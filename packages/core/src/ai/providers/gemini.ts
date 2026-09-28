@@ -301,7 +301,7 @@ async function requestGemini(config: AIProviderConfig, prompt: { system: string;
 export function createGeminiProvider(config: AIProviderConfig): AIProvider {
     return withAIRequestStopNotifications(config, {
         clarifyTask: async (input: ClarifyInput, options?: AIRequestOptions): Promise<ClarifyResponse> => {
-            const prompt = buildClarifyPrompt(input);
+            const prompt = buildClarifyPrompt(input, config.language);
             const text = await requestGemini(config, prompt, CLARIFY_SCHEMA, options);
             try {
                 return parseJson<ClarifyResponse>(text, isClarifyResponse);
@@ -315,7 +315,7 @@ export function createGeminiProvider(config: AIProviderConfig): AIProvider {
             }
         },
         breakDownTask: async (input: BreakdownInput, options?: AIRequestOptions): Promise<BreakdownResponse> => {
-            const prompt = buildBreakdownPrompt(input);
+            const prompt = buildBreakdownPrompt(input, config.language);
             const text = await requestGemini(config, prompt, BREAKDOWN_SCHEMA, options);
             try {
                 return parseJson<BreakdownResponse>(text, isBreakdownResponse);
@@ -329,7 +329,7 @@ export function createGeminiProvider(config: AIProviderConfig): AIProvider {
             }
         },
         analyzeReview: async (input: ReviewAnalysisInput, options?: AIRequestOptions): Promise<ReviewAnalysisResponse> => {
-            const prompt = buildReviewAnalysisPrompt(input.items);
+            const prompt = buildReviewAnalysisPrompt(input.items, config.language);
             const text = await requestGemini(config, prompt, REVIEW_SCHEMA, options);
             try {
                 return parseJson<ReviewAnalysisResponse>(text, isReviewAnalysisResponse);
@@ -343,7 +343,7 @@ export function createGeminiProvider(config: AIProviderConfig): AIProvider {
             }
         },
         predictMetadata: async (input: CopilotInput, options?: AIRequestOptions): Promise<CopilotResponse> => {
-            const prompt = buildCopilotPrompt(input);
+            const prompt = buildCopilotPrompt(input, config.language);
             const text = await requestGemini(config, prompt, COPILOT_SCHEMA, options);
             try {
                 const parsed = parseJson<CopilotResponse>(text, isCopilotResponse);

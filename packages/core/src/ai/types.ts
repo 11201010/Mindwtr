@@ -95,6 +95,7 @@ export interface AIProviderConfig {
     provider: AIProviderId;
     apiKey: string;
     model: string;
+    language?: string;
     endpoint?: string;
     fetcher?: typeof fetch;
     reasoningEffort?: AIReasoningEffort;

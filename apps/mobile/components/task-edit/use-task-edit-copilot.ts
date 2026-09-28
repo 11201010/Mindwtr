@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppData, TimeEstimate } from '@mindwtr/core';
-import { createAIProvider } from '@mindwtr/core';
-import type { AIProviderId } from '@mindwtr/core';
+import { createAIProvider, type AIProviderId, type AppData, type Language, type TimeEstimate } from '@mindwtr/core';
 import type { TaskDraft, TaskDraftSetter } from '@mindwtr/core/task-draft';
 import { buildCopilotConfig, isAIKeyRequired, loadAIKey } from '../../lib/ai-config';
 import { logError } from '../../lib/app-log';
 
 type CopilotSuggestion = {
+    language: Language;
     context?: string;
     timeEstimate?: TimeEstimate;
     tags?: string[];
@@ -17,6 +16,7 @@ export type CopilotPart = { kind: 'context' | 'timeEstimate' | 'tag'; value: str
 
 type UseTaskEditCopilotArgs = {
     settings: AppData['settings'];
+    language?: Language;
     aiEnabled: boolean;
     aiProvider: AIProviderId;
     timeEstimatesEnabled: boolean;
@@ -31,6 +31,7 @@ type UseTaskEditCopilotArgs = {
 
 export function useTaskEditCopilot({
     settings,
+    language = 'en',
     aiEnabled,
     aiProvider,
     timeEstimatesEnabled,
@@ -45,6 +46,7 @@ export function useTaskEditCopilot({
     const [aiKey, setAiKey] = useState('');
     const keyRequired = isAIKeyRequired(settings);
     const [copilotSuggestion, setCopilotSuggestion] = useState<CopilotSuggestion | null>(null);
+    const visibleCopilotSuggestion = copilotSuggestion?.language === language ? copilotSuggestion : null;
     const [copilotContext, setCopilotContext] = useState<string | undefined>(undefined);
     const [copilotEstimate, setCopilotEstimate] = useState<TimeEstimate | undefined>(undefined);
     const [copilotTags, setCopilotTags] = useState<string[]>([]);
@@ -104,7 +106,7 @@ export function useTaskEditCopilot({
                 previousController.abort();
             }
             try {
-                const provider = createAIProvider(buildCopilotConfig(settings, aiKey));
+                const provider = createAIProvider(buildCopilotConfig(settings, aiKey, language));
                 const suggestion = await provider.predictMetadata(
                     { title: input, contexts: contextOptionsRef.current, tags: tagOptionsRef.current },
                     abortController ? { signal: abortController.signal } : undefined
@@ -113,7 +115,7 @@ export function useTaskEditCopilot({
                 if (!suggestion.context && (!timeEstimatesEnabled || !suggestion.timeEstimate) && !suggestion.tags?.length) {
                     setCopilotSuggestion(null);
                 } else {
-                    setCopilotSuggestion(suggestion);
+                    setCopilotSuggestion({ ...suggestion, language });
                 }
             } catch {
                 if (!cancelled && copilotMountedRef.current) setCopilotSuggestion(null);
@@ -127,7 +129,7 @@ export function useTaskEditCopilot({
                 copilotAbortRef.current = null;
             }
         };
-    }, [aiEnabled, aiKey, descriptionDraft, keyRequired, settings, timeEstimatesEnabled, titleDraft]);
+    }, [aiEnabled, aiKey, descriptionDraft, keyRequired, language, settings, timeEstimatesEnabled, titleDraft]);
 
     useEffect(() => {
         if (!visible) {
@@ -158,19 +160,19 @@ export function useTaskEditCopilot({
     // The suggestion splits into parts the user applies one at a time (#1022);
     // a part leaves the pending list once it is in the applied markers below.
     const pendingCopilotParts = useMemo<CopilotPart[]>(() => {
-        if (!copilotSuggestion) return [];
+        if (!visibleCopilotSuggestion) return [];
         const parts: CopilotPart[] = [];
-        if (copilotSuggestion.context && copilotSuggestion.context !== copilotContext) {
-            parts.push({ kind: 'context', value: copilotSuggestion.context });
+        if (visibleCopilotSuggestion.context && visibleCopilotSuggestion.context !== copilotContext) {
+            parts.push({ kind: 'context', value: visibleCopilotSuggestion.context });
         }
-        if (timeEstimatesEnabled && copilotSuggestion.timeEstimate && copilotSuggestion.timeEstimate !== copilotEstimate) {
-            parts.push({ kind: 'timeEstimate', value: copilotSuggestion.timeEstimate });
+        if (timeEstimatesEnabled && visibleCopilotSuggestion.timeEstimate && visibleCopilotSuggestion.timeEstimate !== copilotEstimate) {
+            parts.push({ kind: 'timeEstimate', value: visibleCopilotSuggestion.timeEstimate });
         }
-        for (const tag of copilotSuggestion.tags ?? []) {
+        for (const tag of visibleCopilotSuggestion.tags ?? []) {
             if (!copilotTags.includes(tag)) parts.push({ kind: 'tag', value: tag });
         }
         return parts;
-    }, [copilotContext, copilotEstimate, copilotSuggestion, copilotTags, timeEstimatesEnabled]);
+    }, [copilotContext, copilotEstimate, copilotTags, timeEstimatesEnabled, visibleCopilotSuggestion]);
 
     // Batched on purpose: applying several tags one call at a time would each
     // re-read the same stale draft string and drop all but the last.

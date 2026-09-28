@@ -27,6 +27,7 @@ import {
 } from './views/inbox/inbox-processing-utils';
 import { TaskEditorAiPanels } from './Task/TaskEditorAiPanels';
 import { useTaskItemAi } from './Task/useTaskItemAi';
+import { useLanguage } from '../contexts/language-context';
 import { TokenAutocompleteInput } from './Task/TokenAutocompleteInput';
 import { AutocompleteTextInput } from './ui/AutocompleteTextInput';
 import { AreaSelector } from './ui/AreaSelector';
@@ -185,6 +186,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
     visibleScheduleFieldKeys,
     settings,
 }: InboxProcessingWizardProps) {
+    const { language } = useLanguage();
     const { nativeDateInputLocale, dateFormatSetting } = useNativeDateInputLocale();
     const {
         allContexts,
@@ -256,6 +258,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
         taskId: processingTask?.id ?? '',
         settings,
         t,
+        language,
         editTitle: draft.title,
         editDescription: draft.description,
         editContexts: draft.contexts,

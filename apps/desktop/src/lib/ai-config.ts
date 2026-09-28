@@ -1,4 +1,4 @@
-import type { AIProviderConfig, AIProviderId, AppData } from '@mindwtr/core';
+import type { AIProviderConfig, AIProviderId, AppData, Language } from '@mindwtr/core';
 import {
     buildAIConfig as buildCoreAIConfig,
     buildCopilotConfig as buildCoreCopilotConfig,
@@ -179,12 +179,12 @@ export function isAIKeyRequired(settings: AppData['settings'] | undefined): bool
     return !(config.provider === 'openai' && Boolean(config.endpoint));
 }
 
-export async function buildAIConfig(settings: AppData['settings'] | undefined, apiKey: string): Promise<AIProviderConfig> {
+export async function buildAIConfig(settings: AppData['settings'] | undefined, apiKey: string, language: Language = 'en'): Promise<AIProviderConfig> {
     if (isSandboxMode()) throw new Error('Unavailable in sandbox.');
-    return withDesktopFetch(buildCoreAIConfig(settings ?? {}, apiKey));
+    return withDesktopFetch({ ...buildCoreAIConfig(settings ?? {}, apiKey), language });
 }
 
-export async function buildCopilotConfig(settings: AppData['settings'] | undefined, apiKey: string): Promise<AIProviderConfig> {
+export async function buildCopilotConfig(settings: AppData['settings'] | undefined, apiKey: string, language: Language = 'en'): Promise<AIProviderConfig> {
     if (isSandboxMode()) throw new Error('Unavailable in sandbox.');
-    return withDesktopFetch(buildCoreCopilotConfig(settings ?? {}, apiKey));
+    return withDesktopFetch({ ...buildCoreCopilotConfig(settings ?? {}, apiKey), language });
 }

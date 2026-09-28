@@ -1090,7 +1090,7 @@ export function useInboxProcessingController({
     }
     setIsAIWorking(true);
     try {
-      const provider = createAIProvider(buildAIConfig(settings ?? {}, apiKey));
+      const provider = createAIProvider(buildAIConfig(settings ?? {}, apiKey, language));
       const contextOptions = Array.from(new Set([
         ...contextSuggestionPool,
         ...selectedContexts,
@@ -1149,6 +1149,7 @@ export function useInboxProcessingController({
     contextSuggestionPool,
     currentTask,
     handleAppleClarifyInbox,
+    language,
     openSettingsLabel,
     processingTitle,
     router,

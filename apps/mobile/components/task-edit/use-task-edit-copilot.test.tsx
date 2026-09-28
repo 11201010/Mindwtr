@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTaskDraft } from '@mindwtr/core/task-draft';
 
 import { useTaskEditCopilot } from './use-task-edit-copilot';
+import { buildCopilotConfig } from '../../lib/ai-config';
 
 const predictMetadata = vi.hoisted(() => vi.fn());
 
@@ -13,7 +14,7 @@ vi.mock('@mindwtr/core', () => ({
 }));
 
 vi.mock('../../lib/ai-config', () => ({
-  buildCopilotConfig: () => ({}),
+  buildCopilotConfig: vi.fn(() => ({})),
   isAIKeyRequired: () => false,
   loadAIKey: async () => 'test-key',
 }));
@@ -29,6 +30,7 @@ const draft = createTaskDraft({
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 });
+const settings = {} as never;
 
 /** Bare host so the hook can run without the whole edit modal — this repo has
  *  no renderHook helper for mobile. */
@@ -36,13 +38,16 @@ function CopilotHost({
   setDraftField,
   onResult,
   titleDraft = 'Book the dentist',
+  language = 'en',
 }: {
   setDraftField: (field: string, value: unknown) => void;
   onResult: (value: ReturnType<typeof useTaskEditCopilot>) => void;
   titleDraft?: string;
+  language?: 'en' | 'de';
 }) {
   const copilot = useTaskEditCopilot({
-    settings: {} as never,
+    settings,
+    language,
     aiEnabled: true,
     aiProvider: 'openai',
     timeEstimatesEnabled: true,
@@ -62,6 +67,7 @@ describe('useTaskEditCopilot suggestion parts', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     predictMetadata.mockReset();
+    vi.mocked(buildCopilotConfig).mockClear();
     predictMetadata.mockResolvedValue({ context: '@phone', timeEstimate: '15min', tags: ['#health', '#errand'] });
   });
 
@@ -80,6 +86,35 @@ describe('useTaskEditCopilot suggestion parts', () => {
     });
     return () => copilot;
   };
+
+  it('refreshes metadata when the app language changes', async () => {
+    let tree!: ReturnType<typeof create>;
+    let copilot!: ReturnType<typeof useTaskEditCopilot>;
+    const onResult = (value: ReturnType<typeof useTaskEditCopilot>) => { copilot = value; };
+    const setDraftField = vi.fn();
+    await act(async () => {
+      tree = create(<CopilotHost setDraftField={setDraftField} onResult={onResult} language="en" />);
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(buildCopilotConfig).toHaveBeenLastCalledWith(settings, 'test-key', 'en');
+    expect(copilot.pendingCopilotParts).toContainEqual({ kind: 'tag', value: '#health' });
+
+    let resolveGerman!: (value: { tags: string[] }) => void;
+    predictMetadata.mockImplementationOnce(
+      () => new Promise<{ tags: string[] }>((resolve) => { resolveGerman = resolve; }),
+    );
+    await act(async () => {
+      tree.update(<CopilotHost setDraftField={setDraftField} onResult={onResult} language="de" />);
+    });
+    expect(copilot.pendingCopilotParts).toEqual([]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(buildCopilotConfig).toHaveBeenLastCalledWith(settings, 'test-key', 'de');
+    expect(predictMetadata).toHaveBeenCalledTimes(2);
+    expect(copilot.pendingCopilotParts).toEqual([]);
+
+    await act(async () => { resolveGerman({ tags: ['#gesundheit'] }); });
+    expect(copilot.pendingCopilotParts).toEqual([{ kind: 'tag', value: '#gesundheit' }]);
+  });
 
   it('applies exactly one part per chip and leaves the others suggestible (#1022)', async () => {
     const setDraftField = vi.fn();

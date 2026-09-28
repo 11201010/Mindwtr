@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildClarifyPrompt, buildCopilotPrompt, buildReviewAnalysisPrompt, MAX_REVIEW_ANALYSIS_ITEMS, MAX_REVIEW_ANALYSIS_SUGGESTIONS } from './prompts';
+import { buildBreakdownPrompt, buildClarifyPrompt, buildCopilotPrompt, buildReviewAnalysisPrompt, MAX_REVIEW_ANALYSIS_ITEMS, MAX_REVIEW_ANALYSIS_SUGGESTIONS } from './prompts';
 import type { ReviewSnapshotItem } from './types';
 
 const createItem = (index: number): ReviewSnapshotItem => ({
@@ -53,7 +53,7 @@ describe('buildReviewAnalysisPrompt', () => {
 });
 
 describe('buildClarifyPrompt', () => {
-    it('includes task schedule context and same-language guidance', () => {
+    it('includes task schedule context and app-language guidance', () => {
         const prompt = buildClarifyPrompt({
             title: 'Enviar informe',
             contexts: ['@computer'],
@@ -62,10 +62,40 @@ describe('buildClarifyPrompt', () => {
             reviewAt: '2099-01-15T09:00:00.000Z',
         });
 
-        expect(prompt.system).toContain('same natural language');
+        expect(prompt.system).toContain('app language: en');
         expect(prompt.user).toContain('"schedule"');
         expect(prompt.user).toContain('2099-02-01T09:00:00.000Z');
         expect(prompt.user).toContain('avoid "do this now" framing');
+    });
+});
+
+describe('AI response language', () => {
+    it.each([
+        ['de', 'Deutsch'],
+        ['fr', 'Français'],
+        ['es', 'Español'],
+        ['ru', 'Русский'],
+        ['zh', '中文（简体）'],
+        ['zh-Hant', '中文（繁體）'],
+        ['en', 'English'],
+        ['unknown', 'English'],
+    ])('instructs %s responses in %s for every AI operation', (language, label) => {
+        const prompts = [
+            buildClarifyPrompt({ title: 'Book dentist', contexts: ['@phone'] }, language),
+            buildBreakdownPrompt({ title: 'Book dentist', description: 'Call the clinic' }, language),
+            buildReviewAnalysisPrompt([createItem(0)], language),
+            buildCopilotPrompt({ title: 'Book dentist', contexts: ['@phone'], tags: ['#health'] }, language),
+        ];
+        for (const prompt of prompts) {
+            expect(prompt.system).toContain(`in ${label}`);
+            expect(prompt.system).toContain('Keep JSON keys, IDs, action values, time-estimate values');
+            expect(prompt.system).toContain('existing context and tag candidates exactly as supplied');
+        }
+        expect(prompts[0]?.user).toContain('"context"?: string');
+        expect(prompts[0]?.user).toContain('@phone');
+        expect(prompts[2]?.user).toContain('"someday|archive|breakdown|keep"');
+        expect(prompts[3]?.user).toContain('5min, 10min, 15min, 30min, 1hr, 2hr, 3hr, 4hr, 4hr+');
+        expect(prompts[3]?.user).toContain('#health');
     });
 });
 

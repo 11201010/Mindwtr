@@ -197,7 +197,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         getDerivedState: state.getDerivedState,
         setHighlightTask: state.setHighlightTask,
     }), shallow);
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const { registerTaskListScope } = useKeybindings();
     const globalSortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
     const density = settings?.appearance?.density ?? 'comfortable';
@@ -391,6 +391,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         applyCopilotSuggestion,
         resetCopilot,
     } = useListCopilot({
+        language,
         settings,
         newTaskTitle,
         allContexts,

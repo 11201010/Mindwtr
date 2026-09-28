@@ -411,7 +411,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         }
         setAiLoading(true);
         try {
-            const provider = createAIProvider(await buildAIConfig(settings, apiKey));
+            const provider = createAIProvider(await buildAIConfig(settings, apiKey, language));
             const response = await provider.analyzeReview({ items: staleItems });
             // Filter here, not in the apply path, so what is displayed and what
             // can be written never diverge.

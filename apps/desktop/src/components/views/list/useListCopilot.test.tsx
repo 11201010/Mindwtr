@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useListCopilot } from './useListCopilot';
+import { buildCopilotConfig } from '../../../lib/ai-config';
 
 const predictMetadata = vi.hoisted(() => vi.fn());
 
@@ -36,7 +37,37 @@ describe('useListCopilot suggestion parts', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         predictMetadata.mockReset();
+        vi.mocked(buildCopilotConfig).mockClear();
         predictMetadata.mockResolvedValue({ context: '@phone', tags: ['#health', '#errand'] });
+    });
+
+    it('requests a fresh suggestion in the newly selected app language', async () => {
+        const allContexts = ['@phone'];
+        const allTags = ['#health'];
+        const { result, rerender } = renderHook(({ language }: { language: 'en' | 'de' }) => useListCopilot({
+            settings,
+            language,
+            newTaskTitle: 'Book the dentist',
+            allContexts,
+            allTags,
+        }), { initialProps: { language: 'en' as 'en' | 'de' } });
+        await settleSuggestion();
+        expect(buildCopilotConfig).toHaveBeenLastCalledWith(settings, expect.any(String), 'en');
+        expect(result.current.pendingCopilotParts).toContainEqual({ kind: 'tag', value: '#health' });
+
+        let resolveGerman!: (value: { tags: string[] }) => void;
+        predictMetadata.mockImplementationOnce(
+            () => new Promise<{ tags: string[] }>((resolve) => { resolveGerman = resolve; }),
+        );
+        rerender({ language: 'de' });
+        expect(result.current.pendingCopilotParts).toEqual([]);
+        await settleSuggestion();
+        expect(buildCopilotConfig).toHaveBeenLastCalledWith(settings, expect.any(String), 'de');
+        expect(predictMetadata).toHaveBeenCalledTimes(2);
+        expect(result.current.pendingCopilotParts).toEqual([]);
+
+        await act(async () => { resolveGerman({ tags: ['#gesundheit'] }); });
+        expect(result.current.pendingCopilotParts).toEqual([{ kind: 'tag', value: '#gesundheit' }]);
     });
 
     it('applies exactly one part per chip and leaves the others suggestible (#1022)', async () => {

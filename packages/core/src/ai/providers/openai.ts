@@ -384,7 +384,7 @@ async function requestOpenAI(config: AIProviderConfig, prompt: { system: string;
 export function createOpenAIProvider(config: AIProviderConfig): AIProvider {
     return withAIRequestStopNotifications(config, {
         clarifyTask: async (input: ClarifyInput, options?: AIRequestOptions): Promise<ClarifyResponse> => {
-            const prompt = buildClarifyPrompt(input);
+            const prompt = buildClarifyPrompt(input, config.language);
             const text = await requestOpenAI(config, prompt, CLARIFY_JSON_SCHEMA, options);
             try {
                 return parseJson<ClarifyResponse>(text, isClarifyResponse);
@@ -398,7 +398,7 @@ export function createOpenAIProvider(config: AIProviderConfig): AIProvider {
             }
         },
         breakDownTask: async (input: BreakdownInput, options?: AIRequestOptions): Promise<BreakdownResponse> => {
-            const prompt = buildBreakdownPrompt(input);
+            const prompt = buildBreakdownPrompt(input, config.language);
             const text = await requestOpenAI(config, prompt, BREAKDOWN_JSON_SCHEMA, options);
             try {
                 return parseJson<BreakdownResponse>(text, isBreakdownResponse);
@@ -412,7 +412,7 @@ export function createOpenAIProvider(config: AIProviderConfig): AIProvider {
             }
         },
         analyzeReview: async (input: ReviewAnalysisInput, options?: AIRequestOptions): Promise<ReviewAnalysisResponse> => {
-            const prompt = buildReviewAnalysisPrompt(input.items);
+            const prompt = buildReviewAnalysisPrompt(input.items, config.language);
             const text = await requestOpenAI(config, prompt, REVIEW_JSON_SCHEMA, options);
             try {
                 return parseJson<ReviewAnalysisResponse>(text, isReviewAnalysisResponse);
@@ -426,7 +426,7 @@ export function createOpenAIProvider(config: AIProviderConfig): AIProvider {
             }
         },
         predictMetadata: async (input: CopilotInput, options?: AIRequestOptions): Promise<CopilotResponse> => {
-            const prompt = buildCopilotPrompt(input);
+            const prompt = buildCopilotPrompt(input, config.language);
             const text = await requestOpenAI(config, prompt, COPILOT_JSON_SCHEMA, options);
             try {
                 const parsed = parseJson<CopilotResponse>(text, isCopilotResponse);

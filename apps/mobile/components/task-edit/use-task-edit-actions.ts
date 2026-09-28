@@ -10,6 +10,7 @@ import {
     createTaskCancellationUndo,
     generateUUID,
     type AIProviderId,
+    type Language,
     getChecklistEditStatus,
     getUsedTaskTokens,
     tFallback,
@@ -48,6 +49,7 @@ type ShowToast = (options: {
 
 type TaskEditActionsParams = {
     aiEnabled: boolean;
+    language?: Language;
     closeAIModal: () => void;
     deleteTask: (taskId: string) => Promise<StoreActionResult>;
     descriptionDraft: string;
@@ -84,6 +86,7 @@ type TaskEditActionsParams = {
 
 export function useTaskEditActions({
     aiEnabled,
+    language = 'en',
     closeAIModal,
     deleteTask,
     descriptionDraft,
@@ -438,8 +441,8 @@ export function useTaskEditActions({
             Alert.alert(t('ai.missingKeyTitle'), t('ai.missingKeyBody'));
             return null;
         }
-        return createAIProvider(buildAIConfig(settings, apiKey));
-    }, [aiEnabled, settings, t]);
+        return createAIProvider(buildAIConfig(settings, apiKey, language));
+    }, [aiEnabled, language, settings, t]);
 
     const applyAISuggestion = useCallback((suggested: { title?: string; context?: string; timeEstimate?: TimeEstimate }) => {
         if (!canMutate()) return;

@@ -17,7 +17,7 @@ import { createAIProvider } from '@mindwtr/core';
 import CaptureScreen, { sanitizeCaptureReturnToParam } from '@/app/capture-modal';
 import { logInfo, logWarn } from '@/lib/app-log';
 
-const { hardwareBack, navigationGuard, openTaskScreen, parseQuickAdd, returnToPreviousApp, routerMocks, routeParams, stashPendingCaptureTaskOpen, storeState } = vi.hoisted(() => {
+const { appLanguage, hardwareBack, navigationGuard, openTaskScreen, parseQuickAdd, returnToPreviousApp, routerMocks, routeParams, stashPendingCaptureTaskOpen, storeState } = vi.hoisted(() => {
   const parseQuickAdd = vi.fn<(value: string) => any>((value: string) => ({ title: value, props: {}, invalidDateCommands: [] }));
   const navigationGuard = {
     callback: null as null | ((options: { data: { action: { type: string } } }) => void),
@@ -41,6 +41,7 @@ const { hardwareBack, navigationGuard, openTaskScreen, parseQuickAdd, returnToPr
     attemptNavigationRemoval(action);
   };
   return {
+    appLanguage: { current: 'en' as 'en' | 'de' },
     hardwareBack: {
       handler: null as (() => boolean) | null,
       remove: vi.fn(),
@@ -137,6 +138,7 @@ vi.mock('@mindwtr/core', async () => {
 
 vi.mock('@/contexts/language-context', () => ({
   useLanguage: () => ({
+    language: appLanguage.current,
     t: (key: string) =>
       ({
         'nav.addTask': 'Add Task',
@@ -1755,9 +1757,9 @@ describe('CaptureScreen', () => {
       (node) => node.props.accessibilityRole === 'button' && node.props.accessibilityLabel === label
     )[0];
 
-    const mountWithSuggestion = async () => {
+    const mountWithSuggestion = async (predictMetadata = vi.fn().mockResolvedValue({ context: '@phone', timeEstimate: '15min', tags: ['#health'] })) => {
       vi.mocked(createAIProvider).mockReturnValue({
-        predictMetadata: vi.fn().mockResolvedValue({ context: '@phone', timeEstimate: '15min', tags: ['#health'] }),
+        predictMetadata,
       } as never);
 
       let tree!: ReturnType<typeof create>;
@@ -1773,12 +1775,32 @@ describe('CaptureScreen', () => {
 
     beforeEach(() => {
       vi.useFakeTimers();
+      appLanguage.current = 'en';
       storeState.settings = { ai: { enabled: true, provider: 'openai' }, features: {} } as never;
     });
 
     afterEach(() => {
       vi.useRealTimers();
+      appLanguage.current = 'en';
       storeState.settings = { ai: { enabled: false }, features: {} } as never;
+    });
+
+    it('hides old-language chips before a delayed replacement reply', async () => {
+      let resolveGerman!: (value: { tags: string[] }) => void;
+      const predictMetadata = vi.fn()
+        .mockResolvedValueOnce({ tags: ['#health'] })
+        .mockImplementationOnce(() => new Promise<{ tags: string[] }>((resolve) => { resolveGerman = resolve; }));
+      const tree = await mountWithSuggestion(predictMetadata);
+      expect(findChip(tree, '#health')).toBeDefined();
+
+      appLanguage.current = 'de';
+      await act(async () => { tree.update(<CaptureScreen />); });
+      expect(findChip(tree, '#health')).toBeUndefined();
+      await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+      expect(findChip(tree, '#health')).toBeUndefined();
+
+      await act(async () => { resolveGerman({ tags: ['#gesundheit'] }); });
+      expect(findChip(tree, '#gesundheit')).toBeDefined();
     });
 
     it('applies only the tapped part to the captured task', async () => {

@@ -498,6 +498,7 @@ export const TaskItem = memo(function TaskItem({
         taskId: task.id,
         settings,
         t,
+        language,
         editTitle: draft.title,
         editDescription: draft.description,
         editContexts: draft.contexts,

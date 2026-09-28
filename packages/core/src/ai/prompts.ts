@@ -1,14 +1,21 @@
 import type { BreakdownInput, ClarifyInput, ReviewSnapshotItem } from './types';
+import { isSupportedLanguage } from '../i18n/i18n-constants';
+import { LOCALES } from '../i18n/i18n-locales';
 
 export const MAX_REVIEW_ANALYSIS_ITEMS = 16;
 export const MAX_REVIEW_ANALYSIS_SUGGESTIONS = 8;
 
-const SYSTEM_PROMPT = [
-    'You are a strict GTD coach.',
-    'You do not decide for the user; you only clarify and propose options.',
-    'Always output valid JSON and nothing else.',
-    'Write JSON string values in the same natural language as the task title or user-provided content; keep JSON keys exactly as requested.',
-].join(' ');
+const systemPrompt = (language?: string) => {
+    const resolved = isSupportedLanguage(language) ? language : 'en';
+    const name = resolved === 'en' ? 'English' : LOCALES[resolved].native;
+    return [
+        'You are a strict GTD coach.',
+        'You do not decide for the user; you only clarify and propose options.',
+        'Always output valid JSON and nothing else.',
+        `Write newly generated natural-language text in ${name} (app language: ${resolved}).`,
+        'Keep JSON keys, IDs, action values, time-estimate values, and existing context and tag candidates exactly as supplied. Never translate existing task titles, notes, project titles, context candidates, or tag candidates.',
+    ].join(' ');
+};
 
 const addScheduleFields = (
     payload: Record<string, unknown>,
@@ -23,7 +30,7 @@ const addScheduleFields = (
     }
 };
 
-export function buildClarifyPrompt(input: ClarifyInput): { system: string; user: string } {
+export function buildClarifyPrompt(input: ClarifyInput, language?: string): { system: string; user: string } {
     const contexts = (input.contexts || []).filter(Boolean);
     const projectTasks = (input.projectTasks || []).filter(Boolean);
     const payload: Record<string, unknown> = { title: input.title, contexts };
@@ -48,10 +55,10 @@ export function buildClarifyPrompt(input: ClarifyInput): { system: string; user:
         '{ "question": string, "options": [{ "label": string, "action": string }], "suggestedAction"?: { "title": string, "timeEstimate"?: string, "context"?: string, "isProject"?: boolean } }',
     ].join('\n');
 
-    return { system: SYSTEM_PROMPT, user };
+    return { system: systemPrompt(language), user };
 }
 
-export function buildBreakdownPrompt(input: BreakdownInput): { system: string; user: string } {
+export function buildBreakdownPrompt(input: BreakdownInput, language?: string): { system: string; user: string } {
     const projectTasks = (input.projectTasks || []).filter(Boolean);
     const payload: Record<string, unknown> = {
         title: input.title,
@@ -71,10 +78,10 @@ export function buildBreakdownPrompt(input: BreakdownInput): { system: string; u
         '{ "steps": [string] }',
     ].join('\n');
 
-    return { system: SYSTEM_PROMPT, user };
+    return { system: systemPrompt(language), user };
 }
 
-export function buildReviewAnalysisPrompt(items: ReviewSnapshotItem[]): { system: string; user: string } {
+export function buildReviewAnalysisPrompt(items: ReviewSnapshotItem[], language?: string): { system: string; user: string } {
     const scopedItems = items.slice(0, MAX_REVIEW_ANALYSIS_ITEMS);
     const scope = items.length > scopedItems.length
         ? `Analyze the ${scopedItems.length} stalest items shown below. Ignore the remaining ${items.length - scopedItems.length} items for this pass.`
@@ -99,10 +106,10 @@ export function buildReviewAnalysisPrompt(items: ReviewSnapshotItem[]): { system
         JSON.stringify(scopedItems),
     ].join('\n');
 
-    return { system: SYSTEM_PROMPT, user };
+    return { system: systemPrompt(language), user };
 }
 
-export function buildCopilotPrompt(input: { title: string; contexts?: string[]; tags?: string[] }): { system: string; user: string } {
+export function buildCopilotPrompt(input: { title: string; contexts?: string[]; tags?: string[] }, language?: string): { system: string; user: string } {
     const contexts = (input.contexts || []).filter(Boolean);
     const tags = (input.tags || []).filter(Boolean);
     const user = [
@@ -119,5 +126,5 @@ export function buildCopilotPrompt(input: { title: string; contexts?: string[]; 
         JSON.stringify({ title: input.title, contextCandidates: contexts, tagCandidates: tags }),
     ].join('\n');
 
-    return { system: SYSTEM_PROMPT, user };
+    return { system: systemPrompt(language), user };
 }

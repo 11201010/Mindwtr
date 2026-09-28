@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type Task, type TaskDraftSetter, useTaskStore } from '@mindwtr/core';
 
 import { useTaskItemAi } from './useTaskItemAi';
+import { buildCopilotConfig } from '../../lib/ai-config';
 import { TaskItem } from '../TaskItem';
 import { LanguageProvider } from '../../contexts/language-context';
 import { useUiStore } from '../../store/ui-store';
@@ -64,8 +65,86 @@ describe('useTaskItemAi copilot parts', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         predictMetadata.mockReset();
+        vi.mocked(buildCopilotConfig).mockClear();
         logWarn.mockReset();
         predictMetadata.mockResolvedValue({ context: '@phone', timeEstimate: '15min', tags: ['#health', '#errand'] });
+    });
+
+    it('invalidates the dispatched copilot signature when the app language changes', async () => {
+        const contextOptions = ['@phone'];
+        const tagOptions = ['#health'];
+        const t = (key: string) => key;
+        const setField = vi.fn();
+        const { rerender } = renderHook(({ language }: { language: 'en' | 'de' }) => useTaskItemAi({
+            taskId: 'task-1', settings, t, language,
+            editTitle: 'Book the dentist', editDescription: '', editContexts: '', editTags: '',
+            editStartTime: '', editDueDate: '', editReviewAt: '',
+            contextOptions, tagOptions, projectContext: null,
+            timeEstimatesEnabled: true, setField,
+        }), { initialProps: { language: 'en' as 'en' | 'de' } });
+        await settleSuggestion();
+        expect(buildCopilotConfig).toHaveBeenLastCalledWith(settings, expect.any(String), 'en');
+
+        rerender({ language: 'de' });
+        await settleSuggestion();
+        expect(buildCopilotConfig).toHaveBeenLastCalledWith(settings, expect.any(String), 'de');
+        expect(predictMetadata).toHaveBeenCalledTimes(2);
+    });
+
+    it('hides an old-language suggestion while the replacement request is pending', async () => {
+        const contextOptions = ['@phone'];
+        const tagOptions = ['#health'];
+        const t = (key: string) => key;
+        const setField = vi.fn();
+        let resolveGerman!: (value: { tags: string[] }) => void;
+        predictMetadata.mockResolvedValueOnce({ tags: ['#health'] }).mockImplementationOnce(
+            () => new Promise<{ tags: string[] }>((resolve) => { resolveGerman = resolve; }),
+        );
+        const { result, rerender } = renderHook(({ language }: { language: 'en' | 'de' }) => useTaskItemAi({
+            taskId: 'task-1', settings, t, language,
+            editTitle: 'Book the dentist', editDescription: '', editContexts: '', editTags: '',
+            editStartTime: '', editDueDate: '', editReviewAt: '',
+            contextOptions, tagOptions, projectContext: null,
+            timeEstimatesEnabled: true, setField,
+        }), { initialProps: { language: 'en' as 'en' | 'de' } });
+        await settleSuggestion();
+        expect(result.current.pendingCopilotParts).toEqual([{ kind: 'tag', value: '#health' }]);
+
+        rerender({ language: 'de' });
+        expect(result.current.copilotSuggestion).toBeNull();
+        expect(result.current.pendingCopilotParts).toEqual([]);
+        await settleSuggestion();
+        expect(result.current.pendingCopilotParts).toEqual([]);
+
+        await act(async () => { resolveGerman({ tags: ['#gesundheit'] }); });
+        expect(result.current.pendingCopilotParts).toEqual([{ kind: 'tag', value: '#gesundheit' }]);
+    });
+
+    it('retries English after an in-flight English request is aborted by en → de → en', async () => {
+        const contextOptions = ['@phone'];
+        const tagOptions = ['#health'];
+        const t = (key: string) => key;
+        const setField = vi.fn();
+        let resolveOldEnglish!: (value: { tags: string[] }) => void;
+        predictMetadata.mockImplementationOnce(() => new Promise<{ tags: string[] }>((resolve) => { resolveOldEnglish = resolve; }))
+            .mockResolvedValueOnce({ tags: ['#health'] });
+        const { result, rerender } = renderHook(({ language }: { language: 'en' | 'de' }) => useTaskItemAi({
+            taskId: 'task-1', settings, t, language,
+            editTitle: 'Book the dentist', editDescription: '', editContexts: '', editTags: '',
+            editStartTime: '', editDueDate: '', editReviewAt: '',
+            contextOptions, tagOptions, projectContext: null,
+            timeEstimatesEnabled: true, setField,
+        }), { initialProps: { language: 'en' as 'en' | 'de' } });
+        await settleSuggestion();
+        expect(predictMetadata).toHaveBeenCalledTimes(1);
+
+        rerender({ language: 'de' });
+        rerender({ language: 'en' });
+        await settleSuggestion();
+        expect(predictMetadata).toHaveBeenCalledTimes(2);
+        expect(result.current.pendingCopilotParts).toEqual([{ kind: 'tag', value: '#health' }]);
+        await act(async () => { resolveOldEnglish({ tags: ['#stale'] }); });
+        expect(result.current.pendingCopilotParts).toEqual([{ kind: 'tag', value: '#health' }]);
     });
 
     it('logs a sanitized diagnostic when metadata prediction fails', async () => {

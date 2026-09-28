@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     type AppData,
     type AIProviderId,
+    type Language,
     type ClarifyResponse,
     type TaskDraftSetter,
     type TimeEstimate,
@@ -24,6 +25,7 @@ type UseTaskItemAiArgs = {
     taskId: string;
     settings: AppData['settings'] | undefined;
     t: (key: string) => string;
+    language?: Language;
     editTitle: string;
     editDescription: string;
     editContexts: string;
@@ -44,6 +46,7 @@ export function useTaskItemAi({
     taskId,
     settings,
     t,
+    language = 'en',
     editTitle,
     editDescription,
     editContexts,
@@ -67,7 +70,8 @@ export function useTaskItemAi({
     const [aiClarifyResponse, setAiClarifyResponse] = useState<ClarifyResponse | null>(null);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiBreakdownSteps, setAiBreakdownSteps] = useState<string[] | null>(null);
-    const [copilotSuggestion, setCopilotSuggestion] = useState<{ context?: string; timeEstimate?: TimeEstimate; tags?: string[] } | null>(null);
+    const [copilotSuggestion, setCopilotSuggestion] = useState<{ language?: Language; context?: string; timeEstimate?: TimeEstimate; tags?: string[] } | null>(null);
+    const visibleCopilotSuggestion = copilotSuggestion?.language === language ? copilotSuggestion : null;
     const [copilotContext, setCopilotContext] = useState<string | undefined>(undefined);
     const [copilotEstimate, setCopilotEstimate] = useState<TimeEstimate | undefined>(undefined);
     const [copilotTags, setCopilotTags] = useState<string[]>([]);
@@ -114,6 +118,7 @@ export function useTaskItemAi({
             input,
             contexts: editContexts,
             provider: aiProvider,
+            language,
             model: copilotModel ?? '',
             tags: tagOptions,
             timeEstimatesEnabled,
@@ -122,6 +127,7 @@ export function useTaskItemAi({
             return;
         }
         let cancelled = false;
+        let completed = false;
         let localAbort: AbortController | null = null;
         const handle = setTimeout(async () => {
             // Record the signature only once the request actually dispatches:
@@ -132,7 +138,8 @@ export function useTaskItemAi({
             copilotInputRef.current = signature;
             try {
                 const currentContexts = editContexts.split(',').map((c) => c.trim()).filter(Boolean);
-                const provider = createAIProvider(await buildCopilotConfig(settings ?? {}, aiKey));
+                const provider = createAIProvider(await buildCopilotConfig(settings ?? {}, aiKey, language));
+                if (cancelled) return;
                 const abortController = typeof AbortController === 'function' ? new AbortController() : null;
                 localAbort = abortController;
                 const previousController = copilotAbortRef.current;
@@ -151,10 +158,11 @@ export function useTaskItemAi({
                     abortController ? { signal: abortController.signal } : undefined
                 );
                 if (cancelled || !copilotMountedRef.current) return;
+                completed = true;
                 if (!suggestion.context && (!timeEstimatesEnabled || !suggestion.timeEstimate) && !suggestion.tags?.length) {
                     setCopilotSuggestion(null);
                 } else {
-                    setCopilotSuggestion(suggestion);
+                    setCopilotSuggestion({ ...suggestion, language });
                 }
             } catch (error) {
                 if (!cancelled && copilotMountedRef.current) {
@@ -176,12 +184,13 @@ export function useTaskItemAi({
         return () => {
             cancelled = true;
             clearTimeout(handle);
+            if (!completed && copilotInputRef.current === signature) copilotInputRef.current = '';
             if (copilotAbortRef.current && copilotAbortRef.current === localAbort) {
                 copilotAbortRef.current.abort();
                 copilotAbortRef.current = null;
             }
         };
-    }, [aiEnabled, aiKey, aiProvider, contextOptions, copilotEnabled, copilotModel, editContexts, editDescription, editTitle, keyRequired, settings, tagOptions, taskId, timeEstimatesEnabled]);
+    }, [aiEnabled, aiKey, aiProvider, contextOptions, copilotEnabled, copilotModel, editContexts, editDescription, editTitle, keyRequired, language, settings, tagOptions, taskId, timeEstimatesEnabled]);
 
     useEffect(() => {
         copilotMountedRef.current = true;
@@ -218,8 +227,8 @@ export function useTaskItemAi({
             setAiError(t('ai.missingKeyBody'));
             return null;
         }
-        return createAIProvider(await buildAIConfig(settings, aiKey));
-    }, [aiEnabled, aiKey, keyRequired, settings, t]);
+        return createAIProvider(await buildAIConfig(settings, aiKey, language));
+    }, [aiEnabled, aiKey, keyRequired, language, settings, t]);
 
     const resetCopilotDraft = useCallback(() => {
         setCopilotContext(undefined);
@@ -249,19 +258,19 @@ export function useTaskItemAi({
     // The suggestion splits into parts the user applies one at a time (#1022);
     // a part leaves the pending list once it is in the applied markers below.
     const pendingCopilotParts = useMemo<CopilotPart[]>(() => {
-        if (!copilotSuggestion) return [];
+        if (!visibleCopilotSuggestion) return [];
         const parts: CopilotPart[] = [];
-        if (copilotSuggestion.context && copilotSuggestion.context !== copilotContext) {
-            parts.push({ kind: 'context', value: copilotSuggestion.context });
+        if (visibleCopilotSuggestion.context && visibleCopilotSuggestion.context !== copilotContext) {
+            parts.push({ kind: 'context', value: visibleCopilotSuggestion.context });
         }
-        if (timeEstimatesEnabled && copilotSuggestion.timeEstimate && copilotSuggestion.timeEstimate !== copilotEstimate) {
-            parts.push({ kind: 'timeEstimate', value: copilotSuggestion.timeEstimate });
+        if (timeEstimatesEnabled && visibleCopilotSuggestion.timeEstimate && visibleCopilotSuggestion.timeEstimate !== copilotEstimate) {
+            parts.push({ kind: 'timeEstimate', value: visibleCopilotSuggestion.timeEstimate });
         }
-        for (const tag of copilotSuggestion.tags ?? []) {
+        for (const tag of visibleCopilotSuggestion.tags ?? []) {
             if (!copilotTags.includes(tag)) parts.push({ kind: 'tag', value: tag });
         }
         return parts;
-    }, [copilotContext, copilotEstimate, copilotSuggestion, copilotTags, timeEstimatesEnabled]);
+    }, [copilotContext, copilotEstimate, copilotTags, timeEstimatesEnabled, visibleCopilotSuggestion]);
 
     // Batched on purpose: applying several tags one call at a time would each
     // re-read the same stale draft string and drop all but the last.
@@ -393,7 +402,7 @@ export function useTaskItemAi({
         aiClarifyResponse,
         aiError,
         aiBreakdownSteps,
-        copilotSuggestion,
+        copilotSuggestion: visibleCopilotSuggestion,
         copilotContext,
         copilotEstimate,
         copilotTags,

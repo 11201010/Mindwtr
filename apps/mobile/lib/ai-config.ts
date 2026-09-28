@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import type { AIProviderConfig, AIProviderId, AppData } from '@mindwtr/core';
+import type { AIProviderConfig, AIProviderId, AppData, Language } from '@mindwtr/core';
 import { buildAIConfig as buildCoreAIConfig, buildCopilotConfig as buildCoreCopilotConfig, getAIKeyStorageKey, isSandboxMode, loadAIKeyFromStorage, saveAIKeyToStorage } from '@mindwtr/core';
 import { logInfo } from './app-log';
 
@@ -93,12 +93,12 @@ const withRequestDiagnostics = (config: AIProviderConfig): AIProviderConfig => (
     },
 });
 
-export function buildAIConfig(settings: AppData['settings'], apiKey: string): AIProviderConfig {
+export function buildAIConfig(settings: AppData['settings'], apiKey: string, language: Language = 'en'): AIProviderConfig {
     if (isSandboxMode()) throw new Error('Unavailable in sandbox');
-    return withRequestDiagnostics(buildCoreAIConfig(settings, apiKey));
+    return withRequestDiagnostics({ ...buildCoreAIConfig(settings, apiKey), language });
 }
 
-export function buildCopilotConfig(settings: AppData['settings'], apiKey: string): AIProviderConfig {
+export function buildCopilotConfig(settings: AppData['settings'], apiKey: string, language: Language = 'en'): AIProviderConfig {
     if (isSandboxMode()) throw new Error('Unavailable in sandbox');
-    return withRequestDiagnostics(buildCoreCopilotConfig(settings, apiKey));
+    return withRequestDiagnostics({ ...buildCoreCopilotConfig(settings, apiKey), language });
 }

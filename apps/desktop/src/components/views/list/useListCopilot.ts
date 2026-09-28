@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppData } from '@mindwtr/core';
+import type { AppData, Language } from '@mindwtr/core';
 import { createAIProvider, type AIProviderId } from '@mindwtr/core';
 import { buildCopilotConfig, isAIKeyRequired, loadAIKey } from '../../../lib/ai-config';
 import type { CopilotPart } from '../../Task/useTaskItemAi';
 
-type CopilotSuggestion = { context?: string; tags?: string[] };
+type CopilotSuggestion = { language: Language; context?: string; tags?: string[] };
 
 type UseListCopilotArgs = {
     settings: AppData['settings'] | undefined;
+    language?: Language;
     newTaskTitle: string;
     allContexts: string[];
     allTags: string[];
 };
 
-export function useListCopilot({ settings, newTaskTitle, allContexts, allTags }: UseListCopilotArgs) {
+export function useListCopilot({ settings, language = 'en', newTaskTitle, allContexts, allTags }: UseListCopilotArgs) {
     const aiEnabled = settings?.ai?.enabled === true;
     const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
     const keyRequired = isAIKeyRequired(settings);
     const [aiKey, setAiKey] = useState('');
     const [copilotSuggestion, setCopilotSuggestion] = useState<CopilotSuggestion | null>(null);
+    const visibleCopilotSuggestion = copilotSuggestion?.language === language ? copilotSuggestion : null;
     const [copilotContext, setCopilotContext] = useState<string | null>(null);
     const [copilotTags, setCopilotTags] = useState<string[]>([]);
     const copilotAbortRef = useRef<AbortController | null>(null);
@@ -50,7 +52,7 @@ export function useListCopilot({ settings, newTaskTitle, allContexts, allTags }:
         let cancelled = false;
         const handle = setTimeout(async () => {
             try {
-                const provider = createAIProvider(await buildCopilotConfig(settings, aiKey));
+                const provider = createAIProvider(await buildCopilotConfig(settings, aiKey, language));
                 if (copilotAbortRef.current) copilotAbortRef.current.abort();
                 const abortController = typeof AbortController === 'function' ? new AbortController() : null;
                 copilotAbortRef.current = abortController;
@@ -62,7 +64,7 @@ export function useListCopilot({ settings, newTaskTitle, allContexts, allTags }:
                 if (!suggestion.context && !suggestion.tags?.length) {
                     setCopilotSuggestion(null);
                 } else {
-                    setCopilotSuggestion({ context: suggestion.context, tags: suggestion.tags });
+                    setCopilotSuggestion({ language, context: suggestion.context, tags: suggestion.tags });
                 }
             } catch {
                 if (!cancelled) setCopilotSuggestion(null);
@@ -76,21 +78,21 @@ export function useListCopilot({ settings, newTaskTitle, allContexts, allTags }:
                 copilotAbortRef.current = null;
             }
         };
-    }, [aiEnabled, aiKey, allContexts, allTags, keyRequired, newTaskTitle, settings]);
+    }, [aiEnabled, aiKey, allContexts, allTags, keyRequired, language, newTaskTitle, settings]);
 
     // Per-part apply (#1022). This row has no time estimate to suggest, so the
     // parts are the context and one per tag.
     const pendingCopilotParts = useMemo<CopilotPart[]>(() => {
-        if (!copilotSuggestion) return [];
+        if (!visibleCopilotSuggestion) return [];
         const parts: CopilotPart[] = [];
-        if (copilotSuggestion.context && copilotSuggestion.context !== copilotContext) {
-            parts.push({ kind: 'context', value: copilotSuggestion.context });
+        if (visibleCopilotSuggestion.context && visibleCopilotSuggestion.context !== copilotContext) {
+            parts.push({ kind: 'context', value: visibleCopilotSuggestion.context });
         }
-        for (const tag of copilotSuggestion.tags ?? []) {
+        for (const tag of visibleCopilotSuggestion.tags ?? []) {
             if (!copilotTags.includes(tag)) parts.push({ kind: 'tag', value: tag });
         }
         return parts;
-    }, [copilotContext, copilotSuggestion, copilotTags]);
+    }, [copilotContext, copilotTags, visibleCopilotSuggestion]);
 
     const applyCopilotParts = useCallback((parts: CopilotPart[]) => {
         const context = parts.find((part) => part.kind === 'context')?.value;

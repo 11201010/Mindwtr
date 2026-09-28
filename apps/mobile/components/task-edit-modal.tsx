@@ -370,6 +370,7 @@ function TaskEditModalInner({
         applyCopilotSuggestion,
     } = useTaskEditCopilot({
         settings,
+        language,
         aiEnabled,
         aiProvider,
         timeEstimatesEnabled,
@@ -808,6 +809,7 @@ function TaskEditModalInner({
         handleShare,
     } = useTaskEditActions({
         aiEnabled,
+        language,
         closeAIModal,
         deleteTask,
         descriptionDraft,
