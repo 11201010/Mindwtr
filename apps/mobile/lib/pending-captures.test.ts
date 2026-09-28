@@ -1347,7 +1347,7 @@ describe('ingestPendingCaptures', () => {
             source: 'apple-watch',
             outboxRetried: true,
         });
-        const addTask = addTaskMock();
+        const addTask = vi.fn(async (_title: string, _props?: Partial<Task>, _options?: { captureId: string }) => ({ id: WATCH_AUDIO_ID }));
         const flushPendingSave = vi.fn(async () => undefined);
         const transcribeAudio = vi.fn(async () => 'Buy milk /due:tomorrow');
 
@@ -1364,7 +1364,11 @@ describe('ingestPendingCaptures', () => {
             transcribeAudio,
         })).toBe(1);
 
-        expect(addTask).toHaveBeenCalledWith('Buy milk', expect.objectContaining({ status: 'inbox', dueDate: '2026-09-07' }));
+        expect(addTask).toHaveBeenCalledWith(
+            'Buy milk',
+            expect.objectContaining({ status: 'inbox', dueDate: '2026-09-07' }),
+            { captureId: WATCH_AUDIO_ID },
+        );
         expect(addTask.mock.calls[0]?.[1]).not.toHaveProperty('outboxRetried');
         expect(transcribeAudio).toHaveBeenCalledWith(
             `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
@@ -1421,7 +1425,7 @@ describe('ingestPendingCaptures', () => {
             outboxRetried: true,
         });
         const common = {
-            addTask: addTaskMock(),
+            addTask: vi.fn(async () => ({ success: true, id: WATCH_AUDIO_ID })),
             updateTask,
             addProject,
             projects: [],
@@ -1451,6 +1455,42 @@ describe('ingestPendingCaptures', () => {
         expect(appLogMocks.logInfo).not.toHaveBeenCalledWith(
             'Watch outbox retry ingested',
             expect.anything(),
+        );
+    });
+
+    it('stores a Watch audio capture once when the app dies between the save and the queue delete', async () => {
+        oneFile('audio.json', {
+            kind: 'audio',
+            id: WATCH_AUDIO_ID,
+            audioPath: `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            source: 'apple-watch',
+        });
+        // The first pass saves the task, then the queue delete fails, as a kill would leave it.
+        fileSystemMocks.deleteAsync.mockRejectedValueOnce(new Error('killed before the delete'));
+        const created: Task[] = [];
+        const addTask = vi.fn(async (title: string, _props?: Partial<Task>, options?: { captureId: string }) => {
+            const id = options?.captureId ?? `generated-${created.length}`;
+            if (!created.some((task) => task.id === id)) created.push({ id, title, status: 'inbox' } as Task);
+            return { success: true, id };
+        });
+        const transcribeAudio = vi.fn(async () => 'Captured thought');
+        const deps = {
+            addTask, updateTask, addProject, projects: [], areas: [], tasks: [], getTasks: () => created,
+            people: [], settings: emptySettings, flushPendingSave: vi.fn(async () => undefined), transcribeAudio,
+        };
+
+        expect(await ingestPendingCaptures(deps)).toBe(0);
+        expect(await ingestPendingCaptures(deps)).toBe(1);
+
+        expect(created).toEqual([expect.objectContaining({ id: WATCH_AUDIO_ID, title: 'Captured thought' })]);
+        expect(transcribeAudio).toHaveBeenCalledOnce();
+        expect(appLogMocks.logInfo).toHaveBeenLastCalledWith('Watch capture ingested', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.3.3/watch-audio-capture-once', kind: 'audio', outcome: 'already-created' },
+        });
+        expect(fileSystemMocks.deleteAsync).toHaveBeenLastCalledWith(
+            `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            { idempotent: true },
         );
     });
 

@@ -318,6 +318,7 @@ const WATCH_CAPTURE_RELEASE_CHECK = 'v1.3.0/watch-capture';
 const WATCH_AUDIO_READY_RELEASE_CHECK = 'v1.3.0/watch-audio-ready';
 const WATCH_COMMAND_RELEASE_CHECK = 'v1.3.0/watch-command';
 const WATCH_OUTBOX_RETRY_RELEASE_CHECK = 'v1.3.0/watch-outbox-retry';
+const WATCH_AUDIO_ONCE_RELEASE_CHECK = 'v1.3.3/watch-audio-capture-once';
 const UUID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 
 function logWatchOutboxRetry(log: PendingCaptureLog, kind: 'text' | 'audio', capture: PendingCapture | PendingAudioCapture): void {
@@ -612,13 +613,17 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             }
 
             const currentTasks = getTasks?.() ?? tasks;
-            const existingCaptureTask = isAndroidQuickCapture
-                ? currentTasks.find((task) => task.id.toLowerCase() === normalizedCaptureId)
+            // Android's recorder and the Watch both name an item by a UUID, so it
+            // doubles as the capture id: the task gets that id, and a replay finds it.
+            const captureId = isAndroidQuickCapture || UUID_PATTERN.test(capture.id) ? normalizedCaptureId : undefined;
+            const existingCaptureTask = captureId
+                ? currentTasks.find((task) => task.id.toLowerCase() === captureId)
                 : undefined;
             if (existingCaptureTask) {
                 // A prior attempt may have durably created the task but crashed
                 // before queue cleanup. Tombstones count too: deleting the task
-                // must not make the same native capture reappear.
+                // must not make the same native capture reappear. The Watch keeps
+                // its own failure path: a throw ends the drain, the rest is silent.
                 let replayResult: unknown;
                 try {
                     replayResult = await addTask(
@@ -626,7 +631,8 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
                         undefined,
                         { captureId: normalizedCaptureId },
                     );
-                } catch {
+                } catch (error) {
+                    if (!isAndroidQuickCapture) throw error;
                     void log.warn('Android quick capture audio retained for retry', {
                         scope: 'capture',
                         extra: { kind: 'audio', outcome: 'task-save-failed' },
@@ -637,28 +643,40 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
                     isFailedResult(replayResult)
                     || resultId(replayResult)?.toLowerCase() !== normalizedCaptureId
                 ) {
-                    void log.warn('Android quick capture audio retained for retry', {
-                        scope: 'capture',
-                        extra: { kind: 'audio', outcome: 'task-save-failed' },
-                    });
+                    if (isAndroidQuickCapture) {
+                        void log.warn('Android quick capture audio retained for retry', {
+                            scope: 'capture',
+                            extra: { kind: 'audio', outcome: 'task-save-failed' },
+                        });
+                    }
                     continue;
                 }
                 try {
                     await flushPendingSave?.();
                     await queue.delete(name);
                 } catch {
-                    void log.warn('Android quick capture audio retained for retry', {
-                        scope: 'capture',
-                        extra: { kind: 'audio', outcome: 'cleanup-failed' },
-                    });
+                    if (isAndroidQuickCapture) {
+                        void log.warn('Android quick capture audio retained for retry', {
+                            scope: 'capture',
+                            extra: { kind: 'audio', outcome: 'cleanup-failed' },
+                        });
+                    }
                     continue;
                 }
                 await audio.delete(resolvedAudioPath).catch(() => undefined);
                 ingested += 1;
-                void log.info('Android quick capture audio ingested', {
-                    scope: 'capture',
-                    extra: { kind: 'audio', outcome: 'already-created' },
-                });
+                if (isAndroidQuickCapture) {
+                    void log.info('Android quick capture audio ingested', {
+                        scope: 'capture',
+                        extra: { kind: 'audio', outcome: 'already-created' },
+                    });
+                } else {
+                    void log.info('Watch capture ingested', {
+                        scope: 'capture',
+                        extra: { releaseCheck: WATCH_AUDIO_ONCE_RELEASE_CHECK, kind: 'audio', outcome: 'already-created' },
+                    });
+                    logWatchOutboxRetry(log, 'audio', capture);
+                }
                 continue;
             }
 
@@ -731,11 +749,11 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             } else {
                 // Preserve the existing Watch failure behavior; Android catches
                 // locally so later text captures cannot be stranded behind it.
-                result = await addTask(title, props);
+                result = await addTask(title, props, ...(captureId ? [{ captureId }] : []));
             }
             if (
                 isFailedResult(result)
-                || (isAndroidQuickCapture && resultId(result)?.toLowerCase() !== normalizedCaptureId)
+                || (captureId && resultId(result)?.toLowerCase() !== captureId)
             ) {
                 if (isAndroidQuickCapture) {
                     void log.warn('Android quick capture audio retained for retry', {
