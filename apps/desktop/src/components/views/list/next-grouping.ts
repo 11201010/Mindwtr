@@ -3,6 +3,8 @@ import {
     compareProjectsByOrder,
     DEFAULT_AREA_COLOR,
     getContextColor,
+    groupTasksByContext as groupCoreTasksByContext,
+    groupTasksByTag as groupCoreTasksByTag,
     groupTasksByViewSection,
     tFallback,
     baseTextCollator,
@@ -160,47 +162,9 @@ export function groupTasksByContext({
     noContextLabel,
     theme,
 }: GroupByContextParams): TaskGroup[] {
-    const grouped = new Map<string, Task[]>();
-    const noContextTasks: Task[] = [];
-
-    tasks.forEach((task) => {
-        const contexts = (task.contexts ?? [])
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0);
-        if (contexts.length === 0) {
-            noContextTasks.push(task);
-            return;
-        }
-        Array.from(new Set(contexts)).forEach((context) => {
-            const contextTasks = grouped.get(context) ?? [];
-            contextTasks.push(task);
-            grouped.set(context, contextTasks);
-        });
-    });
-
-    const groups: TaskGroup[] = [];
-    const sortedContexts = [...grouped.keys()].sort((a, b) =>
-        baseTextCollator.compare(a, b)
-    );
-    sortedContexts.forEach((context) => {
-        const contextTasks = grouped.get(context) ?? [];
-        groups.push({
-            id: `context:${context}`,
-            title: context,
-            tasks: contextTasks,
-            dotColor: getContextColor(context, theme),
-        });
-    });
-
-    if (noContextTasks.length > 0) {
-        groups.push({
-            id: 'context:none',
-            title: noContextLabel,
-            tasks: noContextTasks,
-            muted: true,
-        });
-    }
-    return groups;
+    return groupCoreTasksByContext({ tasks, noContextLabel }).map((group) => (
+        group.muted ? group : { ...group, dotColor: getContextColor(group.title, theme) }
+    ));
 }
 
 export function groupTasksByPriority({
@@ -419,47 +383,9 @@ export function groupTasksByTag({
     noTagLabel,
     theme,
 }: GroupByTagParams): TaskGroup[] {
-    const grouped = new Map<string, Task[]>();
-    const noTagTasks: Task[] = [];
-
-    tasks.forEach((task) => {
-        const tags = (task.tags ?? [])
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0);
-        if (tags.length === 0) {
-            noTagTasks.push(task);
-            return;
-        }
-        Array.from(new Set(tags)).forEach((tag) => {
-            const tagTasks = grouped.get(tag) ?? [];
-            tagTasks.push(task);
-            grouped.set(tag, tagTasks);
-        });
-    });
-
-    const groups: TaskGroup[] = [];
-    const sortedTags = [...grouped.keys()].sort((a, b) =>
-        baseTextCollator.compare(a, b)
-    );
-    sortedTags.forEach((tag) => {
-        const tagTasks = grouped.get(tag) ?? [];
-        groups.push({
-            id: `tag:${tag}`,
-            title: tag,
-            tasks: tagTasks,
-            dotColor: getContextColor(tag, theme),
-        });
-    });
-
-    if (noTagTasks.length > 0) {
-        groups.push({
-            id: 'tag:none',
-            title: noTagLabel,
-            tasks: noTagTasks,
-            muted: true,
-        });
-    }
-    return groups;
+    return groupCoreTasksByTag({ tasks, noTagLabel }).map((group) => (
+        group.muted ? group : { ...group, dotColor: getContextColor(group.title, theme) }
+    ));
 }
 
 /**

@@ -39,6 +39,75 @@ export type TaskGroupTaskItem = {
 
 export type TaskGroupItem = TaskGroupSectionItem | TaskGroupTaskItem;
 
+type TaskTokenGroup = {
+  id: string;
+  title: string;
+  tasks: Task[];
+  muted?: boolean;
+};
+
+function groupTasksByToken(
+  tasks: Task[],
+  tokensForTask: (task: Task) => readonly string[] | undefined,
+  idPrefix: 'context' | 'tag',
+  noTokenLabel: string,
+): TaskTokenGroup[] {
+  const grouped = new Map<string, Task[]>();
+  const tokenlessTasks: Task[] = [];
+
+  tasks.forEach((task) => {
+    const tokens = tokensForTask(task)
+      ?.map((token) => token.trim())
+      .filter((token) => token.length > 0) ?? [];
+    if (tokens.length === 0) {
+      tokenlessTasks.push(task);
+      return;
+    }
+    new Set(tokens).forEach((token) => {
+      const tokenTasks = grouped.get(token) ?? [];
+      tokenTasks.push(task);
+      grouped.set(token, tokenTasks);
+    });
+  });
+
+  const groups: TaskTokenGroup[] = [...grouped.keys()]
+    .sort((a, b) => baseTextCollator.compare(a, b))
+    .map((token) => ({
+      id: `${idPrefix}:${token}`,
+      title: token,
+      tasks: grouped.get(token) ?? [],
+    }));
+  if (tokenlessTasks.length > 0) {
+    groups.push({
+      id: `${idPrefix}:none`,
+      title: noTokenLabel,
+      tasks: tokenlessTasks,
+      muted: true,
+    });
+  }
+  return groups;
+}
+
+export function groupTasksByContext({
+  tasks,
+  noContextLabel,
+}: {
+  tasks: Task[];
+  noContextLabel: string;
+}): TaskTokenGroup[] {
+  return groupTasksByToken(tasks, (task) => task.contexts, 'context', noContextLabel);
+}
+
+export function groupTasksByTag({
+  tasks,
+  noTagLabel,
+}: {
+  tasks: Task[];
+  noTagLabel: string;
+}): TaskTokenGroup[] {
+  return groupTasksByToken(tasks, (task) => task.tags, 'tag', noTagLabel);
+}
+
 /** Label for a grouping axis. Lives with the axis logic so the two cannot drift apart. */
 export function getTaskGroupByLabel(groupBy: TaskGroupBy, t: (key: string) => string): string {
   switch (groupBy) {
@@ -170,60 +239,20 @@ export function buildTaskGroupSections({
   }
 
   if (groupBy === 'context') {
-    // Mirrors desktop's groupTasksByContext (next-grouping.ts): a task with
-    // several contexts appears under each of them, catch-all last.
-    const grouped = new Map<string, Task[]>();
-    const noContextTasks: Task[] = [];
-
-    tasks.forEach((task) => {
-      const contexts = (task.contexts ?? [])
-        .map((context) => context.trim())
-        .filter((context) => context.length > 0);
-      if (contexts.length === 0) {
-        noContextTasks.push(task);
-        return;
-      }
-      Array.from(new Set(contexts)).forEach((context) => {
-        const items = grouped.get(context) ?? [];
-        items.push(task);
-        grouped.set(context, items);
-      });
-    });
-
     const items: TaskGroupItem[] = [];
-    [...grouped.keys()]
-      .sort((a, b) => baseTextCollator.compare(a, b))
-      .forEach((context) => appendSection(items, `context:${context}`, context, grouped.get(context) ?? []));
-    appendSection(items, 'context:none', tFallback(t, 'contexts.none', 'No context'), noContextTasks, true);
+    groupTasksByContext({
+      tasks,
+      noContextLabel: tFallback(t, 'contexts.none', 'No context'),
+    }).forEach((group) => appendSection(items, group.id, group.title, group.tasks, group.muted));
     return items;
   }
 
   if (groupBy === 'tag') {
-    const grouped = new Map<string, Task[]>();
-    const noTagTasks: Task[] = [];
-
-    tasks.forEach((task) => {
-      const tags = (task.tags ?? [])
-        .map((tag) => tag.trim())
-        .filter((tag) => tag.length > 0);
-      if (tags.length === 0) {
-        noTagTasks.push(task);
-        return;
-      }
-      // A task with several tags appears under each of them, so the counts sum
-      // to more than the task total by design.
-      Array.from(new Set(tags)).forEach((tag) => {
-        const items = grouped.get(tag) ?? [];
-        items.push(task);
-        grouped.set(tag, items);
-      });
-    });
-
     const items: TaskGroupItem[] = [];
-    [...grouped.keys()]
-      .sort((a, b) => baseTextCollator.compare(a, b))
-      .forEach((tag) => appendSection(items, `tag:${tag}`, tag, grouped.get(tag) ?? []));
-    appendSection(items, 'tag:none', tFallback(t, 'taskEdit.noTags', 'No tags'), noTagTasks, true);
+    groupTasksByTag({
+      tasks,
+      noTagLabel: tFallback(t, 'taskEdit.noTags', 'No tags'),
+    }).forEach((group) => appendSection(items, group.id, group.title, group.tasks, group.muted));
     return items;
   }
 

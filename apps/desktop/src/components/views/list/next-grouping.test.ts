@@ -140,6 +140,55 @@ describe('groupTasksByTag', () => {
     });
 });
 
+describe('token grouping adapters', () => {
+    const tasks = [
+        baseTask({
+            id: 'first',
+            contexts: [' @work ', '@deep', '@work', ' '],
+            tags: [' #work ', '#deep', '#work', ''],
+        }),
+        baseTask({ id: 'second', contexts: ['@work'], tags: ['#work'] }),
+        baseTask({ id: 'none', contexts: ['', '  '], tags: [' ', ''] }),
+    ];
+
+    it('preserves labels, task order, deduplication, and themed context colors', () => {
+        const contextGroups = groupTasksByContext({
+            tasks,
+            noContextLabel: 'Without context',
+            theme: 'dracula',
+        });
+        const tagGroups = groupTasksByTag({
+            tasks,
+            noTagLabel: 'Without tags',
+            theme: 'dracula',
+        });
+
+        expect(contextGroups.map((group) => ({
+            id: group.id,
+            title: group.title,
+            taskIds: group.tasks.map((task) => task.id),
+            muted: group.muted,
+        }))).toEqual([
+            { id: 'context:@deep', title: '@deep', taskIds: ['first'], muted: undefined },
+            { id: 'context:@work', title: '@work', taskIds: ['first', 'second'], muted: undefined },
+            { id: 'context:none', title: 'Without context', taskIds: ['none'], muted: true },
+        ]);
+        expect(contextGroups[0]?.dotColor).toBe('#69ff94');
+
+        expect(tagGroups.map((group) => ({
+            id: group.id,
+            title: group.title,
+            taskIds: group.tasks.map((task) => task.id),
+            muted: group.muted,
+        }))).toEqual([
+            { id: 'tag:#deep', title: '#deep', taskIds: ['first'], muted: undefined },
+            { id: 'tag:#work', title: '#work', taskIds: ['first', 'second'], muted: undefined },
+            { id: 'tag:none', title: 'Without tags', taskIds: ['none'], muted: true },
+        ]);
+        expect(tagGroups[0]?.dotColor).toBe('#f1fa8c');
+    });
+});
+
 describe('flattenVisibleGroupTasks', () => {
     const tasks = [
         baseTask({ id: 't1', title: 'Multi tag', tags: ['#work', '#deep'] }),

@@ -99,6 +99,27 @@ describe('buildTaskGroupSections', () => {
     ]);
   });
 
+  it('normalizes token memberships while collapsed headers keep the full count', () => {
+    const items = buildTaskGroupSections({
+      groupBy: 'tag',
+      tasks: [
+        task('first', { tags: [' #work ', '#deep', '#work', ''] }),
+        task('second', { tags: ['#work'] }),
+        task('none', { tags: [' ', ''] }),
+      ],
+      areas: [],
+      projectById: new Map(),
+      t,
+      collapsedGroupIds: new Set(['tag:#work']),
+    });
+
+    expect(layout(items)).toEqual([
+      { section: '#deep', count: 1, ids: ['first'] },
+      { section: '#work', count: 2, ids: [] },
+      { section: 'No tags', count: 1, ids: ['none'] },
+    ]);
+  });
+
   // Desktop's References/Done/Archive lists group by context; the mobile axis
   // mirrors groupTasksByContext's semantics exactly (#1027).
   it('lists a multi-context task under each of its contexts', () => {
