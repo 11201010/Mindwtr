@@ -4,6 +4,7 @@ import SQLiteSupport
 
 final class SQLiteBridge {
     private var database: OpaquePointer?
+    private var loggedLeadingBOM = false
     #if DEBUG
     var faults: HostIOFaults?
     #endif
@@ -120,7 +121,7 @@ final class SQLiteBridge {
         #if DEBUG
         try faults?.beforeSQL?(sql)
         #endif
-        guard let parameters = try JSONSerialization.jsonObject(with: Data(parametersJSON.utf8)) as? [Any] else {
+        guard let parameters = try NativeJSON.jsonObject(with: Data(parametersJSON.utf8)) as? [Any] else {
             throw HostFailure("SQLite parameters must be an array")
         }
         var statement: OpaquePointer?
@@ -157,7 +158,14 @@ final class SQLiteBridge {
                 case SQLITE_TEXT:
                     let count = Int(sqlite3_column_bytes(statement, column))
                     let data = Data(bytes: sqlite3_column_text(statement, column)!, count: count)
-                    guard let text = String(data: data, encoding: .utf8) else { throw HostFailure("Invalid SQLite text") }
+                    // Foundation's Data-to-String initializer discards a leading UTF-8 BOM.
+                    // Decode without that normalization and reject replacement decoding.
+                    let text = String(decoding: data, as: UTF8.self)
+                    guard text.utf8.elementsEqual(data) else { throw HostFailure("Invalid SQLite text") }
+                    if !loggedLeadingBOM && data.starts(with: [0xEF, 0xBB, 0xBF]) {
+                        loggedLeadingBOM = true
+                        NSLog("Native iOS SQLite text preserved leading BOM releaseCheck=v1.3.3/native-ios-sqlite-leading-bom outcome=preserved")
+                    }
                     row[name] = text
                 default: throw HostFailure("Unsupported SQLite column")
                 }

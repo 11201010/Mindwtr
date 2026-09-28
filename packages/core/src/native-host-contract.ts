@@ -236,6 +236,7 @@ import { createProjectFlowMethods } from './native-host-contract-project-flow';
 import { createProjectNotesWriteMethods } from './native-host-contract-project-notes';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
 import { createProjectDateMethods } from './native-host-contract-project-date';
+import { createProjectAreaMethods } from './native-host-contract-project-area';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
 import { createProjectSectionRenameMethods } from './native-host-contract-project-section-rename';
 import { createProjectSectionDeleteMethods } from './native-host-contract-project-section-delete';
@@ -1294,6 +1295,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             revision: projectMutationRevision }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
+        ...createProjectAreaMethods({ readiness, save,
+            revision: projectMutationRevision,
+            sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas), t: () => translate }),
         ...createProjectSectionMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createProjectSectionRenameMethods({ readiness, save,

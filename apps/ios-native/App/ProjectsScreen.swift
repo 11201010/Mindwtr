@@ -758,6 +758,9 @@ struct ProjectDetailScreen: View {
             if model.projectDateField != nil && !model.projectDatePending && model.projectCurrent {
                 await model.retryProjectDateRead()
             }
+            if model.projectAreaPresented && !model.projectAreaPending && model.projectCurrent {
+                await model.retryProjectAreaRead()
+            }
         }
         .onAppear { detailsProjectID = model.projectHeader.text("id") }
         .onChange(of: model.projectHeader.text("id")) { id in
@@ -783,6 +786,12 @@ struct ProjectDetailScreen: View {
             projectDateSheet
                 .presentationDetents(model.retryNeeded ? [.large] : [.medium, .large])
                 .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
+        }
+        .sheet(isPresented: Binding(get: { model.projectAreaPresented },
+                                    set: { if !$0 { model.closeProjectArea() } })) {
+            ProjectAreaSelectionSheet(model: model, palette: palette)
+                .presentationDetents([.large])
+                .interactiveDismissDisabled(!model.projectAreaCloseEnabled)
         }
         .sheet(isPresented: Binding(get: { model.projectSectionsPresented },
                                     set: { if !$0 { model.closeProjectSections() } })) {
@@ -1069,7 +1078,10 @@ struct ProjectDetailScreen: View {
                         resignProjectNotesInput()
                         Task { await model.openProjectSections() }
                     }
-                    metadataRow("projects.areaLabel", value: metadata.text("areaLabel"), id: "area")
+                    ProjectAreaMetadata(model: model, palette: palette, metadata: metadata) {
+                        resignProjectNotesInput()
+                        Task { await model.openProjectArea() }
+                    }
                     metadataRow("taskEdit.tagsLabel", value: metadata.text("tagsLabel"), id: "tags")
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -1567,5 +1579,145 @@ private struct ProjectDateMetadataRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// A concrete boundary keeps the Area control out of Details' iOS 17 opaque View type.
+private struct ProjectAreaMetadata: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let metadata: CoreObject
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(model.label("projects.areaLabel"))
+                    .rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                Spacer(minLength: 8)
+                if !model.projectDetail.flag("readOnly") {
+                    Button(action: onOpen) {
+                        Text(model.label("common.edit"))
+                            .rnFont(14, .semibold).foregroundStyle(palette.tint)
+                            .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectAreaOpenEnabled)
+                    .accessibilityLabel(model.label("projects.areaLabel") + ": " + metadata.text("areaLabel"))
+                    .accessibilityIdentifier("project-area-open")
+                }
+            }
+            Text(metadata.text("areaLabel"))
+                .rnFont(14).foregroundStyle(palette.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-detail-meta-area")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ProjectAreaSelectionSheet: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Text(model.label("projects.areaLabel"))
+                        .rnFont(20, .bold).foregroundStyle(palette.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 8)
+                    Button { model.closeProjectArea() } label: {
+                        Image(systemName: "xmark").font(.system(size: 20))
+                            .foregroundStyle(palette.secondary)
+                            .frame(width: 48, height: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectAreaCloseEnabled)
+                    .accessibilityLabel(model.label("common.close"))
+                    .accessibilityIdentifier("project-area-close")
+                }
+                if let message = model.projectAreaError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-area-error")
+                    Button {
+                        Task {
+                            if model.projectAreaPending { await model.retry() }
+                            else { await model.retryProjectAreaRead() }
+                        }
+                    } label: {
+                        Text(model.label("common.retry"))
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy)
+                    .accessibilityIdentifier("project-area-retry")
+                }
+                if model.projectAreaReadError != nil || model.projectAreaNeedsRead {
+                    if let message = model.projectAreaReadError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("project-area-read-error")
+                    }
+                    Button { Task { await model.retryProjectAreaRead() } } label: {
+                        Text(model.label("common.retry"))
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectAreaPending)
+                    .accessibilityIdentifier("project-area-read-retry")
+                }
+                if !model.projectAreaOptions.isEmpty {
+                    let noneSelected = model.projectAreaSelectedID == nil
+                    areaChoice(model.projectAreaOptions.text("noAreaLabel"), color: nil,
+                               selected: noneSelected, identifier: "project-area-none") {
+                        Task { await model.chooseProjectArea(nil, name: nil) }
+                    }
+                    let areas = model.projectAreaOptions.objects("areas")
+                    ForEach(areas.indices, id: \.self) { index in
+                        let area = areas[index]
+                        let id = area.text("id")
+                        let name = area.text("label")
+                        areaChoice(name, color: area["color"] as? String,
+                                   selected: model.projectAreaSelectedID == id,
+                                   identifier: "project-area-choice-" + id) {
+                            Task { await model.chooseProjectArea(id, name: name) }
+                        }
+                    }
+                } else if model.projectAreaReadError == nil {
+                    ProgressView().frame(maxWidth: .infinity, minHeight: 48)
+                }
+            }
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(palette.card)
+        .accessibilityIdentifier("project-area-sheet")
+    }
+
+    private func areaChoice(_ label: String, color: String?, selected: Bool,
+                            identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                if let color, !color.isEmpty {
+                    Circle().fill(Color(hex: color)).frame(width: 12, height: 12)
+                        .overlay(Circle().stroke(palette.border, lineWidth: 1))
+                        .accessibilityHidden(true)
+                }
+                Text(label).rnFont(16).foregroundStyle(palette.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark").foregroundStyle(palette.tint)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .padding(.horizontal, 12)
+            .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.projectAreaChoiceEnabled)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
     }
 }

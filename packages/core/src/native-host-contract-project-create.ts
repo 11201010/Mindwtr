@@ -6,7 +6,7 @@ import { projectToSqliteRow } from './project-sync-schema';
 import { findSelectableProjectByTitleAndArea } from './project-utils';
 import { ensureDeviceId } from './store-helpers';
 import { useTaskStore } from './store';
-import { buildNewProject } from './store-projects/project-actions';
+import { buildNewProject, projectAreaOrderMax } from './store-projects/project-actions';
 import type { PreparedProjectCreate } from './store-types';
 import { taskEditValuesEqual } from './store-tasks';
 import type { Area, Project } from './types';
@@ -53,9 +53,6 @@ const readRequest = (value: unknown): NativeProjectCreateRequest | null => {
         ? input as NativeProjectCreateRequest : null;
 };
 const same = taskEditValuesEqual;
-const orderMax = (projects: readonly Project[], areaId: string | null) => projects
-    .filter((project) => (project.areaId ?? null) === areaId)
-    .reduce((max, project) => Math.max(max, Number.isFinite(project.order) ? project.order : -1), -1);
 const areaWitness = (area: Area): PreparedProjectCreate['selectedArea'] => ({
     id: area.id, name: area.name, color: area.color ?? null, deletedAt: null,
 });
@@ -150,7 +147,7 @@ export function createProjectCreateMethods(deps: {
                 deviceIdBefore: state.settings.deviceId ?? null,
                 deviceIdToInitialize: device.updated ? device.deviceId : null,
                 selectedArea: area ? areaWitness(area) : null,
-                orderMax: orderMax(state._allProjects, request.areaId),
+                orderMax: projectAreaOrderMax(state._allProjects, request.areaId),
                 defaultProjectFlowMode: state.settings.gtd?.defaultProjectFlowMode ?? null,
                 result: { id: request.requestId, created: true },
             };

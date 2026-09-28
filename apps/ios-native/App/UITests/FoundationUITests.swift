@@ -3735,6 +3735,155 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testProjectAreaAndNotes() {
+        projectAreaSelection(library: "a7085484-e69d-4193-8041-bd496971e640")
+    }
+
+    func testProjectAreaLargestText() {
+        projectAreaSelection(library: "2fb190cc-0959-4031-aaf0-267f1d9d3f32")
+    }
+
+    private func projectAreaSelection(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        let target = "776dd5c5-1926-4da1-96ff-5d5096971050"
+        let areaID = "3abf38fa-7ec4-45f4-ad79-4e30f08b78ad"
+        let choice = "project-area-choice-" + areaID
+        let notes = app.textViews["project-notes-input"]
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            let sheet = app.scrollViews["project-area-sheet"]
+            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch, outerEdge: true)
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, 48)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        func open(_ id: String) {
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardTap(app, "project-details-toggle")
+        }
+        func select(_ id: String) {
+            tap(id)
+            let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["project-area-close"])
+            XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed)
+        }
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        projects()
+        let draft = app.textFields["projects-create-title"]
+        draft.tap(); draft.typeText("Retained Area assignment draft")
+        open(target)
+        tap("project-area-open")
+        XCTAssertTrue(app.buttons["project-area-none"].isSelected)
+        XCTAssertFalse(app.buttons["project-area-choice-5f6a5911-186b-4680-9e42-63c90f1c7c31"].exists)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        boardEnabled(app.buttons["project-area-none"])
+        XCTAssertTrue(app.buttons["project-area-none"].isSelected)
+        select("project-area-none") // Same canonical selection does not write.
+        revealPagedElement(app, app.buttons["project-notes-toggle"], in: app.scrollViews.firstMatch, outerEdge: true)
+        boardTap(app, "project-notes-toggle"); boardEnabled(notes)
+        revealPagedElement(app, notes, in: app.scrollViews.firstMatch)
+        notes.tap(); revealPagedElement(app, notes, in: app.scrollViews.firstMatch, outerEdge: true)
+        replaceProjectNotesText(notes, with: "Notes before Area opens\n")
+        tap("project-area-open"); select(choice) // First tap flushes Notes before opening.
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, "Metadata Area")
+        tap("project-area-open"); XCTAssertTrue(app.buttons[choice].isSelected); select(choice)
+        tap("project-area-open"); select("project-area-none")
+        tap("project-area-open"); XCTAssertTrue(app.buttons["project-area-none"].isSelected)
+        select(choice)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Project Area preserves Notes and Details"
+        capture.lifetime = .keepAlways; add(capture)
+        boardTap(app, "project-back")
+        XCTAssertEqual(draft.value as? String, "Retained Area assignment draft")
+        XCTAssertTrue(app.buttons["projects-create-area-none"].isSelected)
+        boardTap(app, "area-open"); boardTap(app, "area-option-" + areaID)
+        boardEnabled(app.buttons["area-option-" + areaID])
+        XCTAssertTrue(app.buttons["area-option-" + areaID].isSelected)
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        open(target)
+        tap("project-area-open"); select("project-area-none")
+        boardTap(app, "project-back")
+        XCTAssertEqual(draft.value as? String, "Retained Area assignment draft")
+        XCTAssertTrue(app.buttons["projects-create-area-" + areaID].isSelected)
+        XCTAssertFalse(app.buttons["project-open-" + target].exists)
+        boardTap(app, "area-open")
+        XCTAssertTrue(app.buttons["area-option-" + areaID].isSelected)
+        boardTap(app, "area-option-__all__"); boardEnabled(app.buttons["area-option-__all__"])
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        let archived = app.buttons["projects-section-archived"]
+        revealPagedElement(app, archived, in: app.scrollViews["projects-scroll"])
+        if archived.value as? String == "Expand" { archived.tap() }
+        open("98432619-81dd-480e-9c35-d4dfa1705ff1")
+        XCTAssertFalse(app.buttons["project-area-open"].exists)
+        XCTAssertTrue(app.staticTexts["project-detail-meta-area"].exists)
+        app.terminate(); app.launch(); projects(); open(target)
+        tap("project-area-open"); XCTAssertTrue(app.buttons["project-area-none"].isSelected)
+        select("project-area-close")
+        revealPagedElement(app, app.buttons["project-notes-toggle"], in: app.scrollViews.firstMatch, outerEdge: true)
+        boardTap(app, "project-notes-toggle")
+        XCTAssertEqual(notes.value as? String, "Notes before Area opens\n")
+        app.terminate()
+    }
+
+    func testProjectAreaFailureKeepsSelection() {
+        projectAreaRecovery(expectFailure: true)
+    }
+
+    func testProjectAreaColdRecovery() {
+        projectAreaRecovery(expectFailure: false)
+    }
+
+    private func projectAreaRecovery(expectFailure: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b41b1a6b-cb7b-4720-9e03-032b458e96fb"]
+        app.launch()
+        if expectFailure {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        } else { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        let row = app.buttons["project-open-776dd5c5-1926-4da1-96ff-5d5096971050"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        row.tap(); boardTap(app, "project-details-toggle")
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            let sheet = app.scrollViews["project-area-sheet"]
+            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch, outerEdge: true)
+            boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, 48)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        tap("project-area-open")
+        let choice = "project-area-choice-3abf38fa-7ec4-45f4-ad79-4e30f08b78ad"
+        if expectFailure {
+            tap(choice)
+            let error = app.staticTexts["project-area-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(app.buttons["project-area-close"].isEnabled)
+                XCTAssertFalse(app.buttons[choice].isEnabled)
+                XCTAssertTrue(app.buttons[choice].isSelected)
+                XCTAssertFalse(app.buttons["project-area-none"].isEnabled)
+                tap("project-area-retry"); boardEnabled(app.buttons["project-area-retry"])
+                XCTAssertTrue(error.exists)
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Failed Project Area save retains exact selection"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            XCTAssertTrue(app.buttons[choice].isSelected)
+            XCTAssertFalse(app.staticTexts["project-area-error"].exists)
+            tap("project-area-close")
+        }
+        app.terminate()
+    }
+
     func testProjectReviewDateAndNotes() {
         projectReviewDates(library: "db25c637-3853-46f5-9625-2f965304217a")
     }

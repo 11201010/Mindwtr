@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from '../store';
 import type { StorageAdapter } from '../storage';
 import type { AppData } from '../types';
-import { buildNewProject } from './project-actions';
+import { buildNewProject, projectAreaSelection } from './project-actions';
 
 const BASE_NOW = '2026-06-14T12:00:00.000Z';
 
@@ -128,6 +128,24 @@ describe('project actions', () => {
         });
 
         expect(explicitParallelProject.isSequential).toBe(false);
+    });
+
+    it('keeps RN own Area selection distinct from omission and honors an explicit finite order', () => {
+        const source = { id: 'source', title: 'Source', status: 'active' as const, color: '#3b82f6',
+            areaId: 'a', areaTitle: 'Area A', order: 1, tagIds: [], createdAt: BASE_NOW, updatedAt: BASE_NOW };
+        const target = { ...source, id: 'target', areaId: 'b', areaTitle: 'Area B', order: 7 };
+        const tombstone = { ...target, id: 'deleted', order: 9, deletedAt: BASE_NOW };
+        const areas = [{ id: 'a', name: 'Area A', order: 0, createdAt: BASE_NOW, updatedAt: BASE_NOW },
+            { id: 'b', name: ' Area B ', order: 1, createdAt: BASE_NOW, updatedAt: BASE_NOW }];
+        expect(projectAreaSelection(source, { title: 'Renamed' }, [source, target, tombstone], areas))
+            .toEqual({ selected: false, metadataChanged: false, fields: {}, order: undefined });
+        expect(projectAreaSelection(source, { areaId: 'b' }, [source, target, tombstone], areas))
+            .toEqual({ selected: true, metadataChanged: true,
+                fields: { areaId: 'b', areaTitle: 'Area B' }, order: 10 });
+        expect(projectAreaSelection(source, { areaId: 'b', order: 3 }, [source, target, tombstone], areas))
+            .toMatchObject({ fields: { areaId: 'b', areaTitle: 'Area B' }, order: 3 });
+        expect(projectAreaSelection(source, { areaId: undefined }, [source, target, tombstone], areas))
+            .toMatchObject({ selected: true, fields: { areaId: undefined, areaTitle: undefined }, order: 0 });
     });
 
     it('allows the same project title in different areas', async () => {

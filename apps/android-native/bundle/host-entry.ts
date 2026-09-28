@@ -988,6 +988,31 @@ globalThis.MindwtrHost = {
     projectDateCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectDate(JSON.parse(json))));
     },
+    projectAreaOptions(id: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectAreaOptions({ projectId: id }));
+        });
+    },
+    projectAreaRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeProjectAreaOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    projectAreaPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareProjectArea(JSON.parse(json)));
+        });
+    },
+    projectAreaValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectArea(JSON.parse(json))));
+    },
+    projectAreaCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectArea(JSON.parse(json))));
+    },
     /** Core refuses a stale `revision`; Kotlin then reads the project again from offset 0. */
     projectDetail(id: string, offset: number, limit: number, revision: string): string {
         return submit(async () => {

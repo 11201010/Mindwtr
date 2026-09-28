@@ -21,7 +21,7 @@ import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from '../project-sync-sche
 import { taskEditValuesEqual } from '../json-value-equality';
 import type { Area } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
-import type { PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
 import type { PendingRemoteAttachmentDelete } from '../types';
 import {
     compactPurgedProjectForLocalStorage,
@@ -222,6 +222,39 @@ export const projectDateEffect = (project: Project, field: 'startDate' | 'dueDat
 export const isProjectDateNoop = (project: Project, field: 'startDate' | 'dueDate' | 'reviewAt', value: string | null): boolean =>
     value === null ? !project[field] : project[field] === value;
 
+/** RN's destination-tail max includes tombstones and ignores nonfinite orders. */
+export const projectAreaOrderMax = (projects: readonly Project[], areaId: string | null): number => projects
+    .filter((project) => (project.areaId ?? null) === areaId)
+    .reduce((max, project) => Math.max(max, Number.isFinite(project.order) ? project.order : -1), -1);
+
+/** Own `areaId` is a selection; omission must leave Area metadata untouched. */
+export const projectAreaSelection = (project: Project, updates: Partial<Project>,
+    projects: readonly Project[], areas: readonly Area[]) => {
+    const selected = Object.prototype.hasOwnProperty.call(updates, 'areaId');
+    const areaId = selected ? updates.areaId ?? undefined : project.areaId;
+    const changed = selected && (areaId ?? undefined) !== (project.areaId ?? undefined);
+    const areaTitle = selected
+        ? (areaId ? areas.find((area) => area.id === areaId && !area.deletedAt)?.name?.trim() || undefined : undefined)
+        : project.areaTitle;
+    const metadataChanged = selected && (changed || areaTitle !== project.areaTitle);
+    const order = changed && !Number.isFinite(updates.order)
+        ? projectAreaOrderMax(projects, areaId ?? null) + 1 : updates.order;
+    return { selected, metadataChanged, fields: selected ? { areaId, areaTitle } : {}, order };
+};
+
+/** The same Area/title/order transition as RN updateProject, with one Project row only. */
+export const projectAreaEffect = (project: Project, areaId: string | null,
+    projects: readonly Project[], areas: readonly Area[], deviceId: string,
+    now: string): PreparedProjectArea['effect'] => {
+    const area = projectAreaSelection(project, { areaId: areaId ?? undefined }, projects, areas);
+    const patch = { ...area.fields, ...(Number.isFinite(area.order) ? { order: area.order } : {}) };
+    const transition = applyProjectLifecycleTransition(project, patch, [], [], now, deviceId);
+    return { project: { before: project, after: normalizeProjectLifecycleFields({
+        ...project, ...transition.projectUpdates,
+        updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
+    }) } };
+};
+
 export const buildNewProject = ({
     title,
     color,
@@ -361,8 +394,7 @@ export const createProjectCoreActions = ({
                 if (!current || current.deletedAt || current.name !== area.name
                     || (current.color ?? null) !== area.color) return state;
             }
-            const max = state._allProjects.filter((project) => (project.areaId ?? null) === (area?.id ?? null))
-                .reduce((value, project) => Math.max(value, Number.isFinite(project.order) ? project.order : -1), -1);
+            const max = projectAreaOrderMax(state._allProjects, area?.id ?? null);
             if (max !== input.orderMax
                 || findSelectableProjectByTitleAndArea(state._allProjects, input.project.title, area?.id)) return state;
             const projects = [...state._allProjects, input.project];
@@ -559,6 +591,42 @@ export const createProjectCoreActions = ({
         return result;
     },
 
+    commitPreparedProjectArea: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Area conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            // The full after-row receipt precedes all mutable Project, Area and order checks.
+            if (current && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && sameProjectSqliteRow(current, input.effect.project.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current || current.deletedAt || current.purgedAt || current.status === 'archived'
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)) return state;
+            const selected = input.scope.selectedArea;
+            const area = selected ? state._areasById.get(selected.id) : null;
+            if (selected && (!area || area.deletedAt || area.name !== selected.name)) return state;
+            if (projectAreaOrderMax(state._allProjects, input.request.areaId) !== input.scope.orderMax) return state;
+            if ((current.areaId ?? null) === input.request.areaId
+                && (current.areaTitle ?? null) === (selected?.name.trim() || null)) return state;
+            const planned = projectAreaEffect(current, input.request.areaId, state._allProjects,
+                state._allAreas, input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!taskEditValuesEqual(planned, input.effect)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { projects,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
     cancelProject: async (id: string) => {
         const project = get()._projectsById.get(id);
         if (!project || project.deletedAt || project.purgedAt) {
@@ -642,27 +710,13 @@ export const createProjectCoreActions = ({
             let adjustedOrder = updates.order;
             // The picker supplies an own areaId key even for No Area (undefined).
             // Omission is an unrelated Project edit and must preserve area metadata.
-            const areaSelected = Object.prototype.hasOwnProperty.call(updates, 'areaId');
-            const nextAreaId = areaSelected ? updates.areaId ?? undefined : oldProject.areaId;
-            const areaChanged = areaSelected
-                && (nextAreaId ?? undefined) !== (oldProject.areaId ?? undefined);
-            const nextAreaTitle = areaSelected
-                ? (nextAreaId
-                    ? state._allAreas.find((area) => area.id === nextAreaId && !area.deletedAt)?.name?.trim() || undefined
-                    : undefined)
-                : oldProject.areaTitle;
-            selectedAreaMetadataChanged = areaSelected
-                && (areaChanged || nextAreaTitle !== oldProject.areaTitle);
-            if (areaChanged && !Number.isFinite(adjustedOrder)) {
-                const maxOrder = allProjects
-                    .filter((project) => (project.areaId ?? undefined) === (nextAreaId ?? undefined))
-                    .reduce((max, project) => Math.max(max, Number.isFinite(project.order) ? project.order : -1), -1);
-                adjustedOrder = maxOrder + 1;
-            }
+            const area = projectAreaSelection(oldProject, updates, allProjects, state._allAreas);
+            selectedAreaMetadataChanged = area.metadataChanged;
+            if (Number.isFinite(area.order)) adjustedOrder = area.order;
 
             const finalProjectUpdates: Partial<Project> = {
                 ...lifecycle.projectUpdates,
-                ...(areaSelected ? { areaId: nextAreaId, areaTitle: nextAreaTitle } : {}),
+                ...area.fields,
                 ...(Number.isFinite(adjustedOrder) ? { order: adjustedOrder } : {}),
                 ...(statusChanged && incomingStatus !== 'active'
                     ? { isFocused: false }

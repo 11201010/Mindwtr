@@ -90,7 +90,7 @@ public struct LegacyRNStorage {
     /// changes authority markers, never backup data or referenced external files.
     func commit(changeJSON: String, checkpointURL: URL) throws {
         guard changeJSON.utf8.count <= 4096,
-              let change = try? JSONSerialization.jsonObject(with: Data(changeJSON.utf8)) as? NSDictionary,
+              let change = try? NativeJSON.jsonObject(with: Data(changeJSON.utf8)) as? NSDictionary,
               change.count == 2,
               let clear = change["clearJsonAhead"] as? NSNumber,
               let reconcile = change["setReconciled"] as? NSNumber,
@@ -101,7 +101,7 @@ public struct LegacyRNStorage {
         guard nonemptyStoreCount == 1, let source else {
             throw HostFailure("Legacy authority commit requires one populated storage copy")
         }
-        let object = try JSONSerialization.jsonObject(with: source.manifest, options: [.mutableContainers])
+        let object = try NativeJSON.jsonObject(with: source.manifest, options: [.mutableContainers])
         guard let next = object as? NSMutableDictionary else { throw HostFailure("Legacy storage manifest is invalid") }
         var nextValues = values
         if clear.boolValue {
@@ -203,7 +203,7 @@ public struct LegacyRNStorage {
             throw HostFailure("Legacy storage manifest is not UTF-8")
         }
         let object: Any
-        do { object = try JSONSerialization.jsonObject(with: data) }
+        do { object = try NativeJSON.jsonObject(with: data) }
         catch { throw HostFailure("Legacy storage manifest is invalid") }
         guard let entries = object as? NSDictionary else {
             throw HostFailure("Legacy storage manifest is invalid")

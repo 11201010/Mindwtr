@@ -93,6 +93,15 @@ export type PreparedProjectDate = {
     updateAt: string;
 };
 
+/** One frozen Project Area assignment with its selected Area and destination-order witness. */
+export type PreparedProjectArea = {
+    scope: { project: Project; selectedArea: { id: string; name: string } | null; orderMax: number };
+    effect: { project: { before: Project; after: Project } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** Frozen parent/order witness and the new Section's complete receipt. */
 export type PreparedProjectSectionCreate = {
     request: { requestId: string; projectId: string; title: string };
@@ -415,6 +424,7 @@ export interface TaskStore {
     commitPreparedProjectNotesWrite: (input: PreparedProjectNotesWrite & { request: { projectId: string; text: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionRename: (input: PreparedProjectSectionRename & { request: {
         projectId: string; sectionId: string; title: string } }) => Promise<PreparedTaskEditResult>;

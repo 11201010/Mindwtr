@@ -104,6 +104,10 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectDateOpeningTimeZone: TimeZone?
     @Published private(set) var projectDateError: String?
     @Published private(set) var projectDateReadError: String?
+    @Published private(set) var projectAreaPresented = false
+    @Published private(set) var projectAreaOptions: CoreObject = [:]
+    @Published private(set) var projectAreaError: String?
+    @Published private(set) var projectAreaReadError: String?
     @Published private(set) var projectSectionsPresented = false
     @Published private(set) var projectSectionEditing = false
     @Published private(set) var projectSectionEditID: String?
@@ -399,6 +403,13 @@ final class CoreModel: ObservableObject {
     private var projectDateExpectedField: String?
     private var projectDateExpectedValue: Any?
     private var projectReviewOpeningRaw: String?
+    private var projectAreaOptionsCurrent = false
+    private var projectAreaOpeningAssociation: (id: String?, title: String?)?
+    private var projectAreaRequest: String?
+    private var projectAreaHasRequestedChoice = false
+    private var projectAreaRequestedID: String?
+    private var projectAreaExpectedID: String?
+    private var projectAreaExpectedAreaID: String?
     private var projectSectionOptionsCurrent = false
     private var projectSectionRequest: String?
     private var projectSectionExpectedID: String?
@@ -585,6 +596,7 @@ final class CoreModel: ObservableObject {
     var projectFlowPending: Bool { projectFlowRequest != nil }
     var projectStatusPending: Bool { projectStatusRequest != nil }
     var projectDatePending: Bool { projectDateRequest != nil }
+    var projectAreaPending: Bool { projectAreaRequest != nil }
     var projectSectionPending: Bool {
         projectSectionRequest != nil || projectSectionRenameRequest != nil || projectSectionDeleteRequest != nil
             || projectSectionOrderRequest != nil
@@ -679,6 +691,27 @@ final class CoreModel: ObservableObject {
             && projectDateReadError == nil && projectDateRequest == nil && !busy && !retryNeeded
             && projectCurrent && projectDateOptions.text("revision") == projectDetail.text("mutationRevision")
             && (projectDateField != "reviewAt" || projectDateOpeningTimeZone != nil)
+    }
+    var projectAreaOpenEnabled: Bool {
+        projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && !projectAreaPresented && !projectSectionsPresented && projectDateField == nil
+            && projectAreaRequest == nil
+    }
+    var projectAreaCloseEnabled: Bool { !busy && !retryNeeded && projectAreaRequest == nil }
+    var projectAreaChoiceEnabled: Bool {
+        projectAreaPresented && projectAreaOptionsCurrent && projectAreaOptions.flag("canEdit")
+            && projectAreaReadError == nil && !busy && !retryNeeded && projectAreaRequest == nil
+            && projectCurrent && projectAreaOptions.text("revision") == projectDetail.text("mutationRevision")
+    }
+    var projectAreaNeedsRead: Bool {
+        projectAreaPresented && projectAreaRequest == nil && !projectAreaOptions.isEmpty
+            && (!projectAreaOptionsCurrent
+                || projectAreaOptions.text("revision") != projectDetail.text("mutationRevision"))
+    }
+    var projectAreaSelectedID: String? {
+        if projectAreaHasRequestedChoice { return projectAreaRequestedID }
+        return projectAreaOptions.object("project")["areaId"] as? String
     }
     var projectStatusSelectedStatus: String { projectStatusOptions.object("project").text("status") }
     var projectStatusOpenTapEnabled: Bool {
@@ -931,7 +964,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -2632,6 +2665,235 @@ final class CoreModel: ObservableObject {
             projectDateError = nil
             error = nil
         } catch { projectDateReadError = error.localizedDescription }
+    }
+
+    func openProjectArea() async {
+        let id = projectHeader.text("id")
+        guard projectAreaOpenEnabled else { return }
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectAreaOpenEnabled else { return }
+        projectAreaPresented = true
+        projectAreaOptions = [:]
+        projectAreaOptionsCurrent = false
+        projectAreaOpeningAssociation = nil
+        projectAreaHasRequestedChoice = false
+        projectAreaRequestedID = nil
+        projectAreaError = nil
+        projectAreaReadError = nil
+        busy = true
+        defer { finishOperation() }
+        do { try await readProjectAreaOptions(projectID: id) }
+        catch { projectAreaReadError = error.localizedDescription }
+    }
+
+    func closeProjectArea() {
+        guard projectAreaCloseEnabled else { return }
+        projectAreaPresented = false
+        projectAreaOptions = [:]
+        projectAreaOptionsCurrent = false
+        projectAreaOpeningAssociation = nil
+        projectAreaHasRequestedChoice = false
+        projectAreaRequestedID = nil
+        projectAreaError = nil
+        projectAreaReadError = nil
+    }
+
+    private func readProjectAreaOptions(projectID id: String) async throws {
+        projectAreaOptionsCurrent = false
+        guard selectedSurface == .project, projectCurrent, projectAreaPresented,
+              projectDetail.text("projectId") == id, projectHeader.text("id") == id,
+              !id.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        for attempt in 0..<2 {
+            let options = try await query("projectAreaOptions", [id])
+            let project = options.object("project")
+            guard options.count == 5, !options.text("revision").isEmpty,
+                  let canEdit = options["canEdit"] as? NSNumber,
+                  CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
+                  let noAreaLabel = options["noAreaLabel"] as? String, !noAreaLabel.isEmpty,
+                  let areas = options["areas"] as? [CoreObject],
+                  areas.allSatisfy({ row in
+                      row.count == 3 && !row.text("id").isEmpty && row.text("id").utf16.count <= 500
+                          && (row["label"] as? String).map({ $0.utf16.count <= 100_000 }) == true
+                          && (row["color"] is NSNull || row["color"] is String)
+                  }),
+                  Set(areas.map { $0.text("id") }).count == areas.count,
+                  project.count == 9, project.text("id") == id,
+                  (project["title"] as? String).map({ $0.utf16.count <= 100_000 }) == true,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  project["areaId"] is NSNull || (project["areaId"] as? String)
+                    .map({ !$0.isEmpty && $0.utf16.count <= 500 }) == true,
+                  project["areaTitle"] is NSNull || (project["areaTitle"] as? String)
+                    .map({ $0.utf16.count <= 100_000 }) == true,
+                  let order = project["order"] as? NSNumber,
+                  CFGetTypeID(order) != CFBooleanGetTypeID(), order.doubleValue.isFinite,
+                  project["rev"] is NSNull || (project["rev"] as? Int).map({ $0 >= 0 }) == true,
+                  project["revBy"] is NSNull || (project["revBy"] as? String)
+                    .map({ $0.utf16.count <= 500 }) == true,
+                  TaskDatePickerComponents.instant(project.text("updatedAt")) != nil,
+                  canEdit.boolValue == (project.text("status") != "archived") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
+               projectDetail.text("projectId") == id, projectHeader.text("id") == id {
+                let association = (id: project["areaId"] as? String,
+                                   title: project["areaTitle"] as? String)
+                if let opening = projectAreaOpeningAssociation {
+                    guard association.id == opening.id && association.title == opening.title else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                } else { projectAreaOpeningAssociation = association }
+                projectAreaOptions = options
+                projectAreaOptionsCurrent = true
+                projectAreaReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    func chooseProjectArea(_ selectedID: String?, name selectedName: String?) async {
+        let id = projectHeader.text("id")
+        guard projectAreaChoiceEnabled, selectedSurface == .project, !id.isEmpty,
+              (selectedID == nil) == (selectedName == nil) else { return }
+        if let selectedID, let selectedName {
+            guard projectAreaOptions.objects("areas").contains(where: {
+                $0.text("id") == selectedID && $0.text("label") == selectedName
+            }) else { return }
+        }
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              selectedSurface == .project, projectAreaPresented, !busy, !retryNeeded,
+              projectAreaRequest == nil else { return }
+        busy = true
+        projectAreaError = nil
+        defer { finishOperation() }
+        do {
+            // Notes autosave may change the Project revision. Re-read its token,
+            // but never silently switch the association or tapped Area witness.
+            try await readProjectAreaOptions(projectID: id)
+            let project = projectAreaOptions.object("project")
+            guard projectAreaOptionsCurrent, projectAreaOptions.flag("canEdit"),
+                  project.text("id") == id,
+                  projectAreaOptions.text("revision") == projectDetail.text("mutationRevision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if let selectedID, let selectedName {
+                guard projectAreaOptions.objects("areas").contains(where: {
+                    $0.text("id") == selectedID && $0.text("label") == selectedName
+                }) else { throw CocoaError(.coderReadCorrupt) }
+            }
+            let expected: CoreObject = [
+                "title": project.text("title"), "status": project.text("status"),
+                "areaId": project["areaId"]!, "areaTitle": project["areaTitle"]!,
+                "order": project["order"]!, "rev": project["rev"]!,
+                "revBy": project["revBy"]!, "updatedAt": project.text("updatedAt")
+            ]
+            let areaValue: Any = selectedID as Any? ?? NSNull()
+            let selectedArea: Any
+            if let selectedID, let selectedName {
+                selectedArea = ["id": selectedID, "name": selectedName]
+            } else { selectedArea = NSNull() }
+            projectAreaRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                                           "projectId": id, "areaId": areaValue,
+                                           "expected": expected, "selectedArea": selectedArea])
+            projectAreaHasRequestedChoice = true
+            projectAreaRequestedID = selectedID
+            projectAreaExpectedID = id
+            projectAreaExpectedAreaID = selectedID
+        } catch {
+            projectAreaReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectAreaWrite", [projectAreaRequest!]) }
+        catch { await handleProjectAreaWriteError(error); return }
+        do { try acknowledgeProjectArea(result) }
+        catch { await handleProjectAreaWriteError(error); return }
+        do { try await refreshProjectAreaAfterWrite() }
+        catch {
+            projectAreaReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectArea(_ result: CoreObject) throws {
+        guard projectAreaRequest != nil, let id = projectAreaExpectedID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        let blocked = result.count == 1 && result["blocked"] as? String == ""
+        if !blocked {
+            let actualAreaID = result["areaId"] as? String
+            guard result.count == 4, result.text("id") == id,
+                  (actualAreaID == projectAreaExpectedAreaID &&
+                    (actualAreaID != nil || result["areaId"] is NSNull)),
+                  result["areaTitle"] is NSNull || (result["areaTitle"] as? String)
+                    .map({ $0.utf16.count <= 100_000 }) == true,
+                  let order = result["order"] as? NSNumber,
+                  CFGetTypeID(order) != CFBooleanGetTypeID(), order.doubleValue.isFinite else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
+        projectAreaRequest = nil
+        projectAreaHasRequestedChoice = false
+        projectAreaRequestedID = nil
+        projectAreaExpectedID = nil
+        projectAreaExpectedAreaID = nil
+        projectAreaPresented = false
+        projectAreaOptions = [:]
+        projectAreaOptionsCurrent = false
+        projectAreaOpeningAssociation = nil
+        retryNeeded = false
+        projectAreaError = nil
+        projectAreaReadError = nil
+        error = nil
+    }
+
+    private func handleProjectAreaWriteError(_ failure: Error) async {
+        if projectAreaRequest != nil && isDefiniteRejection(failure) {
+            projectAreaRequest = nil
+            projectAreaHasRequestedChoice = false
+            projectAreaRequestedID = nil
+            projectAreaExpectedID = nil
+            projectAreaExpectedAreaID = nil
+            projectAreaOptionsCurrent = false
+            retryNeeded = false
+            projectAreaError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectAreaAfterWrite() }
+            catch { projectAreaReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectAreaRequest != nil
+            projectAreaError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshProjectAreaAfterWrite() async throws {
+        try await readSelectedSurface()
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == projectHeader.text("id") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+    }
+
+    func retryProjectAreaRead() async {
+        guard ready, selectedSurface == .project, projectAreaPresented,
+              !busy, !retryNeeded, projectAreaRequest == nil else { return }
+        let id = projectHeader.text("id")
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectAreaAfterWrite()
+            try await readProjectAreaOptions(projectID: id)
+            projectAreaReadError = nil
+            projectAreaError = nil
+            error = nil
+        } catch { projectAreaReadError = error.localizedDescription }
     }
 
     private func invalidateAreaManagerOptions() {
@@ -5676,6 +5938,17 @@ final class CoreModel: ObservableObject {
         projectDateExpectedID = nil
         projectDateExpectedField = nil
         projectDateExpectedValue = nil
+        projectAreaPresented = false
+        projectAreaOptions = [:]
+        projectAreaOptionsCurrent = false
+        projectAreaOpeningAssociation = nil
+        projectAreaRequest = nil
+        projectAreaHasRequestedChoice = false
+        projectAreaRequestedID = nil
+        projectAreaExpectedID = nil
+        projectAreaExpectedAreaID = nil
+        projectAreaError = nil
+        projectAreaReadError = nil
         projectSectionsPresented = false
         projectSectionEditing = false
         projectSectionEditID = nil
@@ -5713,11 +5986,16 @@ final class CoreModel: ObservableObject {
     func closeProject() async {
         guard await flushProjectNotesEdit() else { return }
         guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented,
-              !projectRenameEditing && !projectSectionsPresented else { return }
+              !projectRenameEditing && !projectSectionsPresented && !projectAreaPresented else { return }
         projectDateField = nil
         projectDatePicker = [:]
         projectDateOpeningTimeZone = nil
         projectReviewOpeningRaw = nil
+        projectAreaOptions = [:]
+        projectAreaOptionsCurrent = false
+        projectAreaOpeningAssociation = nil
+        projectAreaError = nil
+        projectAreaReadError = nil
         selectedSurface = projectCaller
         projectCurrent = false
         projectError = nil
@@ -5787,6 +6065,9 @@ final class CoreModel: ObservableObject {
                 }
                 if projectDateOptions.text("revision") != next.text("mutationRevision") {
                     projectDateOptionsCurrent = false
+                }
+                if projectAreaOptions.text("revision") != next.text("mutationRevision") {
+                    projectAreaOptionsCurrent = false
                 }
                 if projectSectionOptions.text("revision") != next.text("mutationRevision") {
                     projectSectionOptionsCurrent = false
@@ -8303,6 +8584,18 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = projectAreaRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectAreaRetryOutcome", [request]) }
+                try acknowledgeProjectArea(result)
+                do { try await refreshProjectAreaAfterWrite() }
+                catch {
+                    projectAreaReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
             if let request = projectSectionRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -8496,6 +8789,10 @@ final class CoreModel: ObservableObject {
             }
             if projectDateRequest != nil {
                 await handleProjectDateWriteError(error)
+                return
+            }
+            if projectAreaRequest != nil {
+                await handleProjectAreaWriteError(error)
                 return
             }
             if projectSectionRequest != nil {
@@ -8949,7 +9246,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func decode(_ result: String) throws -> CoreObject {
-        guard let object = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? CoreObject else {
+        guard let object = try NativeJSON.jsonObject(with: Data(result.utf8)) as? CoreObject else {
             throw CocoaError(.coderReadCorrupt)
         }
         return object
