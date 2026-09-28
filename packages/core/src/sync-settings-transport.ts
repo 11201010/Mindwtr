@@ -293,14 +293,15 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         return compatibility;
     };
 
-    const persistSyncConfigItem = (key: string, value: string, afterSave?: () => void) => {
+    /** Answers once the write is stored (React Native's screen does not wait for it). */
+    const persistSyncConfigItem = (key: string, value: string, afterSave?: () => void): Promise<void> => (
         host.storage.setItem(key, value)
             .then(() => {
                 host.clearSyncConfigCache();
                 afterSave?.();
             })
-            .catch((error) => host.logSettingsError(error));
-    };
+            .catch((error) => host.logSettingsError(error))
+    );
 
     const isManualInsecureOverride = (url: string, allowInsecureHttp: boolean): boolean => {
         if (!allowInsecureHttp) return false;
@@ -405,7 +406,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
 
     /**
      * Reads the stored configuration. The answer cancels it for a screen that leaves
-     * first; its `done` settles once the read is applied.
+     * first; its `done` settles once the read is applied and any correction is stored.
      */
     const load = (): SyncSettingsCancel => {
         let cancelled = false;
@@ -426,7 +427,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             ]),
             host.secrets.get(WEBDAV_PASSWORD_KEY),
             host.secrets.get(CLOUD_TOKEN_KEY),
-        ]).then(([entries, storedWebDavPassword, storedCloudToken]) => {
+        ]).then(async ([entries, storedWebDavPassword, storedCloudToken]) => {
             if (cancelled) return;
 
             const entryMap = new Map(entries);
@@ -478,16 +479,18 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 cloudProvider: resolvedCloudProvider,
             });
 
+            const corrections: Promise<void>[] = [];
             if (resolvedBackend !== supportedBackend) {
-                persistSyncConfigItem(SYNC_BACKEND_KEY, supportedBackend);
+                corrections.push(persistSyncConfigItem(SYNC_BACKEND_KEY, supportedBackend));
             }
             if (!dropboxConfigured && storedCloudProvider === 'dropbox') {
-                persistSyncConfigItem(CLOUD_PROVIDER_KEY, 'selfhosted');
+                corrections.push(persistSyncConfigItem(CLOUD_PROVIDER_KEY, 'selfhosted'));
             }
             if (!supportsNativeICloudSync && storedCloudProvider === 'cloudkit') {
-                persistSyncConfigItem(CLOUD_PROVIDER_KEY, 'selfhosted');
+                corrections.push(persistSyncConfigItem(CLOUD_PROVIDER_KEY, 'selfhosted'));
             }
             reconcileBackgroundSyncRegistration();
+            await Promise.all(corrections);
         }).catch((error) => host.logSettingsError(error));
 
         return Object.assign(() => {
@@ -550,7 +553,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         },
     });
 
-    /** Answers the activation it starts, if any (React Native's screen does not wait for it). */
+    /** Answers the activation it starts, or Off's stored write (React Native's screen waits for neither). */
     const handleSelectSyncBackend = (backend: 'off' | 'file' | 'webdav' | 'cloud'): Promise<void> | undefined => {
         const p = host.params();
         const { cloudProvider } = state;
@@ -563,7 +566,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             hasPendingSyncConfiguration = false;
             provenSyncBackend = 'off';
             p.resetSyncStatusForBackendSwitch();
-            persistSyncConfigItem(SYNC_BACKEND_KEY, nextBackend, reconcileBackgroundSyncRegistration);
+            return persistSyncConfigItem(SYNC_BACKEND_KEY, nextBackend, reconcileBackgroundSyncRegistration);
         } else if (nextBackend !== provenSyncBackend) {
             hasPendingSyncConfiguration = true;
             if (isSyncTargetComplete(nextBackend, cloudProvider)) {

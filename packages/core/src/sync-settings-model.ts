@@ -37,7 +37,9 @@ export const isValidSyncHttpUrl = (value: string): boolean => {
     if (!value.trim()) return false;
     try {
         const url = new URL(value);
-        return url.protocol === 'http:' || url.protocol === 'https:';
+        // The native engine's URL is a small parser that accepts an empty or spaced
+        // host; the platform's URL refuses both, so this changes nothing on React Native.
+        return (url.protocol === 'http:' || url.protocol === 'https:') && /^[^\s]+$/.test(url.hostname);
     } catch {
         return false;
     }

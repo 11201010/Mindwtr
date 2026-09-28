@@ -222,6 +222,7 @@ import {
 } from './native-host-contract-focus-controls';
 import { createSettingsMethods } from './native-host-contract-settings';
 import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
+export { NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 import { createTaskViewMethods, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';

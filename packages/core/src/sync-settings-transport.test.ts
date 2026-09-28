@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSyncSettingsTransport, type SyncSettingsSyncResult, type SyncSettingsToast, type SyncSettingsTransportHost } from './sync-settings-transport';
-import { SYNC_BACKEND_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY } from './sync-storage-keys';
+import { SYNC_BACKEND_KEY, SYNC_PATH_BOOKMARK_KEY, SYNC_PATH_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY } from './sync-storage-keys';
+
+const picked = { value: null as unknown };
 
 vi.mock('./webdav', async (importOriginal) => ({
     ...(await importOriginal<typeof import('./webdav')>()),
@@ -46,7 +48,7 @@ function setup(syncResults: SyncSettingsSyncResult[]) {
         },
         clearSyncConfigCache: () => undefined,
         reconcileBackgroundSync: async () => undefined,
-        pickSyncFolder: async () => null,
+        pickSyncFolder: async () => picked.value,
         getCloudKitAccountStatus: async () => 'unknown',
         rememberWebdavCapabilityProof: async () => undefined,
         encryption: { getStatus: async () => ({ state: 'off' }), getIncompleteTransition: async () => null },
@@ -109,5 +111,18 @@ describe('sync settings transport', () => {
         // Sync now on a form still warns: that tap has no save before it.
         await transport.handleSync({ backend: 'cloud', cloudProvider: 'selfhosted', cloud: { allowInsecureHttp: true, token: 'abcdefghijklmnopqrstuvwxyz012345', url: 'http://cloud.example.com' } });
         expect(toasts.slice(4).map((toast) => toast.title)).toEqual(['settings.syncMobile.insecureHttpEnabled', 'common.success']);
+    });
+
+    it('stores a folder picked without a bookmark with no bookmark, not the previous folder\'s', async () => {
+        const { transport, storage, syncs } = setup([]);
+        storage.set(SYNC_BACKEND_KEY, 'file');
+        storage.set(SYNC_PATH_KEY, 'file:///old/data.json');
+        storage.set(SYNC_PATH_BOOKMARK_KEY, 'old-bookmark');
+        await transport.load().done;
+        picked.value = { __fileUri: 'file:///new/data.json' };
+        await transport.handleSetSyncPath();
+        expect(syncs[0]).toMatchObject({ configOverride: { backend: 'file', syncPath: 'file:///new/data.json', syncPathBookmark: null } });
+        expect(storage.get(SYNC_PATH_KEY)).toBe('file:///new/data.json');
+        expect(storage.has(SYNC_PATH_BOOKMARK_KEY)).toBe(false);
     });
 });

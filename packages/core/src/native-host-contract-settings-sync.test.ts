@@ -210,6 +210,7 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
             get os() { return state.os; },
             get isFossBuild() { return state.foss; },
             get dropboxAppKey() { return state.dropboxAppKey; },
+            get cloudKitAvailable() { return state.os === 'ios'; },
         },
         storage: {
             multiGet: async (keys) => keys.map((key) => [key, state.storage.get(key) ?? null] as const),
@@ -972,6 +973,37 @@ describe('native host contract: Settings › Sync keeps secrets out of its views
         expect(view.encryption?.rows.map((row) => row.kind === 'action' && row.label)).toContain('Enable encryption');
         value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'enable' } }));
         expect(await contract.runSyncEncryptionAction({ action: { type: 'generate' } })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        contract.closeSyncSettings();
+    });
+
+    it('never turns a stored Dropbox backend off because the host has not bound Dropbox yet', async () => {
+        await seed({}, false);
+        const dev = createDevice({ dropboxAppKey: 'app-key', storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' } });
+        delete (dev.host as { dropbox?: unknown }).dropbox;
+        const contract = await openHost(dev.host);
+        const view = value(await contract.openSyncSettings());
+        expect(dev.state.log).toEqual([]);
+        expect(view.backend.options.find((option) => option.selected)?.option).toBe('dropbox');
+        expect(view.panel).toMatchObject({ kind: 'dropbox', connected: false });
+        expect(await contract.connectDropbox({ requestId: generateUUID() })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        expect(dev.state.log).toEqual([]);
+        contract.closeSyncSettings();
+    });
+
+    it('refuses Connect where its control does not show, and every command while the screen opens', async () => {
+        await seed({}, false);
+        const dev = createDevice({});
+        const contract = await openHost(dev.host);
+        const opening = contract.openSyncSettings();
+        expect(contract.getSyncSettings()).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        expect(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'off' })).toMatchObject({ ok: false });
+        value(await opening);
+        // No app key: the build offers Dropbox, but choosing it shows no Dropbox panel.
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'dropbox' }));
+        expect(value(contract.getSyncSettings()).panel).toBeNull();
+        device.calls.length = 0;
+        expect(await contract.connectDropbox({ requestId: generateUUID() })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        expect(device.calls).toEqual([]);
         contract.closeSyncSettings();
     });
 });

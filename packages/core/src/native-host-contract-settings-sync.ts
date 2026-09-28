@@ -9,8 +9,9 @@
  * `syncSettings` option): RN's key-value keys (sync-storage-keys.ts), RN's secret
  * store, the mobile sync service, and later the folder picker (File Sync), Dropbox
  * sign-in and the encryption transitions. Until a host passes them, the File Sync
- * folder, Dropbox and the encryption actions answer ACTION_FAILED; the view still
- * shows React Native's states.
+ * folder, Dropbox and the encryption actions answer ACTION_FAILED, and the view
+ * still shows the stored backend: which backends a build supports comes from
+ * `platform` (as on React Native), never from which ports are bound.
  *
  * One visit is one screen, as on React Native: openSyncSettings reads the stored
  * configuration, closeSyncSettings drops what the visit staged (a backend chosen
@@ -39,6 +40,9 @@
  * settings, an encryption submit needs its flow open (a new visit has none), and
  * Dropbox connect or disconnect does nothing when the account is already in that
  * state.
+ *
+ * Only functions read this module's imports from native-host-contract.ts, so the
+ * import cycle between the two files is safe.
  */
 import { getDocsGuideUrl } from './docs-guidance';
 import { createDateFormatter } from './date';
@@ -98,6 +102,7 @@ import {
 } from './sync-settings-transport';
 import { isValidCloudSyncToken } from './cloud';
 import { SYNC_BACKEND_KEY } from './sync-storage-keys';
+import { hashComparableSignature } from './sync-signatures';
 
 type Translate = (key: string) => string;
 
@@ -109,6 +114,8 @@ export type NativeSyncSettingsHost = {
         isFossBuild: boolean;
         /** The build's Dropbox app key, or '' when none is configured. */
         dropboxAppKey: string;
+        /** iOS with CloudKit (React Native: `isCloudKitAvailable()`); false on Android. */
+        cloudKitAvailable?: boolean;
     };
     /** RN's key-value store (RKStorage on Android), with RN's keys. Durable when a write resolves. */
     storage: SyncSettingsTransportHost['storage'];
@@ -133,9 +140,13 @@ export type NativeSyncSettingsHost = {
     addBreadcrumb?(message: string): void;
     /** The system folder picker (File Sync); absent until the host has it. */
     pickSyncFolder?(): Promise<{ uri: string; bookmark?: string | null } | null>;
-    /** Dropbox sign-in and tokens; absent until the host has them. */
+    /**
+     * Dropbox sign-in and tokens; absent until the host has them. Its token reads are
+     * core's createDropboxTokenStore over `storage` and `secrets`; without it the Dropbox
+     * panel shows the account as not connected and its actions refuse.
+     */
     dropbox?: SyncSettingsDropboxPort;
-    /** iCloud (iOS only). A host without it never offers iCloud. */
+    /** iCloud's account (iOS, with `platform.cloudKitAvailable`); without it the status reads unknown. */
     cloudKit?: { getAccountStatus(): Promise<CloudKitAccountStatus> };
     /** Recovery snapshot file names, newest first; absent until the Data screen moves. */
     listRecoverySnapshots?(): Promise<string[]>;
@@ -295,9 +306,13 @@ type Screen = {
     transport: SyncSettingsTransport;
     card: SyncEncryptionCard | null;
     cardCancels: (() => void)[];
+    /** The read a finished transport action started; the next action's start cancels it. */
+    edgeRefresh: (() => void) | null;
     lastBusy: boolean;
     lastBackend: string;
     effectsQueued: boolean;
+    /** True until openSyncSettings has read the stored configuration. */
+    opening: boolean;
     snapshots: string[];
     cancels: (() => void)[];
     pending: Set<Promise<unknown>>;
@@ -309,6 +324,13 @@ const MONTH_FIRST_LOCALE = /^en(?:[-_]US)?$/i;
 const PASSWORD_DOTS = '••••••••';
 const PASSPHRASE_FIELDS = new Set<string>(['current', 'next', 'confirm']);
 const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock']);
+
+/** A request's payload for its receipt, with a password or token as a fingerprint. */
+const withoutSecrets = (fields: NativeSyncWebDavFields | NativeSyncSelfHostedFields | null) => {
+    if (!fields) return null;
+    const mark = (secret: string | null) => (secret === null ? null : `fnv:${hashComparableSignature(secret)}`);
+    return 'password' in fields ? { ...fields, password: mark(fields.password) } : { ...fields, token: mark(fields.token) };
+};
 
 const readWebDavFields = (value: unknown): NativeSyncWebDavFields | null => (
     isObjectRecord(value) && Object.keys(value).every((key) => ['url', 'username', 'password', 'allowInsecureHttp'].includes(key))
@@ -346,7 +368,9 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         const tr = createSyncSettingsTranslator(t);
         const settings = useTaskStore.getState().settings;
         const isFossBuild = host.platform.isFossBuild;
-        const dropboxAppKey = host.dropbox ? host.platform.dropboxAppKey.trim() : '';
+        // The build decides which backends it supports, as on React Native. A port the host
+        // has not bound yet only refuses its actions: it never turns a stored backend off.
+        const dropboxAppKey = host.platform.dropboxAppKey.trim();
         const push = (toast: SyncSettingsToast) => {
             toasts.push({ title: toast.title, message: toast.message, tone: toast.tone, durationMs: toast.durationMs ?? null });
         };
@@ -369,7 +393,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             showSettingsErrorToast: (title, message, durationMs = 4200) => push({ title, message, tone: 'error', durationMs }),
             showSettingsWarning: (title, message, durationMs = 4200) => push({ title, message, tone: 'warning', durationMs }),
             showToast: push,
-            supportsNativeICloudSync: host.platform.os === 'ios' && Boolean(host.cloudKit),
+            supportsNativeICloudSync: host.platform.os === 'ios' && host.platform.cloudKitAvailable === true,
             t,
         };
     };
@@ -461,13 +485,14 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             syncBackend: state.syncBackend,
             cloudProvider: state.cloudProvider,
             isFossBuild: current.host.platform.isFossBuild,
-            supportsCloudKit: current.host.platform.os === 'ios' && Boolean(current.host.cloudKit),
+            supportsCloudKit: params(current.host).supportsNativeICloudSync,
         });
         const busy = state.isSyncing || state.isTestingConnection || state.dropboxBusy;
         if (!selection.isEncryptionCapableBackend) {
             if (current.card) {
                 for (const cancel of current.cardCancels.splice(0)) cancel();
                 current.card = null;
+                current.edgeRefresh = null;
             }
             current.lastBusy = busy;
             return;
@@ -481,9 +506,14 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             current.lastBusy = busy;
             return;
         }
+        if (busy !== current.lastBusy) {
+            current.edgeRefresh?.();
+            current.edgeRefresh = null;
+        }
         if (current.lastBusy && !busy) {
             const read = current.card.refresh();
             current.cardCancels.push(read);
+            current.edgeRefresh = read;
             track(current, read.done);
         }
         current.lastBusy = busy;
@@ -493,7 +523,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         closeScreen();
         const transport = createTransport(host);
         const current: Screen = {
-            host, transport, card: null, cardCancels: [], lastBusy: false, lastBackend: 'off', effectsQueued: false,
+            host, transport, card: null, cardCancels: [], edgeRefresh: null, lastBusy: false, lastBackend: 'off', effectsQueued: false, opening: true,
             snapshots: [], cancels: [], pending: new Set(), generation: 0, unsubscribe: () => undefined,
         };
         screen = current;
@@ -522,6 +552,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                 .catch((error) => host.log.error(error)));
         }
         await settle(current);
+        current.opening = false;
         return current;
     };
 
@@ -867,7 +898,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
     const openedScreen = (): { ok: true; value: Screen } | NativeHostResult<never> => {
         const ready = deps.readiness();
         if (!ready.ok) return ready;
-        if (!screen) return fail('ACTION_FAILED', 'Open Settings › Sync first (openSyncSettings)');
+        if (!screen || screen.opening) return fail('ACTION_FAILED', 'Open Settings › Sync first (openSyncSettings), and wait for it');
         return { ok: true, value: screen };
     };
 
@@ -993,7 +1024,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             const kind = webdav ? 'webdav' : 'selfhosted';
             const panel = panelAction(current, 'save', webdav ? { url: webdav.url } : { url: selfHosted!.url, token: selfHosted!.token });
             if (!panel || panel.kind !== kind) return fail('ACTION_FAILED', 'That form\'s Save is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['saveSyncBackend', webdav ?? selfHosted], current, () => (
+            return runScreenAction(input.requestId, ['saveSyncBackend', withoutSecrets(webdav ?? selfHosted)], current, () => (
                 webdav
                     ? current.transport.handleSaveWebDavSettings(webdavSettings(current, webdav))
                     : current.transport.handleSaveSelfHostedSettings(selfHostedSettings(current, selfHosted!))
@@ -1023,7 +1054,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             }
             const draft = webdav ? { url: webdav.url } : selfHosted ? { url: selfHosted.url, token: selfHosted.token } : {};
             if (!panelAction(current, 'syncNow', draft)) return fail('ACTION_FAILED', 'Sync now is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['syncNow', kind, webdav ?? selfHosted ?? null], current, () => {
+            return runScreenAction(input.requestId, ['syncNow', kind, withoutSecrets(webdav ?? selfHosted)], current, () => {
                 switch (kind) {
                     case 'webdav':
                         return current.transport.handleSync({ backend: 'webdav', webdav: webdavSettings(current, webdav!) });
@@ -1080,10 +1111,10 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!isObjectRecord(input) || !isRequestId(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
             if (!current.host.dropbox) return fail('ACTION_FAILED', 'Dropbox is not available on this host yet');
             const panel = buildPanel(current, {});
-            if (panel?.kind !== 'dropbox') return fail('ACTION_FAILED', 'Connect Dropbox is not available now; read the screen again');
+            if (panel?.kind !== 'dropbox' || !panel.connect.enabled) return fail('ACTION_FAILED', 'Connect Dropbox is not available now; read the screen again');
             return runScreenAction(input.requestId, ['connectDropbox'], current, () => {
                 // Target state: the toggle shows Disconnect for a connected account.
-                if (panel.connected || !panel.connect.enabled) return undefined;
+                if (panel.connected) return undefined;
                 return current.transport.handleConnectDropbox();
             });
         },
@@ -1096,10 +1127,10 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!isObjectRecord(input) || !isRequestId(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
             if (!current.host.dropbox) return fail('ACTION_FAILED', 'Dropbox is not available on this host yet');
             const panel = buildPanel(current, {});
-            if (panel?.kind !== 'dropbox') return fail('ACTION_FAILED', 'Disconnect Dropbox is not available now; read the screen again');
+            if (panel?.kind !== 'dropbox' || !panel.connect.enabled) return fail('ACTION_FAILED', 'Disconnect Dropbox is not available now; read the screen again');
             return runScreenAction(input.requestId, ['disconnectDropbox'], current, () => {
                 // Target state: the toggle shows Connect once the account is gone.
-                if (!panel.connected || !panel.connect.enabled) return undefined;
+                if (!panel.connected) return undefined;
                 return current.transport.handleDisconnectDropbox();
             });
         },
