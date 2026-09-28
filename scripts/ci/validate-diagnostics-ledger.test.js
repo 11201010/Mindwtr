@@ -45,8 +45,13 @@ function collectCodeSlugs({ file, source }) {
   // Native Rust diagnostics put the field inside a log message rather than
   // a JavaScript object. Only count log macros, not unused string constants.
   if (file.endsWith(".rs")) {
-    for (const message of source.matchAll(/\blog::(?:info|warn)!\(\s*"((?:\\[\s\S]|[^"\\])*)"/g)) {
-      for (const match of message[1].matchAll(/\bextra\.releaseCheck=([\w./-]+)/g)) {
+    const messages = [
+      ...Array.from(source.matchAll(/\blog::(?:info|warn)!\(\s*"((?:\\[\s\S]|[^"\\])*)"/g), (match) => match[1]),
+      // A formatted message immediately logged, then reused for the Diagnostics file.
+      ...Array.from(source.matchAll(/\blet\s+(\w+)\s*=\s*format!\(\s*"((?:\\[\s\S]|[^"\\])*)"\s*\);\s*log::(?:info|warn)!\(\s*"\{\1\}"\s*\)/g), (match) => match[2]),
+    ];
+    for (const message of messages) {
+      for (const match of message.matchAll(/\bextra\.releaseCheck=([\w./-]+)/g)) {
         sites.push({ file, slug: match[1] });
       }
     }
@@ -158,6 +163,17 @@ describe("release diagnostics ledger", () => {
       { file, slug: "v1.3.0/android-reuse" },
       { file, slug: "v1.3.0/android-guard" },
     ]);
+  });
+
+  it("resolves a Rust formatted message immediately forwarded to a log macro", () => {
+    const file = "apps/desktop/src-tauri/src/example.rs";
+    expect(collectCodeSlugs({ file, source: `
+      let line = format!("Saved extra.releaseCheck=v1.3.3/formatted count={count}");
+      log::info!("{line}");
+      let unused = format!("Unused extra.releaseCheck=v1.3.3/unused");
+      let other = format!("Different extra.releaseCheck=v1.3.3/different");
+      log::warn!("{unrelated}");
+    ` })).toEqual([{ file, slug: "v1.3.3/formatted" }]);
   });
 
   it("uses version-prefixed slugs at every code site", () => {
