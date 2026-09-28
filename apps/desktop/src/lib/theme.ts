@@ -2,6 +2,7 @@ import type { AppData } from '@mindwtr/core';
 import { THEME_DESCRIPTORS, resolveThemeColorScheme, themeDescriptor } from '@mindwtr/core';
 
 import { invokeNative } from './tauri-invoke';
+import { isLinuxRuntime } from './runtime';
 
 // The themes desktop ships CSS for, read off core's registry rather than
 // hand-listed here: `desktop: false` themes (material3-*) collapse below.
@@ -94,8 +95,12 @@ export const watchSystemThemePreference = (
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => { };
 
     const mediaQuery = window.matchMedia(SYSTEM_THEME_MEDIA_QUERY);
+    let lastNotifiedTheme: NativeThemePreference | null = null;
     const handler = (event: MediaQueryListEvent | { matches: boolean }) => {
-        onChange(event.matches ? 'dark' : 'light');
+        const theme = event.matches ? 'dark' : 'light';
+        if (theme === lastNotifiedTheme) return;
+        lastNotifiedTheme = theme;
+        onChange(theme);
     };
 
     if (typeof mediaQuery.addEventListener === 'function') {
@@ -116,6 +121,8 @@ export const watchNativeSystemThemePreference = (
     onChange: (theme: NativeThemePreference) => void,
     onError?: (step: 'resolveSystem' | 'watch', error: unknown) => void,
 ): (() => void) => {
+    // GTK theme events reflect our own setTheme calls on Linux, not the portal preference.
+    if (isLinuxRuntime()) return () => { };
     let cancelled = false;
     let stopWatchingNativeTheme = () => { };
 
@@ -219,8 +226,31 @@ export const applyThemeMode = (mode: DesktopThemeMode | null, systemTheme?: Syst
     if (themeClass) root.classList.add(themeClass);
 };
 
-export const resolveNativeTheme = (mode: DesktopThemeMode | null): 'light' | 'dark' | null => {
-    if (!mode || mode === 'system' || mode === 'system-oled') return null;
+export const applySystemThemeChange = (
+    mode: DesktopThemeMode | null,
+    theme: NativeThemePreference,
+    applyNative: (theme: NativeThemePreference) => void,
+): void => {
+    applyThemeMode(mode, theme);
+    if (isLinuxRuntime()) applyNative(theme);
+};
+
+export const applyStartupSystemThemeBeforeApp = async (
+    result: Promise<SystemThemePreference>,
+    appOwnsTheme: () => boolean,
+    apply: (theme: NativeThemePreference) => void,
+): Promise<void> => {
+    const theme = await result;
+    if (theme && !appOwnsTheme()) apply(theme);
+};
+
+export const resolveNativeTheme = (
+    mode: DesktopThemeMode | null,
+    systemTheme = resolveSystemThemePreference(),
+): 'light' | 'dark' | null => {
+    if (!mode || mode === 'system' || mode === 'system-oled') {
+        return isLinuxRuntime() ? systemTheme : null;
+    }
     return resolveThemeColorScheme(mode, 'light');
 };
 
@@ -229,17 +259,19 @@ export const applyNativeTheme = async (
     loadAppModule: () => Promise<NativeThemeAppModule>,
     loadWindowModule: () => Promise<NativeThemeWindowModule>,
     onError?: (step: 'app' | 'window', error: unknown) => void,
-): Promise<void> => {
-    await Promise.all([
+): Promise<boolean> => {
+    const applied = await Promise.all([
         loadAppModule()
-            .then(({ setTheme }) => setTheme(theme))
-            .catch((error) => onError?.('app', error)),
+            .then(async ({ setTheme }) => { await setTheme(theme); return true; })
+            .catch((error) => { onError?.('app', error); return false; }),
         loadWindowModule()
-            .then(({ getCurrentWindow }) => {
+            .then(async ({ getCurrentWindow }) => {
                 const currentWindow = getCurrentWindow();
-                if (typeof currentWindow.setTheme !== 'function') return undefined;
-                return currentWindow.setTheme(theme);
+                if (typeof currentWindow.setTheme !== 'function') return false;
+                await currentWindow.setTheme(theme);
+                return true;
             })
-            .catch((error) => onError?.('window', error)),
+            .catch((error) => { onError?.('window', error); return false; }),
     ]);
+    return applied.every(Boolean);
 };

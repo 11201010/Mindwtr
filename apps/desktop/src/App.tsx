@@ -72,7 +72,7 @@ import { migratePortableAttachments } from './lib/portable-migration';
 import { logDesktopStartupContext } from './lib/startup-context';
 import * as LocalDataWatcher from './lib/local-data-watcher';
 import { invokeNative } from './lib/tauri-invoke';
-import { getInstallSourceOrFallback, isFlatpakRuntime, isTauriRuntime } from './lib/runtime';
+import { getInstallSourceOrFallback, isFlatpakRuntime, isLinuxRuntime, isTauriRuntime } from './lib/runtime';
 import { useDesktopShellSync } from './lib/desktop-shell-sync';
 import { reportError as reportAppError } from './lib/report-error';
 import { syncNativeProxyUrl } from './lib/tauri-http';
@@ -89,6 +89,7 @@ import { beginSettingsOpenTrace, markSettingsOpenTrace, wrapSettingsOpenImport }
 import {
     THEME_STORAGE_KEY,
     applyNativeTheme,
+    applySystemThemeChange,
     applyThemeMode,
     resolveDesktopThemeMode,
     resolveNativeTheme,
@@ -544,13 +545,21 @@ function App() {
 
     const applyActiveNativeTheme = useCallback((stepPrefix = 'apply') => {
         if (!isTauriRuntime()) return;
-        const nativeTheme = resolveNativeTheme(getActiveThemeMode());
+        const mode = getActiveThemeMode();
+        const nativeTheme = resolveNativeTheme(mode);
         void applyNativeTheme(
             nativeTheme,
             () => import('@tauri-apps/api/app'),
             () => import('@tauri-apps/api/window'),
             (step, error) => void logError(error, { scope: 'theme', step: `${stepPrefix}:${step}` }),
-        );
+        ).then((applied) => {
+            if (applied && isLinuxRuntime() && (mode === 'system' || mode === 'system-oled')) {
+                void logInfo('Linux native system theme applied', {
+                    scope: 'theme',
+                    extra: { releaseCheck: 'v1.3.3/linux-titlebar-theme', theme: nativeTheme ?? 'unknown' },
+                });
+            }
+        });
     }, [getActiveThemeMode]);
 
     useEffect(() => {
@@ -563,7 +572,9 @@ function App() {
             void resolveSystemThemeCommandPreference(
                 (step, error) => void logError(error, { scope: 'theme', step: `initial-command:${step}` }),
             ).then((theme) => {
-                if (!cancelled && theme) applyThemeMode(normalizedTheme, theme);
+                if (!cancelled && theme) {
+                    applySystemThemeChange(normalizedTheme, theme, () => applyActiveNativeTheme('system-command'));
+                }
             });
         }
         applyActiveNativeTheme();
@@ -655,7 +666,7 @@ function App() {
         if (normalizedTheme !== 'system' && normalizedTheme !== 'system-oled') return;
 
         const stopWatchingSystemTheme = watchSystemThemePreference((theme) => {
-            applyThemeMode(normalizedTheme, theme);
+            applySystemThemeChange(normalizedTheme, theme, () => applyActiveNativeTheme('media'));
         });
 
         if (!isTauriRuntime()) {
@@ -676,7 +687,7 @@ function App() {
         const stopWatchingPortalTheme = watchSystemThemePortalPreference(
             () => import('@tauri-apps/api/event'),
             (theme) => {
-                applyThemeMode(normalizedTheme, theme);
+                applySystemThemeChange(normalizedTheme, theme, () => applyActiveNativeTheme('portal'));
             },
             (step, error) => {
                 void logError(error, { scope: 'theme', step: `portal:${step}` });
@@ -688,7 +699,7 @@ function App() {
             stopWatchingNativeTheme();
             stopWatchingPortalTheme();
         };
-    }, [getActiveThemeMode, hasHydratedSettings]);
+    }, [applyActiveNativeTheme, getActiveThemeMode, hasHydratedSettings]);
 
     useEffect(() => {
         if (!settingsLanguage || !isSupportedLanguage(settingsLanguage)) return;

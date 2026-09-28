@@ -22,6 +22,8 @@ import { isDiagnosticsEnabled, logError, logInfo, logWarn, setupGlobalErrorLoggi
 import {
     THEME_STORAGE_KEY,
     applyNativeTheme,
+    applyStartupSystemThemeBeforeApp,
+    applySystemThemeChange,
     applyThemeMode,
     coerceDesktopThemeMode,
     resolveNativeTheme,
@@ -214,12 +216,21 @@ async function bootstrap() {
         sandboxMode ? sandboxSettings.theme : localStorage.getItem(THEME_STORAGE_KEY),
     );
     applyThemeMode(initialTheme);
-    if ((initialTheme ?? 'system') === 'system' && isTauriRuntime()) {
-        void resolveSystemThemeCommandPreference(
-            (step, error) => void logError(error, { scope: 'theme', step: `startup-command:${step}` }),
-        ).then((theme) => {
-            if (theme) applyThemeMode('system', theme);
-        });
+    let appOwnsTheme = false;
+    if (((initialTheme ?? 'system') === 'system' || initialTheme === 'system-oled') && isTauriRuntime()) {
+        void applyStartupSystemThemeBeforeApp(
+            resolveSystemThemeCommandPreference(
+                (step, error) => void logError(error, { scope: 'theme', step: `startup-command:${step}` }),
+            ),
+            () => appOwnsTheme,
+            (theme) => applySystemThemeChange(initialTheme, theme, () => {
+                void applyNativeTheme(
+                    resolveNativeTheme(initialTheme, theme),
+                    () => import('@tauri-apps/api/app'),
+                    () => import('@tauri-apps/api/window'),
+                );
+            }),
+        );
     }
     applyDesktopTextSize(coerceDesktopTextSize(
         sandboxMode ? sandboxSettings.appearance?.textSize : localStorage.getItem(TEXT_SIZE_STORAGE_KEY),
@@ -278,6 +289,8 @@ async function bootstrap() {
             </LanguageProvider>
         </React.StrictMode>,
     );
+    // Quick Add has no App theme effect; the main App takes over after render.
+    appOwnsTheme = !isQuickAddWindow;
 
     if (!isQuickAddWindow) {
         requestAnimationFrame(() => markDesktopStartup('shell_ready'));
