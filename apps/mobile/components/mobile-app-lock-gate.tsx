@@ -140,8 +140,11 @@ export function MobileAppLockGate({ enabled, children }: MobileAppLockGateProps)
         <View style={[styles.iconWrap, { borderColor: tc.border, backgroundColor: tc.filterBg }]}>
           <LockKeyhole size={34} color={tc.tint} strokeWidth={2.2} />
         </View>
-        <Text style={[styles.title, { color: tc.text }]}>{resolveText('appLock.title', 'Mindwtr is locked')}</Text>
-        <Text style={[styles.description, { color: tc.secondaryText }]}>{message}</Text>
+        <Text style={[styles.title, { color: tc.text }]} accessibilityRole="header">
+          {resolveText('appLock.title', 'Mindwtr is locked')}
+        </Text>
+        {/* A live region, so TalkBack reads a failed or cancelled unlock. */}
+        <Text style={[styles.description, { color: tc.secondaryText }]} accessibilityLiveRegion="polite">{message}</Text>
         <TouchableOpacity
           activeOpacity={0.85}
           disabled={authenticating}
