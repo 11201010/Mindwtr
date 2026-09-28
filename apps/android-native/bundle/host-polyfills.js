@@ -391,7 +391,8 @@
             this.searchParams = new global.URLSearchParams(this.search);
         };
         global.URL.prototype.toString = function () {
-            var query = this.searchParams ? this.searchParams.toString() : this.search;
+            var params = this.searchParams ? this.searchParams.toString() : null;
+            var query = params === null ? this.search : params ? '?' + params : '';
             if (this._opaque) return this.protocol + this.pathname + query + this.hash;
             var credentials = this.username ? this.username + (this.password ? ':' + this.password : '') + '@' : '';
             return this.protocol + '//' + credentials + this.host + this.pathname + query + this.hash;
@@ -439,7 +440,8 @@
             if (this._pairs.length === 0) return '';
             // A space goes out as "+", as WHATWG writes it, so a "+" the query came with survives String(url).
             var encodeQuery = function (text) { return encodeURIComponent(text).replace(/%20/g, '+'); };
-            return '?' + this._pairs.map(function (pair) {
+            // No "?": WHATWG's serialization, which a form body and a caller's own "?" rely on.
+            return this._pairs.map(function (pair) {
                 return encodeQuery(pair[0]) + '=' + encodeQuery(pair[1]);
             }).join('&');
         };
@@ -633,7 +635,7 @@
                         request.headers.set('content-type', typeof body === 'string'
                             ? 'text/plain;charset=UTF-8' : 'application/x-www-form-urlencoded;charset=UTF-8');
                     }
-                    payload.text = typeof body === 'string' ? body : body.toString().replace(/^\?/, '');
+                    payload.text = typeof body === 'string' ? body : body.toString();
                 } else if (body !== null) {
                     payload.base64 = toBase64(bytesOf(body));
                 }

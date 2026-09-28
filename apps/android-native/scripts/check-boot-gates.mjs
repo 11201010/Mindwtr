@@ -45,6 +45,14 @@ assert.equal(String(new consoleState.URL('https://host/dav/?dir=a+b')), 'https:/
 // A context automation link names a context with a space as "+" (core's parseContextAutomationUrl reads the query).
 assert.equal(new consoleState.URL('mindwtr://contexts?token=home+office&contextAction=activate').searchParams.get('token'), 'home office');
 assert.equal(new consoleState.URL('mindwtr://activate-context?name=%40home+office%2Bgym').searchParams.get('name'), '@home office+gym');
+// URLSearchParams.toString() has no "?", as WHATWG writes it: core posts it as a form body (dropbox-auth-tokens.ts) and puts
+// its own "?" before it (sync-helpers.ts); String(url) still writes the "?" before a query.
+for (const init of ['?a=1&b=x+y', 'a=1', '', { grant_type: 'refresh_token', refresh_token: 'r t+s' }]) {
+    assert.equal(new consoleState.URLSearchParams(init).toString(), new URLSearchParams(init).toString(), JSON.stringify(init));
+}
+for (const text of ['https://host/dav/?dir=a+b&_=1', 'https://host/dav/', 'mindwtr:///capture?title=a', 'mailto:alex@example.com?subject=Hi']) {
+    assert.equal(String(new consoleState.URL(text)), String(new URL(text)), text);
+}
 // fetch and the secret calls (HostIo.kt): the polyfill hands each call to the bridge and settles it only when the pump
 // takes the host's answer (ioNext), as timers fire. A stand-in bridge answers here.
 {
