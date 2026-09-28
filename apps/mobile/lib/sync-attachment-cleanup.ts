@@ -1,191 +1,31 @@
 import {
-  AppData,
   cloudDeleteFile,
-  decodeUriSafe,
-  getErrorStatus,
-  isSyncRemoteMutationFenceError,
-  isWebdavRemoteWriteConflictError,
-  normalizeStrongWebdavEtag,
-  runAttachmentCleanupLifecycle,
-  sanitizeAttachmentUriForSyncMerge,
   webdavDeleteFileVersioned,
   webdavHeadFile,
-  type CloudProvider,
 } from '@mindwtr/core';
+import {
+  runMobileAttachmentCleanup as runCoreMobileAttachmentCleanup,
+  type MobileAttachmentCleanupResult,
+} from '@mindwtr/core/mobile-attachment-cleanup';
+import type { MobileSyncAttachmentCleanupOptions } from '@mindwtr/core/mobile-sync-service';
 import { getBaseSyncUrl, getCloudBaseUrl } from './attachment-sync';
-import { ATTACHMENTS_DIR_NAME } from './attachment-sync-utils';
-import * as FileSystem from './file-system';
-import { type SyncBackend } from './sync-service-utils';
-import { getMobileCloudRequestOptions, getMobileWebDavRequestOptions } from './webdav-request-options';
+import { mobileAttachmentFileSystem } from './attachment-sync-utils';
 import { DropboxConflictError } from './dropbox-sync';
 
-const ATTACHMENT_CLEANUP_BATCH_LIMIT = 25;
-
-type MobileWebDavCleanupConfig = {
-  url: string;
-  username: string;
-  password: string;
-  allowInsecureHttp?: boolean;
-};
-
-type MobileCloudCleanupConfig = {
-  url: string;
-  token: string;
-  allowInsecureHttp?: boolean;
-};
-
-type MobileAttachmentCleanupOptions = {
-  appData: AppData;
-  backend: SyncBackend;
-  webdavConfig: MobileWebDavCleanupConfig | null;
-  cloudConfig: MobileCloudCleanupConfig | null;
-  cloudProvider: CloudProvider;
-  fetcher: typeof fetch;
-  ensureLocalSnapshotFresh: () => void;
-  assertRemoteMutationFenceHeld?: (minRemainingMs?: number) => Promise<void>;
-  deleteDropboxAttachment: (
-    cloudKey: string,
-    ensureBeforeProviderDelete: () => void
-  ) => Promise<void>;
-  isRemoteMissingError: (error: unknown) => boolean;
-  logSyncInfo: (message: string, extra?: Record<string, string>) => void;
-  logSyncWarning: (message: string, error?: unknown) => void;
-};
-
-type MobileAttachmentCleanupResult = {
-  appData: AppData;
-  shouldInvalidateFastSyncState: boolean;
-};
-
-const getManagedAttachmentCleanupPrefixes = (): string[] => {
-  return [FileSystem.documentDirectory, FileSystem.cacheDirectory]
-    .filter((base): base is string => typeof base === 'string' && base.length > 0)
-    .map((base) => {
-      const normalized = base.endsWith('/') ? base : `${base}/`;
-      return `${normalized}${ATTACHMENTS_DIR_NAME}/`;
-    });
-};
-
-const deleteAttachmentFile = async (
-  uri: string | undefined,
-  logSyncWarning: MobileAttachmentCleanupOptions['logSyncWarning'],
-  ensureLocalSnapshotFresh: MobileAttachmentCleanupOptions['ensureLocalSnapshotFresh']
-): Promise<void> => {
-  const safeUri = sanitizeAttachmentUriForSyncMerge(uri);
-  if (!safeUri) return;
-  if (safeUri.startsWith('content://') || /^https?:\/\//i.test(safeUri)) return;
-  const decodedUri = decodeUriSafe(safeUri);
-  const managedPrefixes = getManagedAttachmentCleanupPrefixes();
-  if (!managedPrefixes.some((prefix) => safeUri.startsWith(prefix) || decodedUri.startsWith(prefix))) {
-    return;
-  }
-  try {
-    ensureLocalSnapshotFresh();
-    await FileSystem.deleteAsync(safeUri, { idempotent: true });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'LocalSyncAbort') throw error;
-    logSyncWarning('Failed to delete attachment file', error);
-  }
-};
-
+// The cleanup run lives in core (`packages/core/src/mobile-attachment-cleanup.ts`) so the native
+// app cleans up the same way. This module binds it to expo-file-system, the Dropbox conflict
+// error and core's transports, each called when used so tests that replace them reach their
+// mocks.
 export const runMobileAttachmentCleanup = async (
-  options: MobileAttachmentCleanupOptions
-): Promise<MobileAttachmentCleanupResult> => {
-  const isWebdavBackend = options.backend === 'webdav' && Boolean(options.webdavConfig?.url);
-  const isCloudBackend = options.backend === 'cloud'
-    && options.cloudProvider === 'selfhosted'
-    && Boolean(options.cloudConfig?.url);
-  const isDropboxBackend = options.backend === 'cloud' && options.cloudProvider === 'dropbox';
-  const canAttemptRemoteDelete = Boolean(
-    isWebdavBackend
-    || isCloudBackend
-    || isDropboxBackend
-  );
-  const deleteRemoteAttachment = canAttemptRemoteDelete
-    ? async (target: { cloudKey: string }) => {
-      if (isWebdavBackend && options.webdavConfig) {
-        const baseSyncUrl = getBaseSyncUrl(options.webdavConfig.url);
-        const targetUrl = baseSyncUrl + '/' + target.cloudKey;
-        const metadata = await webdavHeadFile(targetUrl, {
-          ...getMobileWebDavRequestOptions(options.webdavConfig.allowInsecureHttp),
-          username: options.webdavConfig.username,
-          password: options.webdavConfig.password,
-          timeoutMs: 30_000,
-          fetcher: options.fetcher,
-        });
-        if (!metadata.exists) {
-          const missing = new Error('WebDAV attachment is already missing');
-          (missing as Error & { status?: number }).status = 404;
-          throw missing;
-        }
-        const etag = normalizeStrongWebdavEtag(metadata.etag);
-        if (!etag) throw new Error('WebDAV attachment version is unavailable; refusing an unconditional delete');
-        options.ensureLocalSnapshotFresh();
-        await options.assertRemoteMutationFenceHeld?.(35_000);
-        await webdavDeleteFileVersioned(targetUrl, etag, {
-          ...getMobileWebDavRequestOptions(options.webdavConfig.allowInsecureHttp),
-          username: options.webdavConfig.username,
-          password: options.webdavConfig.password,
-          timeoutMs: 30_000,
-          fetcher: options.fetcher,
-        });
-      } else if (isCloudBackend && options.cloudConfig) {
-        const baseSyncUrl = getCloudBaseUrl(options.cloudConfig.url);
-        options.ensureLocalSnapshotFresh();
-        await cloudDeleteFile(baseSyncUrl + '/' + target.cloudKey, {
-          ...getMobileCloudRequestOptions(options.cloudConfig.allowInsecureHttp),
-          token: options.cloudConfig.token,
-          timeoutMs: 30_000,
-          fetcher: options.fetcher,
-        });
-      } else if (isDropboxBackend) {
-        options.ensureLocalSnapshotFresh();
-        await options.deleteDropboxAttachment(
-          target.cloudKey,
-          options.ensureLocalSnapshotFresh,
-        );
-      }
-    }
-    : undefined;
-
-  const result = await runAttachmentCleanupLifecycle({
-    appData: options.appData,
-    maxAttachmentTargets: ATTACHMENT_CLEANUP_BATCH_LIMIT,
-    beforeEachAttachment: options.ensureLocalSnapshotFresh,
-    beforeEachRemoteDelete: options.ensureLocalSnapshotFresh,
-    deleteLocalAttachment: (attachment) => deleteAttachmentFile(
-      attachment.uri,
-      options.logSyncWarning,
-      options.ensureLocalSnapshotFresh,
-    ),
-    deleteRemoteAttachment,
-    // File Sync folders are replicated independently. Without a distributed
-    // GC tombstone, another peer can reselect any existing generation before
-    // its document CAS, so cleanup removes metadata only and retains bytes.
-    shouldRetainRemoteAttachment: options.backend === 'file' ? () => true : undefined,
-    isRemoteMissingError: (error) => options.isRemoteMissingError(error) || getErrorStatus(error) === 404,
-    onRemoteAttachmentMissing: (target) => {
-      options.logSyncInfo('Remote attachment already missing during cleanup', {
-        cloudKey: target.cloudKey,
-      });
-    },
-    onRemoteDeleteError: (_target, error) => {
-      if (
-        isSyncRemoteMutationFenceError(error)
-        || isWebdavRemoteWriteConflictError(error)
-        || error instanceof DropboxConflictError
-      ) throw error;
-      options.logSyncWarning('Failed to delete remote attachment', error);
-    },
-    onBatchLimitReached: ({ limit, total }) => {
-      options.logSyncInfo('Attachment cleanup batch limit reached', {
-        limit: String(limit),
-        total: String(total),
-      });
-    },
-  });
-  return {
-    appData: result.appData,
-    shouldInvalidateFastSyncState: result.shouldInvalidateFastSyncState,
-  };
-};
+  options: MobileSyncAttachmentCleanupOptions
+): Promise<MobileAttachmentCleanupResult> => runCoreMobileAttachmentCleanup(options, {
+  fs: mobileAttachmentFileSystem,
+  isDropboxConflictError: (error) => error instanceof DropboxConflictError,
+  core: {
+    getBaseSyncUrl: (url) => getBaseSyncUrl(url),
+    getCloudBaseUrl: (url) => getCloudBaseUrl(url),
+    webdavHeadFile: (url, options) => webdavHeadFile(url, options),
+    webdavDeleteFileVersioned: (url, etag, options) => webdavDeleteFileVersioned(url, etag, options),
+    cloudDeleteFile: (url, options) => cloudDeleteFile(url, options),
+  },
+});

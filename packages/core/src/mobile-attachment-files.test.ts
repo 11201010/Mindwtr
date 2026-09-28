@@ -1,0 +1,313 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { AppData, Attachment } from './types';
+import { createMobileAttachmentFiles, type MobileAttachmentFileSystemPort, type MobileAttachmentSafPort } from './mobile-attachment-files';
+import { DropboxUnauthorizedError } from './dropbox';
+import { CLOUD_ALLOW_INSECURE_HTTP_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, SYNC_BACKEND_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY } from './sync-storage-keys';
+import { CACHE, createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
+
+const now = '2026-09-28T00:00:00.000Z';
+const bytes = (...values: number[]) => new Uint8Array(values);
+
+const setup = (options: {
+  storage?: Record<string, string>;
+  secrets?: Record<string, string>;
+  sandbox?: boolean;
+  saf?: MobileAttachmentSafPort;
+  fs?: (fs: MobileAttachmentFileSystemPort) => MobileAttachmentFileSystemPort;
+} = {}) => {
+  const memory = createMemoryFileSystem({ saf: options.saf });
+  const { storage, values } = createMemoryStorage(options.storage);
+  const { log, lines } = createRecordingLog();
+  const fetcher = vi.fn() as unknown as typeof fetch;
+  const dropboxAuth = {
+    getValidAccessToken: vi.fn(async () => 'stored-token'),
+    forceRefreshAccessToken: vi.fn(async () => 'refreshed-token'),
+  };
+  const files = createMobileAttachmentFiles({
+    fs: options.fs ? options.fs(memory.fs) : memory.fs,
+    storage,
+    getSecureConfigValue: async (key) => options.secrets?.[key] ?? null,
+    log,
+    fetch: fetcher,
+    dropboxAuth,
+    core: { isSandboxMode: () => options.sandbox === true },
+  });
+  return { files, memory, values, lines, fetcher, dropboxAuth };
+};
+
+const attachment = (overrides: Partial<Attachment> = {}): Attachment => ({
+  id: 'att-1',
+  kind: 'file',
+  title: 'notes.txt',
+  uri: `${MANAGED}att-1.txt`,
+  localStatus: 'available',
+  createdAt: now,
+  updatedAt: now,
+  ...overrides,
+});
+
+const documentWith = (attachments: Attachment[], settings: AppData['settings'] = {}): AppData => ({
+  tasks: [{
+    id: 'task-1',
+    title: 'Task',
+    status: 'inbox',
+    tags: [],
+    contexts: [],
+    attachments,
+    createdAt: now,
+    updatedAt: now,
+  }],
+  projects: [],
+  sections: [],
+  areas: [],
+  settings,
+});
+
+describe('mobile attachment files: storage home and safe writes', () => {
+  it('writes to a temp file beside the target and renames it into place', async () => {
+    const { files, memory } = setup();
+
+    await files.writeBytesSafely(`${MANAGED}att-1.txt`, bytes(1, 2, 3));
+
+    expect(memory.read(`${MANAGED}att-1.txt`)).toEqual(bytes(1, 2, 3));
+    const [write, move] = memory.calls;
+    expect(write).toMatch(/^writeBytes file:\/\/\/data\/files\/attachments\/\.mindwtr-attachment-write-[0-9a-z]+-[0-9a-f]{12}\.tmp$/);
+    expect(move).toBe(`move ${write.slice('writeBytes '.length)} -> ${MANAGED}att-1.txt`);
+    expect([...memory.files.keys()]).toEqual([`${MANAGED}att-1.txt`]);
+  });
+
+  it('leaves the previous file intact when the temp write fails', async () => {
+    const { files, memory } = setup();
+    memory.put(`${MANAGED}att-1.txt`, bytes(9, 9));
+    memory.fail('writeBytes', new Error('connection cut mid-download'));
+
+    await expect(files.writeBytesSafely(`${MANAGED}att-1.txt`, bytes(1, 2, 3))).rejects.toThrow('connection cut');
+
+    expect(memory.read(`${MANAGED}att-1.txt`)).toEqual(bytes(9, 9));
+    expect(memory.calls.filter((call) => call.startsWith('move'))).toEqual([]);
+  });
+
+  it('re-homes a picked content:// file into <files>/attachments/ under its id', async () => {
+    const { files, memory } = setup();
+    const source = 'content://provider/document/picked';
+    memory.put(source, bytes(4, 5, 6));
+
+    const result = await files.persistAttachmentLocallyDetailed(attachment({ uri: source, localStatus: undefined }));
+
+    expect(result.status).toBe('copied');
+    expect(result.attachment).toMatchObject({ uri: `${MANAGED}att-1.txt`, size: 3, localStatus: 'available' });
+    expect(memory.read(`${MANAGED}att-1.txt`)).toEqual(bytes(4, 5, 6));
+    await expect(files.persistAttachmentLocallyDetailed(result.attachment)).resolves.toMatchObject({ status: 'already-local' });
+  });
+
+  it('refuses to persist or delete anything in sandbox mode', async () => {
+    const { files, memory } = setup({ sandbox: true });
+    memory.put(`${MANAGED}att-1.txt`, bytes(1));
+
+    await expect(files.persistAttachmentLocallyDetailed(attachment({ uri: 'content://provider/x' }))).rejects.toThrow('sandbox');
+    await expect(files.deleteManagedAttachmentFile(attachment())).resolves.toBe(false);
+    expect(memory.read(`${MANAGED}att-1.txt`)).toEqual(bytes(1));
+  });
+
+  it('uploads only flat files inside the managed directory (SEC-07)', () => {
+    const { files } = setup();
+
+    expect(files.canUploadAttachmentFrom(`${MANAGED}att-1.txt`)).toBe(true);
+    expect(files.canUploadAttachmentFrom(`${MANAGED}../../databases/mindwtr.db`)).toBe(false);
+    expect(files.canUploadAttachmentFrom(`${MANAGED}%2e%2e/%2e%2e/databases/mindwtr.db`)).toBe(false);
+    expect(files.canUploadAttachmentFrom(`${MANAGED}sub/att-1.txt`)).toBe(false);
+    expect(files.canUploadAttachmentFrom(MANAGED)).toBe(false);
+    expect(files.canUploadAttachmentFrom(`${CACHE}att-1.txt`)).toBe(false);
+    expect(files.attachmentNeedsManagedLocalCopy(attachment({ uri: `${MANAGED}../../databases/mindwtr.db` }))).toBe(false);
+    expect(files.attachmentNeedsManagedLocalCopy(attachment({ uri: 'content://provider/document/picked' }))).toBe(true);
+  });
+
+  it('deletes only the id-named managed copy and only app scratch files', async () => {
+    const { files, memory } = setup();
+    memory.put(`${MANAGED}att-1.txt`, bytes(1));
+    memory.put(`${MANAGED}other.txt`, bytes(2));
+    memory.put(`${MANAGED}4b28a96e.tmp`, bytes(3));
+    memory.put(`${MANAGED}.mindwtr-attachment-write-m7v0x9k2-012345abcdef.tmp`, bytes(4));
+
+    await expect(files.deleteManagedAttachmentFile(attachment({ uri: `${MANAGED}other.txt` }))).resolves.toBe(false);
+    await expect(files.deleteManagedAttachmentFile(attachment())).resolves.toBe(true);
+    await files.cleanupAttachmentTempFiles();
+
+    expect([...memory.files.keys()].sort()).toEqual([`${MANAGED}4b28a96e.tmp`, `${MANAGED}other.txt`]);
+  });
+});
+
+describe('mobile attachment files: presence and stat', () => {
+  it('tells a missing file from an unreadable one', async () => {
+    const { files, memory } = setup();
+    memory.put(`${MANAGED}present.txt`, bytes(1));
+    memory.fail('getInfo', Object.assign(new Error('gone'), { code: 'ENOENT' }));
+    await expect(files.getLocalAttachmentPresence('content://provider/document/gone')).resolves.toBe('confirmed-not-found');
+    memory.fail('getInfo', new Error('Permission denied'));
+    await expect(files.getLocalAttachmentPresence('content://provider/document/locked')).resolves.toBe('unreadable');
+
+    await expect(files.getLocalAttachmentPresence(`${MANAGED}present.txt`)).resolves.toBe('present');
+    await expect(files.getLocalAttachmentPresence(`${MANAGED}absent.txt`)).resolves.toBe('confirmed-not-found');
+  });
+
+  it('treats an ambiguous exists flag as unreadable', async () => {
+    const { files } = setup({ fs: (fs) => ({ ...fs, getInfo: async () => ({}) }) });
+
+    await expect(files.getLocalAttachmentPresence(`${MANAGED}att-1.txt`)).resolves.toBe('unreadable');
+  });
+
+  it('reports mtime in milliseconds and skips content:// uris', async () => {
+    const { files } = setup({
+      fs: (fs) => ({ ...fs, getInfo: async () => ({ exists: true, size: 12, modificationTime: 1_700_000_000.4 }) }),
+    });
+
+    await expect(files.statAttachmentFile(`${MANAGED}att-1.txt`)).resolves.toEqual({ mtimeMs: 1_700_000_000_400, size: 12 });
+    await expect(files.statAttachmentFile('content://provider/document/x')).resolves.toBeNull();
+  });
+
+  it('reads a content:// uri through a cache copy when the direct read fails', async () => {
+    const { files, memory } = setup();
+    memory.put('content://provider/document/x', bytes(7, 8));
+    memory.fail('readBytes', new Error('provider refused'), 'content://provider/document/x');
+
+    await expect(files.readFileAsBytes('content://provider/document/x')).resolves.toEqual(bytes(7, 8));
+    expect([...memory.files.keys()]).toEqual(['content://provider/document/x']);
+  });
+});
+
+describe('mobile attachment files: upload refusals and download backoff', () => {
+  it('marks a first upload unrecoverable on the third refusal', () => {
+    const { files } = setup();
+    const refused = attachment();
+
+    expect(files.handleAttachmentUploadRefusal(refused, 'server_rejected')).toMatchObject({ attempts: 1, reachedLimit: false });
+    expect(files.handleAttachmentUploadRefusal(refused, 'server_rejected')).toMatchObject({ attempts: 2, reachedLimit: false });
+    const third = files.handleAttachmentUploadRefusal(refused, 'server_rejected');
+
+    expect(third).toMatchObject({ attempts: 3, reachedLimit: true, mutated: true });
+    expect(third.message).not.toContain('notes.txt');
+    expect(refused.deletedAt).toBeDefined();
+    expect(refused.cloudKey).toBeUndefined();
+  });
+
+  it('keeps a refused replacement pending and the remote copy unchanged', () => {
+    const { files } = setup();
+    const replacement = attachment({ cloudKey: 'attachments/att-1.txt', fileHash: 'a'.repeat(64), pendingContentUpload: true });
+    for (let i = 0; i < 3; i += 1) files.handleAttachmentUploadRefusal(replacement, 'server_rejected');
+
+    expect(replacement).toMatchObject({ cloudKey: 'attachments/att-1.txt', pendingContentUpload: true });
+    expect(replacement.deletedAt).toBeUndefined();
+    expect(files.shouldAttemptAttachmentUpload(replacement)).toBe(false);
+    replacement.fileHash = 'b'.repeat(64);
+    expect(files.shouldAttemptAttachmentUpload(replacement)).toBe(true);
+  });
+
+  it('backs a missing remote file off for 15 minutes', () => {
+    const { files } = setup();
+    const start = Date.now();
+
+    files.setWebdavDownloadBackoff('att-1', Object.assign(new Error('Not found'), { status: 404 }));
+
+    expect(files.getWebdavDownloadBackoff('att-1')).toBeGreaterThanOrEqual(start + 15 * 60_000);
+    files.clearWebdavDownloadBackoff('att-1');
+    expect(files.getWebdavDownloadBackoff('att-1')).toBeNull();
+  });
+});
+
+describe('mobile attachment files: stored configs and Dropbox', () => {
+  it('reads the saved WebDAV and cloud locations, secrets from the keystore', async () => {
+    const { files } = setup({
+      storage: {
+        [WEBDAV_URL_KEY]: 'https://dav.example/Mindwtr/data.json',
+        [WEBDAV_USERNAME_KEY]: 'me',
+        [CLOUD_URL_KEY]: 'https://cloud.example',
+        [CLOUD_ALLOW_INSECURE_HTTP_KEY]: 'true',
+      },
+      secrets: { [WEBDAV_PASSWORD_KEY]: 'pw', [CLOUD_TOKEN_KEY]: 'tok' },
+    });
+
+    await expect(files.loadWebDavConfig()).resolves.toMatchObject({ url: 'https://dav.example/Mindwtr/data.json', username: 'me', password: 'pw' });
+    await expect(files.loadCloudConfig()).resolves.toEqual({ url: 'https://cloud.example', token: 'tok', allowInsecureHttp: true });
+  });
+
+  it('retries a Dropbox operation once with a refreshed token, on the host fetch', async () => {
+    const { files, dropboxAuth, fetcher } = setup();
+    const operation = vi.fn(async (token: string) => {
+      if (token === 'stored-token') throw new DropboxUnauthorizedError('expired');
+      return 'ok';
+    });
+
+    await expect(files.runDropboxAuthorized('app-key', operation)).resolves.toBe('ok');
+
+    expect(operation.mock.calls.map(([token]) => token)).toEqual(['stored-token', 'refreshed-token']);
+    expect(dropboxAuth.getValidAccessToken).toHaveBeenCalledWith('app-key', fetcher);
+    expect(dropboxAuth.forceRefreshAccessToken).toHaveBeenCalledWith('app-key', fetcher);
+  });
+});
+
+describe('mobile attachment files: File Sync folders', () => {
+  it('keeps a File Sync folder\'s attachments beside the data file', async () => {
+    const { files, memory } = setup();
+
+    await expect(files.resolveFileSyncDir('file:///storage/Mindwtr/data.json')).resolves.toEqual({
+      type: 'file',
+      dirUri: 'file:///storage/Mindwtr/',
+      attachmentsDirUri: 'file:///storage/Mindwtr/attachments/',
+    });
+    expect(memory.calls).toContain('makeDirectory file:///storage/Mindwtr/attachments/');
+  });
+
+  it('never creates a SAF attachments folder when no folder listing could be read', async () => {
+    const saf = {
+      readDirectory: vi.fn(async () => { throw new Error('provider offline'); }),
+      makeDirectory: vi.fn(async () => 'content://created'),
+    };
+    const { files } = setup({ saf });
+
+    await expect(files.resolveFileSyncDir('content://com.provider/tree/primary%3AMindwtr')).resolves.toBeNull();
+    expect(saf.makeDirectory).not.toHaveBeenCalled();
+  });
+
+  it('finds an existing SAF attachments folder by its leaf name', async () => {
+    const saf = {
+      readDirectory: vi.fn(async () => ['content://com.provider/tree/primary%3AMindwtr/document/primary%3AMindwtr%2Fattachments']),
+      makeDirectory: vi.fn(async () => 'content://created'),
+    };
+    const { files } = setup({ saf });
+
+    await expect(files.resolveFileSyncDir('content://com.provider/tree/primary%3AMindwtr')).resolves.toMatchObject({
+      type: 'saf',
+      attachmentsDirUri: 'content://com.provider/tree/primary%3AMindwtr/document/primary%3AMindwtr%2Fattachments',
+    });
+    expect(saf.makeDirectory).not.toHaveBeenCalled();
+  });
+});
+
+describe('mobile attachment files: pending work and the presence stamp (#1119)', () => {
+  const webdavLocation = { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example/data.json' };
+  const settled = attachment({ cloudKey: 'attachments/att-1.txt', contentMtimeMs: 1, contentSize: 1 });
+
+  it('reports pending remote deletes and unsynced local files as work', async () => {
+    const { files } = setup();
+
+    await expect(files.hasPendingAttachmentSyncWork(documentWith([], {
+      attachments: { pendingRemoteDeletes: [{ cloudKey: 'attachments/old.txt', attempts: 0 }] },
+    }))).resolves.toBe(true);
+    await expect(files.hasPendingAttachmentSyncWork(documentWith([attachment()]))).resolves.toBe(true);
+  });
+
+  it('runs the presence proof once a day per sync location', async () => {
+    const { files, values } = setup({ storage: webdavLocation });
+    const data = documentWith([settled]);
+
+    await expect(files.hasPendingAttachmentSyncWork(data, { contentCheckEnabled: true })).resolves.toBe(true);
+    await expect(files.hasCompletedAttachmentPresenceReconciliation()).resolves.toBe(false);
+    await files.markAttachmentPresenceReconciled();
+    await expect(files.hasPendingAttachmentSyncWork(data, { contentCheckEnabled: true })).resolves.toBe(false);
+    await expect(files.hasCompletedAttachmentPresenceReconciliation()).resolves.toBe(true);
+
+    values.set(WEBDAV_URL_KEY, 'https://other.example/data.json');
+    await expect(files.isAttachmentPresenceReconciliationDue()).resolves.toBe(true);
+    await expect(files.hasCompletedAttachmentPresenceReconciliation()).resolves.toBe(false);
+  });
+});

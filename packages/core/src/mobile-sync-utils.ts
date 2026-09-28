@@ -20,6 +20,7 @@ import {
 import { summarizeMergeStats } from './sync-log-utils';
 import type { MergeStats } from './sync-types';
 import { isDropboxUnauthorizedError } from './dropbox';
+import { assertConnectionAllowed, SYNC_LOCAL_INSECURE_URL_OPTIONS } from './http-utils';
 import {
   WEBDAV_ALLOW_INSECURE_HTTP_KEY,
   WEBDAV_PASSWORD_KEY,
@@ -164,6 +165,23 @@ export const getMobileWebDavRequestOptions = (allowInsecureHttp?: boolean) => (
 export const getMobileCloudRequestOptions = (allowInsecureHttp?: boolean) => (
   allowInsecureHttp === true ? { allowInsecureHttp: true } : {}
 );
+
+const MOBILE_WEBDAV_HTTPS_ERROR =
+  'WebDAV requires HTTPS for public URLs (HTTP allowed for localhost, private IPs, and local hostnames).';
+
+/**
+ * The cleartext guard core runs inside every `webdav*` call. A native streamed uploader talks
+ * to the server directly, so it never reaches that guard — without this it would stream Basic
+ * credentials and the file's bytes in the clear (SEC-10a). Android's
+ * `cleartextTrafficPermitted="true"` is load-bearing for private-IP WebDAV (#663), so this
+ * check is the enforcement point, not the platform config.
+ */
+export const assertMobileWebdavConnection = (url: string, allowInsecureHttp?: boolean): void => {
+  assertConnectionAllowed(url, MOBILE_WEBDAV_HTTPS_ERROR, {
+    ...SYNC_LOCAL_INSECURE_URL_OPTIONS,
+    allowInsecureHttp: allowInsecureHttp === true,
+  });
+};
 
 export type MobileWebDavStoredConfig = { url: string; username: string; password: string; allowInsecureHttp?: boolean };
 

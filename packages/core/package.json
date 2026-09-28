@@ -39,7 +39,12 @@
     "./mobile-sync-utils": "./src/mobile-sync-utils.ts",
     "./mobile-sync-service": "./src/mobile-sync-service.ts",
     "./mobile-background-sync": "./src/mobile-background-sync.ts",
-    "./mobile-sync-triggers": "./src/mobile-sync-triggers.ts"
+    "./mobile-sync-triggers": "./src/mobile-sync-triggers.ts",
+    "./mobile-attachment-files": "./src/mobile-attachment-files.ts",
+    "./mobile-attachment-installer": "./src/mobile-attachment-installer.ts",
+    "./mobile-attachment-common": "./src/mobile-attachment-common.ts",
+    "./mobile-attachment-availability": "./src/mobile-attachment-availability.ts",
+    "./mobile-attachment-cleanup": "./src/mobile-attachment-cleanup.ts"
   },
   "sideEffects": false,
   "type": "module",
