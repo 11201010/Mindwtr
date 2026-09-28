@@ -66,6 +66,11 @@ const deterministicHash128 = (value: string): [number, number, number, number] =
     ];
 };
 
+/** A 128-bit fingerprint of `value`, as 32 hex digits: the same for the same text, not readable. */
+export const deterministicHash128Hex = (value: string): string => (
+    deterministicHash128(String(value)).map((part) => part.toString(16).padStart(8, '0')).join('')
+);
+
 export function generateDeterministicUUID(value: string): string {
     const hex = deterministicHash128(String(value)).map((part) => part.toString(16).padStart(8, '0')).join('');
     const chars = hex.slice(0, 32).split('');

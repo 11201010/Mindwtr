@@ -114,8 +114,9 @@ type StorageEntry = readonly [string, string];
 
 /** A device write that failed: the screen kept the stored value, and the caller may retry. */
 export class SyncSettingsWriteError extends Error {
-    constructor(cause: unknown) {
-        super(cause instanceof Error ? cause.message : String(cause));
+    /** `message` is already redacted (the transport's `redactText`). */
+    constructor(message: string) {
+        super(message);
         this.name = 'SyncSettingsWriteError';
     }
 }
@@ -281,7 +282,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
     let stagedDropboxCredentials: MobileDropboxSyncCredentials | null = null;
 
     const reconcileBackgroundSyncRegistration = () => {
-        void host.reconcileBackgroundSync().catch((error) => host.logSettingsError(error));
+        void host.reconcileBackgroundSync().catch(logError);
     };
 
     const probeWebdavCompatibilityForCurrentEncryptionPosture = async (
@@ -308,7 +309,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 host.clearSyncConfigCache();
                 afterSave?.();
             })
-            .catch((error) => host.logSettingsError(error))
+            .catch(logError)
     );
 
     const isManualInsecureOverride = (url: string, allowInsecureHttp: boolean): boolean => {
@@ -321,14 +322,45 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         return !core.isConnectionAllowed(url, core.SYNC_LOCAL_INSECURE_URL_OPTIONS);
     };
 
-    /** A failure's text for a toast, without the configured secrets or URL credentials. */
+    const urlPassword = (url: string): string | null => {
+        try {
+            return decodeURIComponent(new URL(url).password) || null;
+        } catch {
+            return null;
+        }
+    };
+
+    /**
+     * The one redaction for every text that leaves the transport (toasts, errors, log
+     * lines; the screen's status and history use it too): the log sanitizer, no URL
+     * credentials, and none of the configured secrets.
+     */
     const redact = (text: string, extra: (string | null | undefined)[] = []) => redactSyncText(text, [
         state.webdavPassword,
         state.cloudToken,
+        urlPassword(state.webdavUrl),
+        urlPassword(state.cloudUrl),
         stagedDropboxCredentials?.tokens.accessToken,
         stagedDropboxCredentials?.tokens.refreshToken,
         ...extra,
+        ...extra.map((entry) => (entry ? urlPassword(entry) : null)),
     ]);
+
+    /** An error for the log callback, its name and message redacted. */
+    const redactError = (error: unknown): Error => {
+        const redacted = new Error(redact(error instanceof Error ? error.message : String(error)));
+        redacted.name = error instanceof Error ? redact(error.name) : 'Error';
+        return redacted;
+    };
+    const logError = (error: unknown) => host.logSettingsError(redactError(error));
+    const logInfo = (message: string, context: { scope: string; extra: Record<string, string> }) => host.logInfo(redact(message), {
+        scope: context.scope,
+        extra: Object.fromEntries(Object.entries(context.extra).map(([key, entry]) => [key, redact(entry)])),
+    });
+
+    // Every write of the backend key takes the next number; a failed Off write restores
+    // the screen only while no later write has started.
+    let backendWrites = 0;
 
     const formatText = (p: SyncSettingsTransportParams, key: string, replacements: Record<string, string | number>) => {
         let text = p.t(key);
@@ -513,7 +545,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             }
             reconcileBackgroundSyncRegistration();
             await Promise.all(corrections);
-        }).catch((error) => host.logSettingsError(error));
+        }).catch(logError);
 
         return Object.assign(() => {
             cancelled = true;
@@ -592,16 +624,20 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             hasPendingSyncConfiguration = false;
             provenSyncBackend = 'off';
             p.resetSyncStatusForBackendSwitch();
+            const sequence = ++backendWrites;
             const write = host.storage.setItem(SYNC_BACKEND_KEY, nextBackend).then(() => {
                 host.clearSyncConfigCache();
                 reconcileBackgroundSyncRegistration();
             }, (error: unknown) => {
-                host.logSettingsError(error);
-                // The store still holds the previous backend: the screen must not show Off.
-                provenSyncBackend = previous.proven;
-                hasPendingSyncConfiguration = previous.pending;
-                if (state.syncBackend === 'off') set({ syncBackend: previous.syncBackend });
-                throw new SyncSettingsWriteError(error);
+                logError(error);
+                // The store still holds the previous backend: the screen must not show Off,
+                // unless a later backend write has started since.
+                if (sequence === backendWrites) {
+                    provenSyncBackend = previous.proven;
+                    hasPendingSyncConfiguration = previous.pending;
+                    if (state.syncBackend === 'off') set({ syncBackend: previous.syncBackend });
+                }
+                throw new SyncSettingsWriteError(redact(error instanceof Error ? error.message : String(error)));
             });
             // React Native's screen does not wait for the write; a caller that does sees the failure.
             write.catch(() => undefined);
@@ -707,6 +743,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             if (
                 disconnectingProvenDropbox
             ) {
+                backendWrites += 1;
                 await host.storage.setItem(SYNC_BACKEND_KEY, 'off');
                 host.clearSyncConfigCache();
                 const [[, persistedBackend]] = await host.storage.multiGet([SYNC_BACKEND_KEY]);
@@ -868,6 +905,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 setItem: (key, value) => host.storage.setItem(key, value),
                 setSecret: (key, value) => host.secrets.set(key, value),
             };
+            backendWrites += 1;
             await commitProvenMobileSyncConfiguration(config, dependencies);
         } catch (error) {
             if (
@@ -960,7 +998,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             // Only an activation passes an explicit backend; a manual "Sync now" tap
             // calls handleSync() with no options and never reaches this line.
             if (options?.backend) {
-                void host.logInfo('Sync backend selected; running the verification sync to activate it', {
+                void logInfo('Sync backend selected; running the verification sync to activate it', {
                     scope: 'sync',
                     extra: {
                         releaseCheck: 'v1.2.7/sync-settings-activation-mobile',
@@ -1481,6 +1519,9 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         handleSync,
         handleTestConnection,
         handleTestDropboxConnection,
+        /** The one redaction for text that leaves the screen (see `redact`). */
+        redactText: (text: string): string => redact(text),
+        redactError,
         /** The configuration this visit proved last (target state for a replayed request). */
         getProven: () => ({ backend: provenSyncBackend, cloudProvider: provenCloudProvider, pending: hasPendingSyncConfiguration }),
     };

@@ -140,7 +140,6 @@ function SyncSettingsView({
         externalCalendars: syncExternalCalendarsEnabled,
         ai: syncAiEnabled,
     } = getSyncPreferenceValues(settings.syncPreferences);
-    const syncHistoryEntries = buildSyncHistoryLines(settings.lastSyncHistory, t, (at) => new Date(at).toLocaleString());
     const {
         lastSyncStats,
         showLastSyncStats,
@@ -359,6 +358,7 @@ function SyncSettingsView({
         handleTestDropboxConnection,
         isSyncing,
         isTestingConnection,
+        redactText,
         syncBackend,
         syncPath,
         webdavPassword,
@@ -382,6 +382,8 @@ function SyncSettingsView({
         supportsNativeICloudSync,
         t,
     });
+    // The history and the last error drop URL credentials and the configured secrets.
+    const syncHistoryEntries = buildSyncHistoryLines(settings.lastSyncHistory, t, (at) => new Date(at).toLocaleString(), redactText);
     const isGettingStartedActionBusy = gettingStartedBusy || isBackupBusy || isSyncing;
     const sandboxEntryBlocked = sandboxBusy
         || isBackupBusy
@@ -531,7 +533,7 @@ function SyncSettingsView({
             conflictLines={conflictLines}
             historyContent={renderSyncHistory()}
             lastSyncAt={settings.lastSyncAt}
-            lastSyncError={getSyncLastErrorText(settings.lastSyncError, t)}
+            lastSyncError={getSyncLastErrorText(settings.lastSyncError, t, redactText)}
             lastSyncStatus={settings.lastSyncStatus}
             maxClockSkewLabel={maxClockSkewMs > 0 ? formatClockSkew(maxClockSkewMs) : undefined}
             showLastSyncStats={showLastSyncStats}

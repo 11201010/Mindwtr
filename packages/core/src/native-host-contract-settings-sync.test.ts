@@ -39,6 +39,8 @@ const device = vi.hoisted(() => ({
     held: [] as (() => void)[],
     holdStarted: null as null | (() => void),
     calls: [] as unknown[][],
+    /** What the host's error log received. */
+    logged: [] as string[],
     encryption: { state: 'off' as string, unavailable: false, pending: false, incomplete: null as string | null },
 }));
 
@@ -192,6 +194,7 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
     device.queues = JSON.parse(JSON.stringify(input.queues ?? {}));
     device.held.length = 0;
     device.calls.length = 0;
+    device.logged.length = 0;
     const calls = device.calls;
     /** A transition: 'ok' moves the state to `after`, `{ cleanup }` commits it and defers the cleanup. */
     const transition = async (name: string, after: string, onProgress?: (progress: { phase: 'attachments' | 'documents'; completed: number; total: number }) => void): Promise<void> => {
@@ -286,7 +289,7 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
         },
         log: {
             info: (message, context) => { calls.push(['logInfo', message, context.extra]); },
-            error: () => undefined,
+            error: (error) => { device.logged.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error)); },
         },
         addBreadcrumb: (message) => { calls.push(['breadcrumb', message]); },
         pickSyncFolder: async () => {
@@ -942,7 +945,7 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         expect(storedConfig(dev).storage).toEqual({ [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' });
     });
 
-    it('a secret-bearing command keeps no payload: a retry joins the running request, and a finished one answers without running again', async () => {
+    it('a secret-bearing command keeps no payload: a retry joins the running request, and a finished one answers its first reply without running again', async () => {
         const { dev, contract } = await start({});
         value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
         const input = { requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, password: 'hunter22' } };
@@ -952,7 +955,7 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         expect(joined).toBe(first);
         expect(since(dev, at).calls.filter((call) => call[0] === 'performMobileSync')).toHaveLength(2);
         const later = mark(dev);
-        expect(await contract.saveSyncBackend(input)).toEqual({ ok: true, value: { toasts: [] } });
+        expect(await contract.saveSyncBackend(input)).toEqual(first);
         expect(since(dev, later)).toEqual({ device: [], writes: [], calls: [] });
     });
 
@@ -1157,5 +1160,82 @@ describe('native host contract: Settings › Sync correction pass', () => {
         expect(await replaced).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
         expect(value(await current).backend.current).toBe('Off');
         contract.closeSyncSettings();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Correction pass (verification of e43ac25eb, review.md).
+
+describe('native host contract: Settings › Sync verification pass', () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyz012345';
+    const CREDENTIAL_URL = 'https://alice:s3cret-pw@dav.example.com/mindwtr';
+
+    it('2: keeps URL credentials and configured secrets out of a SAVE_FAILED message and the error log', async () => {
+        const { dev, contract } = await start({
+            storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: CREDENTIAL_URL, [WEBDAV_USERNAME_KEY]: 'alice', [CLOUD_URL_KEY]: 'https://cloud.example.com' },
+            secrets: { [WEBDAV_PASSWORD_KEY]: 'hunter22', [CLOUD_TOKEN_KEY]: TOKEN },
+        });
+        dev.state.failKeys.add(SYNC_BACKEND_KEY);
+        const setItem = dev.host.storage.setItem;
+        dev.host.storage.setItem = async (key, entry) => {
+            if (key === SYNC_BACKEND_KEY) throw new Error(`EACCES writing ${CREDENTIAL_URL} with hunter22 and ${TOKEN}`);
+            return setItem(key, entry);
+        };
+        const refused = await contract.selectSyncBackend({ requestId: generateUUID(), option: 'off' });
+        expect(refused).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(device.logged.length).toBeGreaterThan(0);
+        const shown = JSON.stringify([refused, device.logged]);
+        for (const secret of ['s3cret-pw', 'hunter22', TOKEN]) expect(shown).not.toContain(secret);
+    });
+
+    it('4: keeps a configured token out of the last-sync error and the history', async () => {
+        const failure = `server rejected ${TOKEN}`;
+        const { contract } = await start({
+            storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'selfhosted', [CLOUD_URL_KEY]: 'https://cloud.example.com' },
+            secrets: { [CLOUD_TOKEN_KEY]: TOKEN },
+        }, {
+            lastSyncStatus: 'error', lastSyncError: failure,
+            lastSyncHistory: [{ at: '2026-09-24T10:00:00.000Z', status: 'error', conflicts: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, error: failure, details: failure }],
+        });
+        const view = value(contract.getSyncSettings());
+        expect(view.panel?.lastSync.error).toBe('server rejected [redacted]');
+        expect(JSON.stringify(view)).not.toContain(TOKEN);
+    });
+
+    it('3: redacts a short configured password as a whole word, never inside a longer one', async () => {
+        const { contract } = await start({
+            storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com', [WEBDAV_USERNAME_KEY]: 'alice' },
+            secrets: { [WEBDAV_PASSWORD_KEY]: 'abc' },
+            queues: { probe: [{ error: 'login abc refused (abcdef is fine)' }] },
+        });
+        const tested = value(await contract.testSyncConnection({ webdav: { ...webdavFields, url: 'https://dav.example.com' } }));
+        expect(tested.toasts.map((toast) => toast.message)).toEqual(['login [redacted] refused (abcdef is fine)']);
+    });
+
+    it('5: tells two passphrases apart even where a 32-bit fingerprint collides', async () => {
+        const { contract } = await start({ ...WEBDAV_STORED, queues: { enable: [{ error: 'MWENC1: could not write' }] } });
+        const act = (action: unknown, requestId?: string) => contract.runSyncEncryptionAction({ ...(requestId ? { requestId } : {}), action } as never);
+        const phrase = async (text: string) => {
+            value(await act({ type: 'typed', field: 'next', value: text }));
+            value(await act({ type: 'typed', field: 'confirm', value: text }));
+        };
+        value(await act({ type: 'open', flow: 'enable' }));
+        await phrase('phrase-rt8llz-1npot9b');
+        const requestId = generateUUID();
+        value(await act({ type: 'submit', flow: 'enable' }, requestId));
+        await phrase('phrase-p8nb0t-z1kpvy');
+        expect(await act({ type: 'submit', flow: 'enable' }, requestId)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('6: answers a same-session replay of an older save with its first reply, and writes nothing (the newer server stays)', async () => {
+        const { dev, contract } = await start({});
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
+        const older = { requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, url: 'https://a.example.com', password: 'pw-a' } };
+        const first = value(await contract.saveSyncBackend(older));
+        value(await contract.saveSyncBackend({ requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, url: 'https://b.example.com', password: 'pw-b' } }));
+        const at = mark(dev);
+        expect(await contract.saveSyncBackend(older)).toEqual({ ok: true, value: first });
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+        expect(dev.state.storage.get(WEBDAV_URL_KEY)).toBe('https://b.example.com');
     });
 });

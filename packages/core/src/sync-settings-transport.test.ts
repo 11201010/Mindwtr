@@ -149,4 +149,28 @@ describe('sync settings transport', () => {
         expect(toasts).toHaveLength(1);
         expect(JSON.stringify(toasts)).not.toContain('secret-pw');
     });
+
+    it('lets only the latest Off write restore the screen when a write fails', async () => {
+        const { transport, storage, host } = setup([]);
+        storage.set(SYNC_BACKEND_KEY, 'webdav');
+        storage.set(WEBDAV_URL_KEY, 'https://dav.example.com');
+        await transport.load().done;
+        const setItem = host.storage.setItem;
+        let failFirst!: (error: Error) => void;
+        let calls = 0;
+        host.storage.setItem = async (key, value) => {
+            if (key === SYNC_BACKEND_KEY && calls++ === 0) {
+                return new Promise<void>((_resolve, reject) => { failFirst = reject; });
+            }
+            return setItem(key, value);
+        };
+        const firstOff = transport.handleSelectSyncBackend('off');
+        transport.handleSelectSyncBackend('file');
+        await transport.handleSelectSyncBackend('off');
+        expect(storage.get(SYNC_BACKEND_KEY)).toBe('off');
+        failFirst(new Error('late failure'));
+        await expect(firstOff).rejects.toBeInstanceOf(SyncSettingsWriteError);
+        expect(transport.getState().syncBackend).toBe('off');
+        expect(transport.getProven()).toMatchObject({ backend: 'off' });
+    });
 });

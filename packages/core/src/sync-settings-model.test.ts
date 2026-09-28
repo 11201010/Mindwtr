@@ -105,4 +105,8 @@ describe('sync settings model', () => {
         );
         expect(redactSyncText('echo hunter22 twice: hunter22', ['hunter22', null, ''])).toBe('echo [redacted] twice: [redacted]');
     });
+
+    it('redacts a short secret only as a whole word', () => {
+        expect(redactSyncText('pin abc, not abcdef or xabc; (abc)', ['abc'])).toBe('pin [redacted], not abcdef or xabc; ([redacted])');
+    });
 });

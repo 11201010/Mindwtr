@@ -194,6 +194,7 @@ export function useSyncSettingsTransportActions(params: UseSyncSettingsTransport
         handleTestDropboxConnection: transport.handleTestDropboxConnection,
         isSyncing: state.isSyncing,
         isTestingConnection: state.isTestingConnection,
+        redactText: transport.redactText,
         syncBackend: state.syncBackend,
         syncPath: state.syncPath,
         webdavAllowInsecureHttp: state.webdavAllowInsecureHttp,

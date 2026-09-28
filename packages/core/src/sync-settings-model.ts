@@ -48,18 +48,27 @@ export const isValidSyncHttpUrl = (value: string): boolean => {
 
 const URL_USERINFO_PATTERN = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi;
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
- * Text shown anywhere but a form's own URL field (a status, the history, a toast):
- * the log sanitizer's redactions, no credentials in a URL, and none of `secrets`
- * (the configured password and token; ones shorter than 4 characters are left).
+ * Text shown anywhere but a form's own URL field (a status, the history, a toast, a
+ * log line): the log sanitizer's redactions, no credentials in a URL, and none of
+ * `secrets` (the configured password and token). A secret shorter than 4 characters
+ * is redacted only as a whole word, never inside a longer one.
  */
 export const redactSyncText = (text: string, secrets: readonly (string | null | undefined)[] = []): string => {
     let result = sanitizeLogMessage(text).replace(URL_USERINFO_PATTERN, '$1');
-    for (const secret of secrets) {
-        if (secret && secret.length >= 4) result = result.split(secret).join('[redacted]');
+    for (const secret of [...secrets].sort((left, right) => (right?.length ?? 0) - (left?.length ?? 0))) {
+        if (!secret) continue;
+        result = secret.length >= 4
+            ? result.split(secret).join('[redacted]')
+            : result.replace(new RegExp(`(^|[^A-Za-z0-9])${escapeRegExp(secret)}(?=$|[^A-Za-z0-9])`, 'g'), '$1[redacted]');
     }
     return result;
 };
+
+type Redact = (text: string) => string;
+const redactUrlText: Redact = (text) => redactSyncText(text);
 
 export const formatSyncClockSkew = (ms: number): string => {
     if (!Number.isFinite(ms) || ms <= 0) return '0 ms';
@@ -207,13 +216,16 @@ export const getSyncFailureMessage = (error: unknown, t: Translate): string => {
     }
 };
 
-/** The last-sync card's error line: File Sync's lock and generation failures read as their guidance. */
-export const getSyncLastErrorText = (lastSyncError: string | undefined, t: Translate): string | undefined => (
+/**
+ * The last-sync card's error line: File Sync's lock and generation failures read as
+ * their guidance. `redact` is the transport's (the configured secrets too).
+ */
+export const getSyncLastErrorText = (lastSyncError: string | undefined, t: Translate, redact: Redact = redactUrlText): string | undefined => (
     classifySyncFailure(lastSyncError) === 'fileLockUnavailable'
         ? t('settings.syncFileLockUnavailable')
         : classifySyncFailure(lastSyncError) === 'fileGenerationCorrupt'
             ? t('settings.syncFileGenerationCorrupt')
-            : lastSyncError === undefined ? undefined : redactSyncText(lastSyncError)
+            : lastSyncError === undefined ? undefined : redact(lastSyncError)
 );
 
 export type CloudKitStatusDetails = { label: string; helpText: string; syncEnabled: boolean };
@@ -331,11 +343,12 @@ export const getSyncLastStatusLine = (
     settings.lastSyncStatus === 'conflict' ? t('settings.syncStatusConflictsSuffix') : '',
 ].join('');
 
-/** The five newest history entries, one line each. */
+/** The five newest history entries, one line each; `redact` as for getSyncLastErrorText. */
 export const buildSyncHistoryLines = (
     history: readonly SyncHistoryEntry[] | undefined,
     t: Translate,
     formatDateTime: (iso: string) => string,
+    redact: Redact = redactUrlText,
 ): string[] => (history ?? []).slice(0, 5).map((entry) => {
     const statusLabel = entry.status === 'success'
         ? t('settings.lastSyncSuccess')
@@ -348,11 +361,11 @@ export const buildSyncHistoryLines = (
         entry.conflicts ? `${t('settings.lastSyncConflicts')}: ${entry.conflicts}` : null,
         entry.maxClockSkewMs > 0 ? `${t('settings.lastSyncSkew')}: ${formatSyncClockSkew(entry.maxClockSkewMs)}` : null,
         entry.timestampAdjustments > 0 ? `${t('settings.lastSyncAdjusted')}: ${entry.timestampAdjustments}` : null,
-        entry.details ? `${t('settings.syncHistoryDetails')}: ${redactSyncText(entry.details)}` : null,
+        entry.details ? `${t('settings.syncHistoryDetails')}: ${redact(entry.details)}` : null,
     ].filter(Boolean);
     return `${formatDateTime(entry.at)} • ${statusLabel}`
         + (details.length ? ` • ${details.join(' • ')}` : '')
-        + (entry.status === 'error' && entry.error ? ` • ${redactSyncText(entry.error)}` : '');
+        + (entry.status === 'error' && entry.error ? ` • ${redact(entry.error)}` : '');
 });
 
 export const SYNC_PREFERENCE_KEYS = ['appearance', 'language', 'gtd', 'savedFilters', 'externalCalendars', 'ai'] as const;

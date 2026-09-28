@@ -49,8 +49,10 @@
  * device store refuses it, and the screen keeps showing the stored backend.
  * getSyncSettings's `draft.token` is a typed token too; it is a read.
  *
- * The URL field shows the URL as typed; every other text (the status, the history,
- * toasts) drops a URL's credentials and never shows the configured secrets.
+ * The URL field shows the URL as typed. Every other text that leaves the screen (the
+ * status, the history, toasts, error answers, the error log) goes through the
+ * transport's one redaction (`redactText`): no URL credentials and none of the
+ * configured secrets, a short one as a whole word.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -80,6 +82,7 @@ import {
     buildSyncPreferencesUpdate,
     createSyncSettingsTranslator,
     formatSyncClockSkew,
+    redactSyncText,
     getCloudKitStatusDetails,
     getSyncBackendCurrentLabel,
     getSyncBackendGroups,
@@ -127,7 +130,7 @@ import {
     WEBDAV_URL_KEY,
     WEBDAV_USERNAME_KEY,
 } from './sync-storage-keys';
-import { hashComparableSignature } from './sync-signatures';
+import { deterministicHash128Hex } from './uuid';
 
 type Translate = (key: string) => string;
 
@@ -357,9 +360,8 @@ const PASSWORD_DOTS = '••••••••';
 const PASSPHRASE_FIELDS = new Set<string>(['current', 'next', 'confirm']);
 const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock']);
 
-/** A value's fingerprint: never readable, the same for the same value. */
-// ponytail: 32-bit FNV-1a; a collision could let one stale save through, a stronger hash if that matters.
-const fingerprint = (value: unknown): string => hashComparableSignature(JSON.stringify(value));
+/** A value's 128-bit fingerprint: never readable, the same for the same value. */
+const fingerprint = (value: unknown): string => deterministicHash128Hex(JSON.stringify(value));
 /** A secret's fingerprint, or null. */
 const secretPrint = (secret: string | null | undefined) => (secret === null || secret === undefined ? null : fingerprint(['secret', secret]));
 
@@ -419,6 +421,13 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
 
     const takeToasts = (): NativeSyncToast[] => toasts.splice(0, toasts.length);
 
+    /** The host's error log, through the open screen's redaction (URL credentials and secrets). */
+    const logError = (host: NativeSyncSettingsHost, error: unknown) => {
+        host.log.error(screen?.host === host
+            ? screen.transport.redactError(error)
+            : new Error(redactSyncText(error instanceof Error ? error.message : String(error))));
+    };
+
     /** React Native's screen props, from the host and the store as they are now. */
     const params = (host: NativeSyncSettingsHost): SyncSettingsTransportParams => {
         const t = deps.t();
@@ -445,7 +454,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                 useTaskStore.getState().updateSettings({
                     lastSyncStatus: 'idle',
                     lastSyncError: undefined,
-                }).catch((error) => host.log.error(error));
+                }).catch((error) => logError(host, error));
             },
             showSettingsErrorToast: (title, message, durationMs = 4200) => push({ title, message, tone: 'error', durationMs }),
             showSettingsWarning: (title, message, durationMs = 4200) => push({ title, message, tone: 'warning', durationMs }),
@@ -495,7 +504,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         core: host.addBreadcrumb ? { addBreadcrumb: (message) => host.addBreadcrumb?.(message) } : undefined,
     });
 
-    const createCard = (host: NativeSyncSettingsHost): SyncEncryptionCard => {
+    const createCard = (current: Screen): SyncEncryptionCard => {
+        const { host } = current;
         const transitions = host.encryption.transitions;
         const missing = unavailable('Sync encryption');
         return createSyncEncryptionCard({
@@ -513,7 +523,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             },
             // The service reads the worklist from the sync location, not from here.
             appData: () => null,
-            logSettingsError: (error) => host.log.error(error),
+            logSettingsError: (error) => host.log.error(current.transport.redactError(error)),
         });
     };
 
@@ -555,7 +565,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             return;
         }
         if (!current.card) {
-            current.card = createCard(current.host);
+            current.card = createCard(current);
             current.card.subscribe(() => { current.generation += 1; });
             const read = current.card.refresh();
             current.cardCancels.push(read);
@@ -606,7 +616,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         if (host.listRecoverySnapshots) {
             track(current, host.listRecoverySnapshots()
                 .then((names) => { current.snapshots = names; })
-                .catch((error) => host.log.error(error)));
+                .catch((error) => host.log.error(transport.redactError(error))));
         }
         await settle(current);
         // An unreadable secret leaves no revision: a form's Save then reads as stale.
@@ -630,7 +640,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         return createDateFormatter({ language: 'en', dateFormat: 'system' })(iso, monthFirst ? 'M/d/yyyy, h:mm:ss a' : 'd/M/yyyy, HH:mm:ss');
     };
 
-    const lastSyncCard = (t: Translate): NativeSyncLastSyncCard => {
+    const lastSyncCard = (t: Translate, redact: (text: string) => string): NativeSyncLastSyncCard => {
         const state = useTaskStore.getState();
         const settings = state.settings;
         const summary = getSyncLastStatusSummary(settings);
@@ -651,8 +661,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                 lines.push(`${t('settings.lastSyncConflictIds')}: ${summary.conflictIds.join(', ')}`);
             }
         }
-        const error = getSyncLastErrorText(settings.lastSyncError, t);
-        const entries = buildSyncHistoryLines(settings.lastSyncHistory, t, formatDateTime);
+        const error = getSyncLastErrorText(settings.lastSyncError, t, redact);
+        const entries = buildSyncHistoryLines(settings.lastSyncHistory, t, formatDateTime, redact);
         const toggle = `${t('settings.syncHistory')} (${entries.length})`;
         return {
             title: t('settings.lastSync'),
@@ -698,7 +708,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     select: action(t('settings.selectFolder'), null, true, true),
                 },
                 syncNow: action(t('settings.syncNow'), t('settings.syncReadMergeFolder'), !isSyncing && hasPath, hasPath, isSyncing),
-                lastSync: lastSyncCard(t),
+                lastSync: lastSyncCard(t, current.transport.redactText),
             };
         }
         if (state.syncBackend === 'webdav') {
@@ -723,7 +733,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     t('settings.testConnection'), t('settings.webdavTestHint'),
                     !isSyncing && !isTestingConnection && form.canUseActions, form.canUseActions, isTestingConnection,
                 ),
-                lastSync: lastSyncCard(t),
+                lastSync: lastSyncCard(t, current.transport.redactText),
             };
         }
         if (!selection.isCloudSyncSelected) return null;
@@ -736,7 +746,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     t('settings.syncNow'), tr('settings.syncMobile.readAndMergeTheLatestCloudkitDataNow'),
                     !isSyncing && details.syncEnabled, details.syncEnabled, isSyncing,
                 ),
-                lastSync: lastSyncCard(t),
+                lastSync: lastSyncCard(t, current.transport.redactText),
             };
         }
         if (selection.isSelfHostedSyncSelected) {
@@ -766,7 +776,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     t('settings.testConnection'), t('settings.cloudTestHint'),
                     !isSyncing && !isTestingConnection && form.canUseActions, form.canUseActions, isTestingConnection,
                 ),
-                lastSync: lastSyncCard(t),
+                lastSync: lastSyncCard(t, current.transport.redactText),
             };
         }
         if (selection.isDropboxSyncSelected) {
@@ -794,7 +804,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     t('settings.syncNow'), tr('settings.syncMobile.readAndMergeDropboxData'),
                     !isSyncing && configured && dropboxConnected, dropboxConnected, isSyncing,
                 ),
-                lastSync: lastSyncCard(t),
+                lastSync: lastSyncCard(t, current.transport.redactText),
             };
         }
         return null;
@@ -969,7 +979,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
     // compare-and-set instead.
     // ponytail: remembers the last 50 finished request UUIDs; an older retry runs as a replay.
     const running = new Map<string, { identity: string; result: Promise<NativeHostResult<NativeSyncCommandResult>> }>();
-    const finished = new Map<string, string>();
+    const finished = new Map<string, { identity: string; value: NativeSyncCommandResult }>();
 
     /**
      * Runs a screen action under its request UUID; answers the toasts once its reads
@@ -984,27 +994,30 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
     ): Promise<NativeHostResult<NativeSyncCommandResult>> => {
         const print = fingerprint(identity);
         const joined = running.get(requestId);
-        const known = joined?.identity ?? finished.get(requestId);
+        const done = finished.get(requestId);
+        const known = joined?.identity ?? done?.identity;
         if (known !== undefined && known !== print) {
             return Promise.resolve(fail('INVALID_INPUT', 'Request ID already belongs to another action'));
         }
         if (joined) return joined.result;
-        if (known !== undefined) return Promise.resolve({ ok: true, value: { toasts: takeToasts() } });
+        // A finished request answers its first reply and runs nothing (receipt semantics).
+        if (done) return Promise.resolve({ ok: true, value: done.value });
         const result = (async (): Promise<NativeHostResult<NativeSyncCommandResult>> => {
             if (screen !== current) return fail('ACTION_FAILED', 'Settings › Sync was closed; open it again');
             try {
                 const refused = await run();
                 if (refused && !refused.ok) return refused;
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = current.transport.redactText(error instanceof Error ? error.message : String(error));
                 return fail(error instanceof SyncSettingsWriteError ? 'SAVE_FAILED' : 'ACTION_FAILED', message);
             } finally {
                 await settle(current);
                 current.configRevision = await readConfigRevision(current.host).catch(() => current.configRevision);
             }
-            finished.set(requestId, print);
+            const value = { toasts: takeToasts() };
+            finished.set(requestId, { identity: print, value });
             if (finished.size > 50) finished.delete(finished.keys().next().value as string);
-            return { ok: true, value: { toasts: takeToasts() } };
+            return { ok: true, value };
         })().finally(() => running.delete(requestId));
         running.set(requestId, { identity: print, result });
         return result;
