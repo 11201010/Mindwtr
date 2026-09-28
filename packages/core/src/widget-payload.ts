@@ -736,6 +736,11 @@ export interface WidgetPublicationInput {
     systemColorScheme?: WidgetSystemColorScheme;
     /** What the Focus screen is filtering and sorting by right now (#1173). */
     focusFilter?: FocusWidgetFilter;
+    /**
+     * The device locale for the "System" date and time formats. A host without
+     * Intl (QuickJS) must pass it; React Native leaves it to the runtime's.
+     */
+    systemLocale?: string;
 }
 
 /**
@@ -753,6 +758,7 @@ export function androidWidgetProjectionOptions(
     return {
         systemColorScheme: input.systemColorScheme,
         focusFilter: input.focusFilter,
+        systemLocale: input.systemLocale,
         listIds: [...WIDGET_FIXED_LIST_IDS, ...input.listSelections],
     };
 }
@@ -765,6 +771,7 @@ export function iosWidgetProjectionOptions(input: WidgetPublicationInput): Widge
     return {
         systemColorScheme: input.systemColorScheme,
         focusFilter: input.focusFilter,
+        systemLocale: input.systemLocale,
         listIds: WIDGET_FIXED_LIST_IDS,
         includeSavedFilterLists: true,
     };

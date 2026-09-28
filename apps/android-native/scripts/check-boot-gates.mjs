@@ -936,7 +936,10 @@ assert.match(themeKt, new RegExp(`data class ThemeColors\\(\\s*${FIELDS.map((fie
 // RN's constants/theme-presets.ts re-exports core's table.
 const presetSource = readFileSync(resolve(app, '../../packages/core/src/theme-presets.ts'), 'utf8');
 const presetBlocks = [...presetSource.matchAll(/^ {4}'?([\w-]+)'?: \{\n([\s\S]*?)\n {4}\},/gm)];
-assert.equal(presetBlocks.length, 6, 'every bespoke theme preset is read');
+// The table is Record<ThemeStatusPreset, …>: every name in that union must parse as a block.
+const statusPresetUnion = /export type ThemeStatusPreset = ([^;]+);/.exec(readFileSync(resolve(app, '../../packages/core/src/theme-scheme.ts'), 'utf8'))[1];
+assert.deepEqual(presetBlocks.map(([, preset]) => preset).sort(), [...statusPresetUnion.matchAll(/'([\w-]+)'/g)].map(([, preset]) => preset).sort(),
+    'every bespoke theme preset is read');
 for (const [, preset, body] of presetBlocks) {
     const values = Object.fromEntries([...body.matchAll(/(\w+): '(#[0-9A-Fa-f]{6})'/g)].map(([, field, hex]) => [field, hex.toUpperCase()]));
     assert.deepEqual(kotlinPalette(`"${preset}" to`), FIELDS.map((field) => values[field]), `preset ${preset} matches RN`);

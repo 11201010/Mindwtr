@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadTranslations } from './i18n/i18n-loader';
 import type { AppData, AppSettings, Task } from './types';
-import { buildWidgetPayload, resolveWidgetLanguage } from './widget-payload';
+import {
+    buildAndroidWidgetPublication,
+    buildWidgetPayload,
+    createWidgetPayloadProjection,
+    iosWidgetProjectionOptions,
+    resolveWidgetLanguage,
+} from './widget-payload';
 
 describe('resolveWidgetLanguage', () => {
     it('falls back to the device language, as the app does, when no language was chosen', () => {
@@ -69,6 +75,32 @@ describe('widget times', () => {
         }) as unknown as typeof Intl.DateTimeFormat);
         try {
             expect(times({}, 'en-GB')).toEqual({ due: '21:30', start: 'Today 08:05' });
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it('reaches the device locale through the platform publications', () => {
+        // A host without Intl names the device locale itself; both publication
+        // paths must hand it to the builder.
+        const data: AppData = {
+            tasks: [
+                task('due-tonight', { dueDate: '2026-09-28T21:30:00' }),
+                task('overdue', { dueDate: '2026-09-25', isFocusedToday: true }),
+            ],
+            projects: [], sections: [], areas: [], settings: {} as AppSettings,
+        };
+        const labels = (payload: { sections: { items: { id: string; dueLabel: string | null }[] }[] }) => Object.fromEntries(
+            payload.sections.flatMap((section) => section.items).map((item) => [item.id, item.dueLabel]),
+        );
+        const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((() => {
+            throw new Error('no Intl in this engine');
+        }) as unknown as typeof Intl.DateTimeFormat);
+        try {
+            const android = buildAndroidWidgetPublication(data, 'en', { systemLocale: 'en-GB', listSelections: [] });
+            expect(labels(android)).toEqual({ 'due-tonight': '21:30', overdue: '25/9' });
+            const ios = createWidgetPayloadProjection(data, 'en', iosWidgetProjectionOptions({ systemLocale: 'en-GB' })).build(20);
+            expect(labels(ios)).toEqual({ 'due-tonight': '21:30', overdue: '25/9' });
         } finally {
             spy.mockRestore();
         }
