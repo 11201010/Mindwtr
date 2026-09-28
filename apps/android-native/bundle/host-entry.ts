@@ -314,6 +314,7 @@ type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; 
  */
 const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
+    projects: (input) => contract.getFilteredProjects(input),
     waiting: (input) => contract.getWaitingView(input),
     someday: (input) => contract.getSomedayView(input),
     reference: (input) => contract.getReferenceView(input),

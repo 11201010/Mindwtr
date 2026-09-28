@@ -12,7 +12,7 @@ import {
     selectProjectTaskListTasks,
     type ProjectTaskListItem,
 } from './project-task-list-model';
-import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
+import { buildProjectGroups, type ProjectAreaGroup, type ProjectTagFilter } from './project-grouping';
 import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { isRecurrenceRule, parseRRuleString } from './recurrence';
@@ -445,6 +445,10 @@ export type NativeProjectsView = {
     deferred: NativeProjectGroup[];
     archived: NativeProjectGroup[];
 };
+export type NativeFilteredProjectsView = NativeProjectsView & {
+    tagFilter: string;
+    tagInventory: { values: string[]; hasUntagged: boolean };
+};
 
 export type NativeProjectDetailItem =
     | { type: 'section'; id: string; title: string; count: number; muted: boolean }
@@ -794,6 +798,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     let cachedReviewProjects: Project[] = [];
     let cachedProjectsRevision = '';
     let cachedProjects: NativeProjectsView | null = null;
+    let cachedProjectsInventory: NativeFilteredProjectsView['tagInventory'] | null = null;
+    let cachedFilteredProjects: NativeFilteredProjectsView | null = null;
     let cachedProjectDetailKey = '';
     let cachedProjectDetail: ProjectDetailCache | null = null;
     let cachedContextHistory: { tasks: Task[]; tokens: string[] } | null = null;
@@ -864,6 +870,59 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     const focusRevision = (now: Date) => `${revision()}:${displayRevision(now)}`;
     // Time refreshes row labels without invalidating an unchanged Project control.
     const projectMutationRevision = () => `${revision()}:${settingsRevision()}:${language}`;
+    const readProjectsView = (rawTagFilter: string | null): NativeProjectsView | NativeFilteredProjectsView => {
+        const currentRevision = projectMutationRevision();
+        if (cachedProjectsRevision !== currentRevision) {
+            cachedProjectsRevision = currentRevision;
+            cachedProjects = null;
+            cachedProjectsInventory = null;
+            cachedFilteredProjects = null;
+        }
+        if (rawTagFilter === null && cachedProjects) return cachedProjects;
+        if (rawTagFilter !== null && cachedFilteredProjects?.tagFilter === rawTagFilter) return cachedFilteredProjects;
+        if (rawTagFilter === '__all__' && cachedProjects && cachedProjectsInventory) {
+            cachedFilteredProjects = { ...cachedProjects, tagFilter: rawTagFilter, tagInventory: cachedProjectsInventory };
+            return cachedFilteredProjects;
+        }
+        const state = useTaskStore.getState();
+        const orderedAreas = sortAreasForDisplay(state.areas);
+        const areaById = new Map(orderedAreas.map((area) => [area.id, area]));
+        const { projectTaskSummaryById: summaries, focusedProjectCount } = state.getDerivedState();
+        const tagFilter: ProjectTagFilter = rawTagFilter === null || rawTagFilter === '__all__'
+            ? { kind: 'all' }
+            : rawTagFilter === '__none__' ? { kind: 'untagged' } : { kind: 'tag', value: rawTagFilter };
+        const groups = buildProjectGroups({
+            projects: state.projects,
+            orderedAreas,
+            areaFilter: resolveAreaFilterSelection(state.settings.filters, orderedAreas),
+            tagFilter,
+            pinFocused: true,
+        });
+        const toNativeGroup = (group: ProjectAreaGroup): NativeProjectGroup => {
+            const area = group.areaId ? areaById.get(group.areaId) : undefined;
+            return {
+                areaId: area?.id ?? null,
+                areaName: area?.name ?? null,
+                areaColor: area?.color ?? null,
+                areaIcon: area?.icon ?? null,
+                projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount, translate)),
+            };
+        };
+        const view: NativeProjectsView = {
+            version: NATIVE_HOST_CONTRACT_VERSION,
+            revision: currentRevision,
+            active: groups.active.map(toNativeGroup),
+            deferred: groups.deferred.map(toNativeGroup),
+            archived: groups.archived.map(toNativeGroup),
+        };
+        if (rawTagFilter === null || rawTagFilter === '__all__') {
+            cachedProjects = view;
+            cachedProjectsInventory = groups.tagInventory;
+        }
+        if (rawTagFilter === null) return view;
+        cachedFilteredProjects = { ...view, tagFilter: rawTagFilter, tagInventory: groups.tagInventory };
+        return cachedFilteredProjects;
+    };
 
     // The configuration mobile's root layout applies to its dates.
     const dateFormatting = (): DateFormattingConfig => {
@@ -1686,40 +1745,18 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         getProjects(): NativeHostResult<NativeProjectsView> {
             const ready = readiness();
             if (!ready.ok) return ready;
-            const currentRevision = `${revision()}:${settingsRevision()}:${language}`;
-            if (cachedProjectsRevision !== currentRevision || !cachedProjects) {
-                const state = useTaskStore.getState();
-                const orderedAreas = sortAreasForDisplay(state.areas);
-                const areaById = new Map(orderedAreas.map((area) => [area.id, area]));
-                const { projectTaskSummaryById: summaries, focusedProjectCount } = state.getDerivedState();
-                // RN Projects groups apply the selected area, including No area.
-                const groups = buildProjectGroups({
-                    projects: state.projects,
-                    orderedAreas,
-                    areaFilter: resolveAreaFilterSelection(state.settings.filters, orderedAreas),
-                    tagFilter: { kind: 'all' },
-                    pinFocused: true,
-                });
-                const toNativeGroup = (group: ProjectAreaGroup): NativeProjectGroup => {
-                    const area = group.areaId ? areaById.get(group.areaId) : undefined;
-                    return {
-                        areaId: area?.id ?? null,
-                        areaName: area?.name ?? null,
-                        areaColor: area?.color ?? null,
-                        areaIcon: area?.icon ?? null,
-                        projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount, translate)),
-                    };
-                };
-                cachedProjects = {
-                    version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision: currentRevision,
-                    active: groups.active.map(toNativeGroup),
-                    deferred: groups.deferred.map(toNativeGroup),
-                    archived: groups.archived.map(toNativeGroup),
-                };
-                cachedProjectsRevision = currentRevision;
+            return { ok: true, value: readProjectsView(null) };
+        },
+
+        getFilteredProjects(input: { tagFilter: string }): NativeHostResult<NativeFilteredProjectsView> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).length !== 1
+                || !Object.prototype.hasOwnProperty.call(input, 'tagFilter')
+                || typeof input.tagFilter !== 'string' || input.tagFilter.length > 100_000) {
+                return fail('INVALID_INPUT', 'A bounded raw tag filter is required');
             }
-            return { ok: true, value: cachedProjects };
+            return { ok: true, value: readProjectsView(input.tagFilter) as NativeFilteredProjectsView };
         },
 
         getProjectDetail(input: { projectId: string; offset: number; limit: number; revision?: string }): NativeHostResult<NativeProjectDetail> {
