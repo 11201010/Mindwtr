@@ -321,10 +321,10 @@ const sameTokens = (left: readonly string[] | undefined, right: readonly string[
  * capture ID) and the project's name, so lines naming one project share it, as the
  * store's name match does, and a retry finds it whichever lines are still missing.
  */
-const captureProjectId = (requestId: string, title: string) => requestRowId(requestId, `project:${title.trim().toLowerCase()}`);
+export const captureProjectId = (requestId: string, title: string) => requestRowId(requestId, `project:${title.trim().toLowerCase()}`);
 
 /** The addProject a capture hands to quick-capture-model: its projects take captureProjectId (requestProjects). */
-const captureProjects = (requestId: string) => requestProjects((title) => captureProjectId(requestId, title));
+export const captureProjects = (requestId: string) => requestProjects((title) => captureProjectId(requestId, title));
 const projectGone = () => fail('STALE_REVISION', 'The project this capture created is gone');
 
 /**

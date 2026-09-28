@@ -32,6 +32,11 @@
  * Shared files (initialProps.attachments) are left out: this host has no
  * managed attachments folder until the attachments pass (A2).
  *
+ * A project a save creates (a +Project, or the link's project param) takes an id
+ * from the capture UUID (a batch's first) and its name: a retry files the task
+ * there, renamed since or not, and refuses one deleted or archived since
+ * (STALE_REVISION).
+ *
  * Saves retry exactly (native-request-receipts.ts): on the native host a
  * landed request's receipt is on disk, so a replay after a restart answers its
  * first reply, and the same UUID with another draft is refused. With no
@@ -66,8 +71,8 @@ import type { DateFormatter } from './date';
 import type { TranslateFn } from './i18n';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-host-contract';
 import { fail, isObjectRecord, isText, isTimeEstimate } from './native-host-contract-menu-views';
-import { isTaskOfPlan } from './native-host-contract-quick-capture';
-import { createNativeRequestReceipts } from './native-request-receipts';
+import { captureProjectId, captureProjects, isTaskOfPlan } from './native-host-contract-quick-capture';
+import { createNativeRequestReceipts, withRequestProject } from './native-request-receipts';
 import { buildQuickAddParseOptions, parseQuickAdd, splitQuickAddBulkLines, type QuickAddParseOptions } from './quick-add';
 import { getQuickCaptureInvalidDateNotice, type QuickCaptureNotice } from './quick-capture-model';
 import { resolveFeatureFlags } from './resolve-feature-flags';
@@ -230,6 +235,26 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
             timeEstimatesEnabled: resolveFeatureFlags(state.settings).timeEstimates,
         });
     };
+    /**
+     * The store's projects, with each project this request made (captureProjectId of the
+     * project a text would create: its +Project, or the link's project param) matched first
+     * under the name the text gives it. A replay files its task there, renamed since or not,
+     * never in a project given that name since. Null when one is deleted or archived.
+     */
+    const ownedProjects = (requestId: string, params: CaptureModalParams, draft: CaptureModalDraft, texts: readonly string[]): Project[] | null => {
+        let projects: Project[] = [...useTaskStore.getState().projects];
+        for (const text of texts) {
+            // The project the text would create with no project to match.
+            const bare = planCaptureModalRequest(requestFor(params, draft, text, []));
+            const title = bare.success ? bare.projectToCreate?.title : undefined;
+            if (!title) continue;
+            const matched = withRequestProject(projects, captureProjectId(requestId, title), title);
+            if (!matched) return null;
+            projects = matched;
+        }
+        return projects;
+    };
+    const projectGone = () => fail('STALE_REVISION', 'The project this capture created is gone');
     const view = (params: CaptureModalParams, draft: CaptureModalDraft): NativeCaptureModalView => {
         const state = useTaskStore.getState();
         const now = new Date();
@@ -351,9 +376,11 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                             },
                         };
                     };
-                    const request = requestFor(params, draft, draft.text, useTaskStore.getState().projects);
-                    // After a restart the receipt is gone: the task this capture UUID created
-                    // answers the retry, but only when it is what this draft writes.
+                    const owned = ownedProjects(captureId, params, draft, [draft.text]);
+                    if (!owned) return projectGone();
+                    const request = requestFor(params, draft, draft.text, owned);
+                    // With no receipt to answer it, the task this capture UUID created answers the
+                    // retry, but only when it is what this draft writes.
                     const existing = useTaskStore.getState()._allTasks.find((task) => task.id === captureId.toLowerCase());
                     if (existing) {
                         const plan = planCaptureModalRequest(request);
@@ -362,10 +389,12 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                             : fail('INVALID_INPUT', 'Capture ID already belongs to another task');
                     }
                     try {
+                        const projects = captureProjects(captureId);
                         const result = await executeCaptureTransaction(request.input, {
-                            addProject: (title, color, props) => useTaskStore.getState().addProject(title, color, props),
+                            addProject: projects.addProject,
                             addTask: (title, props) => useTaskStore.getState().addTask(title, props, { captureId }),
                         }, request.options);
+                        if (projects.made.stale) return projectGone();
                         if (!result.success) return notApplied('error' in result ? result.error : result.reason);
                         return saved(result.createdTaskId ?? captureId.toLowerCase(), result.props.projectId);
                     } catch (error) {
@@ -411,13 +440,16 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                 JSON.stringify(['captureModalLines', params, draft.text, draft.description, draft.applied, ids]),
                 async () => {
                     const state = useTaskStore.getState();
+                    // The batch's projects take ids from its first capture UUID (the receipt's).
+                    const owned = ownedProjects(ids[0], params, draft, lines);
+                    if (!owned) return projectGone();
                     // One store write makes every line, so a batch that landed holds all its UUIDs. A batch
                     // saved before a restart answers from its tasks when each matches its line; a list that
                     // names only some saved tasks is not that batch.
                     const existing = taskIds.map((id) => state._allTasks.find((task) => task.id === id));
                     if (existing.some(Boolean)) {
                         const matches = existing.every((task, index) => {
-                            const plan = task && planCaptureModalRequest(requestFor(params, draft, lines[index], state.projects));
+                            const plan = task && planCaptureModalRequest(requestFor(params, draft, lines[index], owned));
                             return Boolean(task && plan?.success && isTaskOfDraft(task, plan, ids[0]));
                         });
                         return matches
@@ -425,16 +457,18 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                             : fail('INVALID_INPUT', 'These capture IDs do not name the batch saved under them');
                     }
                     try {
+                        const projects = captureProjects(ids[0]);
                         const outcome = await saveCaptureModalLines({
                             lines,
-                            projects: state.projects,
+                            projects: owned,
                             buildRequest,
                             actions: {
-                                addProject: (title, color, props) => useTaskStore.getState().addProject(title, color, props),
+                                addProject: projects.addProject,
                                 addTasks: (items) => useTaskStore.getState().addTasks(items),
                             },
                             captureIds: ids,
                         });
+                        if (projects.made.stale) return projectGone();
                         if (outcome.kind !== 'saved') return notApplied(undefined);
                         return { ok: true, value: { kind: 'saved', taskIds, close } };
                     } catch (error) {

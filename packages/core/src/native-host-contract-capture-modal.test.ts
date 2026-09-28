@@ -5,6 +5,7 @@ import { configureDateFormatting } from './date';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeCaptureModalClose, NativeCaptureModalSubmitResult, NativeCaptureModalView } from './native-host-contract-capture-modal';
 import { openScreenHost, openSqliteHost, requestId, restartScreenHost, value } from './screen-parity.replay';
+import { requestRowId } from './native-request-receipts';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppSettings, Area, Project, Task } from './types';
 
@@ -90,7 +91,9 @@ async function openReplayHost(settings: AppSettings, refuse: () => boolean) {
             return result;
         },
         addProject: async (title, color, props) => {
-            log.push(['addProject', ...encode([title, color, props]) as unknown[]]);
+            // The native host names a capture's project by its request (requestRowId); React Native's store picks the id.
+            const { id: _requestDerived, ...shown } = props ?? {};
+            log.push(['addProject', ...encode([title, color, Object.keys(shown).length > 0 ? shown : undefined]) as unknown[]]);
             const created = await actions.addProject(title, color, props);
             if (created) createdIds.set(created.id, `<created-project:${title}>`);
             return created;
@@ -521,5 +524,70 @@ describe('native host contract: the capture confirmation screen over SQLite', ()
         }
         expect(useTaskStore.getState()._allTasks.filter((task) => task.title === 'First' || task.title === 'Second').map((task) => task.id).sort())
             .toEqual([a, b].sort());
+    });
+
+    /** Runs `write` while the store refuses to add tasks, as a task write that fails after its project landed. */
+    const withTaskWritesRefused = async <T,>(write: () => Promise<T>): Promise<T> => {
+        const { addTask, addTasks } = useTaskStore.getState();
+        useTaskStore.setState({
+            addTask: async () => ({ success: false, error: 'Task store refused' }),
+            addTasks: async () => ({ success: false, error: 'Task store refused' }),
+        });
+        try {
+            return await write();
+        } finally {
+            useTaskStore.setState({ addTask, addTasks });
+            await flushPendingSave();
+        }
+    };
+    const store = () => useTaskStore.getState();
+
+    // Review blocker 3: a project that landed while its task failed was made again by a replay after a rename.
+    it.each([
+        ['a link\'s project param', linkParams, 'shopping'],
+        ['a typed +Project', { initialValue: 'Plan%20beds%20%2BGarden' }, 'garden'],
+    ] as const)('%s whose project landed and task failed: a replay after a rename files the task there and makes no second project', async (_entry, params, name) => {
+        {
+            const env = await open();
+            const { draft } = value(env.host.openCaptureModal({ params }));
+            const input = { params, draft, captureId: requestId() };
+            const projectId = requestRowId(input.captureId, `project:${name}`);
+            expect(await withTaskWritesRefused(() => env.host.submitCaptureModal(input))).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            expect(await env.receiptIds()).toEqual([]);
+            await store().updateProject(projectId, { title: 'Renamed' });
+            await flushPendingSave();
+            const replay = await env.replay((restarted) => restarted.submitCaptureModal(input));
+            expect(replay.result).toMatchObject({ ok: true, value: { kind: 'saved', taskId: input.captureId, projectId } });
+            expect(store()._allProjects.filter((project) => !['p-launch', 'p-home', 'p-old', 'p-gone'].includes(project.id)).map((project) => [project.id, project.title]))
+                .toEqual([[projectId, 'Renamed']]);
+            expect(store()._tasksById.get(input.captureId)).toMatchObject({ projectId });
+            expect(await env.replay((restarted) => restarted.submitCaptureModal(input))).toEqual({ result: replay.result, wrote: false, receipts: false });
+        }
+    });
+
+    it('a capture whose project was deleted since is refused (STALE_REVISION) and writes nothing', async () => {
+        const env = await open();
+        const { draft } = value(env.host.openCaptureModal({ params: linkParams }));
+        const input = { params: linkParams, draft, captureId: requestId() };
+        await withTaskWritesRefused(() => env.host.submitCaptureModal(input));
+        await store().deleteProject(requestRowId(input.captureId, 'project:shopping'));
+        await flushPendingSave();
+        expect(await env.replay((restarted) => restarted.submitCaptureModal(input)))
+            .toMatchObject({ result: { ok: false, error: { code: 'STALE_REVISION' } }, wrote: false, receipts: false });
+    });
+
+    it('a batch whose project landed and tasks failed: a replay after a rename files every line there', async () => {
+        const env = await open();
+        const params = { initialValue: 'Buy%20seeds%20%2BGarden%0AWeed%20%2BGarden' };
+        const { draft } = value(env.host.openCaptureModal({ params }));
+        const input = { params, draft, captureIds: [requestId(), requestId()] };
+        const projectId = requestRowId(input.captureIds[0], 'project:garden');
+        expect(await withTaskWritesRefused(() => env.host.submitCaptureModalLines(input))).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        await store().updateProject(projectId, { title: 'Beds' });
+        await flushPendingSave();
+        const replay = await env.replay((restarted) => restarted.submitCaptureModalLines(input));
+        expect(replay.result).toMatchObject({ ok: true, value: { kind: 'saved', taskIds: input.captureIds } });
+        expect(input.captureIds.map((id) => store()._tasksById.get(id)?.projectId)).toEqual([projectId, projectId]);
+        expect(store()._allProjects.filter((project) => project.title === 'Garden' || project.id === projectId).map((project) => project.title)).toEqual(['Beds']);
     });
 });
