@@ -12,6 +12,7 @@ export type ProjectDetailsMetadata = {
     tagsLabel: string;
     hasStartDate: boolean;
     hasDueDate: boolean;
+    hasReviewDate: boolean;
     startDateLabel: string;
     dueDateLabel: string;
     reviewDateLabel: string;
@@ -72,6 +73,7 @@ export function getProjectDetailsPresentation(
         tagsLabel: project.tagIds?.length ? project.tagIds.join(', ') : t('common.none'),
         hasStartDate: Boolean(project.startDate),
         hasDueDate: Boolean(project.dueDate),
+        hasReviewDate: Boolean(project.reviewAt),
         startDateLabel: formatProjectDate(project.startDate, t('common.notSet')),
         dueDateLabel: formatProjectDate(project.dueDate, t('common.notSet')),
         reviewDateLabel: formatProjectDate(project.reviewAt, t('common.notSet')),

@@ -1158,11 +1158,11 @@ private struct TaskScheduleField: View {
 /// displayed labels never pass through Foundation formatting here. The wheel
 /// itself keeps the platform locale/calendar, as RN's native spinner does.
 enum TaskDatePickerComponents {
-    private static func formatter(_ format: String) -> DateFormatter {
+    private static func formatter(_ format: String, timeZone: TimeZone = .current) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = .current
+        formatter.timeZone = timeZone
         formatter.dateFormat = format
         formatter.isLenient = false
         return formatter
@@ -1172,8 +1172,19 @@ enum TaskDatePickerComponents {
         formatter("yyyy-MM-dd HH:mm").date(from: picker.text("date") + " " + picker.text("time"))
     }
 
-    static func string(_ date: Date, time: Bool) -> String {
-        formatter(time ? "HH:mm" : "yyyy-MM-dd").string(from: date)
+    static func string(_ date: Date, time: Bool, timeZone: TimeZone = .current) -> String {
+        formatter(time ? "HH:mm" : "yyyy-MM-dd", timeZone: timeZone).string(from: date)
+    }
+
+    static func instant(_ value: String) -> Date? {
+        let codec = formatter("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timeZone: TimeZone(secondsFromGMT: 0)!)
+        guard let date = codec.date(from: value), codec.string(from: date) == value else { return nil }
+        return date
+    }
+
+    static func instantString(_ date: Date) -> String {
+        formatter("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timeZone: TimeZone(secondsFromGMT: 0)!)
+            .string(from: date)
     }
 }
 

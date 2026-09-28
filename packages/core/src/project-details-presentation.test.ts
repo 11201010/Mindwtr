@@ -32,9 +32,10 @@ const render = (item: Project, patch: Partial<Parameters<typeof getProjectDetail
 describe('Project Details presentation shared with RN', () => {
     it('shows Clear only for RN truthy raw dates, even if raw text equals the missing label', () => {
         for (const value of [undefined, null, '', 'Not set', 'invalid', '2026-03-08', '2026-03-08T04:30:00.000Z']) {
-            const item = project({ startDate: value, dueDate: value } as Partial<Project>);
+            const item = project({ startDate: value, dueDate: value, reviewAt: value } as Partial<Project>);
             const before = structuredClone(item);
-            expect(render(item)).toMatchObject({ hasStartDate: Boolean(value), hasDueDate: Boolean(value) });
+            expect(render(item)).toMatchObject({ hasStartDate: Boolean(value), hasDueDate: Boolean(value),
+                hasReviewDate: Boolean(value) });
             expect(item).toEqual(before);
         }
     });

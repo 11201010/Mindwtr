@@ -752,9 +752,8 @@ struct ProjectDetailScreen: View {
         .onChange(of: model.projectRenameEditing) { renameFocused = $0 }
         .onChange(of: model.projectRenameInputEnabled) { if $0 { renameFocused = true } }
         .onChange(of: notesFocused) { if !$0 { Task { await model.flushProjectNotesEdit() } } }
-        .onChange(of: model.projectDatePicker.text("date")) { _ in
-            if let date = TaskDatePickerComponents.date(model.projectDatePicker) { projectDateDraft = date }
-        }
+        .onChange(of: model.projectDatePicker.text("date")) { _ in updateProjectDateDraft() }
+        .onChange(of: model.projectDatePicker.text("instant")) { _ in updateProjectDateDraft() }
         .task(id: model.projectDetail.text("mutationRevision")) {
             if model.projectDateField != nil && !model.projectDatePending && model.projectCurrent {
                 await model.retryProjectDateRead()
@@ -782,7 +781,7 @@ struct ProjectDetailScreen: View {
         .sheet(isPresented: Binding(get: { model.projectDateField != nil },
                                     set: { if !$0 { model.cancelProjectDate() } })) {
             projectDateSheet
-                .presentationDetents([.medium, .large])
+                .presentationDetents(model.retryNeeded ? [.large] : [.medium, .large])
                 .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
         }
         .sheet(isPresented: Binding(get: { model.projectSectionsPresented },
@@ -841,15 +840,24 @@ struct ProjectDetailScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 let field = model.projectDateField ?? "startDate"
-                let label = model.label(field == "startDate" ? "taskEdit.startDateLabel" : "taskEdit.dueDateLabel")
+                let label = model.label(field == "reviewAt" ? "projects.reviewAt"
+                    : field == "startDate" ? "taskEdit.startDateLabel" : "taskEdit.dueDateLabel")
                 Text(label).rnFont(18, .semibold).foregroundStyle(palette.text)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                 if !model.projectDatePicker.isEmpty {
-                    DatePicker(label, selection: $projectDateDraft, displayedComponents: .date)
-                        .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
-                        .disabled(model.busy || model.projectDatePending || model.retryNeeded)
-                        .accessibilityLabel(label).accessibilityIdentifier("project-date-picker")
+                    if field == "reviewAt" {
+                        DatePicker(label, selection: $projectDateDraft, displayedComponents: .date)
+                            .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
+                            .environment(\.timeZone, model.projectDateOpeningTimeZone ?? .current)
+                            .disabled(model.busy || model.projectDatePending || model.retryNeeded)
+                            .accessibilityLabel(label).accessibilityIdentifier("project-date-picker")
+                    } else {
+                        DatePicker(label, selection: $projectDateDraft, displayedComponents: .date)
+                            .datePickerStyle(.wheel).labelsHidden().tint(palette.tint)
+                            .disabled(model.busy || model.projectDatePending || model.retryNeeded)
+                            .accessibilityLabel(label).accessibilityIdentifier("project-date-picker")
+                    }
                 } else if model.projectDateReadError == nil {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 100)
                 }
@@ -863,8 +871,13 @@ struct ProjectDetailScreen: View {
                     .disabled(model.projectDatePending || model.retryNeeded || model.busy)
                     .accessibilityIdentifier("project-date-cancel")
                     Button {
-                        let value = TaskDatePickerComponents.string(projectDateDraft, time: false)
-                        Task { await model.changeProjectDate(field, value: value) }
+                        if field == "reviewAt" {
+                            let selected = projectDateDraft
+                            Task { await model.finishProjectReviewDate(selected) }
+                        } else {
+                            let value = TaskDatePickerComponents.string(projectDateDraft, time: false)
+                            Task { await model.changeProjectDate(field, value: value) }
+                        }
                     } label: {
                         Text(model.label("common.done"))
                             .frame(maxWidth: .infinity, minHeight: 48)
@@ -879,6 +892,14 @@ struct ProjectDetailScreen: View {
         }
         .background(palette.card)
         .accessibilityIdentifier("project-date-sheet")
+    }
+
+    private func updateProjectDateDraft() {
+        let picker = model.projectDatePicker
+        let date = model.projectDateField == "reviewAt"
+            ? TaskDatePickerComponents.instant(picker.text("instant"))
+            : TaskDatePickerComponents.date(picker)
+        if let date { projectDateDraft = date }
     }
 
     @ViewBuilder
@@ -1054,15 +1075,9 @@ struct ProjectDetailScreen: View {
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
                 projectNotesPanel
-                VStack(alignment: .leading, spacing: 16) {
-                    projectDateRow("startDate", value: metadata.text("startDateLabel"),
-                                   hasValue: metadata.flag("hasStartDate"))
-                    projectDateRow("dueDate", value: metadata.text("dueDateLabel"),
-                                   hasValue: metadata.flag("hasDueDate"))
-                    metadataRow("projects.reviewAt", value: metadata.text("reviewDateLabel"), id: "review-date")
+                ProjectDatesMetadata(model: model, palette: palette, metadata: metadata) {
+                    resignProjectNotesInput()
                 }
-                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -1242,47 +1257,6 @@ struct ProjectDetailScreen: View {
         sectionFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         Task { await model.saveProjectSection() }
-    }
-
-    private func projectDateRow(_ field: String, value: String, hasValue: Bool) -> some View {
-        let start = field == "startDate"
-        let label = model.label(start ? "taskEdit.startDateLabel" : "taskEdit.dueDateLabel")
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(label).rnFont(12, .semibold).foregroundStyle(palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .center, spacing: 8) {
-                Button {
-                    resignProjectNotesInput()
-                    Task { await model.openProjectDate(field) }
-                } label: {
-                    Text(value.isEmpty ? model.label("common.notSet") : value)
-                        .rnFont(14).foregroundStyle(palette.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(!model.projectDateTapEnabled)
-                .accessibilityLabel(label + ": " + (value.isEmpty ? model.label("common.notSet") : value))
-                .accessibilityIdentifier(start ? "project-start-date-open" : "project-due-date-open")
-                if hasValue {
-                    Button {
-                        resignProjectNotesInput()
-                        Task { await model.changeProjectDate(field, value: nil) }
-                    } label: {
-                        Image(systemName: "xmark.circle").font(.system(size: 19))
-                            .foregroundStyle(palette.secondary)
-                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).disabled(!model.projectDateTapEnabled)
-                    .accessibilityLabel(model.label("common.clear") + " " + label)
-                    .accessibilityIdentifier(start ? "project-start-date-clear" : "project-due-date-clear")
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var projectNotesPanel: some View {
@@ -1514,6 +1488,83 @@ private struct ProjectSectionsMetadata: View {
                 .rnFont(14).foregroundStyle(palette.text)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("project-detail-meta-sections")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// Keep the three date rows behind concrete View boundaries so expanding Details
+// does not resolve their nested SwiftUI types in the parent body on iOS 17.
+private struct ProjectDatesMetadata: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let metadata: CoreObject
+    let onResignNotes: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ProjectDateMetadataRow(model: model, palette: palette, field: "startDate",
+                                   value: metadata.text("startDateLabel"),
+                                   hasValue: metadata.flag("hasStartDate"), onResignNotes: onResignNotes)
+            ProjectDateMetadataRow(model: model, palette: palette, field: "dueDate",
+                                   value: metadata.text("dueDateLabel"),
+                                   hasValue: metadata.flag("hasDueDate"), onResignNotes: onResignNotes)
+            ProjectDateMetadataRow(model: model, palette: palette, field: "reviewAt",
+                                   value: metadata.text("reviewDateLabel"),
+                                   hasValue: metadata.flag("hasReviewDate"), onResignNotes: onResignNotes)
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct ProjectDateMetadataRow: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let field: String
+    let value: String
+    let hasValue: Bool
+    let onResignNotes: () -> Void
+
+    var body: some View {
+        let start = field == "startDate"
+        let prefix = start ? "project-start-date" : field == "reviewAt" ? "project-review-date" : "project-due-date"
+        let label = model.label(start ? "taskEdit.startDateLabel"
+            : field == "reviewAt" ? "projects.reviewAt" : "taskEdit.dueDateLabel")
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(label).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    onResignNotes()
+                    Task { await model.openProjectDate(field) }
+                } label: {
+                    Text(value.isEmpty ? model.label("common.notSet") : value)
+                        .rnFont(14).foregroundStyle(palette.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.projectDateTapEnabled)
+                .accessibilityLabel(label + ": " + (value.isEmpty ? model.label("common.notSet") : value))
+                .accessibilityIdentifier(prefix + "-open")
+                if hasValue {
+                    Button {
+                        onResignNotes()
+                        Task { await model.changeProjectDate(field, value: nil) }
+                    } label: {
+                        Image(systemName: "xmark.circle").font(.system(size: 19))
+                            .foregroundStyle(palette.secondary)
+                            .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectDateTapEnabled)
+                    .accessibilityLabel(model.label("common.clear") + " " + label)
+                    .accessibilityIdentifier(prefix + "-clear")
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

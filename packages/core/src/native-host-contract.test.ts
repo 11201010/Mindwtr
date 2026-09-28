@@ -598,6 +598,7 @@ describe('native host contract', () => {
                 summary: 'Active · Sequential · Work · 3 Sections',
                 statusLabel: 'Active', typeLabel: 'Sequential', sequentialScopeLabel: 'Within sections',
                 areaLabel: 'Work', tagsLabel: '#one, #two', startDateLabel: 'invalid-date',
+                hasReviewDate: false,
                 sections: [{ id: 'sec-a', title: 'Design' }, { id: 'sec-empty', title: 'Empty' },
                     { id: 'sec-b', title: 'Build' }],
             });
@@ -629,7 +630,7 @@ describe('native host contract', () => {
             expect(host.getProjectDetail({ projectId: 'p-live', offset: 1, limit: 1, revision: changedSection.revision }))
                 .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
             expect(detail(host, 'p-live', 1).metadata).toMatchObject({
-                tagsLabel: '#changed', reviewDateLabel: 'invalid-review',
+                tagsLabel: '#changed', reviewDateLabel: 'invalid-review', hasReviewDate: true,
             });
             expect(saveData).not.toHaveBeenCalled();
         });

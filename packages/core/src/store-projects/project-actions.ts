@@ -208,8 +208,8 @@ export const projectStatusEffect = (project: Project, status: 'active' | 'waitin
     }) } };
 };
 
-/** RN updateProject's start/due date lifecycle result, with no child writes. */
-export const projectDateEffect = (project: Project, field: 'startDate' | 'dueDate', value: string | null,
+/** RN updateProject's Project date lifecycle result, with no child writes. */
+export const projectDateEffect = (project: Project, field: 'startDate' | 'dueDate' | 'reviewAt', value: string | null,
     deviceId: string, now: string): PreparedProjectDate['effect'] => {
     const transition = applyProjectLifecycleTransition(project, { [field]: value ?? undefined }, [], [], now, deviceId);
     return { project: { before: project, after: normalizeProjectLifecycleFields({
@@ -219,7 +219,7 @@ export const projectDateEffect = (project: Project, field: 'startDate' | 'dueDat
 };
 
 /** Clearing absent/null/empty preserves the original raw representation. */
-export const isProjectDateNoop = (project: Project, field: 'startDate' | 'dueDate', value: string | null): boolean =>
+export const isProjectDateNoop = (project: Project, field: 'startDate' | 'dueDate' | 'reviewAt', value: string | null): boolean =>
     value === null ? !project[field] : project[field] === value;
 
 export const buildNewProject = ({

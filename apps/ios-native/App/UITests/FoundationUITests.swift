@@ -865,7 +865,7 @@ final class FoundationUITests: XCTestCase {
         } else { XCTAssertEqual(input.value as? String, text) }
     }
 
-    private func revealPagedElement(_ app: XCUIApplication, _ element: XCUIElement, in scroll: XCUIElement, more: String = "", ready: XCUIElement? = nil) {
+    private func revealPagedElement(_ app: XCUIApplication, _ element: XCUIElement, in scroll: XCUIElement, more: String = "", ready: XCUIElement? = nil, outerEdge: Bool = false) {
         XCTAssertTrue(scroll.waitForExistence(timeout: 10))
         func visibleViewport() -> CGRect {
             var frame = scroll.frame.intersection(app.frame)
@@ -897,8 +897,9 @@ final class FoundationUITests: XCTestCase {
             let distance = min(max(44, needed + 24), frame.height * (exists ? 0.4 : 0.7))
             let endY = startY + (above ? distance : -distance)
             let origin = app.coordinate(withNormalizedOffset: .zero)
-            origin.withOffset(CGVector(dx: frame.midX, dy: startY)).press(forDuration: 0.05,
-                thenDragTo: origin.withOffset(CGVector(dx: frame.midX, dy: endY)),
+            let x = outerEdge ? frame.maxX - 4 : frame.midX
+            origin.withOffset(CGVector(dx: x, dy: startY)).press(forDuration: 0.05,
+                thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
                 withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         boardEnabled(element)
@@ -3730,6 +3731,160 @@ final class FoundationUITests: XCTestCase {
             boardTap(app, "project-sections-close"); tap("project-sections-open")
             XCTAssertEqual(app.staticTexts["project-section-row-" + first].label, "Retry Section rename")
             boardTap(app, "project-sections-close"); boardTap(app, "project-back")
+        }
+        app.terminate()
+    }
+
+    func testProjectReviewDateAndNotes() {
+        projectReviewDates(library: "db25c637-3853-46f5-9625-2f965304217a")
+    }
+
+    func testProjectReviewDateLargestText() {
+        projectReviewDates(library: "540cc44b-e491-4816-a367-1cbf53d9f5ee")
+    }
+
+    private func projectReviewDates(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launchEnvironment["TZ"] = "America/New_York"
+        app.launch()
+        let picker = app.datePickers["project-date-picker"]
+        let notes = app.textViews["project-notes-input"]
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            let scroll = app.scrollViews["project-date-sheet"].exists
+                ? app.scrollViews["project-date-sheet"] : app.scrollViews.firstMatch
+            revealPagedElement(app, button, in: scroll)
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, id.hasPrefix("project-date-") ? 44 : 48)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        func open(_ id: String) {
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardTap(app, "project-details-toggle")
+        }
+        func day(_ expected: String, change: String? = nil) {
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            let wheel = picker.pickerWheels.allElementsBoundByIndex.first {
+                guard let value = $0.value as? String, let number = Int(value) else { return false }
+                return (1...31).contains(number)
+            }
+            XCTAssertNotNil(wheel); XCTAssertEqual(wheel?.value as? String, expected)
+            if let change { wheel?.adjust(toPickerWheelValue: change) }
+        }
+        func close(_ action: String) {
+            tap(action)
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: picker)
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 15), .completed)
+        }
+        projects()
+        let draft = app.textFields["projects-create-title"]
+        draft.tap(); draft.typeText("Retained review date draft")
+        open("776dd5c5-1926-4da1-96ff-5d5096971050")
+        tap("project-review-date-open"); day("28"); close("project-date-done")
+        tap("project-review-date-open"); day("28", change: "29"); close("project-date-cancel")
+        boardTap(app, "project-notes-toggle"); boardEnabled(notes)
+        revealPagedElement(app, notes, in: app.scrollViews.firstMatch)
+        notes.tap()
+        // Reveal the editor above the keyboard without scrolling inside its text.
+        revealPagedElement(app, notes, in: app.scrollViews.firstMatch, outerEdge: true)
+        replaceProjectNotesText(notes, with: "Notes before Review Date opens\n")
+        tap("project-review-date-open"); day("28"); close("project-date-done")
+        boardTap(app, "project-back")
+        XCTAssertEqual(draft.value as? String, "Retained review date draft")
+        open("61181128-5b30-4622-95d0-601658a9d216")
+        tap("project-review-date-open"); day("7"); close("project-date-done")
+        tap("project-review-date-open"); day("7", change: "8"); close("project-date-done")
+        tap("project-review-date-open"); day("8"); close("project-date-done")
+        boardTap(app, "project-back")
+        open("7c299e65-4a02-410d-8e85-c01d0655ebda")
+        XCTAssertFalse(app.buttons["project-review-date-clear"].exists)
+        tap("project-review-date-open"); close("project-date-done")
+        XCTAssertTrue(app.buttons["project-review-date-clear"].exists)
+        tap("project-review-date-open"); close("project-date-done")
+        tap("project-review-date-clear")
+        XCTAssertFalse(app.buttons["project-review-date-clear"].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Review Date native controls after clear"
+        capture.lifetime = .keepAlways; add(capture)
+        boardTap(app, "project-back")
+        let archived = app.buttons["projects-section-archived"]
+        revealPagedElement(app, archived, in: app.scrollViews["projects-scroll"])
+        if archived.value as? String == "Expand" { archived.tap() }
+        open("98432619-81dd-480e-9c35-d4dfa1705ff1")
+        XCTAssertFalse(app.buttons["project-review-date-open"].isEnabled)
+        app.terminate(); app.launch(); projects()
+        open("776dd5c5-1926-4da1-96ff-5d5096971050")
+        tap("project-review-date-open"); day("28"); close("project-date-cancel")
+        boardTap(app, "project-notes-toggle")
+        XCTAssertEqual(notes.value as? String, "Notes before Review Date opens\n")
+        app.terminate()
+    }
+
+    func testProjectReviewDateFailureKeepsDraft() {
+        projectReviewDateRecovery(expectFailure: true)
+    }
+
+    func testProjectReviewDateColdRecovery() {
+        projectReviewDateRecovery(expectFailure: false)
+    }
+
+    private func projectReviewDateRecovery(expectFailure: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8d1aaf12-81b3-43e0-9b4b-fbdd1ea87b26"]
+        app.launchEnvironment["TZ"] = "America/New_York"
+        app.launch()
+        if expectFailure {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        } else { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        let row = app.buttons["project-open-61181128-5b30-4622-95d0-601658a9d216"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        row.tap(); boardTap(app, "project-details-toggle")
+        let open = app.buttons["project-review-date-open"]
+        revealPagedElement(app, open, in: app.scrollViews.firstMatch)
+        boardEnabled(open); open.tap()
+        let picker = app.datePickers["project-date-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        let day = picker.pickerWheels.allElementsBoundByIndex.first {
+            guard let value = $0.value as? String, let number = Int(value) else { return false }
+            return (1...31).contains(number)
+        }
+        XCTAssertNotNil(day); guard let day else { return }
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            revealPagedElement(app, button, in: app.scrollViews["project-date-sheet"], outerEdge: true)
+            boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, id.hasPrefix("project-date-") ? 44 : 48)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        if expectFailure {
+            XCTAssertEqual(day.value as? String, "7"); day.adjust(toPickerWheelValue: "8")
+            let selected = picker.pickerWheels.allElementsBoundByIndex.map { $0.value as? String ?? "" }
+            tap("project-date-done")
+            let failure = app.staticTexts["project-date-error"]
+            XCTAssertTrue(failure.waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(app.buttons["project-date-cancel"].isEnabled)
+                XCTAssertFalse(app.buttons["project-date-done"].isEnabled)
+                XCTAssertFalse(picker.isEnabled)
+                XCTAssertEqual(picker.pickerWheels.allElementsBoundByIndex.map { $0.value as? String ?? "" }, selected)
+                tap("project-date-retry"); boardEnabled(app.buttons["project-date-retry"])
+                XCTAssertTrue(failure.exists)
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Review Date failed save retains wheel"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            XCTAssertEqual(day.value as? String, "8")
+            XCTAssertFalse(app.staticTexts["project-date-error"].exists)
+            tap("project-date-cancel")
         }
         app.terminate()
     }

@@ -9,12 +9,13 @@ import { isProjectDateNoop, projectDateEffect, sameProjectSqliteRow } from './st
 import type { PreparedProjectDate } from './store-types';
 import type { Project } from './types';
 
-export type NativeProjectDateField = 'startDate' | 'dueDate';
+export type NativeProjectDateField = 'startDate' | 'dueDate' | 'reviewAt';
 export type NativeProjectDateToken = { title: string; status: Project['status'];
     startDate: string | null; dueDate: string | null; rev: number | null;
     revBy: string | null; updatedAt: string };
 export type NativeProjectDateRequest = { requestId: string; projectId: string;
-    field: NativeProjectDateField; value: string | null; expected: NativeProjectDateToken };
+    field: NativeProjectDateField; value: string | null;
+    expected: NativeProjectDateToken & { reviewAt?: string | null } };
 export type NativeProjectDateResult = { id: string; field: NativeProjectDateField; value: string | null };
 export type NativePreparedProjectDate = PreparedProjectDate & { version: 1;
     request: NativeProjectDateRequest; result: NativeProjectDateResult };
@@ -25,7 +26,8 @@ export type NativeProjectDatePreparation = { kind: 'noop'; result: NativeProject
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const same = taskEditValuesEqual;
-const field = (value: unknown): value is NativeProjectDateField => value === 'startDate' || value === 'dueDate';
+const field = (value: unknown): value is NativeProjectDateField =>
+    value === 'startDate' || value === 'dueDate' || value === 'reviewAt';
 const rawDate = (value: unknown): value is string | null =>
     value === null || typeof value === 'string' && value.length <= 100;
 const calendarDay = (value: unknown): value is string => {
@@ -35,10 +37,11 @@ const calendarDay = (value: unknown): value is string => {
 };
 const fail = (code: 'INVALID_INPUT' | 'STALE_REVISION' | 'SAVE_FAILED', message: string): NativeHostResult<never> =>
     ({ ok: false, error: { code, message } });
-const token = (project: Project): NativeProjectDateToken => ({
+const token = (project: Project, selectedField: NativeProjectDateField): NativeProjectDateRequest['expected'] => ({
     title: project.title, status: project.status,
     startDate: project.startDate ?? null, dueDate: project.dueDate ?? null,
     rev: project.rev ?? null, revBy: project.revBy ?? null, updatedAt: project.updatedAt,
+    ...(selectedField === 'reviewAt' ? { reviewAt: project.reviewAt ?? null } : {}),
 });
 const result = (request: NativeProjectDateRequest): NativeProjectDateResult =>
     ({ id: request.projectId, field: request.field, value: request.value });
@@ -47,7 +50,7 @@ const result = (request: NativeProjectDateRequest): NativeProjectDateResult =>
 const validDateProject = (value: unknown, projectId: string): value is Project => {
     if (!record(value) || !rawDate(value.startDate ?? null) || !rawDate(value.dueDate ?? null)) return false;
     return validProject({ ...value, startDate: value.startDate ?? undefined,
-        dueDate: value.dueDate ?? undefined }, projectId);
+        dueDate: value.dueDate ?? undefined, reviewAt: value.reviewAt ?? undefined }, projectId);
 };
 
 const readRequest = (value: unknown): NativeProjectDateRequest | null => {
@@ -55,13 +58,16 @@ const readRequest = (value: unknown): NativeProjectDateRequest | null => {
     if (!input || !exact(input, ['requestId', 'projectId', 'field', 'value', 'expected'])
         || typeof input.requestId !== 'string' || !UUID.test(input.requestId)
         || typeof input.projectId !== 'string' || !input.projectId || input.projectId.length > 500
-        || !field(input.field) || !(input.value === null || calendarDay(input.value))
+        || !field(input.field) || !(input.value === null || (input.field === 'reviewAt'
+            ? iso(input.value) : calendarDay(input.value)))
         || !record(input.expected)
-        || !exact(input.expected, ['title', 'status', 'startDate', 'dueDate', 'rev', 'revBy', 'updatedAt'])) return null;
+        || !exact(input.expected, ['title', 'status', 'startDate', 'dueDate', 'rev', 'revBy', 'updatedAt',
+            ...(input.field === 'reviewAt' ? ['reviewAt'] : [])])) return null;
     const expected = input.expected;
     return typeof expected.title === 'string' && expected.title.length <= 100_000
         && ['active', 'someday', 'waiting', 'archived'].includes(String(expected.status))
         && rawDate(expected.startDate) && rawDate(expected.dueDate)
+        && (input.field !== 'reviewAt' || rawDate(expected.reviewAt))
         && (expected.rev === null || typeof expected.rev === 'number'
             && Number.isSafeInteger(expected.rev) && expected.rev >= 0)
         && (expected.revBy === null || typeof expected.revBy === 'string' && expected.revBy.length <= 500)
@@ -92,7 +98,7 @@ const readPrepared = (value: unknown): NativePreparedProjectDate | null => {
             || !validDateProject(prepared.effect.project.before, request.projectId)
             || !validDateProject(prepared.effect.project.after, request.projectId)
             || before.status === 'archived' || isProjectDateNoop(before, request.field, request.value)
-            || !same(token(before), request.expected)
+            || !same(token(before, request.field), request.expected)
             || !same(before, prepared.effect.project.before)) return null;
         const planned = projectDateEffect(before, request.field, request.value,
             prepared.deviceIdBefore ?? prepared.deviceIdToInitialize!, prepared.updateAt);
@@ -108,21 +114,26 @@ export function createProjectDateMethods(deps: {
 }) {
     return {
         getProjectDateOptions(input: { projectId: string; field: NativeProjectDateField }): NativeHostResult<{
-            revision: string; project: { id: string } & NativeProjectDateToken;
-            canEdit: boolean; picker: { date: string; time: '12:00' } }> {
+            revision: string; project: { id: string } & NativeProjectDateRequest['expected'];
+            canEdit: boolean; picker: { date: string; time: '12:00'; instant?: string;
+                preserveUnchanged?: boolean } }> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!input || typeof input.projectId !== 'string' || !input.projectId || input.projectId.length > 500
-                || !field(input.field)) return fail('INVALID_INPUT', 'A Project ID and start/due date field are required');
+                || !field(input.field)) return fail('INVALID_INPUT', 'A Project ID and date field are required');
             const project = useTaskStore.getState()._projectsById.get(input.projectId);
             if (!project || project.deletedAt || project.purgedAt)
                 return fail('STALE_REVISION', 'Project is unavailable; refresh before changing its date');
-            const expected = token(project);
-            if (!rawDate(expected.startDate) || !rawDate(expected.dueDate))
+            const expected = token(project, input.field);
+            if (!rawDate(expected.startDate) || !rawDate(expected.dueDate)
+                || (input.field === 'reviewAt' && !rawDate(expected.reviewAt)))
                 return fail('INVALID_INPUT', 'Project date token exceeds the bounded native response');
             const selected = project[input.field];
-            const picker = { date: safeFormatDate(safeParseDate(selected) ?? new Date(), 'yyyy-MM-dd'),
-                time: '12:00' as const };
+            const parsed = safeParseDate(selected);
+            const selectedDate = parsed ?? new Date();
+            const picker = { date: safeFormatDate(selectedDate, 'yyyy-MM-dd'), time: '12:00' as const,
+                ...(input.field === 'reviewAt'
+                    ? { instant: selectedDate.toISOString(), preserveUnchanged: parsed !== null } : {}) };
             const value = { revision: deps.revision(), project: { id: project.id, ...expected },
                 canEdit: project.status !== 'archived', picker };
             return isNativeJsonWithinBytes(value) ? { ok: true, value }
@@ -143,7 +154,8 @@ export function createProjectDateMethods(deps: {
             if (!request) return fail('INVALID_INPUT', 'A bounded Project date request is required');
             const state = useTaskStore.getState();
             const project = state._projectsById.get(request.projectId);
-            if (!project || project.deletedAt || project.purgedAt || !same(token(project), request.expected))
+            if (!project || project.deletedAt || project.purgedAt
+                || !same(token(project, request.field), request.expected))
                 return fail('STALE_REVISION', 'Project changed; refresh before changing its date');
             if (project.status === 'archived')
                 return { ok: true, value: { kind: 'blocked', result: { blocked: '' } } };

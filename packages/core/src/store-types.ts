@@ -84,7 +84,7 @@ export type PreparedProjectStatus = {
     updateAt: string;
 };
 
-/** One frozen Project start/due calendar-day change and its complete Project receipt. */
+/** One frozen Project date change and its complete Project receipt. */
 export type PreparedProjectDate = {
     scope: { project: Project };
     effect: { project: { before: Project; after: Project } };
@@ -414,7 +414,7 @@ export interface TaskStore {
     commitPreparedProjectFlow: (input: PreparedProjectFlow & { request: { projectId: string; action: ProjectFlowAction } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectNotesWrite: (input: PreparedProjectNotesWrite & { request: { projectId: string; text: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;
-    commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate'; value: string | null } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionRename: (input: PreparedProjectSectionRename & { request: {
         projectId: string; sectionId: string; title: string } }) => Promise<PreparedTaskEditResult>;

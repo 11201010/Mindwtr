@@ -101,6 +101,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectStatusReadError: String?
     @Published private(set) var projectDateField: String?
     @Published private(set) var projectDatePicker: CoreObject = [:]
+    @Published private(set) var projectDateOpeningTimeZone: TimeZone?
     @Published private(set) var projectDateError: String?
     @Published private(set) var projectDateReadError: String?
     @Published private(set) var projectSectionsPresented = false
@@ -397,6 +398,7 @@ final class CoreModel: ObservableObject {
     private var projectDateExpectedID: String?
     private var projectDateExpectedField: String?
     private var projectDateExpectedValue: Any?
+    private var projectReviewOpeningRaw: String?
     private var projectSectionOptionsCurrent = false
     private var projectSectionRequest: String?
     private var projectSectionExpectedID: String?
@@ -676,6 +678,7 @@ final class CoreModel: ObservableObject {
         projectDateField != nil && projectDateOptionsCurrent && projectDateOptions.flag("canEdit")
             && projectDateReadError == nil && projectDateRequest == nil && !busy && !retryNeeded
             && projectCurrent && projectDateOptions.text("revision") == projectDetail.text("mutationRevision")
+            && (projectDateField != "reviewAt" || projectDateOpeningTimeZone != nil)
     }
     var projectStatusSelectedStatus: String { projectStatusOptions.object("project").text("status") }
     var projectStatusOpenTapEnabled: Bool {
@@ -2409,11 +2412,13 @@ final class CoreModel: ObservableObject {
 
     func openProjectDate(_ field: String) async {
         let id = projectHeader.text("id")
-        guard ["startDate", "dueDate"].contains(field), projectDateTapEnabled else { return }
+        guard ["startDate", "dueDate", "reviewAt"].contains(field), projectDateTapEnabled else { return }
         guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
               projectDateOpenEnabled else { return }
         projectDateField = field
         projectDatePicker = [:]
+        projectDateOpeningTimeZone = field == "reviewAt" ? TimeZone.current : nil
+        projectReviewOpeningRaw = nil
         projectDateError = nil
         projectDateReadError = nil
         busy = true
@@ -2426,6 +2431,8 @@ final class CoreModel: ObservableObject {
         guard projectDateRequest == nil, !retryNeeded, !busy else { return }
         projectDateField = nil
         projectDatePicker = [:]
+        projectDateOpeningTimeZone = nil
+        projectReviewOpeningRaw = nil
         projectDateError = nil
     }
 
@@ -2433,31 +2440,51 @@ final class CoreModel: ObservableObject {
         projectDateOptionsCurrent = false
         guard selectedSurface == .project, projectCurrent,
               projectDetail.text("projectId") == id, projectHeader.text("id") == id,
-              ["startDate", "dueDate"].contains(field) else { throw CocoaError(.coderReadCorrupt) }
+              ["startDate", "dueDate", "reviewAt"].contains(field) else { throw CocoaError(.coderReadCorrupt) }
+        let review = field == "reviewAt"
+        let readZone = TimeZone.current
+        if review && projectDateField == field && projectDatePicker.isEmpty {
+            guard projectDateOpeningTimeZone == readZone else { throw CocoaError(.coderReadCorrupt) }
+        }
         for attempt in 0..<2 {
             let options = try await query("projectDateOptions", [try json(["projectId": id, "field": field])])
+            if review && TimeZone.current != readZone { throw CocoaError(.coderReadCorrupt) }
             let project = options.object("project")
             let picker = options.object("picker")
+            let instant = review ? TaskDatePickerComponents.instant(picker.text("instant")) : nil
             guard options.count == 4, !options.text("revision").isEmpty,
                   let canEdit = options["canEdit"] as? NSNumber,
                   CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
-                  project.count == 8, project.text("id") == id,
+                  project.count == (review ? 9 : 8), project.text("id") == id,
                   project["title"] is String,
                   ["active", "waiting", "someday", "archived"].contains(project.text("status")),
                   ["startDate", "dueDate"].allSatisfy({ key in
                       project[key] is NSNull || (project[key] as? String).map({ $0.utf16.count <= 100 }) == true
                   }),
+                  !review || project["reviewAt"] is NSNull
+                    || (project["reviewAt"] as? String).map({ $0.utf16.count <= 100 }) == true,
                   project["rev"] is Int || project["rev"] is NSNull,
                   project["revBy"] is String || project["revBy"] is NSNull,
                   !project.text("updatedAt").isEmpty,
-                  picker.count == 2, picker.text("time") == "12:00",
+                  picker.count == (review ? 4 : 2), picker.text("time") == "12:00",
                   picker.text("date").range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
-                  TaskDatePickerComponents.date(picker) != nil,
+                  (review ? instant != nil : TaskDatePickerComponents.date(picker) != nil),
+                  !review || (picker["preserveUnchanged"] as? NSNumber)
+                    .map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true,
+                  !review || instant.map({ TaskDatePickerComponents.string($0, time: false,
+                      timeZone: readZone) == picker.text("date") }) == true,
                   canEdit.boolValue == (project.text("status") != "archived") else {
                 throw CocoaError(.coderReadCorrupt)
             }
             if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
                projectDetail.text("projectId") == id, projectHeader.text("id") == id {
+                if review && projectDateField == field {
+                    let raw = project["reviewAt"] as? String
+                    if !projectDatePicker.isEmpty && raw != projectReviewOpeningRaw {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                    if projectDatePicker.isEmpty { projectReviewOpeningRaw = raw }
+                }
                 projectDateOptions = options
                 projectDateOptionsField = field
                 projectDateOptionsCurrent = true
@@ -2475,9 +2502,21 @@ final class CoreModel: ObservableObject {
         throw CocoaError(.coderReadCorrupt)
     }
 
+    func finishProjectReviewDate(_ selected: Date) async {
+        guard projectDateField == "reviewAt", projectDateDoneEnabled,
+              let zone = projectDateOpeningTimeZone else { return }
+        if projectDatePicker.flag("preserveUnchanged")
+            && TaskDatePickerComponents.string(selected, time: false, timeZone: zone) == projectDatePicker.text("date") {
+            cancelProjectDate()
+            return
+        }
+        await changeProjectDate("reviewAt", value: TaskDatePickerComponents.instantString(selected))
+    }
+
     func changeProjectDate(_ field: String, value: String?) async {
         let id = projectHeader.text("id")
-        guard ["startDate", "dueDate"].contains(field),
+        guard ["startDate", "dueDate", "reviewAt"].contains(field),
+              field != "reviewAt" || (value.map({ TaskDatePickerComponents.instant($0) != nil }) ?? true),
               value == nil || projectDateField == field, projectDateTapEnabled else { return }
         guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
               projectDateOpenEnabled, projectDateRequest == nil else { return }
@@ -2494,12 +2533,13 @@ final class CoreModel: ObservableObject {
                   projectDateOptions.text("revision") == projectDetail.text("mutationRevision") else {
                 throw CocoaError(.coderReadCorrupt)
             }
-            let expected: CoreObject = [
+            var expected: CoreObject = [
                 "title": project.text("title"), "status": project.text("status"),
                 "startDate": project["startDate"]!, "dueDate": project["dueDate"]!,
                 "rev": project["rev"]!, "revBy": project["revBy"]!,
                 "updatedAt": project.text("updatedAt")
             ]
+            if field == "reviewAt" { expected["reviewAt"] = project["reviewAt"]! }
             let requested: Any
             if let value { requested = value } else { requested = NSNull() }
             projectDateRequest = try json(["requestId": UUID().uuidString.lowercased(),
@@ -2543,6 +2583,8 @@ final class CoreModel: ObservableObject {
         projectDateOptionsCurrent = false
         projectDateField = nil
         projectDatePicker = [:]
+        projectDateOpeningTimeZone = nil
+        projectReviewOpeningRaw = nil
         retryNeeded = false
         projectDateError = nil
         projectDateReadError = nil
@@ -5623,6 +5665,8 @@ final class CoreModel: ObservableObject {
         projectStatusExpectedStatus = nil
         projectDateField = nil
         projectDatePicker = [:]
+        projectDateOpeningTimeZone = nil
+        projectReviewOpeningRaw = nil
         projectDateError = nil
         projectDateReadError = nil
         projectDateOptions = [:]
@@ -5672,6 +5716,8 @@ final class CoreModel: ObservableObject {
               !projectRenameEditing && !projectSectionsPresented else { return }
         projectDateField = nil
         projectDatePicker = [:]
+        projectDateOpeningTimeZone = nil
+        projectReviewOpeningRaw = nil
         selectedSurface = projectCaller
         projectCurrent = false
         projectError = nil
@@ -5717,7 +5763,7 @@ final class CoreModel: ObservableObject {
                 guard next.text("projectId") == id, !next.text("revision").isEmpty,
                       !next.text("mutationRevision").isEmpty,
                       next.number("total") >= 0,
-                      ["hasStartDate", "hasDueDate"].allSatisfy({ key in
+                      ["hasStartDate", "hasDueDate", "hasReviewDate"].allSatisfy({ key in
                           (metadata[key] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
                       }),
                       next.objects("items").count == min(pageSize, next.number("total")) else {

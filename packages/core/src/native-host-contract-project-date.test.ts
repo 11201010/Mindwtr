@@ -3,6 +3,7 @@ import { createProjectDateMethods, type NativeProjectDateField,
     type NativeProjectDateRequest } from './native-host-contract-project-date';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from './project-sync-schema';
+import { safeFormatDate } from './date';
 import type { AppData, Project, Section, Task } from './types';
 
 const now = '2026-09-28T15:00:00.000Z';
@@ -206,7 +207,7 @@ describe('prepared native Project start/due dates', () => {
             expect(methods.prepareProjectDate({ ...input, value })).toMatchObject({ ok: false,
                 error: { code: 'INVALID_INPUT' } });
         }
-        expect(methods.prepareProjectDate({ ...input, field: 'reviewAt' as never }))
+        expect(methods.prepareProjectDate({ ...input, field: 'unknown' as never }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(methods.prepareProjectDate({ ...input, expected: { ...input.expected,
             startDate: 'x'.repeat(101) } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
@@ -232,5 +233,250 @@ describe('prepared native Project start/due dates', () => {
         expect(methods.probeProjectDateOutcome(input)).toMatchObject({ ok: false,
             error: { code: 'STALE_REVISION' } });
         expect(saves()).toBe(0);
+    });
+});
+
+describe('prepared native Project Review Date', () => {
+    it('keeps legacy start/due option and journal shapes while projecting a frozen review instant', async () => {
+        vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-28T23:59:59.500Z'));
+        const raw = '2026-09-28T23:30:14.125+02:00';
+        const { methods, request } = await open({ projects: [project('target', { reviewAt: raw })] });
+        const legacy = methods.getProjectDateOptions({ projectId: 'target', field: 'dueDate' });
+        if (!legacy.ok) throw new Error(JSON.stringify(legacy));
+        expect(Object.keys(legacy.value.project).sort()).toEqual([
+            'dueDate', 'id', 'rev', 'revBy', 'startDate', 'status', 'title', 'updatedAt',
+        ]);
+        expect(legacy.value.picker).toEqual({ date: legacy.value.picker.date, time: '12:00' });
+        const oldRequest = request('dueDate', '2026-10-01');
+        const oldPlan = methods.prepareProjectDate(oldRequest);
+        if (!oldPlan.ok || oldPlan.value.kind !== 'prepared') throw new Error(JSON.stringify(oldPlan));
+        expect(Object.keys(oldPlan.value.prepared.request.expected).sort()).toEqual([
+            'dueDate', 'rev', 'revBy', 'startDate', 'status', 'title', 'updatedAt',
+        ]);
+        const oldCold = JSON.parse(JSON.stringify(sortKeys({ request: oldRequest,
+            prepared: oldPlan.value.prepared }))) as
+            { request: typeof oldRequest; prepared: typeof oldPlan.value.prepared };
+        expect(methods.validatePreparedProjectDate(oldCold))
+            .toEqual({ ok: true, value: oldPlan.value.prepared.result });
+        expect(await methods.commitPreparedProjectDate(oldCold)).toEqual({ ok: true,
+            value: oldPlan.value.prepared.result });
+        expect(useTaskStore.getState()._allProjects[0].reviewAt).toBe(raw);
+        expect(await methods.commitPreparedProjectDate(oldCold)).toEqual({ ok: true,
+            value: oldPlan.value.prepared.result });
+        const review = methods.getProjectDateOptions({ projectId: 'target', field: 'reviewAt' as NativeProjectDateField });
+        if (!review.ok) throw new Error(JSON.stringify(review));
+        expect(Object.keys(review.value.project).sort()).toEqual([
+            'dueDate', 'id', 'rev', 'revBy', 'reviewAt', 'startDate', 'status', 'title', 'updatedAt',
+        ]);
+        expect(review.value.project.reviewAt).toBe(raw);
+        expect(review.value.picker).toEqual({ date: safeFormatDate(new Date(raw), 'yyyy-MM-dd'),
+            time: '12:00', instant: new Date(raw).toISOString(), preserveUnchanged: true });
+        const missing = await open({ projects: [project('target', { reviewAt: 'invalid' })] });
+        const projected = missing.methods.getProjectDateOptions({ projectId: 'target',
+            field: 'reviewAt' as NativeProjectDateField });
+        expect(projected).toMatchObject({ ok: true, value: { picker: {
+            date: safeFormatDate(new Date('2026-09-28T23:59:59.500Z'), 'yyyy-MM-dd'),
+            time: '12:00', instant: '2026-09-28T23:59:59.500Z', preserveUnchanged: false,
+        } } });
+    });
+
+    it('accepts an old start/due journal with a long unrelated raw reviewAt', async () => {
+        const raw = 'x'.repeat(101);
+        const { methods, request, data } = await open({ projects: [project('target', { reviewAt: raw })] });
+        const input = request('dueDate', '2026-10-01');
+        const plan = methods.prepareProjectDate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const cold = JSON.parse(JSON.stringify(sortKeys({ request: input, prepared: plan.value.prepared }))) as
+            { request: typeof input; prepared: typeof plan.value.prepared };
+        expect(methods.validatePreparedProjectDate(cold)).toEqual({ ok: true, value: plan.value.prepared.result });
+        expect(await methods.commitPreparedProjectDate(cold)).toMatchObject({ ok: true });
+        expect(data().projects[0].reviewAt).toBe(raw);
+        expect(methods.getProjectDateOptions({ projectId: 'target', field: 'reviewAt' }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it('sets and clears only reviewAt with RN Project row stamping', async () => {
+        vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-28T16:00:00.000Z'));
+        const original = project('target', { startDate: '2026-09-01', dueDate: 'invalid due',
+            reviewAt: '2026-09-28', supportNotes: 'Keep Notes' });
+        const { methods, request } = await open({ projects: [original, project('other')],
+            tasks: [task()], sections: [section()] });
+        const value = '2026-10-01T04:00:00.000Z';
+        const input = request('reviewAt' as NativeProjectDateField, value);
+        const plan = methods.prepareProjectDate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const before = { tasks: structuredClone(useTaskStore.getState()._allTasks),
+            sections: structuredClone(useTaskStore.getState()._allSections) };
+        expect(plan.value.prepared.effect.project.after).toMatchObject({ reviewAt: value, rev: 4,
+            startDate: original.startDate, dueDate: original.dueDate, supportNotes: original.supportNotes });
+        expect((await useTaskStore.getState().updateProject('target', { reviewAt: value })).success).toBe(true);
+        expect(useTaskStore.getState()._allProjects[0]).toEqual(plan.value.prepared.effect.project.after);
+        expect(useTaskStore.getState()._allTasks).toEqual(before.tasks);
+        expect(useTaskStore.getState()._allSections).toEqual(before.sections);
+        const reopened = await open({ projects: [original], tasks: [task()], sections: [section()] });
+        const fresh = reopened.request('reviewAt' as NativeProjectDateField, value);
+        const prepared = reopened.methods.prepareProjectDate(fresh);
+        if (!prepared.ok || prepared.value.kind !== 'prepared') throw new Error(JSON.stringify(prepared));
+        expect(await reopened.methods.commitPreparedProjectDate({ request: fresh, prepared: prepared.value.prepared }))
+            .toEqual({ ok: true, value: { id: 'target', field: 'reviewAt', value } });
+        expect(reopened.data().projects[0].reviewAt).toBe(value);
+        expect(reopened.data().tasks).toEqual(before.tasks);
+        expect(reopened.data().sections).toEqual(before.sections);
+        const clear = reopened.request('reviewAt' as NativeProjectDateField, null);
+        const clearing = reopened.methods.prepareProjectDate(clear);
+        if (!clearing.ok || clearing.value.kind !== 'prepared') throw new Error(JSON.stringify(clearing));
+        expect(await reopened.methods.commitPreparedProjectDate({ request: clear, prepared: clearing.value.prepared }))
+            .toMatchObject({ ok: true });
+        expect(reopened.data().projects[0].reviewAt).toBeUndefined();
+    });
+
+    it('keeps null, absent, invalid, and date-only raw values until an explicit review edit', async () => {
+        const { methods, request, saves } = await open({ projects: [project('target', {
+            startDate: null as never, dueDate: '2026-09-29', reviewAt: null as never,
+        })] });
+        expect(methods.getProjectDateOptions({ projectId: 'target', field: 'reviewAt' }))
+            .toMatchObject({ ok: true, value: { project: { reviewAt: null },
+                picker: { preserveUnchanged: false } } });
+        expect(methods.prepareProjectDate(request('reviewAt', null)))
+            .toEqual({ ok: true, value: { kind: 'noop', result: { id: 'target', field: 'reviewAt', value: null } } });
+        expect(saves()).toBe(0);
+        const nullInput = request('reviewAt', '2026-10-01T04:00:00.000Z');
+        const nullPlan = methods.prepareProjectDate(nullInput);
+        if (!nullPlan.ok || nullPlan.value.kind !== 'prepared') throw new Error(JSON.stringify(nullPlan));
+        useTaskStore.setState({ _allProjects: [project('target', {
+            startDate: null as never, dueDate: '2026-09-29', reviewAt: undefined,
+        })] });
+        expect(await methods.commitPreparedProjectDate({ request: nullInput, prepared: nullPlan.value.prepared }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const values: Array<string | undefined> = [undefined, '', 'invalid', '2026-09-28'];
+        for (const value of values) {
+            useTaskStore.setState({ _allProjects: [project('target', {
+                startDate: null as never, dueDate: '2026-09-29', reviewAt: value })] });
+            const options = methods.getProjectDateOptions({ projectId: 'target', field: 'reviewAt' });
+            expect(options).toMatchObject({ ok: true, value: { project: { reviewAt: value ?? null },
+                picker: { preserveUnchanged: value === '2026-09-28' } } });
+            const input = request('reviewAt', '2026-10-01T04:00:00.000Z');
+            const plan = methods.prepareProjectDate(input);
+            if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+            expect(plan.value.prepared.scope.project.startDate).toBeNull();
+            expect(plan.value.prepared.effect.project.after.startDate).toBeNull();
+            expect(plan.value.prepared.effect.project.after.dueDate).toBe('2026-09-29');
+            expect(plan.value.prepared.effect.project.after.reviewAt).toBe(input.value);
+        }
+        expect(saves()).toBe(0);
+    });
+
+    it('sets reviewAt from a raw null without changing nullable start/due fields', async () => {
+        const { methods, request, data } = await open({ projects: [project('target', {
+            startDate: null as never, dueDate: null as never, reviewAt: null as never,
+        })] });
+        const input = request('reviewAt', '2026-10-01T04:00:00.000Z');
+        const plan = methods.prepareProjectDate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        expect(await methods.commitPreparedProjectDate({ request: input, prepared: plan.value.prepared }))
+            .toEqual({ ok: true, value: plan.value.prepared.result });
+        expect(data().projects[0].startDate).toBeNull();
+        expect(data().projects[0].dueDate).toBeNull();
+        expect(data().projects[0].reviewAt).toBe(input.value);
+    });
+
+    it('rejects noncanonical review writes and conditional token forgeries before a write', async () => {
+        const { methods, request, saves } = await open({ projects: [project('target', {
+            reviewAt: '2026-09-28T14:00:00.000Z',
+        })] });
+        const input = request('reviewAt', '2026-10-01T04:00:00.000Z');
+        for (const value of ['2026-10-01', '2026-10-01T04:00:00Z',
+            '2026-10-01T00:00:00.000-04:00', '2026-02-30T04:00:00.000Z', 'tomorrow']) {
+            expect(methods.prepareProjectDate({ ...input, value }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        const omitted = { ...input, expected: { ...input.expected } };
+        delete omitted.expected.reviewAt;
+        expect(methods.prepareProjectDate(omitted)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(methods.prepareProjectDate({ ...input, expected: { ...input.expected, reviewAt: 'later' } }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        const old = request('dueDate', '2026-10-01');
+        expect(methods.prepareProjectDate({ ...old, expected: { ...old.expected, reviewAt: null } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const plan = methods.prepareProjectDate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const forged = structuredClone({ request: input, prepared: plan.value.prepared });
+        forged.prepared.effect.project.after.reviewAt = '2026-10-02T04:00:00.000Z';
+        expect(methods.validatePreparedProjectDate(forged)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(await methods.commitPreparedProjectDate(forged)).toMatchObject({ ok: false,
+            error: { code: 'INVALID_INPUT' } });
+        expect(saves()).toBe(0);
+    });
+
+    it('checks stale review token before noop, blocks archived, and keeps outcome probes conservative', async () => {
+        const { methods, request, saves } = await open({ projects: [project('target', {
+            reviewAt: '2026-09-28T14:00:00.000Z',
+        })] });
+        const sameValue = request('reviewAt', '2026-09-28T14:00:00.000Z');
+        useTaskStore.setState({ _allProjects: [project('target', {
+            reviewAt: '2026-09-28T15:00:00.000Z', rev: 4,
+        })] });
+        expect(methods.prepareProjectDate(sameValue)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allProjects: [project('target', { status: 'archived' })] });
+        expect(methods.prepareProjectDate(request('reviewAt', '2026-10-01T04:00:00.000Z')))
+            .toEqual({ ok: true, value: { kind: 'blocked', result: { blocked: '' } } });
+        expect(methods.probeProjectDateOutcome(sameValue)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        expect(saves()).toBe(0);
+    });
+
+    it('validates a sorted-key review journal and requires the complete after-row receipt', async () => {
+        const original = project('target', { reviewAt: '2026-09-28',
+            attachments: [{ id: 'a', kind: 'link', title: 'Keep', uri: 'https://example.test/',
+                createdAt: now, updatedAt: now }] });
+        const { methods, request, saves } = await open({ projects: [original, project('other')],
+            tasks: [task()], sections: [section()] });
+        const input = request('reviewAt', '2026-10-01T04:00:00.000Z');
+        const plan = methods.prepareProjectDate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const cold = JSON.parse(JSON.stringify(sortKeys({ request: input, prepared: plan.value.prepared }))) as
+            { request: typeof input; prepared: typeof plan.value.prepared };
+        expect(methods.validatePreparedProjectDate(cold)).toEqual({ ok: true, value: plan.value.prepared.result });
+        useTaskStore.setState({ _allProjects: [{ ...original, reviewAt: input.value }, project('other')] });
+        expect(await methods.commitPreparedProjectDate(cold)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allProjects: [original, project('other')] });
+        expect(await methods.commitPreparedProjectDate(cold)).toEqual({ ok: true, value: plan.value.prepared.result });
+        const count = saves();
+        useTaskStore.setState((state) => ({ settings: { ...state.settings, deviceId: 'later-device' },
+            _allProjects: [...state._allProjects, project('later')] }));
+        expect(await methods.commitPreparedProjectDate(cold)).toEqual({ ok: true, value: plan.value.prepared.result });
+        expect(saves()).toBe(count);
+        useTaskStore.setState((state) => ({ _allProjects: state._allProjects.map((row) => row.id === 'target'
+            ? { ...row, title: 'Later' } : row) }));
+        expect(await methods.commitPreparedProjectDate(cold)).toMatchObject({ ok: false,
+            error: { code: 'STALE_REVISION' } });
+    });
+
+    it('retries the exact frozen review effect after failed persistence and cold receipt', async () => {
+        let failed = true;
+        const first = await open({ projects: [project('target', { reviewAt: '2026-09-28' })],
+            settings: {} }, () => failed);
+        useTaskStore.setState({ settings: {} });
+        const input = first.request('reviewAt', '2026-10-01T04:00:00.000Z');
+        const plan = first.methods.prepareProjectDate(input);
+        if (!plan.ok || plan.value.kind !== 'prepared') throw new Error(JSON.stringify(plan));
+        const frozen = { request: input, prepared: plan.value.prepared };
+        expect(await first.methods.commitPreparedProjectDate(frozen)).toMatchObject({ ok: false,
+            error: { code: 'SAVE_FAILED' } });
+        const expectedAfter = structuredClone(useTaskStore.getState()._allProjects[0]);
+        failed = false;
+        expect(await first.methods.commitPreparedProjectDate(frozen)).toEqual({ ok: true,
+            value: plan.value.prepared.result });
+        expect(useTaskStore.getState()._allProjects[0]).toEqual(expectedAfter);
+        const second = await open(structuredClone(first.data()));
+        await flushPendingSave();
+        const count = second.saves();
+        expect(await second.methods.commitPreparedProjectDate(frozen)).toEqual({ ok: true,
+            value: plan.value.prepared.result });
+        expect(second.saves()).toBe(count);
     });
 });

@@ -11717,6 +11717,10 @@ final class CoreHostTests: XCTestCase {
                                                 argumentsJSON: json([json(["projectId": "focus-target", "field": "startDate"])])))
         XCTAssertEqual(options["canEdit"] as? Bool, true)
         XCTAssertEqual((options["picker"] as? [String: Any])?["time"] as? String, "12:00")
+        let oldPicker = try XCTUnwrap(options["picker"] as? [String: Any])
+        let oldProject = try XCTUnwrap(options["project"] as? [String: Any])
+        XCTAssertEqual(Set(oldPicker.keys), Set(["date", "time"]))
+        XCTAssertEqual(Set(oldProject.keys), Set(["id", "title", "status", "startDate", "dueDate", "rev", "revBy", "updatedAt"]))
         let request = try await projectDateRequest(core, field: "startDate", value: "2036-03-09")
         let targetBefore = try XCTUnwrap(projectRows("focus-target").first)
         let beforeSQLite = try SQLiteBridge(url: database)
@@ -11832,9 +11836,13 @@ final class CoreHostTests: XCTestCase {
             await expectFailure("INVALID_INPUT") {
                 _ = try await core.call("projectDateWrite", argumentsJSON: json([json(oversized)]))
             }
-            await expectFailure("INVALID_INPUT") {
-                _ = try await core.call("projectDateOptions", argumentsJSON: json([json(["projectId": "focus-target", "field": "reviewAt"])]))
-            }
+            let reviewOptions = try object(await core.call("projectDateOptions",
+                                                           argumentsJSON: json([json(["projectId": "focus-target", "field": "reviewAt"])])))
+            XCTAssertEqual(reviewOptions["canEdit"] as? Bool, kind != "archived")
+            let reviewProject = try XCTUnwrap(reviewOptions["project"] as? [String: Any])
+            XCTAssertEqual(Set(reviewProject.keys), Set(["id", "title", "status", "startDate", "dueDate", "reviewAt", "rev", "revBy", "updatedAt"]))
+            let reviewPicker = try XCTUnwrap(reviewOptions["picker"] as? [String: Any])
+            XCTAssertEqual(Set(reviewPicker.keys), Set(["date", "time", "instant", "preserveUnchanged"]))
             await expectFailure("STALE_REVISION") {
                 _ = try await core.call("projectDateOptions", argumentsJSON: json([json(["projectId": "missing-project", "field": "startDate"])]))
             }
@@ -11870,6 +11878,12 @@ final class CoreHostTests: XCTestCase {
             }
             let pending = try object(String(contentsOf: journal))
             XCTAssertEqual(pending["method"] as? String, "projectDateCommit")
+            let frozenArgs = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+            let frozen = try object(XCTUnwrap(frozenArgs.first))
+            let oldRequest = try XCTUnwrap(frozen["request"] as? [String: Any])
+            let oldExpected = try XCTUnwrap(oldRequest["expected"] as? [String: Any])
+            XCTAssertEqual(Set(oldExpected.keys), Set(["title", "status", "startDate", "dueDate", "rev", "revBy", "updatedAt"]))
+            XCTAssertEqual((frozen["prepared"] as? [String: Any])?["version"] as? Int, 1)
             await writer.close()
             if kind == "receipt" {
                 var settings = try calendarPreferenceSettings()
@@ -12019,6 +12033,267 @@ final class CoreHostTests: XCTestCase {
             check.close()
             await replay.close()
             directory = parent
+        }
+    }
+
+    func testProjectReviewDateFailedCommitExactRetryAndClearPreserveRichRows() async throws {
+        try await seedProjectRenameRows()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET startDate = ?, dueDate = ?, reviewAt = ? WHERE id = 'focus-target'",
+                             parametersJSON: json(["2036-03-08", "2036-11-02T09:45:00.000Z", "2036-03-07"]))
+        edit.close()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("projectDateOptions",
+                                                argumentsJSON: json([json(["projectId": "focus-target", "field": "reviewAt"])])))
+        let picker = try XCTUnwrap(options["picker"] as? [String: Any])
+        XCTAssertEqual(Set(picker.keys), Set(["date", "time", "instant", "preserveUnchanged"]))
+        XCTAssertEqual(picker["preserveUnchanged"] as? Bool, true)
+        XCTAssertNotNil(picker["instant"] as? String)
+        let request = try await projectDateRequest(core, field: "reviewAt", value: "2036-03-09T16:30:00.000Z")
+        let token = try XCTUnwrap(request["expected"] as? [String: Any])
+        XCTAssertEqual(Set(token.keys), Set(["title", "status", "startDate", "dueDate", "reviewAt", "rev", "revBy", "updatedAt"]))
+        XCTAssertEqual(token["reviewAt"] as? String, "2036-03-07")
+        let targetBefore = try XCTUnwrap(projectRows("focus-target").first)
+        let beforeSQLite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeSQLite)
+        beforeSQLite.close()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Review Date COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("projectDateWrite", argumentsJSON: json([json(request)])) }
+        XCTAssertTrue(diagnostics.isEmpty)
+        let pending = try object(String(contentsOf: journal))
+        XCTAssertEqual(pending["method"] as? String, "projectDateCommit")
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), before)
+        rolledBack.close()
+        faults.beforeSQL = nil
+        let retry = try await core.retryPending()
+        let result = try object(XCTUnwrap(retry))
+        XCTAssertEqual(result["id"] as? String, "focus-target")
+        XCTAssertEqual(result["field"] as? String, "reviewAt")
+        XCTAssertEqual(result["value"] as? String, "2036-03-09T16:30:00.000Z")
+        XCTAssertEqual(diagnostics, ["projectReviewDateApplied"])
+        let targetAfter = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(targetAfter["reviewAt"] as? String, "2036-03-09T16:30:00.000Z")
+        XCTAssertEqual(targetAfter["startDate"] as? String, "2036-03-08")
+        XCTAssertEqual(targetAfter["dueDate"] as? String, "2036-11-02T09:45:00.000Z")
+        XCTAssertEqual(targetAfter["rev"] as? Int, (targetBefore["rev"] as? Int ?? 0) + 1)
+        for (field, value) in targetBefore where !["reviewAt", "rev", "revBy", "updatedAt"].contains(field) {
+            XCTAssertEqual(try json([targetAfter[field] ?? NSNull()]), try json([value]), field)
+        }
+        let saved = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(saved)
+        saved.close()
+        for index in [0, 2, 3, 4, 5, 6, 7, 8] { XCTAssertEqual(after[index], before[index]) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let clear = try await projectDateRequest(core, field: "reviewAt", value: NSNull())
+        let cleared = try object(await core.call("projectDateWrite", argumentsJSON: json([json(clear)])))
+        XCTAssertEqual(cleared["field"] as? String, "reviewAt")
+        XCTAssertTrue(cleared["value"] is NSNull)
+        XCTAssertTrue(try XCTUnwrap(projectRows("focus-target").first)["reviewAt"] is NSNull)
+        XCTAssertEqual(diagnostics, ["projectReviewDateApplied", "projectReviewDateApplied"])
+        let emptyClear = try await projectDateRequest(core, field: "reviewAt", value: NSNull())
+        var writes = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#,
+                         options: .regularExpression) != nil { writes += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        let noWrite = try object(await core.call("projectDateWrite", argumentsJSON: json([json(emptyClear)])))
+        XCTAssertTrue(noWrite["value"] is NSNull)
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectDateRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        await core.close()
+    }
+
+    func testProjectReviewDateLegacyOptionsAndMalformedRequestsWriteNothing() async throws {
+        for kind in ["offset", "invalid", "archived"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedProjectRenameRows(targetStatus: kind == "archived" ? "archived" : "active")
+            let raw = kind == "offset" ? "2036-03-07T13:30:00+02:00" : kind == "invalid" ? "legacy-invalid" : "2036-03-07"
+            let edit = try SQLiteBridge(url: database)
+            _ = try edit.execute("UPDATE projects SET reviewAt = ? WHERE id = 'focus-target'", parametersJSON: json([raw]))
+            edit.close()
+            let faults = HostIOFaults()
+            let core = host(faults)
+            _ = try await core.start()
+            var writes = 0, journals = 0
+            faults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+"#,
+                             options: .regularExpression) != nil { writes += 1 }
+            }
+            faults.journalWrite = { journals += 1 }
+            let options = try object(await core.call("projectDateOptions",
+                                                     argumentsJSON: json([json(["projectId": "focus-target", "field": "reviewAt"])])))
+            XCTAssertEqual(options["canEdit"] as? Bool, kind != "archived")
+            XCTAssertEqual((options["project"] as? [String: Any])?["reviewAt"] as? String, raw)
+            let picker = try XCTUnwrap(options["picker"] as? [String: Any])
+            XCTAssertEqual(Set(picker.keys), Set(["date", "time", "instant", "preserveUnchanged"]))
+            XCTAssertEqual(picker["preserveUnchanged"] as? Bool, kind != "invalid")
+            let request = try await projectDateRequest(core, field: "reviewAt", value: "2036-03-09T16:30:00.000Z")
+            await expectFailure("STALE_REVISION") {
+                _ = try await core.call("projectDateRetryOutcome", argumentsJSON: json([json(request)]))
+            }
+            var stale = request
+            var expected = try XCTUnwrap(request["expected"] as? [String: Any])
+            expected["title"] = "Stale title"; stale["expected"] = expected
+            await expectFailure("STALE_REVISION") { _ = try await core.call("projectDateWrite", argumentsJSON: json([json(stale)])) }
+            for invalid in ["2036-03-09", "2036-03-09T16:30:00Z", "2036-03-09T16:30:00.000+00:00",
+                            "2036-03-09T16:30:00.0000Z", "2036-02-30T16:30:00.000Z"] {
+                var malformed = request; malformed["value"] = invalid
+                await expectFailure("INVALID_INPUT") { _ = try await core.call("projectDateWrite", argumentsJSON: json([json(malformed)])) }
+            }
+            var wrongToken = request
+            expected = try XCTUnwrap(request["expected"] as? [String: Any])
+            expected.removeValue(forKey: "reviewAt"); wrongToken["expected"] = expected
+            await expectFailure("INVALID_INPUT") { _ = try await core.call("projectDateWrite", argumentsJSON: json([json(wrongToken)])) }
+            if kind == "archived" {
+                let blocked = try object(await core.call("projectDateWrite", argumentsJSON: json([json(request)])))
+                XCTAssertEqual(blocked["blocked"] as? String, "")
+            }
+            XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await core.close()
+            directory = parent
+        }
+    }
+
+    func testProjectReviewDateColdFirstReceiptAndTerminalCleanup() async throws {
+        for kind in ["first", "receipt", "terminal"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedProjectRenameRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await projectDateRequest(writer, field: "reviewAt", value: "2036-03-09T16:30:00.000Z")
+            let targetBefore = try XCTUnwrap(projectRows("focus-target").first)
+            if kind == "first" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Review Date") } }
+                await expectFailure("SAVE_FAILED") { _ = try await writer.call("projectDateWrite", argumentsJSON: json([json(request)])) }
+            } else if kind == "receipt" {
+                var journalWrites = 0
+                faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Review Date lost reply") } }
+                await expectFailure("lost reply") { _ = try await writer.call("projectDateWrite", argumentsJSON: json([json(request)])) }
+            } else {
+                faults.journalRemove = { throw HostFailure("Injected Review Date terminal cleanup") }
+                await expectFailure("terminal cleanup") { _ = try await writer.call("projectDateWrite", argumentsJSON: json([json(request)])) }
+            }
+            let pending = try object(String(contentsOf: journal))
+            XCTAssertEqual(pending["method"] as? String, "projectDateCommit")
+            let frozenArgs = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+            let frozen = try object(XCTUnwrap(frozenArgs.first))
+            let prepared = try XCTUnwrap(frozen["prepared"] as? [String: Any])
+            XCTAssertEqual(prepared["version"] as? Int, 1)
+            XCTAssertEqual((prepared["result"] as? [String: Any])?["value"] as? String, "2036-03-09T16:30:00.000Z")
+            await writer.close()
+            if kind != "first" {
+                var settings = try calendarPreferenceSettings()
+                settings["deviceId"] = UUID().uuidString.lowercased()
+                try writeCalendarPreferenceSettings(settings)
+                let edit = try SQLiteBridge(url: database)
+                _ = try edit.execute("UPDATE projects SET title = 'Later unrelated edit', updatedAt = ?, rev = rev + 1 WHERE id = 'focus-other-0'",
+                                     parametersJSON: json([recentAreaTestTime(daysAgo: 0)]))
+                edit.close()
+            }
+            let beforeSQLite = try SQLiteBridge(url: database)
+            let before = try nineTableSnapshot(beforeSQLite)
+            beforeSQLite.close()
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            var diagnostics: [String] = []
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#,
+                             options: .regularExpression) != nil { writes += 1 }
+            }
+            replayFaults.commandDiagnostic = { diagnostics.append($0) }
+            let reopened = host(replayFaults)
+            let startup = try object(await reopened.start())
+            let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+            XCTAssertEqual(recovery["method"] as? String, "projectDateCommit")
+            XCTAssertEqual((recovery["result"] as? [String: Any])?["field"] as? String, "reviewAt")
+            XCTAssertEqual((recovery["result"] as? [String: Any])?["value"] as? String, "2036-03-09T16:30:00.000Z")
+            XCTAssertEqual(diagnostics, ["projectReviewDateApplied"])
+            if kind == "first" { XCTAssertGreaterThan(writes, 0) }
+            else {
+                XCTAssertEqual(writes, 0)
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), before)
+                check.close()
+            }
+            XCTAssertEqual(try projectRows("focus-target").first?["reviewAt"] as? String, "2036-03-09T16:30:00.000Z")
+            XCTAssertEqual(try projectRows("focus-target").first?["rev"] as? Int, (targetBefore["rev"] as? Int ?? 0) + 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await reopened.close()
+            directory = parent
+        }
+    }
+
+    func testProjectReviewDateForgedJournalsRefuseBeforeSQLite() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectDateRequest(writer, field: "reviewAt", value: "2036-03-09T16:30:00.000Z")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Review Date") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("projectDateWrite", argumentsJSON: json([json(request)])) }
+        let pending = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for corruption in ["request-value", "expected", "scope", "effect", "result", "terminal", "malformed"] {
+            var envelope = original
+            var forged = pending
+            if corruption == "request-value" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["value"] = "2036-03-09"
+                envelope["request"] = changed
+            } else if corruption == "expected" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                var expected = try XCTUnwrap(changed["expected"] as? [String: Any])
+                expected.removeValue(forKey: "reviewAt"); changed["expected"] = expected
+                envelope["request"] = changed
+            } else if ["scope", "effect", "result"].contains(corruption) {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                if corruption == "scope" {
+                    var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+                    var project = try XCTUnwrap(scope["project"] as? [String: Any])
+                    project["reviewAt"] = "2036-03-08"; scope["project"] = project; prepared["scope"] = scope
+                } else if corruption == "effect" {
+                    var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                    var pair = try XCTUnwrap(effect["project"] as? [String: Any])
+                    var after = try XCTUnwrap(pair["after"] as? [String: Any])
+                    after["reviewAt"] = "2036-03-10T16:30:00.000Z"
+                    pair["after"] = after; effect["project"] = pair; prepared["effect"] = effect
+                } else {
+                    prepared["result"] = ["id": "focus-target", "field": "reviewAt", "value": "2036-03-10T16:30:00.000Z"]
+                }
+                envelope["prepared"] = prepared
+            } else if corruption == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["id": "focus-target", "field": "reviewAt", "value": "2036-03-10T16:30:00.000Z"])]]
+            }
+            forged["argumentsJSON"] = corruption == "malformed" ? "[]" : try json([json(envelope)])
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, corruption); XCTAssertEqual(cleanup, 0, corruption)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, corruption)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, corruption)
+            await blocked.close()
         }
     }
 

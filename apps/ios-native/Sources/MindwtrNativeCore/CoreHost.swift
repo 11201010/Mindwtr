@@ -433,6 +433,9 @@ private final class Engine: @unchecked Sendable {
                 }
             }
             let value = try invoke(method, arguments: args)
+            if method == "projectDateOptions", let input = args.first as? String {
+                try validateProjectDateOptions(value, request: input)
+            }
             if method == "inboxStart" {
 #if DEBUG
                 faults?.commandDiagnostic?("processInboxRead")
@@ -1364,10 +1367,15 @@ private final class Engine: @unchecked Sendable {
             NSLog("Native iOS Project status saved releaseCheck=v1.3.3/native-ios-project-status outcome=applied")
         }
         if command.method == "projectDateCommit", case .success = terminal {
+            let review = projectDateField(command) == "reviewAt"
 #if DEBUG
-            faults?.commandDiagnostic?("projectDateApplied")
+            faults?.commandDiagnostic?(review ? "projectReviewDateApplied" : "projectDateApplied")
 #endif
-            NSLog("Native iOS Project date saved releaseCheck=v1.3.3/native-ios-project-date outcome=applied")
+            if review {
+                NSLog("Native iOS Project Review Date saved releaseCheck=v1.3.3/native-ios-project-review-date outcome=applied")
+            } else {
+                NSLog("Native iOS Project date saved releaseCheck=v1.3.3/native-ios-project-date outcome=applied")
+            }
         }
         return terminal
     }
@@ -1735,6 +1743,39 @@ private final class Engine: @unchecked Sendable {
               try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
                 == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
             throw HostFailure("Malformed Project date acknowledgment")
+        }
+    }
+
+    private func projectDateField(_ command: PendingCommand) -> String? {
+        guard let args = try? journalArguments(command), let encoded = args.first as? String,
+              let envelope = try? JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any] else { return nil }
+        return request["field"] as? String
+    }
+
+    private func validateProjectDateOptions(_ value: String, request encoded: String) throws {
+        guard let input = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let field = input["field"] as? String,
+              let options = try JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(options.keys) == Set(["revision", "project", "canEdit", "picker"]),
+              options["revision"] is String, Self.isBoolean(options["canEdit"]),
+              let project = options["project"] as? [String: Any],
+              project["id"] as? String == input["projectId"] as? String,
+              Set(project.keys) == Set(["id", "title", "status", "startDate", "dueDate", "rev", "revBy", "updatedAt"])
+                .union(field == "reviewAt" ? ["reviewAt"] : []),
+              let picker = options["picker"] as? [String: Any],
+              Set(picker.keys) == Set(["date", "time"]).union(field == "reviewAt" ? ["instant", "preserveUnchanged"] : []),
+              let day = picker["date"] as? String,
+              day.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+              picker["time"] as? String == "12:00" else {
+            throw HostFailure("Malformed Project date options")
+        }
+        if field == "reviewAt" {
+            guard project["reviewAt"] is NSNull || (project["reviewAt"] as? String).map({ $0.utf16.count <= 100 }) == true,
+                  let instant = picker["instant"] as? String, Self.isCanonicalReviewInstant(instant),
+                  Self.isBoolean(picker["preserveUnchanged"]) else {
+                throw HostFailure("Malformed Project Review Date options")
+            }
         }
     }
 
@@ -2191,6 +2232,15 @@ private final class Engine: @unchecked Sendable {
         return scope == "project" || scope == "section"
     }
 
+    private static func isCanonicalReviewInstant(_ value: String) -> Bool {
+        guard value.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"#,
+                          options: .regularExpression) != nil else { return false }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)!
+        return formatter.date(from: value).map { formatter.string(from: $0) == value } ?? false
+    }
+
     private static func isFiniteNumber(_ value: Any?) -> Bool {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
         return number.doubleValue.isFinite
@@ -2476,7 +2526,7 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["projectId", "field"]),
                   let projectID = input["projectId"] as? String, !projectID.isEmpty,
                   projectID.utf16.count <= 500,
-                  let field = input["field"] as? String, ["startDate", "dueDate"].contains(field) else {
+                  let field = input["field"] as? String, ["startDate", "dueDate", "reviewAt"].contains(field) else {
                 throw HostFailure("INVALID_INPUT: Project date options need a bounded Project ID and date field")
             }
         }
@@ -2486,18 +2536,22 @@ private final class Engine: @unchecked Sendable {
                   Set(input.keys) == Set(["requestId", "projectId", "field", "value", "expected"]),
                   let id = input["requestId"] as? String, UUID(uuidString: id) != nil, id == id.lowercased(),
                   let projectID = input["projectId"] as? String, !projectID.isEmpty, projectID.utf16.count <= 500,
-                  let field = input["field"] as? String, ["startDate", "dueDate"].contains(field),
+                  let field = input["field"] as? String, ["startDate", "dueDate", "reviewAt"].contains(field),
                   input["value"] is NSNull || (input["value"] as? String).map({
-                      $0.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+                      field == "reviewAt" ? Self.isCanonicalReviewInstant($0)
+                        : $0.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
                   }) == true,
                   let expected = input["expected"] as? [String: Any],
-                  Set(expected.keys) == Set(["title", "status", "startDate", "dueDate", "rev", "revBy", "updatedAt"]),
+                  Set(expected.keys) == Set(["title", "status", "startDate", "dueDate", "rev", "revBy", "updatedAt"])
+                    .union(field == "reviewAt" ? ["reviewAt"] : []),
                   let title = expected["title"] as? String, title.utf16.count <= 100_000,
                   let oldStatus = expected["status"] as? String,
                   ["active", "waiting", "someday", "archived"].contains(oldStatus),
                   ["startDate", "dueDate"].allSatisfy({ key in
                       expected[key] is NSNull || (expected[key] as? String).map({ $0.utf16.count <= 100 }) == true
                   }),
+                  field != "reviewAt" || expected["reviewAt"] is NSNull
+                    || (expected["reviewAt"] as? String).map({ $0.utf16.count <= 100 }) == true,
                   expected["rev"] is NSNull || (Self.isInteger(expected["rev"]) && (expected["rev"] as? Int ?? -1) >= 0),
                   expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
                   let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
