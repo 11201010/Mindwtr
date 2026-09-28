@@ -76,6 +76,10 @@ data class ProjectsViewState(val collapsedAreas: Set<String>, val showDeferred: 
 
 /** RN's DONE_LIST_VIEW_STATE_STORAGE_KEY (lib/view-state/done-list-view-state.ts). */
 const val DONE_VIEW_KEY = "mindwtr:view:done:v1"
+/** RN's ReferenceScreen grouping preference. */
+const val REFERENCE_GROUP_BY_KEY = "mindwtr:view:reference:groupBy:v1"
+/** Valid values in core's Reference group picker, checked when reading the saved choice. */
+val REFERENCE_GROUP_BY_OPTIONS = setOf("none", "context", "area", "project", "tag")
 /** RN's ARCHIVED_LIST_VIEW_STATE_STORAGE_KEY (lib/view-state/archived-list-view-state.ts). */
 const val ARCHIVED_VIEW_KEY = "mindwtr:view:archived:v1"
 

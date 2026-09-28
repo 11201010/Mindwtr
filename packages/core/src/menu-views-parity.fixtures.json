@@ -40,6 +40,10 @@
     "someday sections: rename and reorder"
    ],
    "why": "A Someday section edit now keeps the stored list in stored order and changes only the edited entries (someday-sections-model.ts); the written definitions, their titles and order numbers are the same, in stored order."
+  },
+  "referenceGroupByRecapture": {
+   "sourceCommit": "0f599140b121cfaa1db4d2c29d13700a5f5fc6d7",
+   "note": "Captured current React Native Reference grouping preference; only its stored values changed."
   }
  },
  "timeZone": "America/New_York",
@@ -17242,7 +17246,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "none"
     }
    },
    {
@@ -17359,7 +17364,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "context"
     }
    },
    {
@@ -17467,7 +17473,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "project"
     }
    },
    {
@@ -17598,7 +17605,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -17744,7 +17752,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -17863,7 +17872,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -17992,7 +18002,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -18112,7 +18123,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -18242,7 +18254,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -18373,7 +18386,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -18454,7 +18468,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -18585,7 +18600,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "tag"
     }
    },
    {
@@ -18697,7 +18713,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[\"a-home\"]}",
+     "mindwtr:view:reference:groupBy:v1": "area"
     }
    },
    {
@@ -18814,7 +18831,8 @@
     "writes": [],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}",
+     "mindwtr:view:reference:groupBy:v1": "area"
     }
    },
    {
@@ -18938,7 +18956,8 @@
     ],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}",
+     "mindwtr:view:reference:groupBy:v1": "area"
     }
    },
    {
@@ -19047,7 +19066,8 @@
     ],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}",
+     "mindwtr:view:reference:groupBy:v1": "area"
     }
    },
    {
@@ -19148,7 +19168,8 @@
     ],
     "toasts": [],
     "stored": {
-     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}"
+     "mindwtr:view:group-collapse:reference:v1": "{\"area\":[]}",
+     "mindwtr:view:reference:groupBy:v1": "area"
     }
    }
   ],

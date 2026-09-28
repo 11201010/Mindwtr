@@ -363,7 +363,10 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         return when (list) {
             "waiting" -> JSONObject().put("person", own.optString("person"))
             "someday" -> kept(listOf("sortBy", "groupBy", "showDetails", "filters"))
-            "reference" -> kept(listOf("groupBy", "includeArchivedProjects", "filters")).put("collapsedGroupIds", GroupCollapse.all(prefs, "reference", 200))
+            "reference" -> kept(listOf("groupBy", "includeArchivedProjects", "filters")).apply {
+                if (!has("groupBy")) prefs.getString(REFERENCE_GROUP_BY_KEY, null)
+                    ?.takeIf { it in REFERENCE_GROUP_BY_OPTIONS }?.let { put("groupBy", it) }
+            }.put("collapsedGroupIds", GroupCollapse.all(prefs, "reference", 200))
             "done" -> ListViewState.read(prefs, DONE_VIEW_KEY).into(kept(listOf("filters"))).put("collapsedGroupIds", GroupCollapse.all(prefs, "done", 200))
             // The Inbox's grouping and filters are RN's session choices; its folds are the device's, for the grouping shown.
             "inbox" -> kept(listOf("groupBy", "filters")).put("collapsedGroupIds", GroupCollapse.axis(prefs, "inbox", own.optString("groupBy", "none"), 200))
@@ -661,6 +664,10 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun group(value: String) {
         val list = list ?: return
         when (list) {
+            "reference" -> {
+                prefs.edit().putString(REFERENCE_GROUP_BY_KEY, value).apply()
+                editOwn(list) { put("groupBy", value) }
+            }
             "done" -> ListViewState.read(prefs, DONE_VIEW_KEY).copy(groupBy = value).save(prefs, DONE_VIEW_KEY)
             "archive" -> ListViewState.read(prefs, ARCHIVED_VIEW_KEY).copy(groupBy = value).save(prefs, ARCHIVED_VIEW_KEY)
             else -> editOwn(list) { put("groupBy", value) }

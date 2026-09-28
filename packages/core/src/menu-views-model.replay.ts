@@ -27,6 +27,7 @@ import {
     getStatusListScreenText,
     REFERENCE_ARCHIVED_CHIP_ID,
     REFERENCE_LIST_DEFAULT_GROUP_BY,
+    TASK_LIST_GROUP_OPTIONS,
     selectSomedayTasks,
     selectStatusListTasks,
     type SomedayGroupBy,
@@ -83,6 +84,7 @@ export type MenuViewsFixture = {
 };
 type Translate = (key: string) => string;
 type Contract = ReturnType<typeof createNativeHostContract>;
+const REFERENCE_GROUP_BY_KEY = 'mindwtr:view:reference:groupBy:v1';
 
 export const loadMenuViewsFixture = (): MenuViewsFixture => JSON.parse(
     readFileSync(new URL('./menu-views-parity.fixtures.json', import.meta.url), 'utf8'),
@@ -224,6 +226,7 @@ export function projectObservation(screen: Screen, observation: Observation, t: 
             choices: getSomedaySectionChoices(dialog.sections, dialog.selectedId ?? undefined, t('viewSections.noSection'), dialog.selectionMixed),
         };
     }
+    if (screen === 'reference') next.referenceGroupByStorage = (observation.stored as Record<string, string> | undefined)?.[REFERENCE_GROUP_BY_KEY] ?? null;
     if (screen === 'reference' || screen === 'done') delete next.stored;
     return next;
 }
@@ -734,11 +737,13 @@ export async function replayMenuViewsScenario(options: {
 
     // --------------------------------------------------- Reference and Done
     const kind: StatusListKind = scenario.screen === 'reference' ? 'reference' : 'done';
+    let storedReferenceGroupBy = scenario.storage?.[REFERENCE_GROUP_BY_KEY] ?? null;
+    const initialReferenceGroupBy = (TASK_LIST_GROUP_OPTIONS as readonly string[]).includes(storedReferenceGroupBy ?? '')
+        ? storedReferenceGroupBy as TaskGroupBy : REFERENCE_LIST_DEFAULT_GROUP_BY;
     const storedDone = scenario.storage?.['mindwtr:view:done:v1'];
     const parsedDone = storedDone ? JSON.parse(storedDone) as { groupBy?: TaskGroupBy; sortBy?: TaskSortBy } : {};
     const session: StatusSession = {
-        groupBy: kind === 'reference'
-            ? REFERENCE_LIST_DEFAULT_GROUP_BY
+        groupBy: kind === 'reference' ? initialReferenceGroupBy
             : (DONE_LIST_GROUP_OPTIONS as readonly string[]).includes(parsedDone.groupBy as string) ? parsedDone.groupBy! : DONE_LIST_DEFAULT_GROUP_BY,
         viewSortBy: DONE_TASK_LIST_SORT_OPTIONS.includes(parsedDone.sortBy as TaskSortBy) ? parsedDone.sortBy : undefined,
         includeArchived: false,
@@ -788,6 +793,7 @@ export async function replayMenuViewsScenario(options: {
         return { model, resolved, summary, filterOptions };
     };
     const title = getStatusListScreenText(kind, t).title;
+    const stored = () => kind === 'reference' ? { stored: storedReferenceGroupBy ? { [REFERENCE_GROUP_BY_KEY]: storedReferenceGroupBy } : {} } : {};
     const observe = (first = false): Observation => {
         if (contract) {
             const view = read();
@@ -817,6 +823,7 @@ export async function replayMenuViewsScenario(options: {
                     activeCount: view.filters.activeCount,
                     archiveToggle: view.archivedProjectsToggle,
                 },
+                ...stored(),
                 ...drain(),
                 ...(first ? {
                     sort: { options: view.sort.options.map((option) => [option.value, option.label, option.selected]) },
@@ -851,6 +858,7 @@ export async function replayMenuViewsScenario(options: {
                 activeCount: resolved.activeCount,
                 archiveToggle: kind === 'reference' ? { label: t('reference.includeArchivedProjects'), value: session.includeArchived } : null,
             },
+            ...stored(),
             ...drain(),
             ...(first ? {
                 sort: { options: model.sortOptions.map((option) => [option.value, option.label, option.selected]) },
@@ -872,7 +880,10 @@ export async function replayMenuViewsScenario(options: {
         const [actionKind, first, second] = action as [string, unknown, unknown];
         if (actionKind === 'status') await changeStatus(first as string, second as Task['status']);
         else if (actionKind === 'delete') await remove(first as string);
-        else if (actionKind === 'group') session.groupBy = first as TaskGroupBy;
+        else if (actionKind === 'group') {
+            session.groupBy = first as TaskGroupBy;
+            if (kind === 'reference') storedReferenceGroupBy = session.groupBy;
+        }
         else if (actionKind === 'sort') {
             if (kind === 'done') session.viewSortBy = first as TaskSortBy;
             else if (contract) ok(await contract.setTaskListSort({ sortBy: first as TaskSortBy }));
