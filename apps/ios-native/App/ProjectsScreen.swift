@@ -74,18 +74,23 @@ struct ProjectsScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 8).accessibilityIdentifier("projects-create-error")
                 if model.projectCreatePending && model.retryNeeded {
-                    Button(model.label("common.retry")) { Task { await model.retry() } }
-                        .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .disabled(model.busy).accessibilityIdentifier("projects-create-retry")
+                    Button { Task { await model.retry() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy).accessibilityIdentifier("projects-create-retry")
                 }
             }
             if let message = model.projectCreateReadError {
                 Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 8).accessibilityIdentifier("projects-create-read-error")
-                Button(model.label("common.retry")) { Task { await model.retryProjectCreateRead() } }
-                    .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .disabled(model.busy || model.retryNeeded).accessibilityIdentifier("projects-create-read-retry")
+                Button { Task { await model.retryProjectCreateRead() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                    .accessibilityIdentifier("projects-create-read-retry")
             }
             if let message = model.projectFocusError {
                 Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)

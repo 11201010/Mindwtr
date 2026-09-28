@@ -18,6 +18,8 @@ A copied RN 1.3.1 simulator container also passed two host startups with its two
 
 Project Add Area recovery also passed separate creation and assignment interruptions. A cold pending create recovers one Area without guessing a Project assignment; a cold pending assignment changes the Project once and retains the already-created Area. Normal/largest-text and iPhone development-identity updates preserved unrelated rows across all nine tables, rich Notes and Review Date. These checks do not activate the production upgrade path. The later Project-origin manager slice also passed Device75 install-over-Device74 with all nine tables exact, then create/assign/rename/merge and cold restart with unrelated rows, Notes, Tags and Review Date preserved. It remains the separate development identity.
 
+Project tag filtering also passed Device76 install-over-Device75 on iPhone 12/iOS 17.5.1. All nine tables stayed exact after installation, tag/No tags selection, Project/Area-manager/Search navigation and cold restart, with no pending journal. Filtering is session state and does not modify the library. This remains a development-identity preservation check; it does not close the signed RN replacement gate.
+
 ## Existing storage contract
 
 | Surface | Existing RN convention | Native requirement |

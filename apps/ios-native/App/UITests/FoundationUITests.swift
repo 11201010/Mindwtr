@@ -5124,7 +5124,8 @@ final class FoundationUITests: XCTestCase {
             revealAreaRenameControl(app, button)
         } else {
             let sheet = app.scrollViews["project-area-sheet"]
-            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch, outerEdge: true)
+            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch,
+                               outerEdge: !app.scrollViews["projects-scroll"].exists)
         }
         boardEnabled(button)
         // AX converts frame coordinates through CGFloat; allow rounding noise only.
@@ -5336,17 +5337,17 @@ final class FoundationUITests: XCTestCase {
 
 
     func testProjectTagFiltersPreserveDraftsAndNavigation() {
-        projectTagFilters(library: "3c965e3b-721a-4e02-8932-2666da0d02aa")
+        projectTagFilters(library: "47c10eb8-9f1c-4971-b288-5fdf4e6fd3c9")
     }
 
     func testProjectTagFiltersLargestText() {
-        projectTagFilters(library: "7c274d23-10b6-4864-8909-560cb5c59fad")
+        projectTagFilters(library: "61471a3f-a953-4cac-b343-31e89f56a841")
     }
 
 
     func testProjectTagFilterReadFailureRetainsViewAndRetriesIntendedSelection() {
         let app = XCUIApplication()
-        app.launchArguments = ["--native-ui-test-library", "042432f2-dde3-4dae-9b0b-021028413527",
+        app.launchArguments = ["--native-ui-test-library", "17df0f4e-5eb2-42fe-8c94-5776070fc071",
                                "--native-project-tag-read-failure"]
         app.launch()
         boardEnabled(app.buttons["tab-menu"], timeout: 30)
