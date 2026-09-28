@@ -164,6 +164,12 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectDetail: CoreObject = [:]
     @Published private(set) var projectCurrent = false
     @Published private(set) var projectError: String?
+    @Published private(set) var projectViewOptionsPresented = false
+    private var projectShowCompleted = false
+    private var projectCompletedCollapsed = true
+    private var pendingProjectView: (showCompleted: Bool, collapsed: Bool)?
+    private var projectShowCompletedPreference = "nativeFoundation.project.showCompleted"
+    private var initialProjectShowCompleted = false
     @Published private(set) var projectNotes: CoreObject = [:]
     @Published private(set) var projectNotesExpanded = false
     @Published private(set) var projectNotesCurrent = false
@@ -375,6 +381,7 @@ final class CoreModel: ObservableObject {
     private var projectAreaTestReadFailure = false
     private var projectAreaTestBlockedWrite = false
     private var projectTagTestReadFailure = false
+    private var projectViewTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -618,6 +625,12 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .project && projectCurrent && !busy && !retryNeeded && !taskPresented
             && !projectRenameEditing
     }
+    var projectViewOpenEnabled: Bool {
+        projectActionsEnabled && pendingProjectView == nil && !capturePresented && !areaPickerPresented
+            && !areaManagerPresented && !morePresented && !projectSectionsPresented && !projectAreaPresented
+            && !projectTagsPresented && projectDateField == nil && !projectStatusOpen
+    }
+    var projectViewReadPending: Bool { pendingProjectView != nil }
     var projectRenameOpenEnabled: Bool {
         projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
             && !areaPickerPresented && !areaManagerPresented && !morePresented
@@ -1090,6 +1103,7 @@ final class CoreModel: ObservableObject {
                     projectAreaTestReadFailure = arguments.contains("--native-project-area-read-failure")
                     projectAreaTestBlockedWrite = arguments.contains("--native-project-area-blocked-write")
                     projectTagTestReadFailure = arguments.contains("--native-project-tag-read-failure")
+                    projectViewTestReadFailures = arguments.contains("--native-project-view-read-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1106,6 +1120,8 @@ final class CoreModel: ObservableObject {
                     storedTheme = try legacy.value(forKey: "@mindwtr_theme") ?? ""
                     initialAddAnother = try legacy.value(forKey: "mindwtr:quickCapture:addAnother") == "true"
                     preference = "nativeRNRehearsal.capture.addAnother"
+                    initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
+                    projectShowCompletedPreference = "nativeRNRehearsal.project.showCompleted"
                     host = CoreHost(databaseURL: database, bundleURL: bundle, legacyStorage: legacy)
                 }
                 #endif
@@ -1115,6 +1131,8 @@ final class CoreModel: ObservableObject {
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 }
             }
+            projectShowCompleted = (preferenceDefaults.object(forKey: projectShowCompletedPreference) as? Bool)
+                ?? initialProjectShowCompleted
             let startup = try decode(await host!.start())
             let recovery = startup.object("recovery")
             if recovery.text("method") == "boardCommit" {
@@ -6741,6 +6759,9 @@ final class CoreModel: ObservableObject {
         projectCaller = selectedSurface
         projectHeader = row
         projectDetail = [:]
+        projectViewOptionsPresented = false
+        projectCompletedCollapsed = true
+        pendingProjectView = nil
         projectLoadedDepth = pageSize
         projectCurrent = false
         projectError = nil
@@ -6876,6 +6897,42 @@ final class CoreModel: ObservableObject {
         await refresh()
     }
 
+    func openProjectViewOptions() async {
+        guard await flushProjectNotesEdit(), projectViewOpenEnabled else { return }
+        projectViewOptionsPresented = true
+    }
+
+    func closeProjectViewOptions() { projectViewOptionsPresented = false }
+
+    func toggleProjectShowCompleted() async {
+        guard await flushProjectNotesEdit(), projectViewOptionsPresented, projectViewOpenEnabled,
+              projectDetail.object("controls").flag("canToggleCompleted") else { return }
+        projectViewOptionsPresented = false
+        pendingProjectView = (!projectShowCompleted, true)
+        busy = true
+        defer { finishOperation() }
+        await readProjectDetail()
+    }
+
+    func toggleProjectCompletedSection(_ id: String) async {
+        guard await flushProjectNotesEdit(), projectViewOpenEnabled,
+              projectDetail.objects("items").contains(where: {
+                  $0.text("type") == "section" && $0.text("id") == id && $0.flag("collapsible")
+              }) else { return }
+        pendingProjectView = (projectShowCompleted, !projectCompletedCollapsed)
+        busy = true
+        defer { finishOperation() }
+        await readProjectDetail()
+    }
+
+    private func projectDetailWindow(offset: Int, limit: Int, revision: String? = nil,
+                                     showCompleted: Bool, collapsed: Bool) async throws -> CoreObject {
+        var input: CoreObject = ["projectId": projectHeader.text("id"), "offset": offset, "limit": limit,
+                                 "showCompleted": showCompleted, "completedCollapsed": collapsed]
+        if let revision { input["revision"] = revision }
+        return try await query("menuRead", ["projectDetailView", try json(input)])
+    }
+
     func loadMoreProject() async {
         guard await flushProjectNotesEdit() else { return }
         guard projectActionsEnabled, projectDetail.objects("items").count < projectDetail.number("total") else { return }
@@ -6886,7 +6943,9 @@ final class CoreModel: ObservableObject {
         projectLoadedDepth = offset + limit
         projectCurrent = false
         do {
-            let window = try await query("projectDetail", [projectHeader.text("id"), offset, limit, projectDetail.text("revision")])
+            let window = try await projectDetailWindow(offset: offset, limit: limit,
+                revision: projectDetail.text("revision"), showCompleted: projectShowCompleted,
+                collapsed: projectCompletedCollapsed)
             try validateProjectWindow(window, against: projectDetail, count: limit)
             projectDetail["items"] = projectDetail.objects("items") + window.objects("items")
             projectCurrent = true
@@ -6908,13 +6967,29 @@ final class CoreModel: ObservableObject {
         projectCurrent = false
         projectError = nil
         let id = projectHeader.text("id")
+        let showCompleted = pendingProjectView?.showCompleted ?? projectShowCompleted
+        var collapsed = pendingProjectView?.collapsed ?? projectCompletedCollapsed
         for attempt in 0..<2 {
             do {
-                var next = try await query("projectDetail", [id, 0, pageSize, ""])
+                var next = try await projectDetailWindow(offset: 0, limit: pageSize,
+                    showCompleted: showCompleted, collapsed: collapsed)
+                // RN resets the completed pile when its grouping mode changes (including type/status edits).
+                if !collapsed, !projectDetail.isEmpty,
+                   next.object("controls").flag("groupCompletedTasksLast")
+                    != projectDetail.object("controls").flag("groupCompletedTasksLast") {
+                    collapsed = true
+                    next = try await projectDetailWindow(offset: 0, limit: pageSize,
+                        showCompleted: showCompleted, collapsed: collapsed)
+                }
                 let metadata = next.object("metadata")
+                let controls = next.object("controls")
                 guard next.text("projectId") == id, !next.text("revision").isEmpty,
                       !next.text("mutationRevision").isEmpty,
                       next.number("total") >= 0,
+                      ["showCompleted", "completedCollapsed", "canToggleCompleted", "groupCompletedTasksLast"].allSatisfy({ key in
+                          (controls[key] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
+                      }), controls.flag("showCompleted") == showCompleted,
+                      controls.flag("completedCollapsed") == collapsed, !controls.text("label").isEmpty,
                       ["hasStartDate", "hasDueDate", "hasReviewDate"].allSatisfy({ key in
                           (metadata[key] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
                       }),
@@ -6925,7 +7000,8 @@ final class CoreModel: ObservableObject {
                 let target = min(projectLoadedDepth, next.number("total"))
                 while items.count < target {
                     let limit = min(pageSize, target - items.count)
-                    let window = try await query("projectDetail", [id, items.count, limit, next.text("revision")])
+                    let window = try await projectDetailWindow(offset: items.count, limit: limit,
+                        revision: next.text("revision"), showCompleted: showCompleted, collapsed: collapsed)
                     try validateProjectWindow(window, against: next, count: limit)
                     items += window.objects("items")
                 }
@@ -6958,6 +7034,13 @@ final class CoreModel: ObservableObject {
                 if projectSectionDeleteOptions.text("revision") != next.text("mutationRevision") {
                     projectSectionDeleteOptionsCurrent = false
                 }
+                if showCompleted != projectShowCompleted {
+                    preferenceDefaults.set(showCompleted, forKey: projectShowCompletedPreference)
+                    NSLog("Native iOS Project completed preference applied releaseCheck=v1.3.3/native-ios-project-completed-view")
+                }
+                projectShowCompleted = showCompleted
+                projectCompletedCollapsed = collapsed
+                pendingProjectView = nil
                 projectDetail = next
                 projectCurrent = true
                 return
@@ -6973,6 +7056,7 @@ final class CoreModel: ObservableObject {
               window.text("mutationRevision") == snapshot.text("mutationRevision"),
               window.number("total") == snapshot.number("total"),
               window.flag("readOnly") == snapshot.flag("readOnly"),
+              NSDictionary(dictionary: window.object("controls")).isEqual(to: snapshot.object("controls")),
               window.objects("items").count == count else { throw CocoaError(.coderReadCorrupt) }
     }
 
@@ -10165,6 +10249,11 @@ final class CoreModel: ObservableObject {
     private func query(_ method: String, _ args: [Any] = []) async throws -> CoreObject {
         guard let host else { throw CocoaError(.coderInvalidValue) }
         #if DEBUG && targetEnvironment(simulator)
+        if method == "menuRead", args.first as? String == "projectDetailView",
+           pendingProjectView != nil, projectViewTestReadFailures > 0 {
+            projectViewTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
         if method == "menuRead", args.first as? String == "projects",
            pendingProjectTagFilter != nil, projectTagTestReadFailure {
             projectTagTestReadFailure = false

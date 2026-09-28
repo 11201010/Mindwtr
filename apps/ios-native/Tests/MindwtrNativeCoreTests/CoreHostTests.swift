@@ -13890,6 +13890,111 @@ final class CoreHostTests: XCTestCase {
         await reopened.close()
     }
 
+    func testProjectCompletedViewGroupsPagesAndRetainsLegacyShapeWithoutWrites() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start()
+        await bootstrap.close()
+        let db = try SQLiteBridge(url: database)
+        let at = "2026-09-28T12:00:00.000Z"
+        for (id, status, sequential) in [("parallel", "active", 0), ("sequential", "active", 1), ("archived", "archived", 0)] {
+            _ = try db.execute("INSERT INTO projects (id, title, status, color, isSequential, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                parametersJSON: json([id, id, status, "#94a3b8", sequential, 0, at, at, 1]))
+            for (order, state) in ["next", "done", "archived", "reference"].enumerated() {
+                _ = try db.execute("INSERT INTO tasks (id, title, status, projectId, orderNum, tags, contexts, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    parametersJSON: json([id + "-" + state, state, state, id, order, "[]", "[]", at, at, 1]))
+            }
+        }
+        db.close()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let check = try SQLiteBridge(url: database)
+        defer { check.close() }
+        let before = try nineTableSnapshot(check)
+        var statements = 0
+        var journals = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journals += 1 }
+        func read(_ id: String, show: Bool, collapsed: Bool, offset: Int = 0, limit: Int = 100,
+                  revision: String? = nil) async throws -> [String: Any] {
+            var input: [String: Any] = ["projectId": id, "showCompleted": show, "completedCollapsed": collapsed,
+                                       "offset": offset, "limit": limit]
+            if let revision { input["revision"] = revision }
+            return try object(await core.call("menuRead", argumentsJSON: json(["projectDetailView", json(input)])))
+        }
+        func items(_ page: [String: Any]) throws -> [[String: Any]] { try XCTUnwrap(page["items"] as? [[String: Any]]) }
+        func ids(_ page: [String: Any]) throws -> Set<String> {
+            Set(try items(page).compactMap { ($0["row"] as? [String: Any])?["id"] as? String })
+        }
+        let hidden = try await read("parallel", show: false, collapsed: true)
+        XCTAssertEqual(try ids(hidden), ["parallel-next", "parallel-reference"])
+        let collapsed = try await read("parallel", show: true, collapsed: true)
+        XCTAssertEqual(try ids(collapsed), try ids(hidden))
+        let completed = try XCTUnwrap(try items(collapsed).first { $0["collapsible"] as? Bool == true })
+        XCTAssertEqual(completed["count"] as? Int, 2)
+        XCTAssertEqual(completed["collapsed"] as? Bool, true)
+        let expanded = try await read("parallel", show: true, collapsed: false)
+        XCTAssertEqual(try ids(expanded), ["parallel-next", "parallel-reference", "parallel-done", "parallel-archived"])
+        let controls = try XCTUnwrap(expanded["controls"] as? [String: Any])
+        XCTAssertEqual(controls["groupCompletedTasksLast"] as? Bool, true)
+        XCTAssertEqual(controls["canToggleCompleted"] as? Bool, true)
+        XCTAssertFalse(try XCTUnwrap(controls["label"] as? String).isEmpty)
+        let first = try await read("parallel", show: true, collapsed: false, limit: 1)
+        let revision = try XCTUnwrap(first["revision"] as? String)
+        var paged = try items(first)
+        for offset in 1..<(try XCTUnwrap(first["total"] as? Int)) {
+            paged += try items(await read("parallel", show: true, collapsed: false, offset: offset, limit: 1, revision: revision))
+        }
+        XCTAssertEqual(try json(paged), try json(items(expanded)))
+        for (id, show, collapse) in [("parallel", false, false), ("parallel", true, true), ("sequential", true, false)] {
+            await expectFailure("STALE_REVISION") { _ = try await read(id, show: show, collapsed: collapse, offset: 1, limit: 1, revision: revision) }
+        }
+        let sequential = try await read("sequential", show: true, collapsed: true)
+        XCTAssertEqual(try ids(sequential), ["sequential-next", "sequential-reference", "sequential-done", "sequential-archived"])
+        XCTAssertFalse(try items(sequential).contains { $0["collapsible"] as? Bool == true })
+        let archived = try await read("archived", show: false, collapsed: true)
+        XCTAssertEqual(archived["readOnly"] as? Bool, true)
+        XCTAssertEqual((archived["controls"] as? [String: Any])?["canToggleCompleted"] as? Bool, false)
+        XCTAssertEqual(try ids(archived), ["archived-next", "archived-reference", "archived-done", "archived-archived"])
+        let legacy = try object(await core.call("projectDetail", argumentsJSON: json(["parallel", 0, 100, ""])))
+        XCTAssertNil(legacy["controls"])
+        XCTAssertEqual(try ids(legacy), try ids(hidden))
+        for item in try items(legacy) where item["type"] as? String == "section" {
+            XCTAssertEqual(Set(item.keys), Set(["type", "id", "title", "count", "muted"]))
+        }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(journals, 0)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testProjectCompletedViewRejectsMalformedControlsBeforeSQLite() async throws {
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        var statements = 0
+        var journals = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journals += 1 }
+        let valid: [String: Any] = ["projectId": "project", "offset": 0, "limit": 50,
+                                    "showCompleted": false, "completedCollapsed": true]
+        var invalid: [[String: Any]] = [[:], valid.filter { $0.key != "completedCollapsed" }]
+        for (field, value) in [("extra", true as Any), ("showCompleted", 1), ("completedCollapsed", "true"),
+                               ("offset", true), ("offset", -1), ("offset", 1.5), ("offset", 1),
+                               ("limit", 101), ("revision", NSNull()), ("projectId", " "),
+                               ("projectId", String(repeating: "x", count: 501))] {
+            var input = valid; input[field] = value; invalid.append(input)
+        }
+        for input in invalid {
+            await expectFailure { _ = try await core.call("menuRead", argumentsJSON: json(["projectDetailView", json(input)])) }
+        }
+        XCTAssertEqual(statements, 0)
+        XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
     func testFilteredProjectsUsesRNTagIdentityGroupingAndAreaIntersectionWithoutWrites() async throws {
         _ = try await seedDestinationTask()
         let seed = try SQLiteBridge(url: database)

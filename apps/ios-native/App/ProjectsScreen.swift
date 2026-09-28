@@ -887,18 +887,39 @@ struct ProjectDetailScreen: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 8).background(palette.card)
             .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+            if model.projectDetail.object("controls").flag("canToggleCompleted") {
+                HStack {
+                    Button { resignProjectNotesInput(); Task { await model.openProjectViewOptions() } } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 20))
+                            .foregroundStyle(model.projectDetail.object("controls").flag("showCompleted") ? palette.tint : palette.secondary)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                            .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
+                    .accessibilityLabel(model.label("taskEdit.moreOptions"))
+                    .accessibilityAddTraits(model.projectDetail.object("controls").flag("showCompleted") ? .isSelected : [])
+                    .accessibilityIdentifier("project-task-view-options-button")
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8).background(palette.card)
+                .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if let error = model.projectError {
                         Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                             .accessibilityIdentifier("project-error")
-                        Button(model.label("common.retry")) { Task { await model.refresh() } }
-                            .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy || model.retryNeeded)
+                        Button { Task { await model.refresh() } } label: {
+                            Text(model.label("common.retry")).rnFont(14, .semibold)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                        }
+                            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
                             .accessibilityIdentifier("project-retry")
                     }
                     if !model.projectCurrent { statusReadErrorView }
                     // Keep the same Project's layout during its refresh, with stale controls inert.
-                    if model.projectCurrent || (model.busy && !model.projectDetail.isEmpty
+                    if model.projectCurrent || ((model.busy || model.projectViewReadPending) && !model.projectDetail.isEmpty
                         && model.projectDetail.text("projectId") == model.projectHeader.text("id")) {
                         Group {
                             let metadata = model.projectDetail.object("metadata")
@@ -911,12 +932,33 @@ struct ProjectDetailScreen: View {
                             ForEach(items.indices, id: \.self) { index in
                                 let item = items[index]
                                 if item.text("type") == "section" {
-                                    HStack(spacing: 8) {
-                                        Text(item.text("title")).rnFont(13, .bold)
-                                        Text(String(item.number("count"))).rnFont(12, .semibold)
+                                    if item.flag("collapsible") {
+                                        Button {
+                                            resignProjectNotesInput()
+                                            Task { await model.toggleProjectCompletedSection(item.text("id")) }
+                                        } label: {
+                                            HStack(spacing: 8) {
+                                                AppIcon(name: "chevron", size: 16)
+                                                    .rotationEffect(.degrees(item.flag("collapsed") ? -90 : 0)).accessibilityHidden(true)
+                                                Text(item.text("title")).rnFont(13, .bold)
+                                                Text(String(item.number("count"))).rnFont(12, .semibold)
+                                                Spacer(minLength: 0)
+                                            }
+                                            .foregroundStyle(palette.secondary)
+                                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
+                                        .accessibilityLabel(item.text("title") + ", " + String(item.number("count")))
+                                        .accessibilityValue(model.label(item.flag("collapsed") ? "markdown.expand" : "markdown.collapse"))
+                                        .accessibilityIdentifier("project-completed-toggle")
+                                    } else {
+                                        HStack(spacing: 8) {
+                                            Text(item.text("title")).rnFont(13, .bold)
+                                            Text(String(item.number("count"))).rnFont(12, .semibold)
+                                        }
+                                        .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
+                                        .padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
                                     }
-                                    .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
-                                    .padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
                                 } else if item.text("type") == "task" {
                                     TaskCard(row: item.object("row"), model: model, palette: palette,
                                              readOnly: model.projectDetail.flag("readOnly"),
@@ -940,6 +982,7 @@ struct ProjectDetailScreen: View {
                 }
                 .padding(12)
             }
+            .accessibilityIdentifier("project-detail-scroll")
             .refreshable { resignProjectNotesInput(); await model.refresh() }
             .allowsHitTesting(!model.projectRenameEditing)
         }
@@ -984,6 +1027,43 @@ struct ProjectDetailScreen: View {
             projectDateSheet
                 .presentationDetents(model.retryNeeded ? [.large] : [.medium, .large])
                 .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
+        }
+        .sheet(isPresented: Binding(get: { model.projectViewOptionsPresented },
+                                    set: { if !$0 { model.closeProjectViewOptions() } })) {
+            VStack(spacing: 16) {
+                HStack {
+                    Text(model.label("taskEdit.moreOptions")).rnFont(18, .semibold).foregroundStyle(palette.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 0)
+                    Button { model.closeProjectViewOptions() } label: {
+                        Text(model.label("common.close")).rnFont(14, .semibold)
+                            .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).accessibilityIdentifier("project-view-options-close")
+                }
+                Button { Task { await model.toggleProjectShowCompleted() } } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: model.projectDetail.object("controls").flag("showCompleted") ? "eye" : "eye.slash")
+                            .accessibilityHidden(true)
+                        Text(model.projectDetail.object("controls").text("label")).rnFont(16)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if model.projectDetail.object("controls").flag("showCompleted") {
+                            Image(systemName: "checkmark").accessibilityHidden(true)
+                        }
+                    }
+                    .foregroundStyle(palette.text)
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
+                .accessibilityAddTraits(model.projectDetail.object("controls").flag("showCompleted") ? .isSelected : [])
+                .accessibilityIdentifier("project-view-completed-option")
+                Spacer(minLength: 0)
+            }
+            .padding(16).background(palette.card).tint(palette.tint)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("project-view-options-sheet")
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: Binding(get: { model.projectAreaPresented },
                                     set: { if !$0 { model.closeProjectArea() } })) {

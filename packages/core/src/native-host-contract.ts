@@ -464,6 +464,19 @@ export type NativeProjectDetail = {
     total: number;
     items: NativeProjectDetailItem[];
 };
+export type NativeProjectDetailView = Omit<NativeProjectDetail, 'items'> & {
+    items: (Extract<NativeProjectDetailItem, { type: 'task' }> | {
+        type: 'section'; id: string; title: string; count: number; muted: boolean;
+        collapsible: boolean; collapsed: boolean;
+    })[];
+    controls: {
+        showCompleted: boolean;
+        completedCollapsed: boolean;
+        canToggleCompleted: boolean;
+        groupCompletedTasksLast: boolean;
+        label: string;
+    };
+};
 export type NativeProjectNotes = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
@@ -476,6 +489,7 @@ export type NativeProjectNotes = {
 };
 type ProjectDetailCache = {
     readOnly: boolean;
+    groupCompletedTasksLast: boolean;
     metadata: ProjectDetailsMetadata;
     items: ProjectTaskListItem[];
     cues: Map<string, ProjectSequenceTaskCue>;
@@ -1067,16 +1081,14 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         });
     };
 
-    // The mobile project workspace as it opens: the project's saved sort, no
-    // search, Show completed off, nothing collapsed. RN TaskList filters its
-    // project rows by area, including completed and reference tasks.
-    const projectDetail = (projectId: string, currentRevision: string): ProjectDetailCache | null => {
-        const key = `${currentRevision}\u0000${projectId}`;
+    // RN TaskList filters its project rows by area, including completed and reference tasks.
+    const projectDetail = (projectId: string, currentRevision: string, showCompleted = false, completedCollapsed = false): ProjectDetailCache | null => {
+        const key = JSON.stringify([currentRevision, projectId, showCompleted, completedCollapsed]);
         if (cachedProjectDetailKey === key && cachedProjectDetail) return cachedProjectDetail;
         const state = useTaskStore.getState();
         const project = state._allProjects.find((candidate) => candidate.id === projectId);
         if (!project || project.deletedAt) return null;
-        const options = getProjectDetailTaskListOptions(project);
+        const options = getProjectDetailTaskListOptions(project, showCompleted);
         // Mobile: ProjectDetailModal resolves the saved sort for features (it gates
         // the cues); TaskList then resolves that for the all-status list.
         const projectSortBy = resolveTaskSortByForFeatures(project.taskSortBy ?? 'default', state.settings);
@@ -1102,12 +1114,13 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             projectOrder: options.enableProjectReorder,
             reorderMode: false,
             groupCompletedTasksLast: options.groupCompletedTasksLast,
-            completedCollapsed: false,
+            completedCollapsed,
             t: translate,
         });
         const area = state.areas.find((candidate) => candidate.id === project.areaId);
         cachedProjectDetail = {
             readOnly: options.readOnly,
+            groupCompletedTasksLast: options.groupCompletedTasksLast,
             metadata: getProjectDetailsPresentation(project, {
                 isArchivedProject: project.status === 'archived',
                 areaName: area?.name || tFallback(translate, 'projects.noArea', 'No Area'),
@@ -1123,6 +1136,41 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         };
         cachedProjectDetailKey = key;
         return cachedProjectDetail;
+    };
+
+    const readProjectDetail = (
+        projectId: string, offset: number, limit: number, currentRevision: string, now: Date,
+        showCompleted = false, completedCollapsed = false,
+    ): NativeHostResult<{ value: NativeProjectDetail; cache: ProjectDetailCache }> => {
+        const detail = projectDetail(projectId, currentRevision, showCompleted, completedCollapsed);
+        if (!detail) return fail('TASK_NOT_FOUND', 'Project not found');
+        return { ok: true, value: {
+            cache: detail,
+            value: {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                revision: currentRevision,
+                mutationRevision: projectMutationRevision(),
+                projectId,
+                readOnly: detail.readOnly,
+                metadata: detail.metadata,
+                total: detail.items.length,
+                items: detail.items.slice(offset, offset + limit).map((item): NativeProjectDetailItem => (
+                    item.type === 'section'
+                        ? { type: 'section', id: item.id, title: item.title, count: item.count, muted: item.muted === true }
+                        : {
+                            type: 'task',
+                            // Mobile's project list hides the project name on its rows.
+                            row: toNativeTaskRow(item.task, detail.projectTitles, rowMeta(item.task, now, {
+                                hideProjectMeta: true,
+                                sequenceCue: detail.cues.get(item.task.id),
+                                sequenceLabel: tFallback(translate, 'projects.availableNextAction', 'Available next action'),
+                            })),
+                            sectionId: item.reorderSectionId ?? null,
+                            sequenceCue: detail.cues.get(item.task.id) ?? null,
+                        }
+                )),
+            },
+        } };
     };
 
     const save = async (): Promise<NativeHostResult<null>> => {
@@ -1775,35 +1823,54 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             if (input.revision !== undefined && input.revision !== currentRevision) {
                 return fail('STALE_REVISION', 'Project changed; restart paging from offset zero');
             }
-            const detail = projectDetail(input.projectId, currentRevision);
-            if (!detail) return fail('TASK_NOT_FOUND', 'Project not found');
-            return {
-                ok: true,
-                value: {
-                    version: NATIVE_HOST_CONTRACT_VERSION,
-                    revision: currentRevision,
-                    mutationRevision: projectMutationRevision(),
-                    projectId: input.projectId,
-                    readOnly: detail.readOnly,
-                    metadata: detail.metadata,
-                    total: detail.items.length,
-                    items: detail.items.slice(input.offset, input.offset + input.limit).map((item): NativeProjectDetailItem => (
-                        item.type === 'section'
-                            ? { type: 'section', id: item.id, title: item.title, count: item.count, muted: item.muted === true }
-                            : {
-                                type: 'task',
-                                // Mobile's project list hides the project name on its rows.
-                                row: toNativeTaskRow(item.task, detail.projectTitles, rowMeta(item.task, now, {
-                                    hideProjectMeta: true,
-                                    sequenceCue: detail.cues.get(item.task.id),
-                                    sequenceLabel: tFallback(translate, 'projects.availableNextAction', 'Available next action'),
-                                })),
-                                sectionId: item.reorderSectionId ?? null,
-                                sequenceCue: detail.cues.get(item.task.id) ?? null,
-                            }
-                    )),
+            const result = readProjectDetail(input.projectId, input.offset, input.limit, currentRevision, now);
+            return result.ok ? { ok: true, value: result.value.value } : result;
+        },
+
+        getProjectDetailView(input: {
+            projectId: string; offset: number; limit: number; revision?: string;
+            showCompleted: boolean; completedCollapsed: boolean;
+        }): NativeHostResult<NativeProjectDetailView> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isNativeJsonWithinBytes(input)
+                || Object.keys(input).length !== (input.revision === undefined ? 5 : 6)
+                || !['projectId', 'offset', 'limit', 'showCompleted', 'completedCollapsed'].every((key) => Object.prototype.hasOwnProperty.call(input, key))
+                || (input.revision !== undefined && !Object.prototype.hasOwnProperty.call(input, 'revision'))
+                || typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 500
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || (input.offset > 0 && typeof input.revision !== 'string')
+                || (input.revision !== undefined && typeof input.revision !== 'string')
+                || typeof input.showCompleted !== 'boolean' || typeof input.completedCollapsed !== 'boolean') {
+                return fail('INVALID_INPUT', 'A bounded Project view, controls, and revision for later pages are required');
+            }
+            const now = new Date();
+            const currentRevision = JSON.stringify([input.projectId, input.showCompleted, input.completedCollapsed, revision(), displayRevision(now)]);
+            if (input.revision !== undefined && input.revision !== currentRevision) {
+                return fail('STALE_REVISION', 'Project changed; restart paging from offset zero');
+            }
+            const result = readProjectDetail(input.projectId, input.offset, input.limit, currentRevision, now, input.showCompleted, input.completedCollapsed);
+            if (!result.ok) return result;
+            const { value, cache } = result.value;
+            return { ok: true, value: {
+                ...value,
+                items: value.items.map((item, index) => {
+                    if (item.type !== 'section') return item;
+                    const source = cache.items[input.offset + index];
+                    return { ...item, collapsible: source.type === 'section' && source.collapsible === true,
+                        collapsed: source.type === 'section' && source.collapsed === true };
+                }),
+                controls: {
+                    showCompleted: input.showCompleted,
+                    completedCollapsed: input.completedCollapsed,
+                    canToggleCompleted: !cache.readOnly,
+                    groupCompletedTasksLast: cache.groupCompletedTasksLast,
+                    label: input.showCompleted
+                        ? tFallback(translate, 'common.hideCompleted', 'Hide completed')
+                        : tFallback(translate, 'common.showCompleted', 'Show completed'),
                 },
-            };
+            } };
         },
 
         getProjectNotes(input: { projectId: string; offset: number; limit: number; revision?: string }): NativeHostResult<NativeProjectNotes> {

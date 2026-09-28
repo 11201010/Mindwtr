@@ -3291,7 +3291,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "projects", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
+            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
@@ -3300,6 +3300,20 @@ private final class Engine: @unchecked Sendable {
                 guard Set(input.keys) == Set(["tagFilter"]), let filter = input["tagFilter"] as? String,
                       filter.utf16.count <= 100_000 else {
                     throw HostFailure("Unsupported native Projects tag filter")
+                }
+            }
+            if name == "projectDetailView" {
+                let required: Set<String> = ["projectId", "offset", "limit", "showCompleted", "completedCollapsed"]
+                guard json.utf8.count <= 1_048_576,
+                      required.isSubset(of: Set(input.keys)), Set(input.keys).isSubset(of: required.union(["revision"])),
+                      let id = input["projectId"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      id.utf16.count <= 500, Self.isInteger(input["offset"]), Self.isInteger(input["limit"]),
+                      let offset = input["offset"] as? NSNumber, (0...9_007_199_254_740_991).contains(offset.doubleValue),
+                      let limit = input["limit"] as? NSNumber, (1...100).contains(limit.doubleValue),
+                      Self.isBoolean(input["showCompleted"]), Self.isBoolean(input["completedCollapsed"]),
+                      (input["revision"] == nil || input["revision"] is String),
+                      (offset.doubleValue == 0 || input["revision"] is String) else {
+                    throw HostFailure("Unsupported native Project detail view input")
                 }
             }
             if name == "contexts" {
