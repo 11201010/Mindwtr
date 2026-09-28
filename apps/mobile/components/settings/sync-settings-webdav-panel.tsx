@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { getSyncWebDavFormState } from '@mindwtr/core/sync-settings-model';
+
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
-import { isValidHttpUrl } from './settings.constants';
 import { styles } from './settings.styles';
 
 type Translate = (key: string) => string;
@@ -66,9 +67,8 @@ export function SyncWebDavBackendPanel({
         setPassword(initialPassword);
     }, [initialPassword]);
 
-    const urlError = url.trim() ? !isValidHttpUrl(url.trim()) : false;
+    const { urlError, canUseActions } = getSyncWebDavFormState(url);
     const settings = { allowInsecureHttp, password, url, username };
-    const canUseActions = url.trim().length > 0 && !urlError;
 
     return (
         <>

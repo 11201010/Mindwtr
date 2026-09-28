@@ -3,10 +3,10 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { isValidCloudSyncToken } from '@mindwtr/core';
+import { getSyncSelfHostedFormState } from '@mindwtr/core/sync-settings-model';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
-import { isValidHttpUrl } from './settings.constants';
 import { styles } from './settings.styles';
 
 type Translate = (key: string) => string;
@@ -60,12 +60,8 @@ export function SyncSelfHostedBackendPanel({
         setToken(initialToken);
     }, [initialToken]);
 
-    const urlError = url.trim() ? !isValidHttpUrl(url.trim()) : false;
-    // An empty token is valid here (self-hosted servers may run without auth);
-    // only a non-empty token that fails the shape check is rejected.
-    const tokenError = token.trim() ? !isValidCloudSyncToken(token.trim()) : false;
+    const { urlError, tokenError, canUseActions } = getSyncSelfHostedFormState(url, token, isValidCloudSyncToken);
     const settings = { allowInsecureHttp, token, url };
-    const canUseActions = url.trim().length > 0 && !urlError && !tokenError;
 
     return (
         <>

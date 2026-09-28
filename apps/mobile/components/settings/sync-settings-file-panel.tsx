@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import React from 'react';
 import { ActivityIndicator, Platform, Text, TouchableOpacity, View } from 'react-native';
 
+import { getSyncFolderLabel } from '@mindwtr/core/sync-settings-model';
+
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
 import { styles } from './settings.styles';
@@ -46,7 +48,7 @@ export function SyncFileBackendPanel({
                     <View style={styles.settingInfo}>
                         <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncFolderLocation')}</Text>
                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
-                            {syncPath ? syncPath.split('/').pop() : t('common.notSet')}
+                            {getSyncFolderLabel(syncPath, t)}
                         </Text>
                     </View>
                     <TouchableOpacity onPress={onSelectFolder}>

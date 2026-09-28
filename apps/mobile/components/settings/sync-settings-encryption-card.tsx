@@ -1,15 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import {
-    generateDicewarePassphrase,
     getDocsGuideUrl,
-    isSyncEncryptionRemoteVersionUnavailableError,
     type AppData,
     type Language,
-    type SyncEncryptionState,
-    type SyncEncryptionTransitionProgress,
 } from '@mindwtr/core';
+import {
+    createSyncEncryptionCard,
+    getSyncEncryptionCardMessages,
+    type SyncEncryptionPassphraseField,
+} from '@mindwtr/core/sync-encryption-card';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { logSettingsError } from '@/lib/settings-utils';
@@ -30,20 +31,6 @@ import { styles } from './settings.styles';
 
 type Translate = (key: string) => string;
 
-/** Which message the card shows after a failed transition. `rotation-first` is the
- *  one terminal case with a remedy: an interrupted passphrase change left the sync
- *  location on two salts, and only re-running the change can heal it. */
-type ErrorKind =
-    | 'mismatch'
-    | 'wrong-passphrase'
-    | 'rotation-first'
-    | 'backend-required'
-    | 'transition-incomplete'
-    | 'generic';
-
-type Flow = 'none' | 'enable' | 'change' | 'disable' | 'unlock';
-type WarningKind = 'cleanup-deferred' | 'file-cleanup-deferred' | 'no-encrypted-remote';
-
 export type SyncEncryptionCardProps = {
     /** Supplies the attachment worklist; phase 2 leaves attachments plaintext without it. */
     appData: AppData;
@@ -58,73 +45,40 @@ export type SyncEncryptionCardProps = {
     transportBusy?: boolean;
 };
 
-const classifyFailure = (error: unknown, terminal: ErrorKind): ErrorKind => {
-    const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-    if (message.includes('SYNC_ENCRYPTION_BACKEND_REQUIRED')) return 'backend-required';
-    if (message.includes('SYNC_ENCRYPTION_TRANSITION_INCOMPLETE')) return 'transition-incomplete';
-    if (isSyncEncryptionRemoteVersionUnavailableError(error)) return 'transition-incomplete';
-    if (/MWENC1|SYNC_ENCRYPTION|passphrase/i.test(message)) return terminal;
-    return 'generic';
-};
-
+// The card's rules live in core (sync-encryption-card.ts) so the native app runs them too;
+// this component binds them to the sync encryption service and draws the card.
 export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = false }: SyncEncryptionCardProps) {
-    const [state, setState] = useState<SyncEncryptionState | null>(null);
-    const [stateUnavailable, setStateUnavailable] = useState(false);
-    const [flow, setFlow] = useState<Flow>('none');
-    const [busy, setBusy] = useState(false);
-    const [progress, setProgress] = useState<SyncEncryptionTransitionProgress | null>(null);
-    const [error, setError] = useState<ErrorKind | null>(null);
-    const [warning, setWarning] = useState<WarningKind | null>(null);
-    const [currentPassphrase, setCurrentPassphrase] = useState('');
-    const [nextPassphrase, setNextPassphrase] = useState('');
-    const [confirmPassphrase, setConfirmPassphrase] = useState('');
-    const [revealed, setRevealed] = useState(false);
-    const [generated, setGenerated] = useState(false);
+    const appDataRef = useRef(appData);
+    appDataRef.current = appData;
+    // One controller per card, created on first use.
+    const [card] = useState(() => createSyncEncryptionCard({
+        getStatus: () => getSyncEncryptionStatus(),
+        isBackendPending: () => isSyncEncryptionBackendPending(),
+        enable: (passphrase, options) => enableSyncEncryption(passphrase, options),
+        change: (current, next, options) => changeSyncEncryptionPassphrase(current, next, options),
+        disable: (options) => disableSyncEncryption(options),
+        provide: (passphrase) => provideSyncEncryptionPassphrase(passphrase),
+        decline: () => declineSyncEncryptionPassphrase(),
+        isCleanupDeferredError: (error): error is Error & { cleanupKind?: string; outcome?: unknown } => isSyncEncryptionCleanupDeferredError(error),
+        randomBytes: (length) => mobileSyncCryptoPrimitives.randomBytes(length),
+        appData: () => appDataRef.current,
+        logSettingsError: (error) => logSettingsError(error),
+    }));
+    const cardState = useSyncExternalStore(card.subscribe, card.getState);
+    const {
+        state,
+        stateUnavailable,
+        flow,
+        busy,
+        currentPassphrase,
+        nextPassphrase,
+        confirmPassphrase,
+        revealed,
+        generated,
+        pendingFirstSync,
+    } = cardState;
 
-    // A status read that failed says nothing about the folder; reporting 'off'
-    // would offer "Enable encryption" for a folder that may already be encrypted.
-    // null is paired with stateUnavailable so the card can offer a safe retry
-    // without guessing that encryption is off.
-    const readState = useCallback(async (): Promise<{
-        state: SyncEncryptionState | null;
-        unavailable: boolean;
-        incomplete: boolean;
-    }> => {
-        try {
-            const status = await getSyncEncryptionStatus();
-            return {
-                state: status.state,
-                unavailable: false,
-                incomplete: Boolean(status.incompleteTransition),
-            };
-        } catch (failure) {
-            logSettingsError(failure);
-            return { state: null, unavailable: true, incomplete: false };
-        }
-    }, []);
-
-    // Durable backend, not the screen's editor selection: a typed-but-unproven config
-    // still runs transitions local-only, and the copy must say so (#1001).
-    const [pendingFirstSync, setPendingFirstSync] = useState(false);
-
-    useEffect(() => {
-        let cancelled = false;
-        void readState().then((next) => {
-            if (!cancelled) {
-                setState(next.state);
-                setStateUnavailable(next.unavailable);
-                if (next.incomplete) setError('transition-incomplete');
-            }
-        });
-        void isSyncEncryptionBackendPending()
-            .then((pending) => {
-                if (!cancelled) setPendingFirstSync(pending);
-            })
-            .catch(logSettingsError);
-        return () => {
-            cancelled = true;
-        };
-    }, [readState]);
+    useEffect(() => card.refresh(), [card]);
 
     // Falling-edge refresh: see the transportBusy prop comment.
     const previousTransportBusy = React.useRef(transportBusy);
@@ -132,177 +86,29 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
         const wasBusy = previousTransportBusy.current;
         previousTransportBusy.current = transportBusy;
         if (!wasBusy || transportBusy) return;
-        let cancelled = false;
-        void readState().then((next) => {
-            if (!cancelled) {
-                setState(next.state);
-                setStateUnavailable(next.unavailable);
-                if (next.incomplete) setError('transition-incomplete');
-            }
-        });
-        void isSyncEncryptionBackendPending()
-            .then((pending) => {
-                if (!cancelled) setPendingFirstSync(pending);
-            })
-            .catch(logSettingsError);
-        return () => {
-            cancelled = true;
-        };
-    }, [transportBusy, readState]);
+        return card.refresh();
+    }, [transportBusy, card]);
 
-    const closeFlow = useCallback(() => {
-        setFlow('none');
-        setCurrentPassphrase('');
-        setNextPassphrase('');
-        setConfirmPassphrase('');
-        setRevealed(false);
-        setGenerated(false);
-        setError(null);
-    }, []);
-
-    const openFlow = (next: Flow) => {
-        closeFlow();
-        setWarning(null);
-        setFlow(next);
-    };
-
-    const generate = () => {
-        const phrase = generateDicewarePassphrase(undefined, mobileSyncCryptoPrimitives.randomBytes);
-        setNextPassphrase(phrase);
-        setConfirmPassphrase(phrase);
-        setRevealed(true);
-        setGenerated(true);
-        setError(null);
-        setWarning(null);
-    };
-
-    const run = async (operation: () => Promise<void>, terminal: ErrorKind) => {
-        setBusy(true);
-        setError(null);
-        setProgress(null);
-        let succeeded = false;
-        let cleanupDeferred: WarningKind | null = null;
-        try {
-            await operation();
-            succeeded = true;
-        } catch (failure) {
-            logSettingsError(failure);
-            if (isSyncEncryptionCleanupDeferredError(failure)) {
-                succeeded = true;
-                cleanupDeferred = failure.cleanupKind === 'file-lock'
-                    ? 'file-cleanup-deferred'
-                    : 'cleanup-deferred';
-                setWarning(cleanupDeferred);
-            } else {
-                setError(classifyFailure(failure, terminal));
-            }
-        }
-        // Transitions are resumable, so a half-finished run still moved the state.
-        const nextState = await readState();
-        setState(nextState.state);
-        setStateUnavailable(nextState.unavailable);
-        if (nextState.incomplete) setError('transition-incomplete');
-        setPendingFirstSync(await isSyncEncryptionBackendPending().catch(() => false));
-        setProgress(null);
-        setBusy(false);
-        if (succeeded) {
-            closeFlow();
-            if (cleanupDeferred) setWarning(cleanupDeferred);
-        }
-    };
-
+    const closeFlow = card.closeFlow;
+    const openFlow = card.openFlow;
+    const generate = card.generate;
     const submitEnable = () => {
-        if (nextPassphrase !== confirmPassphrase) {
-            setError('mismatch');
-            return;
-        }
-        void run(
-            () => enableSyncEncryption(nextPassphrase, { appData, onProgress: setProgress }),
-            'generic',
-        );
+        void card.submitEnable();
     };
-
     const submitChange = () => {
-        if (nextPassphrase !== confirmPassphrase) {
-            setError('mismatch');
-            return;
-        }
-        void run(
-            () => changeSyncEncryptionPassphrase(currentPassphrase, nextPassphrase, { appData, onProgress: setProgress }),
-            'wrong-passphrase',
-        );
+        void card.submitChange();
     };
-
     const submitDisable = () => {
-        void run(() => disableSyncEncryption({ appData, onProgress: setProgress }), 'rotation-first');
+        void card.submitDisable();
     };
-
     const submitUnlock = () => {
-        void (async () => {
-            setBusy(true);
-            setError(null);
-            setWarning(null);
-            let accepted = false;
-            let cleanupDeferred: WarningKind | null = null;
-            try {
-                const outcome = await provideSyncEncryptionPassphrase(currentPassphrase);
-                accepted = outcome === 'ok';
-                // #1138: nothing encrypted is here any more, so the lock described a location
-                // this device has left behind. Core already cleared it; close the flow and say
-                // what changed rather than reporting a wrong passphrase.
-                if (outcome === 'no-encrypted-remote') {
-                    accepted = true;
-                    cleanupDeferred = 'no-encrypted-remote';
-                    setWarning('no-encrypted-remote');
-                } else if (!accepted) {
-                    setError('wrong-passphrase');
-                }
-            } catch (failure) {
-                logSettingsError(failure);
-                if (isSyncEncryptionCleanupDeferredError(failure)) {
-                    accepted = failure.outcome === 'ok';
-                    if (accepted) {
-                        cleanupDeferred = failure.cleanupKind === 'file-lock'
-                            ? 'file-cleanup-deferred'
-                            : 'cleanup-deferred';
-                        setWarning(cleanupDeferred);
-                    } else {
-                        setError('wrong-passphrase');
-                    }
-                } else {
-                    setError(classifyFailure(failure, 'wrong-passphrase'));
-                }
-            }
-            const nextState = await readState();
-            setState(nextState.state);
-            setStateUnavailable(nextState.unavailable);
-            setBusy(false);
-            if (accepted) {
-                closeFlow();
-                if (cleanupDeferred) setWarning(cleanupDeferred);
-            }
-        })();
+        void card.submitUnlock();
     };
-
     const decline = () => {
-        closeFlow();
-        void declineSyncEncryptionPassphrase()
-            .catch(logSettingsError)
-            .then(async () => {
-                const nextState = await readState();
-                setState(nextState.state);
-                setStateUnavailable(nextState.unavailable);
-            });
+        void card.decline();
     };
-
     const retryState = () => {
-        void (async () => {
-            setBusy(true);
-            const nextState = await readState();
-            setState(nextState.state);
-            setStateUnavailable(nextState.unavailable);
-            setBusy(false);
-        })();
+        void card.retryState();
     };
 
     if (state === null) {
@@ -337,43 +143,15 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
         );
     }
 
-    const errorMessage = error === 'mismatch'
-        ? t('settings.syncEncryptionErrorMismatch')
-        : error === 'wrong-passphrase'
-            ? t('settings.syncEncryptionErrorWrongPassphrase')
-            : error === 'rotation-first'
-                ? t('settings.syncEncryptionErrorRotationFirst')
-                : error === 'backend-required'
-                    ? t('settings.syncEncryptionErrorBackendRequired')
-                    : error === 'transition-incomplete'
-                        ? t('settings.syncEncryptionErrorTransitionIncomplete')
-                        : error === 'generic'
-                            ? t('settings.syncEncryptionErrorGeneric')
-                            : null;
+    const { errorMessage, progressLabel, warningMessage } = getSyncEncryptionCardMessages(cardState, t);
 
-    const progressLabel = progress
-        ? `${progress.phase === 'attachments'
-            ? t('settings.syncEncryptionProgressAttachments')
-            : t('settings.syncEncryptionProgressDocuments')} ${progress.completed} / ${progress.total}`
-        : null;
-    const warningMessage = warning === 'cleanup-deferred'
-        ? t('settings.syncEncryptionCleanupDeferred')
-        : warning === 'file-cleanup-deferred'
-            ? t('settings.syncEncryptionFileCleanupDeferred')
-            : warning === 'no-encrypted-remote'
-                ? t('settings.syncEncryptionNoEncryptedRemote')
-                : null;
-
-    const renderPassphraseInput = (label: string, value: string, onChange: (value: string) => void) => (
+    const renderPassphraseInput = (label: string, value: string, field: SyncEncryptionPassphraseField) => (
         <View style={[styles.inputGroup, { borderTopWidth: 1, borderTopColor: tc.border }]}>
             <Text style={[styles.settingLabel, { color: tc.text }]}>{label}</Text>
             <TextInput
                 accessibilityLabel={label}
                 value={value}
-                onChangeText={(text) => {
-                    onChange(text);
-                    setError(null);
-                }}
+                onChangeText={(text) => card.setField(field, text)}
                 autoCapitalize="none"
                 autoCorrect={false}
                 secureTextEntry={!revealed}
@@ -420,7 +198,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
         <TouchableOpacity
             accessibilityRole="switch"
             accessibilityState={{ checked: revealed }}
-            onPress={() => setRevealed((shown) => !shown)}
+            onPress={card.toggleRevealed}
             style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
         >
             <View style={styles.settingInfo}>
@@ -467,8 +245,8 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                                             </Text>
                                         )}
                                     </View>
-                                    {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), nextPassphrase, setNextPassphrase)}
-                                    {renderPassphraseInput(t('settings.syncEncryptionPassphraseConfirm'), confirmPassphrase, setConfirmPassphrase)}
+                                    {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), nextPassphrase, 'next')}
+                                    {renderPassphraseInput(t('settings.syncEncryptionPassphraseConfirm'), confirmPassphrase, 'confirm')}
                                     {errorBlock}
                                     {renderRevealToggle()}
                                     {renderAction(t('settings.syncEncryptionGenerate'), generate)}
@@ -512,9 +290,9 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                         )}
                         {flow === 'change' && (
                             <>
-                                {renderPassphraseInput(t('settings.syncEncryptionCurrentPassphrase'), currentPassphrase, setCurrentPassphrase)}
-                                {renderPassphraseInput(t('settings.syncEncryptionNewPassphrase'), nextPassphrase, setNextPassphrase)}
-                                {renderPassphraseInput(t('settings.syncEncryptionPassphraseConfirm'), confirmPassphrase, setConfirmPassphrase)}
+                                {renderPassphraseInput(t('settings.syncEncryptionCurrentPassphrase'), currentPassphrase, 'current')}
+                                {renderPassphraseInput(t('settings.syncEncryptionNewPassphrase'), nextPassphrase, 'next')}
+                                {renderPassphraseInput(t('settings.syncEncryptionPassphraseConfirm'), confirmPassphrase, 'confirm')}
                                 {errorBlock}
                                 {renderRevealToggle()}
                                 {renderAction(t('settings.syncEncryptionGenerate'), generate)}
@@ -570,7 +348,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                             ? renderAction(t('settings.syncEncryptionUnlock'), () => openFlow('unlock'))
                             : (
                                 <>
-                                    {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), currentPassphrase, setCurrentPassphrase)}
+                                    {renderPassphraseInput(t('settings.syncEncryptionPassphrase'), currentPassphrase, 'current')}
                                     {errorBlock}
                                     {renderRevealToggle()}
                                     {renderAction(t('settings.syncEncryptionUnlock'), submitUnlock, !currentPassphrase)}

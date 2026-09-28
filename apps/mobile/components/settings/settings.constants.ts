@@ -93,15 +93,3 @@ export type MobileExtraConfig = {
     promptTestControlsEnabled?: boolean | string;
     appleClarificationPrototypeEnabled?: boolean | string;
 };
-
-export type CloudProvider = 'selfhosted' | 'dropbox' | 'cloudkit';
-
-export const isValidHttpUrl = (value: string): boolean => {
-    if (!value.trim()) return false;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch {
-        return false;
-    }
-};

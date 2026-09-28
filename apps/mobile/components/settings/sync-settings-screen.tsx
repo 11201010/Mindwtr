@@ -7,12 +7,26 @@ import { Beaker } from 'lucide-react-native';
 
 import {
     getDocsGuideUrl,
-    isSettingsSyncGroupEnabled,
-    listMergeConflictSamples,
-    summarizeMergeStats,
-    translateWithFallback,
     useTaskStore,
 } from '@mindwtr/core';
+import {
+    buildSyncConflictLines,
+    buildSyncPreferencesUpdate,
+    buildSyncHistoryLines,
+    getCloudKitStatusDetails as getCoreCloudKitStatusDetails,
+    getSyncBackendCurrentLabel,
+    getSyncBackendGroups,
+    getSyncBackendOptionLabel,
+    getSyncBackendOptions,
+    getSyncFailureMessage,
+    getSyncLastErrorText,
+    getSyncLastStatusSummary,
+    getSyncPreferenceValues,
+    isSyncBackendOptionSelected,
+    resolveSyncBackendSelection,
+    type SyncPreferenceKey,
+    type SyncSettingsBackendOption,
+} from '@mindwtr/core/sync-settings-model';
 
 import { useMobileSyncBadge } from '@/hooks/use-mobile-sync-badge';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -30,9 +44,6 @@ import {
     formatClockSkew,
     logSettingsError,
 } from '@/lib/settings-utils';
-import {
-    classifySyncFailure,
-} from '@/lib/sync-service-utils';
 import {
     isMobileAnalyticsHeartbeatConfigured,
     resetMobileAnalyticsOptOutMarker,
@@ -68,12 +79,7 @@ import { styles } from './settings.styles';
 import { reloadIntoMobileSandbox } from '@/lib/sandbox-workspace';
 import { requestMobileSandboxEntry } from './sandbox-entry-confirmation';
 
-type VisibleSyncBackendOption = 'off' | 'file' | 'dropbox' | 'webdav' | 'selfhosted' | 'cloudkit';
-type VisibleSyncBackendGroup = {
-    description: string;
-    options: VisibleSyncBackendOption[];
-    title: string;
-};
+type VisibleSyncBackendOption = SyncSettingsBackendOption;
 
 function SyncSettingsView({
     mode,
@@ -126,60 +132,32 @@ function SyncSettingsView({
     const [appleRemindersBusy, setAppleRemindersBusy] = useState(false);
     const { refreshSyncBadgeConfig } = useMobileSyncBadge();
 
-    const syncPreferences = settings.syncPreferences ?? {};
-    const syncAppearanceEnabled = syncPreferences.appearance === true;
-    const syncLanguageEnabled = syncPreferences.language === true;
-    const syncGtdEnabled = isSettingsSyncGroupEnabled(syncPreferences, 'gtd');
-    const syncSavedFiltersEnabled = syncPreferences.savedFilters === true;
-    const syncExternalCalendarsEnabled = syncPreferences.externalCalendars === true;
-    const syncAiEnabled = syncPreferences.ai === true;
-    const syncHistory = settings.lastSyncHistory ?? [];
-    const syncHistoryEntries = syncHistory.slice(0, 5);
-    const lastSyncStats = settings.lastSyncStats ?? null;
-    const showLastSyncStats = Boolean(lastSyncStats) && (settings.lastSyncStatus === 'success' || settings.lastSyncStatus === 'conflict');
-    const lastSyncSummary = summarizeMergeStats(lastSyncStats);
-    const syncConflictCount = lastSyncSummary.conflicts;
-    const maxClockSkewMs = lastSyncSummary.maxClockSkewMs;
-    const timestampAdjustments = lastSyncSummary.timestampAdjustments;
-    const conflictIds = lastSyncSummary.conflictIds.slice(0, 6);
+    const {
+        appearance: syncAppearanceEnabled,
+        language: syncLanguageEnabled,
+        gtd: syncGtdEnabled,
+        savedFilters: syncSavedFiltersEnabled,
+        externalCalendars: syncExternalCalendarsEnabled,
+        ai: syncAiEnabled,
+    } = getSyncPreferenceValues(settings.syncPreferences);
+    const syncHistoryEntries = buildSyncHistoryLines(settings.lastSyncHistory, t, (at) => new Date(at).toLocaleString());
+    const {
+        lastSyncStats,
+        showLastSyncStats,
+        conflictCount: syncConflictCount,
+        maxClockSkewMs,
+        timestampAdjustments,
+        conflictIds,
+    } = getSyncLastStatusSummary(settings);
     const conflictLines = useMemo(() => {
-        const samples = listMergeConflictSamples(lastSyncStats).slice(0, 6);
-        if (samples.length === 0) return [];
         const state = useTaskStore.getState();
-        const findTitle = (sample: (typeof samples)[number]): string => {
-            const { id } = sample;
-            const entity = sample.entity === 'task'
-                ? state._allTasks.find((item) => item.id === id)
-                : sample.entity === 'project'
-                    ? state._allProjects.find((item) => item.id === id)
-                    : sample.entity === 'section'
-                        ? state._allSections.find((item) => item.id === id)
-                        : sample.entity === 'area'
-                            ? state._allAreas.find((item) => item.id === id)
-                            : state._allPeople.find((item) => item.id === id);
-            if (!entity) return id;
-            return ('title' in entity ? entity.title : entity.name) || id;
-        };
-        const lines = samples.map((sample) => {
-            const outcome = sample.winner === 'incoming'
-                ? translateWithFallback(t, 'settings.syncConflictKeptOtherDevice', 'kept the synced version')
-                : translateWithFallback(t, 'settings.syncConflictKeptThisDevice', "kept this device's version");
-            const detail = sample.reasons.includes('deleteState')
-                ? translateWithFallback(t, 'settings.syncConflictDeleteRestore', 'delete vs. edit')
-                : sample.diffKeys.length > 0
-                    ? translateWithFallback(t, 'settings.syncConflictChanged', 'changed: {{fields}}').replace('{{fields}}', sample.diffKeys.join(', '))
-                    : '';
-            const title = findTitle(sample);
-            return detail ? `“${title}” — ${outcome} (${detail})` : `“${title}” — ${outcome}`;
-        });
-        const totalConflicts = summarizeMergeStats(lastSyncStats).conflicts;
-        if (totalConflicts > samples.length) {
-            lines.push(
-                translateWithFallback(t, 'settings.syncConflictMore', '+{{count}} more resolved conflicts')
-                    .replace('{{count}}', String(totalConflicts - samples.length)),
-            );
-        }
-        return lines;
+        return buildSyncConflictLines(lastSyncStats, {
+            tasks: state._allTasks,
+            projects: state._allProjects,
+            sections: state._allSections,
+            areas: state._allAreas,
+            people: state._allPeople,
+        }, t);
     }, [lastSyncStats, t]);
     const loggingEnabled = settings.diagnostics?.loggingEnabled === true;
     const analyticsHeartbeatAvailable = isMobileAnalyticsHeartbeatConfigured({
@@ -191,30 +169,8 @@ function SyncSettingsView({
     const analyticsHeartbeatOptedOut = analyticsHeartbeatAvailable && !analyticsHeartbeatEnabled;
     const pendingRemoteDeleteCount = settings.attachments?.pendingRemoteDeletes?.length ?? 0;
     const isBackupBusy = backupAction !== null;
-    const backendGroups: VisibleSyncBackendGroup[] = [
-        {
-            title: t('settings.syncBackendGroupCloud'),
-            description: t('settings.syncBackendGroupCloudDesc'),
-            options: [
-                ...(!isFossBuild ? (['dropbox'] as const) : []),
-                ...(supportsNativeICloudSync ? (['cloudkit'] as const) : []),
-            ],
-        },
-        {
-            title: t('settings.syncBackendGroupFile'),
-            description: t('settings.syncBackendGroupFileDesc'),
-            options: ['file'],
-        },
-        {
-            title: t('settings.syncBackendGroupAdvanced'),
-            description: t('settings.syncBackendGroupAdvancedDesc'),
-            options: ['webdav', 'selfhosted'],
-        },
-    ];
-    const backendControlOptions: VisibleSyncBackendOption[] = [
-        'off',
-        ...backendGroups.flatMap((group) => group.options),
-    ];
+    const backendGroups = getSyncBackendGroups({ t, isFossBuild, supportsCloudKit: supportsNativeICloudSync });
+    const backendControlOptions: VisibleSyncBackendOption[] = getSyncBackendOptions(backendGroups);
     const showSettingsWarning = useCallback((title: string, message: string, durationMs = 4200) => {
         showToast({
             title,
@@ -231,36 +187,7 @@ function SyncSettingsView({
             durationMs,
         });
     }, [showToast]);
-    const getSyncFailureToastMessage = useCallback((error: unknown) => {
-        switch (classifySyncFailure(error)) {
-            case 'offline':
-                return t('settings.syncFailureOffline');
-            case 'auth':
-                return t('settings.syncFailureAuth');
-            case 'permission':
-                return t('settings.syncFailurePermission');
-            case 'rateLimited':
-                return t('settings.syncFailureRateLimited');
-            case 'misconfigured':
-                return t('settings.syncFailureMisconfigured');
-            case 'conflict':
-                return t('settings.syncFailureConflict');
-            case 'encryptionState':
-                return t('settings.syncEncryptionStateUnavailable');
-            case 'encryption':
-                return t('settings.syncFailureEncryption');
-            case 'fileLockUnavailable':
-                return t('settings.syncFileLockUnavailable');
-            case 'fileGenerationCorrupt':
-                return t('settings.syncFileGenerationCorrupt');
-            default: {
-                // An unclassified failure used to show only "Review Settings → Sync and
-                // try again", which hid the one line that named the cause (#1151).
-                const detail = (error instanceof Error ? error.message : String(error ?? '')).trim();
-                return detail ? `${t('settings.syncFailureGeneric')}\n${detail}` : t('settings.syncFailureGeneric');
-            }
-        }
-    }, [t]);
+    const getSyncFailureToastMessage = useCallback((error: unknown) => getSyncFailureMessage(error, t), [t]);
 
     const resetSyncStatusForBackendSwitch = useCallback(() => {
         updateSettings({
@@ -269,8 +196,8 @@ function SyncSettingsView({
         }).catch(logSettingsError);
     }, [updateSettings]);
 
-    const updateSyncPreferences = (partial: Partial<NonNullable<typeof settings.syncPreferences>>) => {
-        updateSettings({ syncPreferences: { ...syncPreferences, ...partial } }).catch(logSettingsError);
+    const updateSyncPreferences = (partial: Partial<Record<SyncPreferenceKey, boolean>>) => {
+        updateSettings(buildSyncPreferencesUpdate(settings.syncPreferences, partial)).catch(logSettingsError);
     };
 
     const handleClearPendingRemoteDeletes = useCallback(() => {
@@ -374,67 +301,16 @@ function SyncSettingsView({
                         {t('settings.syncHistory')} ({syncHistoryEntries.length}) {syncHistoryExpanded ? '▾' : '▸'}
                     </Text>
                 </TouchableOpacity>
-                {syncHistoryExpanded && syncHistoryEntries.map((entry) => {
-                    const statusLabel = entry.status === 'success'
-                        ? t('settings.lastSyncSuccess')
-                        : entry.status === 'conflict'
-                            ? t('settings.lastSyncConflict')
-                            : t('settings.lastSyncError');
-                    const details = [
-                        entry.backend ? `${t('settings.syncHistoryBackend')}: ${entry.backend}` : null,
-                        entry.type ? `${t('settings.syncHistoryType')}: ${entry.type}` : null,
-                        entry.conflicts ? `${t('settings.lastSyncConflicts')}: ${entry.conflicts}` : null,
-                        entry.maxClockSkewMs > 0 ? `${t('settings.lastSyncSkew')}: ${formatClockSkew(entry.maxClockSkewMs)}` : null,
-                        entry.timestampAdjustments > 0 ? `${t('settings.lastSyncAdjusted')}: ${entry.timestampAdjustments}` : null,
-                        entry.details ? `${t('settings.syncHistoryDetails')}: ${entry.details}` : null,
-                    ].filter(Boolean);
-                    return (
-                        <Text key={`${entry.at}-${entry.status}`} style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                            {new Date(entry.at).toLocaleString()} • {statusLabel}
-                            {details.length ? ` • ${details.join(' • ')}` : ''}
-                            {entry.status === 'error' && entry.error ? ` • ${entry.error}` : ''}
-                        </Text>
-                    );
-                })}
+                {syncHistoryExpanded && syncHistoryEntries.map((line, index) => (
+                    <Text key={`${index}-${line}`} style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                        {line}
+                    </Text>
+                ))}
             </View>
         );
     };
 
-    const getCloudKitStatusDetails = useCallback((status: CloudKitAccountStatus) => {
-        switch (status) {
-            case 'available':
-                return {
-                    label: tr('settings.syncMobile.signedInToIcloud'),
-                    helpText: tr('settings.syncMobile.syncsYourTasksProjectsAndAreasAcrossAppleDevicesUsing'),
-                    syncEnabled: true,
-                };
-            case 'noAccount':
-                return {
-                    label: tr('settings.syncMobile.icloudSignInRequired'),
-                    helpText: tr('settings.syncMobile.thisDeviceIsNotSignedIntoIcloudOpenIosSettings'),
-                    syncEnabled: false,
-                };
-            case 'restricted':
-                return {
-                    label: tr('settings.syncMobile.icloudRestricted'),
-                    helpText: tr('settings.syncMobile.cloudkitIsRestrictedOnThisDeviceCheckScreenTimeMdm'),
-                    syncEnabled: false,
-                };
-            case 'temporarilyUnavailable':
-                return {
-                    label: tr('settings.syncMobile.icloudTemporarilyUnavailable'),
-                    helpText: tr('settings.syncMobile.icloudIsTemporarilyUnavailableWaitAMomentThenTapSync'),
-                    syncEnabled: false,
-                };
-            case 'unknown':
-            default:
-                return {
-                    label: tr('settings.syncMobile.icloudStatusUnavailable'),
-                    helpText: tr('settings.syncMobile.syncsYourTasksProjectsAndAreasAcrossAppleDevicesUsing2'),
-                    syncEnabled: true,
-                };
-        }
-    }, [tr]);
+    const getCloudKitStatusDetails = useCallback((status: CloudKitAccountStatus) => getCoreCloudKitStatusDetails(status, tr), [tr]);
 
     const {
         formatRecoverySnapshotLabel,
@@ -514,11 +390,14 @@ function SyncSettingsView({
         || appleRemindersBusy;
     const sandboxEntryBlockedRef = React.useRef(sandboxEntryBlocked);
     sandboxEntryBlockedRef.current = sandboxEntryBlocked;
-    // Encryption covers the backends Mindwtr writes whole blobs to; the self-hosted
-    // cloud and CloudKit keep structured server-side state and are out of scope.
-    const isEncryptionCapableBackend = syncBackend === 'file'
-        || syncBackend === 'webdav'
-        || (syncBackend === 'cloud' && cloudProvider === 'dropbox' && !isFossBuild);
+    const {
+        isCloudSyncSelected,
+        isSelfHostedSyncSelected,
+        isDropboxSyncSelected,
+        isCloudKitSyncSelected,
+        isEncryptionCapableBackend,
+    } = resolveSyncBackendSelection({ syncBackend, cloudProvider, isFossBuild, supportsCloudKit: supportsNativeICloudSync });
+    const backendSelection = { isCloudSyncSelected, isSelfHostedSyncSelected, isDropboxSyncSelected, isCloudKitSyncSelected, isEncryptionCapableBackend };
     // The attachment worklist a transition converts is derived from this document —
     // without it, phase 2 leaves every attachment in plaintext.
     const encryptionAppData = useMemo(
@@ -526,10 +405,6 @@ function SyncSettingsView({
         [areas, projects, sections, settings, tasks],
     );
     const cloudKitStatusDetails = getCloudKitStatusDetails(cloudKitAccountStatus);
-    const isCloudSyncSelected = syncBackend === 'cloud' || syncBackend === 'cloudkit';
-    const isSelfHostedSyncSelected = syncBackend === 'cloud' && (cloudProvider === 'selfhosted' || isFossBuild);
-    const isDropboxSyncSelected = syncBackend === 'cloud' && cloudProvider === 'dropbox' && !isFossBuild;
-    const isCloudKitSyncSelected = syncBackend === 'cloudkit' && cloudProvider === 'cloudkit' && supportsNativeICloudSync;
     const addGettingStartedContent = useCallback((options?: { openProject?: boolean }) => {
         if (isGettingStartedActionBusy) return;
         setGettingStartedBusy(true);
@@ -610,36 +485,10 @@ function SyncSettingsView({
             </View>
         </View>
     ) : null;
-    const getBackendOptionLabel = useCallback((option: VisibleSyncBackendOption): string => {
-        switch (option) {
-            case 'off':
-                return t('settings.syncBackendOff');
-            case 'file':
-                return t('settings.syncBackendFile');
-            case 'dropbox':
-                return t('settings.cloudProviderDropbox');
-            case 'webdav':
-                return t('settings.syncBackendWebdav');
-            case 'selfhosted':
-                return t('settings.cloudProviderSelfHosted');
-            case 'cloudkit':
-                return 'iCloud';
-        }
-    }, [t]);
-    const isBackendOptionSelected = useCallback((option: VisibleSyncBackendOption): boolean => {
-        switch (option) {
-            case 'off':
-            case 'file':
-            case 'webdav':
-                return syncBackend === option;
-            case 'dropbox':
-                return isDropboxSyncSelected;
-            case 'selfhosted':
-                return isSelfHostedSyncSelected;
-            case 'cloudkit':
-                return isCloudKitSyncSelected;
-        }
-    }, [isCloudKitSyncSelected, isDropboxSyncSelected, isSelfHostedSyncSelected, syncBackend]);
+    const getBackendOptionLabel = useCallback((option: VisibleSyncBackendOption): string => getSyncBackendOptionLabel(option, t), [t]);
+    const isBackendOptionSelected = (option: VisibleSyncBackendOption): boolean => (
+        isSyncBackendOptionSelected(option, syncBackend, backendSelection)
+    );
     const selectedBackendGroup = backendGroups.find((group) =>
         group.options.some((option) => isBackendOptionSelected(option))
     );
@@ -682,11 +531,7 @@ function SyncSettingsView({
             conflictLines={conflictLines}
             historyContent={renderSyncHistory()}
             lastSyncAt={settings.lastSyncAt}
-            lastSyncError={classifySyncFailure(settings.lastSyncError) === 'fileLockUnavailable'
-                ? t('settings.syncFileLockUnavailable')
-                : classifySyncFailure(settings.lastSyncError) === 'fileGenerationCorrupt'
-                    ? t('settings.syncFileGenerationCorrupt')
-                    : settings.lastSyncError}
+            lastSyncError={getSyncLastErrorText(settings.lastSyncError, t)}
             lastSyncStatus={settings.lastSyncStatus}
             maxClockSkewLabel={maxClockSkewMs > 0 ? formatClockSkew(maxClockSkewMs) : undefined}
             showLastSyncStats={showLastSyncStats}
@@ -708,17 +553,7 @@ function SyncSettingsView({
                                 <View style={styles.settingInfo}>
                                     <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncBackend')}</Text>
                                     <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                        {syncBackend === 'off'
-                                            ? t('settings.syncBackendOff')
-                                            : syncBackend === 'file'
-                                                ? t('settings.syncBackendFile')
-                                                : syncBackend === 'webdav'
-                                                    ? t('settings.syncBackendWebdav')
-                                                    : isCloudKitSyncSelected
-                                                        ? 'iCloud (CloudKit)'
-                                                        : isDropboxSyncSelected
-                                                            ? t('settings.cloudProviderDropbox')
-                                                            : t('settings.cloudProviderSelfHosted')}
+                                        {getSyncBackendCurrentLabel(syncBackend, backendSelection, t)}
                                     </Text>
                                 </View>
                                 <Text style={[styles.settingDescription, { color: tc.secondaryText, marginTop: 8 }]}>

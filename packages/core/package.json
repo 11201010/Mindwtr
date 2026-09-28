@@ -45,7 +45,11 @@
     "./mobile-attachment-common": "./src/mobile-attachment-common.ts",
     "./mobile-attachment-availability": "./src/mobile-attachment-availability.ts",
     "./mobile-attachment-cleanup": "./src/mobile-attachment-cleanup.ts",
-    "./mobile-attachment-backends": "./src/mobile-attachment-backends.ts"
+    "./mobile-attachment-backends": "./src/mobile-attachment-backends.ts",
+    "./mobile-sync-configuration-transaction": "./src/mobile-sync-configuration-transaction.ts",
+    "./sync-settings-model": "./src/sync-settings-model.ts",
+    "./sync-settings-transport": "./src/sync-settings-transport.ts",
+    "./sync-encryption-card": "./src/sync-encryption-card.ts"
   },
   "sideEffects": false,
   "type": "module",
