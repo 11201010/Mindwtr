@@ -9,7 +9,7 @@ import {
     type MindSweepView,
 } from './mind-sweep-view-model';
 import { createNativeHostContract } from './native-host-contract';
-import { loadScreenFixture, normalize, openScreenHost, requestId, value, type ScreenHost } from './screen-parity.replay';
+import { loadScreenFixture, normalize, openScreenHost, requestId, restartScreenHost, value } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 
 type Action = [string, ...string[]];
@@ -191,7 +191,8 @@ describe('Mind Sweep: core and the native host contract', () => {
         const direct = buildMindSweepView({ state, draft: 'x', addFailed: true, t });
         const { version, revision, state: echoed, group, ...rest } = view;
         expect(version).toBe(1);
-        expect(echoed).toEqual(state);
+        // The host keeps the captures: the view echoes only the scope and the step.
+        expect(echoed).toEqual({ scope: 'personal', step: 0 });
         const { captured: directCaptured, ...directGroup } = direct.group!;
         expect({ ...rest, group: { ...group!, captured: undefined } }).toEqual({ ...direct, group: { ...directGroup, captured: undefined } });
         expect(group!.captured).toEqual({ label: directCaptured!.label, total: 105, items: directCaptured!.items.slice(0, 100) });
@@ -204,8 +205,16 @@ describe('Mind Sweep: core and the native host contract', () => {
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(host.getMindSweep({ state, draft: 'x', addFailed: true, offset: 100, limit: 100 }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // One capture a page: the response carries that one and the counts, never the whole session.
+        const small = value(host.getMindSweep({ state, draft: 'x', addFailed: true, limit: 1 }));
+        expect(small.group!.captured).toEqual({ label: directCaptured!.label, total: 105, items: ['Item 1'] });
+        expect(small.capturedCount).toBe(106);
+        expect(JSON.stringify(small)).not.toContain('Item 2"');
+        expect(JSON.stringify(small)).not.toContain('Call mom');
         // The first read starts at the intro.
-        expect(value(host.getMindSweep())).toMatchObject({ phase: 'intro', state: INITIAL_MIND_SWEEP_STATE, group: null });
+        expect(value(host.getMindSweep())).toMatchObject({
+            phase: 'intro', state: { scope: INITIAL_MIND_SWEEP_STATE.scope, step: INITIAL_MIND_SWEEP_STATE.step }, group: null,
+        });
         // A new capture is a store edit: the revision moves.
         value(await host.addMindSweepItem({ requestId: requestId(), title: 'Fix sink' }));
         expect(value(host.getMindSweep({ state, draft: 'x', addFailed: true })).revision).not.toBe(revision);
@@ -226,12 +235,15 @@ describe('Mind Sweep: core and the native host contract', () => {
         expect(useTaskStore.getState()._tasksById.get(id)).toMatchObject({ title: 'Fix the sink', status: 'inbox' });
         // A replay after a restart (a new host, no receipt) finds the task and adds nothing.
         const tasks = useTaskStore.getState()._allTasks;
-        const restarted = createNativeHostContract();
-        value(await restarted.setLanguage({ storedLanguage: 'en', systemLocale: null }));
-        value(await restarted.activate({ writeSafetyReady: true }));
+        contract.log.length = 0;
+        const restarted = await restartScreenHost();
         expect(value(await restarted.addMindSweepItem({ requestId: id, title: 'Fix the sink' }))).toEqual({ id, title: 'Fix the sink' });
         expect(useTaskStore.getState()._allTasks.filter((task) => task.title === 'Fix the sink')).toHaveLength(1);
         expect(useTaskStore.getState()._allTasks.map((task) => task.id)).toEqual(tasks.map((task) => task.id));
+        // The same request UUID with another title is another capture: refused, and the stored task keeps its title.
+        expect(await restarted.addMindSweepItem({ requestId: id, title: 'Different capture' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(useTaskStore.getState()._tasksById.get(id)).toMatchObject({ title: 'Fix the sink' });
+        expect(contract.log).toEqual([]);
     });
 
     it('retries exactly after a failed save', async () => {

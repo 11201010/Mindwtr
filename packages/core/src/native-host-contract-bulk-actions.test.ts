@@ -430,27 +430,71 @@ describe('native host contract: selection mode', () => {
             expect(saveData).not.toHaveBeenCalled();
         });
 
-        it('retries exactly after a failed save', async () => {
+        it.each([
+            // The draft's area leaves the dialog before the retry.
+            ['project', 'Garden', { areaChoice: 'a-work' }, () => useTaskStore.getState().deleteArea('a-work')],
+            // The draft's project leaves the dialog before the retry.
+            ['area', 'Errands', { projectChoice: 'p-home' }, () => useTaskStore.getState().updateProject('p-home', { status: 'archived' })],
+        ] as const)('retries a new %s exactly after a failed save, even when its draft\'s choice left the dialog since', async (kind, name, draft, change) => {
             freezeClock();
             const saveData = vi.fn().mockResolvedValue(undefined);
             const { host } = await open(saveData);
-            const input = { requestId: requestId(), list: 'inbox' as const, kind: 'project' as const, name: 'Garden', draft: { areaChoice: 'a-work' } };
+            const input = { requestId: requestId(), list: 'inbox' as const, kind, name, draft };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.createBulkOrganizeDestination(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
+            const entries = () => (kind === 'project' ? useTaskStore.getState()._allProjects : useTaskStore.getState()._allAreas)
+                .filter((entry) => ('title' in entry ? entry.title : entry.name) === name);
+            expect(entries()).toHaveLength(1);
+            await change();
             const landed = destinationsNow();
-            expect(useTaskStore.getState().projects.filter((project) => project.title === 'Garden')).toHaveLength(1);
             saveData.mockResolvedValue(undefined);
             const retried = value(await host.createBulkOrganizeDestination(input));
-            expect(retried).toMatchObject({ changed: true, draft: { projectChoice: retried.id, areaChoice: BULK_ORGANIZE_KEEP } });
-            // The retry only saved: the same projects, one Garden in Work, and that is what storage holds.
+            expect(retried).toEqual({
+                id: entries()[0].id,
+                changed: true,
+                draft: kind === 'project'
+                    ? { ...EMPTY_BULK_ORGANIZE_DRAFT, projectChoice: entries()[0].id, areaChoice: BULK_ORGANIZE_KEEP }
+                    : { ...EMPTY_BULK_ORGANIZE_DRAFT, ...draft, areaChoice: entries()[0].id },
+            });
+            // The retry only saved: nothing new in memory, and storage holds the new row.
             expect(destinationsNow()).toEqual(landed);
-            const saved = saveData.mock.lastCall?.[0] as { projects: { id: string; title: string; areaId?: string }[] };
-            expect(saved.projects.filter((project) => project.title === 'Garden')).toEqual([expect.objectContaining({ id: retried.id, areaId: 'a-work' })]);
+            const saved = saveData.mock.lastCall?.[0] as { projects: { id: string }[]; areas: { id: string }[] };
+            expect((kind === 'project' ? saved.projects : saved.areas).filter((entry) => entry.id === retried.id)).toHaveLength(1);
+            expect(useTaskStore.getState().persistenceFailure).toBeNull();
             // A lost reply repeats the request: no write, no save.
             const saves = saveData.mock.calls.length;
             expect(await host.createBulkOrganizeDestination(input)).toEqual({ ok: true, value: retried });
             expect(saveData).toHaveBeenCalledTimes(saves);
             expect(await host.createBulkOrganizeDestination({ ...input, name: 'Orchard' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }, 20_000);
+
+        it('a replay after a restart resolves the row it made, even renamed, archived or deleted, and adds nothing', async () => {
+            freezeClock();
+            const { host } = await open();
+            const area = { requestId: requestId(), list: 'inbox' as const, kind: 'area' as const, name: 'Errands' };
+            const deleted = { requestId: requestId(), list: 'inbox' as const, kind: 'project' as const, name: 'Garden', draft: { areaChoice: 'a-home' } };
+            const archived = { requestId: requestId(), list: 'inbox' as const, kind: 'project' as const, name: 'Orchard' };
+            const first = await Promise.all([area, deleted, archived].map(async (input) => value(await host.createBulkOrganizeDestination(input))));
+            expect(first.every((result) => result.changed)).toBe(true);
+            // The row takes the request UUID as its ID.
+            expect(first.map((result) => result.id)).toEqual([area.requestId, deleted.requestId, archived.requestId]);
+            await useTaskStore.getState().updateArea(first[0].id, { name: 'Chores' });
+            await useTaskStore.getState().deleteProject(first[1].id);
+            await useTaskStore.getState().updateProject(first[2].id, { status: 'archived' });
+            await flushPendingSave();
+            const stored = destinationsNow();
+            // A new host has no receipts: the replays find the rows by their request UUIDs.
+            const restarted = await openBulkActionsHost();
+            expect(value(await restarted.createBulkOrganizeDestination(area)))
+                .toEqual({ id: first[0].id, changed: false, draft: { ...EMPTY_BULK_ORGANIZE_DRAFT, areaChoice: first[0].id } });
+            // A project that is no option any more is not chosen: the draft stays as sent.
+            expect(value(await restarted.createBulkOrganizeDestination(deleted)))
+                .toEqual({ id: first[1].id, changed: false, draft: { ...EMPTY_BULK_ORGANIZE_DRAFT, areaChoice: 'a-home' } });
+            expect(value(await restarted.createBulkOrganizeDestination(archived)))
+                .toEqual({ id: first[2].id, changed: false, draft: EMPTY_BULK_ORGANIZE_DRAFT });
+            expect(destinationsNow()).toEqual(stored);
+            expect(useTaskStore.getState()._allAreas.filter((entry) => entry.name === 'Errands')).toEqual([]);
+            expect(useTaskStore.getState()._projectsById.get(first[1].id)?.deletedAt).toBeTruthy();
         }, 20_000);
 
         it('refuses invalid input without writing', async () => {

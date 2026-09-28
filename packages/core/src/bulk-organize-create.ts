@@ -30,23 +30,24 @@ async function saveDestination<T>(create: () => Promise<T | null>): Promise<T | 
 /**
  * The store call behind createBulkOrganizeProject, without its durable save: the
  * trimmed title, the placeholder color and the chosen area. addProject returns the
- * same-titled project already in that area instead of adding another.
+ * same-titled project already in that area instead of adding another. `id` names a
+ * new project (the native host passes its request UUID, so a replay finds it).
  */
-export function addBulkOrganizeProject(title: string, areaId?: string): Promise<Project | null> {
+export function addBulkOrganizeProject(title: string, areaId?: string, id?: string): Promise<Project | null> {
     return useTaskStore.getState().addProject(
         title.trim(),
         DEFAULT_PROJECT_COLOR,
-        areaId ? { areaId } : undefined,
+        areaId || id ? { ...(areaId ? { areaId } : {}), ...(id ? { id } : {}) } : undefined,
     );
 }
 
-/** The store call behind createBulkOrganizeArea, without its durable save: an area of that name is reused. */
-export async function addBulkOrganizeArea(name: string): Promise<Area | null> {
+/** The store call behind createBulkOrganizeArea, without its durable save: an area of that name is reused. `id` names a new area. */
+export async function addBulkOrganizeArea(name: string, id?: string): Promise<Area | null> {
     const state = useTaskStore.getState();
     const choice = resolveCaptureAreaQuery(state.areas, name);
     if (choice.kind === 'select') return choice.area;
     if (choice.kind === 'empty') return null;
-    return state.addArea(choice.areaToCreate.name, { color: choice.areaToCreate.color });
+    return state.addArea(choice.areaToCreate.name, { color: choice.areaToCreate.color, ...(id ? { id } : {}) });
 }
 
 export async function createBulkOrganizeProject(title: string, areaId?: string): Promise<Project | null> {

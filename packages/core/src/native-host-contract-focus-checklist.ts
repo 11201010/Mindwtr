@@ -14,14 +14,16 @@
  * - Each item carries its `toggle` and `remove` edits; a rename is
  *   `{ kind: 'rename', index, itemId, text }` with the typed text; Add is
  *   `{ kind: 'add', itemId }` with a new UUID for the item. Send one with
- *   editFocusChecklist. Mobile shows the edit at once and puts the checklist back
- *   when the write fails, with the toast `error.title` and the failure's message
+ *   editFocusChecklist with the `taskRevision` it was made on: the page's, then each
+ *   answer's. Mobile shows the edit at once and puts the checklist back when the
+ *   write fails, with the toast `error.title` and the failure's message
  *   (ACTION_FAILED carries the toast's message).
  *
  * editFocusChecklist takes a request UUID and retries exactly
- * (native-request-receipts.ts). Its edits are target-state: an item already ticked,
- * renamed, removed or added writes nothing. An edit names its item by position and
- * ID; when that item moved, the edit refuses with STALE_REVISION.
+ * (native-request-receipts.ts): the same host answers a retry from its receipt. An
+ * edit is compare-and-set on the task's revision: once the task changed since the
+ * edit was made (a later edit, another device), it refuses with STALE_REVISION and
+ * writes nothing, so a replay after a restart never undoes a later edit.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -32,9 +34,9 @@ import { fail, isObjectRecord, isPaging, isText, page, paramsKey } from './nativ
 import { toChecklist } from './native-host-contract-task-view';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
 import { useTaskStore } from './store';
-import type { ChecklistItem } from './types';
+import type { ChecklistItem, Task } from './types';
 
-/** An edit on the page, naming its item so that a replay can tell it already landed. */
+/** An edit on the page, naming its item by position and ID. */
 export type NativeFocusChecklistEdit =
     | { kind: 'toggle'; index: number; itemId: string; isCompleted: boolean }
     | { kind: 'rename'; index: number; itemId: string; text: string }
@@ -47,6 +49,8 @@ export type NativeFocusChecklistView = Omit<FocusChecklistPageModel, 'items'> & 
     revision: string;
     id: string;
     found: boolean;
+    /** The saved task's revision: send it with the next edit. Null when the task is missing. */
+    taskRevision: string | null;
     /** All the checklist's items; `items` holds the requested window of them. */
     total: number;
     items: (FocusChecklistPageModel['items'][number] & {
@@ -66,6 +70,8 @@ type FocusChecklistDeps = {
     /** Data plus display revision: tasks, settings, language and the minute. */
     revision: (now: Date) => string;
 };
+
+export type NativeFocusChecklistEditResult = { changed: boolean; checklist: ChecklistItem[]; taskRevision: string };
 
 const TEXT_LIMIT = 10_000;
 const isId = (value: unknown): value is string => isText(value, 200) && value.length > 0;
@@ -89,6 +95,8 @@ function readEdit(value: unknown): NativeFocusChecklistEdit | null {
 
 /** A visible task, as mobile's page finds it (state.tasks: not deleted, not archived). */
 const visibleTask = (id: string) => useTaskStore.getState().tasks.find((task) => task.id === id);
+/** Changes with every write to the task, here or synced from another device. */
+const taskRevisionOf = (task: Task) => `${task.rev ?? 0}:${task.revBy ?? ''}:${task.updatedAt}`;
 
 export function createFocusChecklistMethods(deps: FocusChecklistDeps) {
     const receipts = createNativeRequestReceipts({
@@ -139,6 +147,7 @@ export function createFocusChecklistMethods(deps: FocusChecklistDeps) {
                     revision,
                     id: input.id,
                     found: Boolean(task),
+                    taskRevision: task ? taskRevisionOf(task) : null,
                     total: items.length,
                     items: page(items, window),
                 },
@@ -146,35 +155,37 @@ export function createFocusChecklistMethods(deps: FocusChecklistDeps) {
         },
 
         /**
-         * One edit on the page, saved at once as mobile saves it (updateTask with the
-         * whole checklist). Reuse `requestId` to retry. Answers with the saved checklist.
+         * One edit on the page, made on `taskRevision`, saved at once as mobile saves it
+         * (updateTask with the whole checklist). Reuse `requestId` to retry. Answers with
+         * the saved checklist and the task revision the next edit is made on.
          */
-        async editFocusChecklist(input: { requestId: string; id: string; edit: NativeFocusChecklistEdit }): Promise<NativeHostResult<{ changed: boolean; checklist: ChecklistItem[] }>> {
+        async editFocusChecklist(input: {
+            requestId: string;
+            id: string;
+            taskRevision: string;
+            edit: NativeFocusChecklistEdit;
+        }): Promise<NativeHostResult<NativeFocusChecklistEditResult>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const edit = isObjectRecord(input) ? readEdit(input.edit) : null;
-            if (!isObjectRecord(input) || !isId(input.id) || !edit) {
-                return fail('INVALID_INPUT', 'A request UUID, a task ID and a valid edit are required');
+            if (!isObjectRecord(input) || !isId(input.id) || !isText(input.taskRevision) || !input.taskRevision || !edit) {
+                return fail('INVALID_INPUT', 'A request UUID, a task ID, the task revision the edit was made on and a valid edit are required');
             }
-            const { id } = input;
-            return receipts.run<{ changed: boolean; checklist: ChecklistItem[] }>(input.requestId, JSON.stringify(['focusChecklist', id, edit]), async () => {
+            const { id, taskRevision } = input;
+            return receipts.run<NativeFocusChecklistEditResult>(input.requestId, JSON.stringify(['focusChecklist', id, taskRevision, edit]), async () => {
                 const task = visibleTask(id);
                 if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                // Compare-and-set: a replay after a later edit (or an edit made on an old read) writes nothing.
+                if (taskRevisionOf(task) !== taskRevision) return fail('STALE_REVISION', 'The task changed; read the page again');
                 const list = task.checklist ?? [];
-                const unchanged = () => ({ ok: true as const, value: { changed: false, checklist: toChecklist(list) } });
+                const unchanged = () => ({ ok: true as const, value: { changed: false, checklist: toChecklist(list), taskRevision } });
                 let change: FocusChecklistEdit;
                 if (edit.kind === 'add') {
-                    // Target state: the item is already there.
-                    if (list.some((item) => item.id === edit.itemId)) return unchanged();
+                    if (list.some((item) => item.id === edit.itemId)) return fail('INVALID_INPUT', 'An item already has that ID');
                     change = { kind: 'add', id: edit.itemId };
                 } else {
                     const item = list[edit.index];
-                    if (item?.id !== edit.itemId) {
-                        // A removed item that is gone is removed; any other item that moved is stale.
-                        return edit.kind === 'remove' && !list.some((entry) => entry.id === edit.itemId)
-                            ? unchanged()
-                            : fail('STALE_REVISION', 'The checklist changed; read the page again');
-                    }
+                    if (item?.id !== edit.itemId) return fail('INVALID_INPUT', 'That item is not at that position');
                     if (edit.kind === 'toggle') {
                         if (item.isCompleted === edit.isCompleted) return unchanged();
                         change = { kind: 'toggle', index: edit.index };
@@ -200,7 +211,8 @@ export function createFocusChecklistMethods(deps: FocusChecklistDeps) {
                     const message = refusal.refused ? refusal.message : written.error.message;
                     return fail('ACTION_FAILED', message || buildFocusChecklistPageModel({ task, checklist: list, t: deps.t() }).error.fallbackMessage);
                 }
-                return settleWrite(written, { changed: true, checklist: toChecklist(visibleTask(id)?.checklist ?? next) });
+                const saved = useTaskStore.getState()._tasksById.get(id) ?? task;
+                return settleWrite(written, { changed: true, checklist: toChecklist(saved.checklist ?? next), taskRevision: taskRevisionOf(saved) });
             });
         },
     };

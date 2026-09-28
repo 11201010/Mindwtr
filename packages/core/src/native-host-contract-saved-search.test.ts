@@ -4,12 +4,13 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
 import {
     buildSavedSearchScreenText,
+    deleteSavedSearchById,
     findSavedSearch,
     removeSavedSearch,
     selectSavedSearchTasks,
     type SavedSearchScreenText,
 } from './saved-search-view-model';
-import { loadScreenFixture, normalize, openScreenHost, requestId, value, type ScreenHost } from './screen-parity.replay';
+import { loadScreenFixture, normalize, openScreenHost, requestId, restartScreenHost, value, type ScreenHost } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import type { AppSettings, Area, Project, Task, TaskStatus } from './types';
@@ -236,6 +237,42 @@ describe('saved search screen: core and the native host contract', () => {
         contract.log.length = 0;
         expect(value(await contract.host.deleteSavedSearch({ requestId: requestId(), id: 'ss-milk' }))).toEqual({ changed: false });
         expect(contract.log).toEqual([]);
+    });
+
+    it('deletes by ID against the saved searches as they are when the write runs, keeping the others as stored', async () => {
+        freezeClock();
+        const { host, log } = await open();
+        value(host.getSavedSearchView({ id: 'ss-milk' }));
+        // Another writer adds a saved search (with a field this build does not know) after the screen was read.
+        const later = { id: 'ss-later', name: 'Later', query: 'later', futureField: 1 } as never;
+        await useTaskStore.getState().updateSettings({ savedSearches: [...useTaskStore.getState().settings.savedSearches!, later] });
+        const before = useTaskStore.getState().settings.savedSearches!;
+        log.length = 0;
+        expect(value(await host.deleteSavedSearch({ requestId: requestId(), id: 'ss-milk' }))).toEqual({ changed: true });
+        const after = useTaskStore.getState().settings.savedSearches!;
+        expect(after.map((search) => search.id)).toEqual(['ss-errands', 'ss-next-work', 'ss-none', 'ss-blank', 'ss-later']);
+        // Every other saved search is the stored object itself.
+        for (const search of after) expect(search).toBe(before.find((entry) => entry.id === search.id));
+        expect(log).toHaveLength(1);
+
+        // The ID-targeted operation core owns: nothing to delete writes nothing.
+        log.length = 0;
+        expect(await deleteSavedSearchById('ss-gone')).toBe(false);
+        expect(log).toEqual([]);
+        expect(await deleteSavedSearchById('ss-later')).toBe(true);
+        expect(useTaskStore.getState().settings.savedSearches!.map((search) => search.id)).toEqual(['ss-errands', 'ss-next-work', 'ss-none', 'ss-blank']);
+    });
+
+    it('a replay after a restart finds the saved search gone and writes nothing', async () => {
+        freezeClock();
+        const { host, log } = await open();
+        const input = { requestId: requestId(), id: 'ss-none' };
+        expect(value(await host.deleteSavedSearch(input))).toEqual({ changed: true });
+        log.length = 0;
+        const restarted = await restartScreenHost();
+        expect(value(await restarted.deleteSavedSearch(input))).toEqual({ changed: false });
+        expect(log).toEqual([]);
+        expect(findSavedSearch(useTaskStore.getState().settings.savedSearches, 'ss-none')).toBeUndefined();
     });
 
     it('retries a delete exactly after a failed save', async () => {

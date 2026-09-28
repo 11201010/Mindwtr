@@ -3,7 +3,7 @@ import { applyFocusChecklistEdit, buildFocusChecklistPageModel, type FocusCheckl
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeFocusChecklistEdit } from './native-host-contract-focus-checklist';
-import { loadScreenFixture, normalize, openScreenHost, requestId, value, type ScreenHost } from './screen-parity.replay';
+import { loadScreenFixture, normalize, openScreenHost, requestId, restartScreenHost, value, type ScreenHost } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { Task } from './types';
 
@@ -163,13 +163,13 @@ describe('Focus checklist page: core and the native host contract', () => {
             const observations = await replay(scenario, {
                 page: contractPage(host),
                 edit: async (id, action, newId) => {
-                    const { items } = value(host.getFocusChecklist({ id }));
+                    const { items, taskRevision } = value(host.getFocusChecklist({ id }));
                     const edit: NativeFocusChecklistEdit = action[0] === 'add'
                         ? { kind: 'add', itemId: newId() }
                         : action[0] === 'rename'
                             ? { kind: 'rename', index: action[1] as number, itemId: items[action[1] as number].id, text: action[2] as string }
                             : items[action[1] as number].edits[action[0] as 'toggle' | 'remove'];
-                    const result = await host.editFocusChecklist({ requestId: requestId(), id, edit });
+                    const result = await host.editFocusChecklist({ requestId: requestId(), id, taskRevision: taskRevision!, edit });
                     return result.ok ? null : result.error.message;
                 },
             }, log, fail);
@@ -194,17 +194,17 @@ describe('Focus checklist page: core and the native host contract', () => {
         const second = value(host.getFocusChecklist({ id: 't-long', offset: 100, limit: 100, revision: first.revision }));
         expect([...first.items, ...second.items].map(({ index: _index, edits: _edits, ...item }) => item)).toEqual(items);
         // A write moves the revision: a later window is stale.
-        value(await host.editFocusChecklist({ requestId: requestId(), id: 't-long', edit: first.items[0].edits.toggle }));
+        value(await host.editFocusChecklist({ requestId: requestId(), id: 't-long', taskRevision: first.taskRevision!, edit: first.items[0].edits.toggle }));
         expect(host.getFocusChecklist({ id: 't-long', offset: 100, limit: 100, revision: first.revision }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(host.getFocusChecklist({ id: 't-long', offset: 100, limit: 100 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         // Mobile finds the task among the visible tasks only.
         for (const id of ['t-archived', 't-deleted', 't-missing']) {
-            expect(value(host.getFocusChecklist({ id }))).toMatchObject({ found: false, title: null, missingText: 'No tasks found', total: 0, items: [] });
+            expect(value(host.getFocusChecklist({ id }))).toMatchObject({ found: false, title: null, missingText: 'No tasks found', total: 0, items: [], taskRevision: null });
         }
     });
 
-    it('writes each edit as mobile writes it, and a replay after it landed writes nothing', async () => {
+    it('writes each edit as mobile writes it, against the task revision it was made on', async () => {
         freezeClock();
         const { host, log } = await open();
         const page = () => value(host.getFocusChecklist({ id: 't-trip' }));
@@ -214,33 +214,61 @@ describe('Focus checklist page: core and the native host contract', () => {
             { kind: 'add', itemId: 'new-item' },
             page().items[2].edits.remove,
         ];
+        const revisions: string[] = [];
         for (const edit of edits) {
             const before = visible('t-trip')!.checklist!;
+            const taskRevision = page().taskRevision!;
+            revisions.push(taskRevision);
             const change: FocusChecklistEdit = edit.kind === 'add' ? { kind: 'add', id: edit.itemId } : edit.kind === 'rename'
                 ? { kind: 'rename', index: edit.index, text: edit.text } : { kind: edit.kind, index: edit.index };
-            const result = value(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', edit }));
+            const result = value(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision, edit }));
             expect(result.changed).toBe(true);
             expect(log.at(-1)).toEqual(['updateTask', 't-trip', { checklist: applyFocusChecklistEdit(before, change) }]);
             expect(result.checklist).toEqual(visible('t-trip')!.checklist);
+            // The answer carries the revision the next edit is made on.
+            expect(result.taskRevision).toBe(page().taskRevision);
+            expect(result.taskRevision).not.toBe(taskRevision);
         }
         log.length = 0;
-        // Target state: each edit again, under new requests, finds it landed. The remove's item is gone.
-        const indexOf = (itemId: string) => visible('t-trip')!.checklist!.findIndex((item) => item.id === itemId);
-        for (const edit of [
-            { ...edits[0], index: indexOf('c-passport') },
-            { ...edits[1], index: indexOf('c-chargers') },
-            edits[2],
-            edits[3],
-        ] as NativeFocusChecklistEdit[]) {
-            expect(value(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', edit }))).toMatchObject({ changed: false });
+        // An edit made on an older revision is stale, whatever it asks for: nothing is written.
+        for (const [index, edit] of edits.entries()) {
+            expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision: revisions[index], edit }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         }
+        // On the current revision, a tick to the value it has writes nothing; an item that is not at that position is refused.
+        const current = page();
+        expect(value(await host.editFocusChecklist({
+            requestId: requestId(), id: 't-trip', taskRevision: current.taskRevision!, edit: { ...current.items[0].edits.toggle, isCompleted: current.items[0].isCompleted },
+        }))).toMatchObject({ changed: false, taskRevision: current.taskRevision });
+        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision: current.taskRevision!, edit: { kind: 'toggle', index: 0, itemId: 'c-chargers', isCompleted: false } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision: current.taskRevision!, edit: { kind: 'add', itemId: 'new-item' } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(log).toEqual([]);
-        // An edit whose item moved is stale.
-        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', edit: { kind: 'toggle', index: 0, itemId: 'c-chargers', isCompleted: false } }))
-            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
-        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', edit: { kind: 'remove', index: 0, itemId: 'c-chargers' } }))
-            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
+    it('a replay after a restart never undoes a later edit; a retry on the same host answers from its receipt', async () => {
+        freezeClock();
+        const { host, log } = await open();
+        const page = () => value(host.getFocusChecklist({ id: 't-trip' }));
+        const tick = { requestId: requestId(), id: 't-trip', taskRevision: page().taskRevision!, edit: page().items[0].edits.toggle };
+        const ticked = value(await host.editFocusChecklist(tick));
+        const untick = value(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision: ticked.taskRevision, edit: page().items[0].edits.toggle }));
+        const rename = { requestId: requestId(), id: 't-trip', taskRevision: untick.taskRevision, edit: { kind: 'rename' as const, index: 1, itemId: 'c-chargers', text: 'Cables' } };
+        const renamed = value(await host.editFocusChecklist(rename));
+        value(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision: renamed.taskRevision, edit: { ...rename.edit, text: 'Chargers' } }));
+        log.length = 0;
+        // The same host still holds the receipts: the answer is the first one, with no write.
+        expect(await host.editFocusChecklist(tick)).toEqual({ ok: true, value: ticked });
+        // A new host has none: the replays are stale and write nothing.
+        const restarted = await restartScreenHost();
+        expect(await restarted.editFocusChecklist(tick)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(await restarted.editFocusChecklist(rename)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(log).toEqual([]);
+        expect(visible('t-trip')!.checklist!.slice(0, 2)).toEqual([
+            { id: 'c-passport', title: 'Passport', isCompleted: false },
+            { id: 'c-chargers', title: 'Chargers', isCompleted: true },
+        ]);
     });
 
     it.each([
@@ -252,14 +280,14 @@ describe('Focus checklist page: core and the native host contract', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, log } = await open({ saveData });
-        const input = { requestId: requestId(), id: 't-trip', edit: edit as NativeFocusChecklistEdit };
+        const input = { requestId: requestId(), id: 't-trip', taskRevision: value(host.getFocusChecklist({ id: 't-trip' })).taskRevision!, edit: edit as NativeFocusChecklistEdit };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.editFocusChecklist(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         expect(log).toHaveLength(1);
         const landed = visible('t-trip')!.checklist;
         saveData.mockResolvedValue(undefined);
         const retried = await host.editFocusChecklist(input);
-        expect(retried).toEqual({ ok: true, value: { changed: true, checklist: landed } });
+        expect(retried).toEqual({ ok: true, value: { changed: true, checklist: landed, taskRevision: value(host.getFocusChecklist({ id: 't-trip' })).taskRevision } });
         // The retry only saved: no second write, and storage holds the edit.
         expect(log).toHaveLength(1);
         expect(visible('t-trip')!.checklist).toBe(landed);
@@ -279,7 +307,10 @@ describe('Focus checklist page: core and the native host contract', () => {
         expect(host.getFocusChecklist({} as never)).toMatchObject(invalid);
         expect(host.getFocusChecklist({ id: '' })).toMatchObject(invalid);
         expect(host.getFocusChecklist({ id: 't-trip', limit: 0 })).toMatchObject(invalid);
-        const edit = async (input: unknown) => expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', ...(input as object) } as never)).toMatchObject(invalid);
+        const taskRevision = value(host.getFocusChecklist({ id: 't-trip' })).taskRevision!;
+        const edit = async (input: unknown) => expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision, ...(input as object) } as never)).toMatchObject(invalid);
+        await edit({ edit: { kind: 'toggle', index: 0, itemId: 'c-passport', isCompleted: true }, taskRevision: undefined });
+        await edit({ edit: { kind: 'toggle', index: 0, itemId: 'c-passport', isCompleted: true }, taskRevision: 7 });
         await edit({ edit: { kind: 'toggle', index: 0, itemId: 'c-passport' } });
         await edit({ edit: { kind: 'toggle', index: -1, itemId: 'c-passport', isCompleted: true } });
         await edit({ edit: { kind: 'rename', index: 0, itemId: 'c-passport', text: 7 } });
@@ -288,7 +319,7 @@ describe('Focus checklist page: core and the native host contract', () => {
         await edit({ edit: { kind: 'move', index: 0, itemId: 'c-passport' } });
         await edit({ edit: { kind: 'remove', index: 0, itemId: 'c-passport' }, id: '' });
         await edit({ edit: { kind: 'remove', index: 0, itemId: 'c-passport' }, requestId: 'not-a-uuid' });
-        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-archived', edit: { kind: 'add', itemId: 'x' } }))
+        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-archived', taskRevision, edit: { kind: 'add', itemId: 'x' } }))
             .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
         expect(log).toEqual([]);
     });
@@ -299,7 +330,7 @@ describe('Focus checklist page: core and the native host contract', () => {
         setStorageAdapter({ getData: async () => ({ tasks: fixture.tasks, projects: [], sections: [], areas: [], settings: {} }), saveData: async () => undefined });
         const host = createNativeHostContract();
         expect(host.getFocusChecklist({ id: 't-trip' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', edit: { kind: 'add', itemId: 'x' } }))
+        expect(await host.editFocusChecklist({ requestId: requestId(), id: 't-trip', taskRevision: 'x', edit: { kind: 'add', itemId: 'x' } }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
     });
 });

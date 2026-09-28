@@ -31,7 +31,9 @@
  *   their search box offers `create` for a name no option carries, and `submit` is
  *   the search box's Done key (the exact match, or the create). Send a create to
  *   createBulkOrganizeDestination with the draft; keep the `draft` it returns
- *   (the new project or area chosen). Creating writes no task: Apply does.
+ *   (the new project or area chosen). Creating writes no task: Apply does. A new
+ *   project or area takes the request UUID as its ID, so a replay after a restart
+ *   finds the row it made (renamed, archived or deleted since) and adds nothing.
  *
  * Every write takes a request UUID and retries exactly (native-request-receipts.ts):
  * while its save is owed (SAVE_FAILED) a retry only saves. Each write is
@@ -282,20 +284,28 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
     const selectableIds = (rows: Row[]) => rows.filter((row) => !row.readOnly).map((row) => row.id);
     const selectAllRevision = (ids: string[]) => `${ids.length}:${paramsKey(ids)}`;
 
-    /** A draft as the host sends it, completed from the empty one; null when a choice is not one the dialog offers. */
-    const readDraft = (value: unknown): BulkOrganizeDraft | null => {
+    /** A draft as the host sends it, completed from the empty one; null when a field is not one the dialog holds. */
+    const readDraftShape = (value: unknown): BulkOrganizeDraft | null => {
         if (value === undefined) return EMPTY_BULK_ORGANIZE_DRAFT;
         if (!isObjectRecord(value) || Object.keys(value).some((key) => !DRAFT_KEYS.has(key))) return null;
         const draft = { ...EMPTY_BULK_ORGANIZE_DRAFT, ...value } as BulkOrganizeDraft;
-        const state = useTaskStore.getState();
-        const isChoice = (choice: unknown, ids: Set<string>) => choice === BULK_ORGANIZE_KEEP || choice === BULK_ORGANIZE_NONE
-            || (typeof choice === 'string' && ids.has(choice));
         const valid = (draft.status === BULK_ORGANIZE_KEEP || BULK_ORGANIZE_STATUS_OPTIONS.includes(draft.status))
-            && isChoice(draft.projectChoice, new Set(getBulkOrganizeProjectOptions(state.projects).map((project) => project.id)))
-            && isChoice(draft.areaChoice, new Set(getBulkOrganizeAreaOptions(state.areas).map((area) => area.id)))
+            && isText(draft.projectChoice, 200) && isText(draft.areaChoice, 200)
             && (Object.keys(TEXT_LIMITS) as BulkOrganizeTextField[]).every((field) => isText(draft[field], TEXT_LIMITS[field]))
             && BULK_ORGANIZE_DATE_FIELDS.every((field) => draft[field] === '' || isDay(draft[field]));
         return valid ? draft : null;
+    };
+    /** Whether the draft's project and area choices are ones the dialog offers now. */
+    const offersChoices = (draft: BulkOrganizeDraft): boolean => {
+        const state = useTaskStore.getState();
+        const isChoice = (choice: string, ids: Set<string>) => choice === BULK_ORGANIZE_KEEP || choice === BULK_ORGANIZE_NONE || ids.has(choice);
+        return isChoice(draft.projectChoice, new Set(getBulkOrganizeProjectOptions(state.projects).map((project) => project.id)))
+            && isChoice(draft.areaChoice, new Set(getBulkOrganizeAreaOptions(state.areas).map((area) => area.id)));
+    };
+    /** A draft as the host sends it, completed from the empty one; null when a choice is not one the dialog offers. */
+    const readDraft = (value: unknown): BulkOrganizeDraft | null => {
+        const draft = readDraftShape(value);
+        return draft && offersChoices(draft) ? draft : null;
     };
     const readEdit = (value: unknown): BulkOrganizeDraftEdit | null => {
         if (!isObjectRecord(value)) return null;
@@ -542,7 +552,9 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
          * or its search box's text on Done), as mobile does: a name an option already
          * carries chooses that option; a project goes in the draft's chosen area. Returns
          * the draft with it chosen (a project resets the area to Keep). Writes no task.
-         * Reuse `requestId` to retry; a replay finds the name taken and writes nothing.
+         * Reuse `requestId` to retry. A new project or area takes the request UUID as its
+         * ID: a replay after a restart answers with that row and writes nothing, choosing
+         * it only while the dialog still offers it.
          */
         async createBulkOrganizeDestination(input: {
             requestId: string;
@@ -553,19 +565,30 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
         }): Promise<NativeHostResult<NativeBulkOrganizeCreateResult>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const draft = isObjectRecord(input) ? readDraft(input.draft) : null;
+            // Only the shape here: what the dialog offers is checked when the request first runs,
+            // so a retry that owes only a save is never refused by a change since.
+            const draft = isObjectRecord(input) ? readDraftShape(input.draft) : null;
             if (!isObjectRecord(input) || !BULK_LISTS.includes(input.list) || !TASK_LIST_BULK_SCREENS[input.list].organize
                 || (input.kind !== 'project' && input.kind !== 'area') || !isText(input.name) || !input.name.trim() || !draft) {
                 return fail('INVALID_INPUT', 'A request UUID, a list that offers Bulk organize, a project or area name and a valid draft are required');
             }
-            const { kind } = input;
+            const { kind, requestId } = input;
             const name = input.name.trim();
-            return receipts.run(input.requestId, JSON.stringify(['bulkCreate', input.list, kind, name, draft]), async () => {
+            return receipts.run(requestId, JSON.stringify(['bulkCreate', input.list, kind, name, draft]), async () => {
+                const offered = (id: string) => (kind === 'project'
+                    ? getBulkOrganizeProjectOptions(useTaskStore.getState().projects).some((project) => project.id === id)
+                    : getBulkOrganizeAreaOptions(useTaskStore.getState().areas).some((area) => area.id === id));
                 const choose = (id: string, changed: boolean): NativeBulkOrganizeCreateResult => ({
                     id,
                     changed,
-                    draft: applyBulkOrganizeDraftEdit(draft, { type: kind === 'project' ? 'setProject' : 'setArea', value: id }),
+                    draft: offered(id) ? applyBulkOrganizeDraftEdit(draft, { type: kind === 'project' ? 'setProject' : 'setArea', value: id }) : draft,
                 });
+                // A new row takes the request UUID as its ID. A replay after a restart finds it,
+                // renamed, archived or deleted since: made already, so nothing is added or restored.
+                const id = requestId.toLowerCase();
+                const state = useTaskStore.getState();
+                if (kind === 'project' ? state._projectsById.has(id) : state._areasById.has(id)) return { ok: true, value: choose(id, false) };
+                if (!offersChoices(draft)) return fail('INVALID_INPUT', 'The draft\'s project or area is not one the dialog offers');
                 // The search box's Done on an exact match chooses it.
                 const exact = exactDestination(kind, name);
                 if (exact) return { ok: true, value: choose(exact.id, false) };
@@ -574,7 +597,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 const areaId = draft.areaChoice !== BULK_ORGANIZE_KEEP && draft.areaChoice !== BULK_ORGANIZE_NONE ? draft.areaChoice : undefined;
                 const made: { entity: Project | Area | null } = { entity: null };
                 const written = await runStoreWrite(async () => {
-                    made.entity = kind === 'project' ? await addBulkOrganizeProject(name, areaId) : await addBulkOrganizeArea(name);
+                    made.entity = kind === 'project' ? await addBulkOrganizeProject(name, areaId, id) : await addBulkOrganizeArea(name, id);
                     return made.entity ? undefined : { success: false, error: kind === 'project' ? 'Project creation failed' : 'Area creation failed' };
                 });
                 if (!made.entity) return written.ok ? fail('ACTION_FAILED', 'Creation failed') : written;

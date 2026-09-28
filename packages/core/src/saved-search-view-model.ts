@@ -8,6 +8,7 @@
 import { taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { tFallback } from './i18n';
 import { filterTasksBySearch } from './search';
+import { useTaskStore } from './store';
 import { sortTasksBy } from './task-utils';
 import type { Area, Project, SavedSearch, Task, TaskSortBy } from './types';
 
@@ -34,6 +35,19 @@ export function findSavedSearch(savedSearches: readonly SavedSearch[] | undefine
 /** The saved searches without `id`: what Delete stores. */
 export function removeSavedSearch(savedSearches: readonly SavedSearch[] | undefined, id: string): SavedSearch[] {
     return (savedSearches || []).filter((search) => search.id !== id);
+}
+
+/**
+ * Delete a saved search by its ID, against the saved searches as they are when the
+ * write runs: every other one stays the stored object. False, with nothing written,
+ * when no saved search has that ID.
+ */
+export async function deleteSavedSearchById(id: string): Promise<boolean> {
+    const { settings, updateSettings } = useTaskStore.getState();
+    if (!findSavedSearch(settings.savedSearches, id)) return false;
+    // updateSettings applies its change before its first await: nothing lands between this read and the write.
+    await updateSettings({ savedSearches: removeSavedSearch(settings.savedSearches, id) });
+    return true;
 }
 
 /**

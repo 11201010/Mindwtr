@@ -74,3 +74,12 @@ export async function openScreenHost(input: {
     return host;
 }
 export type ScreenHost = Awaited<ReturnType<typeof openScreenHost>>;
+
+/** A new host over the same store and storage, as after a restart: it holds no request receipts. */
+export async function restartScreenHost() {
+    await flushPendingSave();
+    const host = createNativeHostContract();
+    value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
+    value(await host.activate({ writeSafetyReady: true }));
+    return host;
+}

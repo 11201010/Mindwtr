@@ -9,6 +9,8 @@
  * - Send it as `state` ({ scope, step, captured }); the first read sends none.
  *   A scope chip's `value` becomes `state.scope`; Start, Back and Next carry the
  *   `step` to go to. Close and Finish leave the screen, which forgets the state.
+ *   The view echoes only the scope and the step: the captures stay with the host,
+ *   and the view carries their counts and the requested window.
  * - The capture box's text goes in as `draft` (Add is disabled while it is blank).
  *   After an add that failed, send `addFailed: true` until the next add lands.
  * - Add is addMindSweepItem with the draft and a request UUID. Once it answers,
@@ -20,7 +22,8 @@
  *
  * Add takes a request UUID and retries exactly (native-request-receipts.ts): the
  * new Inbox task takes that UUID as its ID, so a retry, or a replay after a
- * restart, never adds it twice.
+ * restart, never adds it twice. A replay whose title differs from the task that
+ * UUID made is another capture: it is refused (INVALID_INPUT).
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -43,8 +46,8 @@ export type NativeMindSweepView = Omit<MindSweepView, 'group'> & {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     /** Covers the language, the day and minute, and the state, draft and failure sent. */
     revision: string;
-    /** The state as read: send it back as `state`. */
-    state: MindSweepState;
+    /** The scope and step as read. The host keeps its captures and sends them back in `state`. */
+    state: Pick<MindSweepState, 'scope' | 'step'>;
     group: (Omit<NonNullable<MindSweepView['group']>, 'captured'> & {
         /** `items` is the requested window of this cue list's captures. */
         captured: { label: string; total: number; items: string[] } | null;
@@ -130,7 +133,7 @@ export function createMindSweepMethods(deps: MindSweepDeps) {
                     ...view,
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision,
-                    state,
+                    state: { scope: state.scope, step: state.step },
                     group: view.group && {
                         ...view.group,
                         captured: view.group.captured && {
@@ -156,6 +159,13 @@ export function createMindSweepMethods(deps: MindSweepDeps) {
             const title = input.title.trim();
             const requestId = input.requestId;
             return receipts.run(requestId, JSON.stringify(['mindSweepAdd', title]), async () => {
+                // A replay after a restart: the task this UUID made answers it; another title is another capture.
+                const existing = useTaskStore.getState()._tasksById.get(requestId.toLowerCase());
+                if (existing) {
+                    return existing.title === title
+                        ? { ok: true, value: { id: existing.id, title } }
+                        : fail('INVALID_INPUT', 'Request ID already belongs to another capture');
+                }
                 const added = { id: requestId.toLowerCase() };
                 const written = await runStoreWrite(async () => {
                     const result = await useTaskStore.getState().addTask(title, { status: 'inbox' }, { captureId: requestId });

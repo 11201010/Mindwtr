@@ -12,8 +12,9 @@
  *   nothing to go back to; the empty state's Inbox replaces the screen with the Inbox.
  *
  * deleteSavedSearch takes a request UUID and retries exactly
- * (native-request-receipts.ts). It is target-state: a saved search already gone
- * writes nothing.
+ * (native-request-receipts.ts). It deletes by ID against the settings as they are
+ * when it runs (deleteSavedSearchById), and it is target-state: a saved search
+ * already gone writes nothing.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -30,8 +31,8 @@ import { fail, isObjectRecord, isPaging, isText, page, paramsKey } from './nativ
 import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
 import {
     buildSavedSearchScreenText,
+    deleteSavedSearchById,
     findSavedSearch,
-    removeSavedSearch,
     selectSavedSearchTasks,
     type SavedSearchScreenText,
 } from './saved-search-view-model';
@@ -137,10 +138,11 @@ export function createSavedSearchMethods(deps: SavedSearchDeps) {
             }
             const { id } = input;
             return receipts.run<{ changed: boolean }>(input.requestId, JSON.stringify(['deleteSavedSearch', id]), async () => {
-                const { savedSearches } = useTaskStore.getState().settings;
+                // By ID, against the settings as they are when the write runs.
+                const deleted = { found: false };
+                const written = await runStoreWrite(async () => { deleted.found = await deleteSavedSearchById(id); });
                 // Target state: a saved search already gone is deleted.
-                if (!findSavedSearch(savedSearches, id)) return { ok: true, value: { changed: false } };
-                const written = await runStoreWrite(() => useTaskStore.getState().updateSettings({ savedSearches: removeSavedSearch(savedSearches, id) }));
+                if (!deleted.found) return written.ok ? { ok: true, value: { changed: false } } : written;
                 return settleWrite(written, { changed: true });
             });
         },

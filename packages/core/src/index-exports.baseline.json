@@ -697,6 +697,7 @@
     "defaultSyncCryptoPrimitives",
     "deleteDropboxFile",
     "deleteDropboxFileVersioned",
+    "deleteSavedSearchById",
     "deriveFocusTaskLists",
     "deriveSyncKeyMaterial",
     "detectDelimiter",
