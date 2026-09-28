@@ -1,49 +1,44 @@
 import * as SecureStore from 'expo-secure-store';
+import {
+    createSyncSecretVault,
+    type SyncSecretStoragePort,
+    type SyncSecretVault,
+} from '@mindwtr/core/sync-secret-storage';
 
-let availability: Promise<boolean> | null = null;
-const sessionSecrets = new Map<string, string>();
-
-/**
- * Cache stable availability, but never turn a rejected native probe into an
- * "unsupported" result. A later operation must be able to retry the probe.
- */
-export const isSecureStoreAvailable = (): Promise<boolean> => {
-    if (!availability) {
-        availability = SecureStore.isAvailableAsync().catch((error) => {
-            availability = null;
-            throw error;
-        });
-    }
-    return availability;
+/** expo-secure-store as core's keystore port. The accessibility class is read at write time:
+ *  a caller only ever needs the one it writes with. */
+export const secureSecretStorage: SyncSecretStoragePort = {
+    isAvailable: () => SecureStore.isAvailableAsync(),
+    getItem: (key) => SecureStore.getItemAsync(key),
+    setItem: (key, value, accessibility) => SecureStore.setItemAsync(key, value, {
+        keychainAccessible: accessibility === 'after-first-unlock'
+            ? SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
+            : SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    }),
+    deleteItem: (key) => SecureStore.deleteItemAsync(key),
 };
 
-export const getSessionSecret = (key: string): string | null => {
-    return sessionSecrets.get(key) ?? null;
-};
+/** One vault per process, shared by secure-config, dropbox-auth and ai-config. */
+export const secureSecretVault: SyncSecretVault = createSyncSecretVault(secureSecretStorage);
+
+export const isSecureStoreAvailable = (): Promise<boolean> => secureSecretVault.isSecureStoreAvailable();
+
+export const getSessionSecret = (key: string): string | null => secureSecretVault.getSessionSecret(key);
 
 export const setSessionSecret = (key: string, value: string): void => {
-    sessionSecrets.set(key, value);
+    secureSecretVault.setSessionSecret(key, value);
 };
 
 export const deleteSessionSecret = (key: string): void => {
-    sessionSecrets.delete(key);
+    secureSecretVault.deleteSessionSecret(key);
 };
 
-export const evacuateLegacySecretToSession = async (
+export const evacuateLegacySecretToSession = (
     key: string,
     value: string,
     removeLegacy: () => Promise<void>,
-): Promise<void> => {
-    setSessionSecret(key, value);
-    try {
-        await removeLegacy();
-    } catch (error) {
-        deleteSessionSecret(key);
-        throw error;
-    }
-};
+): Promise<void> => secureSecretVault.evacuateLegacySecretToSession(key, value, removeLegacy);
 
 export const __resetSecureSecretStoreForTests = (): void => {
-    availability = null;
-    sessionSecrets.clear();
+    secureSecretVault.reset();
 };

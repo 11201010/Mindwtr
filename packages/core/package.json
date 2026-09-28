@@ -33,7 +33,9 @@
     "./mindwtr-csv-export": "./src/mindwtr-csv-export.ts",
     "./tasknotes-export": "./src/tasknotes-export.ts",
     "./import-runner": "./src/import-runner.ts",
-    "./whisper-models": "./src/whisper-models.ts"
+    "./whisper-models": "./src/whisper-models.ts",
+    "./sync-secret-storage": "./src/sync-secret-storage.ts",
+    "./dropbox-auth-tokens": "./src/dropbox-auth-tokens.ts"
   },
   "sideEffects": false,
   "type": "module",

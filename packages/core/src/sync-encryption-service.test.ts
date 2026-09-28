@@ -1,0 +1,229 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { defaultSyncCryptoPrimitives, type SyncCryptoPrimitives } from './sync-crypto';
+import {
+    SyncEncryptionRemoteConflictError,
+    isPlaintextSyncArtifact,
+    type SyncEncryptionRemotePort,
+} from './sync-encryption';
+import { createSyncEncryptionStateStore, readSyncLocationScope } from './sync-encryption-local-state';
+import { SyncEncryptionCleanupDeferredError, createSyncEncryptionService } from './sync-encryption-service';
+import {
+    CLOUD_PROVIDER_KEY,
+    SYNC_BACKEND_KEY,
+    SYNC_ENCRYPTION_KEY_KEY,
+    SYNC_ENCRYPTION_STATE_KEY,
+    SYNC_PATH_KEY,
+} from './sync-storage-keys';
+
+// Argon2id at the writer's default cost takes seconds in pure JS; the service only needs a
+// deterministic key here. AES-GCM stays real.
+const fastCrypto: SyncCryptoPrimitives = {
+    ...defaultSyncCryptoPrimitives,
+    argon2id: async (pass, salt, _params, dkLen) => Uint8Array.from(
+        { length: dkLen },
+        (_, index) => (pass[index % pass.length] ^ salt[index % salt.length] ^ index) & 0xff,
+    ),
+};
+
+const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+
+/** A File Sync folder in memory: every artifact carries a generation, writes and removes are
+ *  compare-and-set on it. */
+const createMemoryFolder = (initial: Record<string, Uint8Array>) => {
+    let generation = 0;
+    const files = new Map<string, { bytes: Uint8Array; version: string }>();
+    for (const [name, bytes] of Object.entries(initial)) files.set(name, { bytes, version: `v${++generation}` });
+    const port: SyncEncryptionRemotePort = {
+        list: async () => [
+            { name: 'data.json', kind: 'document' },
+            { name: 'data.json.enc', kind: 'document' },
+            { name: 'data.json.bak', kind: 'document' },
+            { name: 'data.json.enc.bak', kind: 'document' },
+            ...[...files.keys()]
+                .filter((name) => name.startsWith('attachments/'))
+                .map((name) => ({ name, kind: 'attachment' as const })),
+        ],
+        read: async (name) => {
+            const file = files.get(name);
+            return file ? { bytes: file.bytes, version: file.version } : { bytes: null, version: null };
+        },
+        write: async (name, bytes, expectedVersion) => {
+            if ((files.get(name)?.version ?? null) !== expectedVersion) throw new SyncEncryptionRemoteConflictError();
+            files.set(name, { bytes, version: `v${++generation}` });
+        },
+        remove: async (name, expectedVersion) => {
+            if (files.get(name)?.version !== expectedVersion) throw new SyncEncryptionRemoteConflictError();
+            files.delete(name);
+        },
+    };
+    return { files, port };
+};
+
+type Lease = { id: string };
+
+const createHarness = (backend: Record<string, string> = {}, folder?: SyncEncryptionRemotePort | null) => {
+    const plain = new Map<string, string>(Object.entries(backend));
+    const secrets = new Map<string, string>();
+    const logs: Array<{ level: string; message: string; extra: Record<string, string>; force?: boolean }> = [];
+    const storage = {
+        getItem: async (key: string) => plain.get(key) ?? null,
+        setItem: async (key: string, value: string) => {
+            plain.set(key, value);
+        },
+        removeItem: async (key: string) => {
+            plain.delete(key);
+        },
+    };
+    const state = createSyncEncryptionStateStore({
+        storage,
+        secureConfig: {
+            getSecureConfigValue: async (key) => secrets.get(key) ?? null,
+            setSecureConfigValue: async (key, value) => {
+                secrets.set(key, value);
+            },
+            deleteSecureConfigValue: async (key) => {
+                secrets.delete(key);
+            },
+        },
+        readActiveScope: () => readSyncLocationScope(storage),
+        log: {
+            info: (message, context) => {
+                logs.push({ level: 'info', message, extra: context.extra, force: context.force });
+            },
+            warn: (message, context) => {
+                logs.push({ level: 'warn', message, extra: context.extra, force: context.force });
+            },
+        },
+    });
+    const fileSync = {
+        acquireLease: vi.fn(async (syncPath: string): Promise<Lease> => ({ id: syncPath })),
+        openRemotePort: vi.fn(async () => folder ?? null),
+        revalidateLease: vi.fn(async (_lease: Lease) => undefined),
+        releaseLease: vi.fn(async (_lease: Lease) => undefined),
+        isLeaseIdentityLostError: (error: unknown) => error instanceof Error && error.name === 'LeaseIdentityLost',
+    };
+    const service = createSyncEncryptionService<Lease>({
+        storage,
+        state,
+        crypto: fastCrypto,
+        fetch: vi.fn(async () => {
+            throw new Error('no network in this test');
+        }) as unknown as typeof fetch,
+        parseWebdavXml: () => {
+            throw new Error('no XML in this test');
+        },
+        loadWebDavConfig: async () => null,
+        webDavRequestOptions: () => ({}),
+        getDropboxClientId: async () => '',
+        runDropboxAuthorized: (_clientId, operation) => operation('token'),
+        fileSync,
+    });
+    const transitionLines = () => logs.filter((line) => line.message.includes('transition'));
+    return { plain, secrets, logs, state, fileSync, service, transitionLines };
+};
+
+describe('sync encryption service', () => {
+    it('manages the key locally before any backend exists, and logs the transition forced', async () => {
+        const { plain, secrets, service, transitionLines } = createHarness();
+
+        await expect(service.isSyncEncryptionBackendPending()).resolves.toBe(true);
+        await service.enableSyncEncryption('correct horse');
+
+        expect(secrets.get(SYNC_ENCRYPTION_KEY_KEY)).toBeTruthy();
+        expect(JSON.parse(plain.get(SYNC_ENCRYPTION_STATE_KEY)!).state).toBe('enabled');
+        await expect(service.getSyncEncryptionStatus()).resolves.toMatchObject({ state: 'enabled' });
+        const lines = transitionLines();
+        expect(lines.map((line) => [line.extra.kind, line.extra.phase, line.force])).toEqual([
+            ['enable-local-only', 'start', true],
+            ['enable-local-only', 'end', true],
+        ]);
+
+        await service.disableSyncEncryption();
+        expect(secrets.has(SYNC_ENCRYPTION_KEY_KEY)).toBe(false);
+        await expect(service.getSyncEncryptionStatus()).resolves.toMatchObject({ state: 'off' });
+    });
+
+    it('refuses what needs a remote without one, and backends without encryption support', async () => {
+        const noBackend = createHarness();
+        await expect(noBackend.service.provideSyncEncryptionPassphrase('x')).rejects.toThrow('SYNC_ENCRYPTION_BACKEND_REQUIRED');
+
+        const selfHosted = createHarness({ [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'selfhosted' });
+        await expect(selfHosted.service.enableSyncEncryption('x'))
+            .rejects.toThrow('Sync encryption is only available for File Sync, WebDAV and Dropbox.');
+
+        const webdav = createHarness({ [SYNC_BACKEND_KEY]: 'webdav' });
+        await expect(webdav.service.enableSyncEncryption('x')).rejects.toThrow('WebDAV is not configured');
+        expect(webdav.transitionLines()).toEqual([]);
+
+        const dropbox = createHarness({ [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' });
+        await expect(dropbox.service.changeSyncEncryptionPassphrase('a', 'b')).rejects.toThrow('Dropbox is not configured');
+    });
+
+    it('encrypts a File Sync folder under its lease and releases the lease once', async () => {
+        const folder = createMemoryFolder({ 'data.json': encode({ tasks: [], projects: [] }) });
+        const { fileSync, service, state } = createHarness(
+            { [SYNC_BACKEND_KEY]: 'file', [SYNC_PATH_KEY]: '/sync' },
+            folder.port,
+        );
+        const progress: string[] = [];
+
+        await service.enableSyncEncryption('correct horse', { onProgress: (p) => progress.push(p.phase) });
+
+        expect(folder.files.has('data.json')).toBe(false);
+        expect(isPlaintextSyncArtifact(folder.files.get('data.json.enc')!.bytes)).toBe(false);
+        expect(fileSync.acquireLease).toHaveBeenCalledWith('/sync');
+        expect(fileSync.revalidateLease).toHaveBeenCalled();
+        expect(fileSync.releaseLease).toHaveBeenCalledTimes(1);
+        expect(state.syncEncryptionLocalState.read()).toMatchObject({ state: 'enabled' });
+        expect(progress).toContain('documents');
+    });
+
+    it('releases the lease when the folder cannot be opened', async () => {
+        const { fileSync, service } = createHarness({ [SYNC_BACKEND_KEY]: 'file', [SYNC_PATH_KEY]: '/sync' }, null);
+
+        await expect(service.enableSyncEncryption('x')).rejects.toThrow('Unable to open the sync folder');
+        expect(fileSync.releaseLease).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a committed transition whose lock release failed as a file-lock cleanup', async () => {
+        const folder = createMemoryFolder({ 'data.json': encode({ tasks: [], projects: [] }) });
+        const { fileSync, service } = createHarness(
+            { [SYNC_BACKEND_KEY]: 'file', [SYNC_PATH_KEY]: '/sync' },
+            folder.port,
+        );
+        fileSync.releaseLease.mockRejectedValueOnce(new Error('close failed'));
+
+        const error = await service.enableSyncEncryption('correct horse').catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(SyncEncryptionCleanupDeferredError);
+        expect((error as SyncEncryptionCleanupDeferredError).cleanupKind).toBe('file-lock');
+        expect(folder.files.has('data.json.enc')).toBe(true);
+        expect(fileSync.releaseLease).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls the key and state back when the lock is lost before the release', async () => {
+        const folder = createMemoryFolder({ 'data.json': encode({ tasks: [], projects: [] }) });
+        const { fileSync, service, secrets, plain } = createHarness(
+            { [SYNC_BACKEND_KEY]: 'file', [SYNC_PATH_KEY]: '/sync' },
+            folder.port,
+        );
+        const lost = Object.assign(new Error('lock replaced'), { name: 'LeaseIdentityLost' });
+        fileSync.releaseLease.mockRejectedValueOnce(lost);
+
+        await expect(service.enableSyncEncryption('correct horse')).rejects.toBe(lost);
+
+        expect(secrets.has(SYNC_ENCRYPTION_KEY_KEY)).toBe(false);
+        expect(JSON.parse(plain.get(SYNC_ENCRYPTION_STATE_KEY)!)).toMatchObject({ incompleteTransition: 'enable' });
+    });
+
+    it('"Not now" keeps the no-key state', async () => {
+        const { plain, service } = createHarness({
+            [SYNC_ENCRYPTION_STATE_KEY]: JSON.stringify({ state: 'remote-encrypted-no-key', discoveredScope: '["file","/sync"]' }),
+        });
+
+        await service.declineSyncEncryptionPassphrase();
+
+        expect(JSON.parse(plain.get(SYNC_ENCRYPTION_STATE_KEY)!).state).toBe('remote-encrypted-no-key');
+    });
+});
