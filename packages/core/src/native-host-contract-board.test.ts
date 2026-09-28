@@ -12,6 +12,7 @@ import {
 import { createBoardRecorder, loadBoardViewsFixture, seedBoardStore, type BoardFixturePart } from './board-view-model.replay';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
+import { matchesPickerQuery } from './native-host-contract-menu-views';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
@@ -145,6 +146,55 @@ describe('native host contract: Board', () => {
         const noEstimates = value(host.getBoardView({ limit: 100 }));
         expect(noEstimates.revision).not.toBe(renamed.revision);
         expect(noEstimates.columns[1].cards.every((card) => card.card.timeEstimateLabel === null)).toBe(true);
+    });
+
+    it('searches the filter sheet\'s token and project pickers as mobile\'s sheet does, under the view\'s revision', async () => {
+        freezeClock();
+        const old = '2026-08-01T12:00:00.000Z';
+        const bulk = Array.from({ length: 120 }, (_, index) => ({
+            id: `bulk-${index}`, title: `Bulk ${index}`, status: 'someday' as const, contexts: [`@room${index}`], tags: [], createdAt: old, updatedAt: old,
+        }));
+        const { host } = await openHost(undefined, { ...part, tasks: [...part.tasks, ...bulk] });
+        const filters = { tokens: ['@room1'] };
+        const view = value(host.getBoardView({ filters, limit: 1 }));
+        const { options } = direct({ ...EMPTY_BOARD_FILTER_STATE, ...view.filters });
+        // TaskFilterSheet's filter, as mobile's Board runs it.
+        const mobileFilter = <T,>(entries: T[], label: (entry: T) => string, query: string) => {
+            const normalized = query.trim().toLocaleLowerCase();
+            return normalized ? entries.filter((entry) => label(entry).toLocaleLowerCase().includes(normalized)) : entries;
+        };
+        const list = (name: 'tokens' | 'projects', query: string, offset = 0) => value(host.getBoardList({
+            filters: view.filters, list: name, query, offset, limit: 100, revision: view.revision,
+        }));
+        for (const query of [' ROOM1', 'HOME', '', 'zzz']) {
+            const expected = mobileFilter(options.tokens, (token) => token, query);
+            const tokens = list('tokens', query);
+            expect(tokens.total).toBe(expected.length);
+            expect(tokens.items).toEqual(expected.slice(0, 100).map((value) => ({
+                value, state: view.filters.tokens.includes(value) ? 'included' : 'none',
+            })));
+            // The Inbox tokens' rule.
+            expect(tokens.items.map((item) => (item as { value: string }).value)).toEqual(options.tokens.filter((token) => matchesPickerQuery(token, query)).slice(0, 100));
+        }
+        expect(list('tokens', ' ROOM1').items[0]).toEqual({ value: '@room1', state: 'included' });
+        // A long search pages under the same revision.
+        const rooms = list('tokens', 'room');
+        expect([rooms.total, rooms.items.length]).toEqual([120, 100]);
+        expect(list('tokens', 'room', 100).items).toHaveLength(20);
+        for (const query of [' gar', 'NO PROJECT', 'zzz']) {
+            const expected = mobileFilter(options.projects, (project) => project.title, query);
+            expect(list('projects', query).items).toEqual(expected.map((project) => ({ ...project, selected: false })));
+        }
+        expect(list('projects', ' gar').total).toBeGreaterThan(0);
+        // A query goes with the sheet's pickers only; a stale revision is refused.
+        const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
+        expect(host.getBoardList({ list: 'chips', query: 'a', offset: 0, limit: 10, revision: view.revision })).toMatchObject(invalid);
+        expect(host.getBoardList({ list: 'cards', status: 'next', query: 'a', offset: 0, limit: 10, revision: view.revision })).toMatchObject(invalid);
+        expect(host.getBoardList({ list: 'tokens', query: 7 as never, offset: 0, limit: 10, revision: view.revision })).toMatchObject(invalid);
+        expect(host.getBoardList({ list: 'tokens', query: 'x'.repeat(501), offset: 0, limit: 10, revision: view.revision })).toMatchObject(invalid);
+        await useTaskStore.getState().updateTask('bulk-0', { contexts: ['@attic'] });
+        expect(host.getBoardList({ filters: view.filters, list: 'tokens', query: 'room', offset: 0, limit: 10, revision: view.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
     it('retries a failed move exactly: one write, and the retry finishes the save', async () => {
@@ -311,6 +361,7 @@ describe('native host contract: Board', () => {
         const notReady = { ok: false, error: { code: 'NOT_READY' } };
         expect(host.getBoardView({ limit: 10 })).toMatchObject(notReady);
         expect(host.getBoardList({ list: 'tokens', offset: 0, limit: 10, revision: 'r' })).toMatchObject(notReady);
+        expect(host.getBoardList({ list: 'projects', query: 'a', offset: 0, limit: 10, revision: 'r' })).toMatchObject(notReady);
         expect(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'trashTask', taskId: 'n-rent' } })).toMatchObject(notReady);
     });
 });

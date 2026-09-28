@@ -11,6 +11,11 @@
  * every action is target-state, so a replay after a restart writes nothing. Success
  * means the change is saved.
  *
+ * Review's selection opens the lists' Bulk organize dialog: send `organize` (the draft
+ * the host keeps, with a control's `edit`) and `picker` with getReviewOverview, as with
+ * getBulkActions; a picker's create goes to createBulkOrganizeDestination with
+ * `list: 'review'`, and Apply is `organizeTasks` with the returned draft.
+ *
  * A review wizard's place (pause and resume) is a device-local checkpoint, as
  * on mobile: each view returns the `checkpoint` string to store and the
  * checkpoints of the steps before and after it. Store the one you move to, send
@@ -25,7 +30,7 @@ import { buildBulkOrganizeTaskUpdates, type BulkOrganizeTaskUpdateInput } from '
 import { buildBulkTaskTokenUpdates, collectBulkTaskTokens } from './bulk-task-tokens';
 import { safeParseDate, type DateFormatter } from './date';
 import { formatI18nTemplate, tFallback } from './i18n';
-import { formatListItemCountNoun } from './list-count';
+import { formatListItemCount, formatListItemCountNoun } from './list-count';
 import type { ExternalCalendarEvent } from './ics';
 import {
     NATIVE_HOST_CONTRACT_VERSION,
@@ -35,11 +40,20 @@ import {
     type NativeListToast,
     type NativeTaskRow,
 } from './native-host-contract';
+import {
+    buildNativeBulkOrganizePicker,
+    buildNativeBulkOrganizeView,
+    buildNativeRemoveTagPicker,
+    readBulkOrganizeApply,
+    type NativeBulkOrganizeView,
+    type NativeBulkPicker,
+} from './native-host-contract-bulk-actions';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { getTrashUndoLabel } from './trash-view-model';
 import {
     buildReviewSteps,
+    getAdvancedReviewDate,
     getDailyReviewBuckets,
     getExternalCalendarDaySummaries,
     getReviewOverviewGroups,
@@ -95,6 +109,7 @@ import {
     type WeeklyReviewStepId,
 } from './review-views-model';
 import { useTaskStore } from './store';
+import { EMPTY_BULK_ORGANIZE_DRAFT, type BulkOrganizeDraft, type BulkOrganizeDraftEdit } from './task-list-bulk-actions';
 import { getBulkTrashConfirmation, type ListConfirmation } from './trash-view-model';
 import type { Task, TaskStatus } from './types';
 
@@ -128,8 +143,17 @@ export type NativeReviewAction =
     | { type: 'addTag'; taskIds: string[]; tag: string }
     | { type: 'removeTags'; taskIds: string[]; tags: string[] }
     | { type: 'organizeTasks'; taskIds: string[]; input: BulkOrganizeTaskUpdateInput }
+    /** The organize dialog's Apply: the draft getReviewOverview returned (`bulk.organize.draft`), as the lists' Apply sends it. */
+    | { type: 'organizeTasks'; taskIds: string[]; draft: Partial<BulkOrganizeDraft> }
     /** Clears reached review reminders after a durable save; a replay is a no-op. */
     | { type: 'markReviewedTasks'; taskIds: string[] }
+    /**
+     * A row's Mark reviewed (`advance: false` clears the review date) or Review in 1 week
+     * (`advance: true` sets it a week from now), as the row's `review` actions carry it.
+     * Compare-and-set on `reviewAt`, the review date the row showed: a task no longer due
+     * writes nothing, and one whose review date changed since is refused (STALE_REVISION).
+     */
+    | { type: 'markTaskReviewed'; taskId: string; advance: boolean; reviewAt: string | null }
     /** The Weekly Review's project Add task (quick-add grammar). The requestId becomes the task id. */
     | { type: 'addProjectTask'; projectId: string; title: string }
     /** The Weekly Review's AI suggestions the user left selected. */
@@ -171,7 +195,18 @@ export type NativeReviewOverviewItem =
         summaryTone: 'warning' | 'secondary';
         expanded: boolean;
     }
-    | { type: 'task'; areaGroupId: string; projectGroupId: string; row: NativeTaskRow; selected: boolean };
+    | {
+        type: 'task';
+        areaGroupId: string;
+        projectGroupId: string;
+        row: NativeTaskRow;
+        selected: boolean;
+        /** A task due for review, in either scope: Mark reviewed and Review in 1 week under the row. */
+        review: { markReviewed: NativeReviewRowAction; advance: NativeReviewRowAction } | null;
+    };
+
+/** One of a row's review links: send `action` with a new request UUID. */
+export type NativeReviewRowAction = { label: string; accessibilityLabel: string; action: Extract<NativeReviewAction, { type: 'markTaskReviewed' }> };
 
 export type NativeReviewExpansionEdit = { type: 'cycle' } | { type: 'toggleArea'; id: string } | { type: 'toggleProject'; id: string };
 
@@ -199,6 +234,10 @@ export type NativeReviewOverview = {
         removeTag: { title: string; placeholder: string; tags: string[] };
         deleteConfirmation: ListConfirmation;
         shareText: string;
+        /** Only when `organize` is sent (the dialog is open): the lists' Bulk organize dialog. */
+        organize: NativeBulkOrganizeView | null;
+        /** Only when `picker` is sent: the organize dialog's project or area picker, or Remove tag's. */
+        picker: NativeBulkPicker | null;
     } | null;
 };
 
@@ -371,6 +410,11 @@ const isOrganizeInput = (value: unknown): value is BulkOrganizeTaskUpdateInput =
             'status', 'projectId', 'sectionId', 'sectionProjectId', 'areaId', 'contexts', 'tags', 'startTime', 'dueDate', 'reviewAt', 'assignedTo',
         ].includes(key));
 };
+const isPicker = (value: unknown) => (
+    isObjectRecord(value) && ['project', 'area', 'removeTag'].includes(value.kind as string)
+    && (value.query === undefined || isText(value.query))
+    && isPaging({ offset: value.offset ?? 0, limit: value.limit ?? NATIVE_HOST_MAX_WINDOW, revision: value.revision })
+);
 const isSuggestion = (value: unknown): value is ReviewSuggestion => (
     isObjectRecord(value) && isText(value.id) && SUGGESTION_ACTIONS.has(value.action as string) && isText(value.reason, 2000)
 );
@@ -408,7 +452,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         return task && !task.deletedAt ? task : undefined;
     };
     const doneToast = (count: number, t: Translate): NativeListToast<NativeReviewAction> => (
-        { tone: 'success', title: t('common.done'), message: `${count} ${t('common.tasks')}`, undo: null }
+        { tone: 'success', title: t('common.done'), message: formatListItemCount(count, 'task', t), undo: null }
     );
     type Outcome = NativeHostResult<NativeReviewActionResult> | NativeUnsavedWrite<NativeReviewActionResult>;
     /** Nothing to write: the request's target state already holds (a replay after a restart lands here). */
@@ -454,9 +498,12 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             || (input.expandedAreaIds !== undefined && !isIdList(input.expandedAreaIds, true))
             || (input.expandedProjectIds !== undefined && !isIdList(input.expandedProjectIds, true))
             || (input.selectedIds !== undefined && !isIdList(input.selectedIds, true))
+            || (input.busy !== undefined && typeof input.busy !== 'boolean')
+            || (input.organize !== undefined && !isObjectRecord(input.organize))
+            || (input.picker !== undefined && !isPicker(input.picker))
             || (edit !== undefined && !(isObjectRecord(edit) && (edit.type === 'cycle'
                 || ((edit.type === 'toggleArea' || edit.type === 'toggleProject') && isText(edit.id)))))) {
-            return fail('INVALID_INPUT', 'Valid expanded ids, an expansion edit, selected ids, offset, bounded limit and revision for later pages are required');
+            return fail('INVALID_INPUT', 'Valid expanded ids, an expansion edit, selected ids, organize and picker inputs, offset, bounded limit and revision for later pages are required');
         }
         const now = new Date();
         const base = deps.revision(now);
@@ -481,11 +528,33 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         const expandedProjectIds = Array.from(projectIds);
         const revision = `${base}:${paramsKey([scope, expandedAreaIds, expandedProjectIds, selectedIds])}`;
         if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Review changed; restart paging from offset zero');
+        const pickerInput = input.picker as { kind: NativeBulkPicker['kind']; query?: string; offset?: number; limit?: number; revision?: string } | undefined;
+        if ((pickerInput?.offset ?? 0) > 0 && pickerInput?.revision !== revision) return fail('STALE_REVISION', 'Review changed; open the picker again');
+        // The organize dialog, as the lists' getBulkActions builds it for the selection.
+        const organize = input.organize === undefined ? null : buildNativeBulkOrganizeView(input.organize as Record<string, unknown>, {
+            selectedCount: selectedIds.length, t, formatDate: deps.formatDate(),
+        });
+        if (input.organize !== undefined && !organize) return fail('INVALID_INPUT', 'A Bulk organize draft and edit with choices the dialog offers are required');
         // One flattened page source per revision and expansion; paging slices it.
         const view = cached('overview-page', revision, () => buildOverviewPage(groups, text, t, areaIds, projectIds, selectedIds, scope));
+        let picker: NativeBulkPicker | null = null;
+        if (pickerInput && view.bulk) {
+            const window = { offset: pickerInput.offset ?? 0, limit: pickerInput.limit ?? NATIVE_HOST_MAX_WINDOW };
+            picker = pickerInput.kind === 'removeTag'
+                ? buildNativeRemoveTagPicker(view.bulk.removeTag.tags, pickerInput.query, window)
+                : buildNativeBulkOrganizePicker({
+                    kind: pickerInput.kind, query: pickerInput.query, draft: organize?.draft ?? EMPTY_BULK_ORGANIZE_DRAFT, busy: input.busy === true, t, ...window,
+                });
+        }
         const windowItems = page(view.entries, input as { offset: number; limit: number });
         const rows = deps.rows(windowItems.flatMap((entry) => (entry.type === 'task' ? [entry.task] : [])), now);
         const selected = new Set(selectedIds);
+        // Mobile shows Mark reviewed and Review in 1 week under every row due for review.
+        const markReviewed = (task: Task, advance: boolean): NativeReviewRowAction => {
+            const label = advance ? t('review.advanceWeek') : text.markReviewed;
+            return { label, accessibilityLabel: `${label}: ${task.title}`, action: { type: 'markTaskReviewed', taskId: task.id, advance, reviewAt: task.reviewAt ?? null } };
+        };
+        const rowReview = (task: Task) => (isTaskDueForReview(task, now) ? { markReviewed: markReviewed(task, false), advance: markReviewed(task, true) } : null);
         let rowIndex = 0;
         return {
             ok: true,
@@ -497,7 +566,10 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                 expansion: view.expansion,
                 total: view.entries.length,
                 items: windowItems.map((entry): NativeReviewOverviewItem => (entry.type === 'task'
-                    ? { type: 'task', areaGroupId: entry.areaGroupId, projectGroupId: entry.projectGroupId, row: rows[rowIndex++], selected: selected.has(entry.task.id) }
+                    ? {
+                        type: 'task', areaGroupId: entry.areaGroupId, projectGroupId: entry.projectGroupId, row: rows[rowIndex++],
+                        selected: selected.has(entry.task.id), review: rowReview(entry.task),
+                    }
                     : entry)),
                 empty: input.scope === undefined && view.empty ? text.empty : view.empty,
                 ...(input.scope === undefined ? {} : { scope: {
@@ -506,12 +578,13 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
                     help: scope === 'due' ? text.dueHelp : text.overviewHelp,
                 } }),
                 startReview: view.startReview,
-                bulk: view.bulk,
+                bulk: view.bulk && { ...view.bulk, organize, picker },
             },
         };
     };
 
     type OverviewEntry = Exclude<NativeReviewOverviewItem, { type: 'task' }> | { type: 'task'; areaGroupId: string; projectGroupId: string; task: Task };
+    type OverviewBulk = Omit<NonNullable<NativeReviewOverview['bulk']>, 'organize' | 'picker'> | null;
     const buildOverviewPage = (
         groups: ReturnType<typeof buildOverview>['groups'],
         text: ReturnType<typeof getReviewOverviewText>,
@@ -543,7 +616,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         const hasSelection = selectedIds.length > 0;
         const tasksById = hasSelection ? Object.fromEntries(useTaskStore.getState().tasks.map((task) => [task.id, task])) : {};
         const removableTags = collectBulkTaskTokens(selectedIds, tasksById, 'tags');
-        const bulk: NativeReviewOverview['bulk'] = !hasSelection ? null : {
+        const bulk: OverviewBulk = !hasSelection ? null : {
             selectedIds,
             countLabel: `${selectedIds.length} ${text.selected}`,
             cancelLabel: text.cancel,
@@ -909,19 +982,43 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             case 'addTag':
             case 'removeTags':
             case 'organizeTasks': {
+                let organize: unknown;
+                if (action.type === 'organizeTasks') {
+                    if (('draft' in action) === ('input' in action)) return fail('INVALID_INPUT', 'Organize takes an input or a draft');
+                    // A draft is checked as the lists' Apply checks it, when the request first runs.
+                    const apply = 'draft' in action ? readBulkOrganizeApply(action.draft) : { ok: true as const, value: action.input };
+                    if (!apply.ok) return apply;
+                    organize = apply.value;
+                }
                 if (!everyLive(action.taskIds)
                     || (action.type === 'addTag' && (!isText(action.tag) || !action.tag.trim()))
                     || (action.type === 'removeTags' && (!isTextList(action.tags) || action.tags.length === 0))
-                    || (action.type === 'organizeTasks' && !isOrganizeInput(action.input))) {
+                    || (action.type === 'organizeTasks' && !isOrganizeInput(organize))) {
                     return fail('INVALID_INPUT', 'Tasks that exist and a valid tag, tags or organize choice are required');
                 }
                 const updates = changing(action.type === 'organizeTasks'
-                    ? buildBulkOrganizeTaskUpdates(action.taskIds, tasksById, action.input)
+                    ? buildBulkOrganizeTaskUpdates(action.taskIds, tasksById, organize as BulkOrganizeTaskUpdateInput)
                     : action.type === 'addTag'
                         ? buildBulkTaskTokenUpdates(action.taskIds, tasksById, 'tags', action.tag.trim(), 'add')
                         : buildBulkTaskTokenUpdates(action.taskIds, tasksById, 'tags', action.tags, 'remove'));
                 if (updates.length === 0) return unchanged();
                 return written(() => store.batchUpdateTasks(updates), doneToast(updates.length, t));
+            }
+            case 'markTaskReviewed': {
+                if (typeof action.advance !== 'boolean' || !(action.reviewAt === null || isText(action.reviewAt, 64))) {
+                    return fail('INVALID_INPUT', 'A task, advance true or false, and the review date the row showed are required');
+                }
+                const task = liveTask(action.taskId);
+                if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                const now = new Date();
+                // As mobile marks a row: only a task due for review. A replay after the write landed finds it not due.
+                if (!isTaskDueForReview(task, now)) return unchanged();
+                // Compare-and-set: a review date changed since the row showed it (a replay after it came due again) is not overwritten.
+                if ((task.reviewAt ?? null) !== action.reviewAt) return fail('STALE_REVISION', 'The task\'s review date changed; read Review again');
+                return written(
+                    () => store.updateTask(task.id, { reviewAt: action.advance ? getAdvancedReviewDate(task.reviewAt, now) : undefined }),
+                    { tone: 'success', title: null, message: t('review.markReviewedDone'), undo: null },
+                );
             }
             case 'addProjectTask': {
                 const project = isText(action.projectId) ? store._projectsById.get(action.projectId) : undefined;
@@ -981,7 +1078,7 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
         /**
          * The Review screen: areas, their projects and tasks, as far as they are
          * expanded. Send the returned expanded ids back with an `expansionEdit`;
-         * `selectedIds` shows the bulk bar.
+         * `selectedIds` shows the bulk bar, and `organize` and `picker` its dialog.
          */
         getReviewOverview(input: {
             expandedAreaIds?: string[];
@@ -990,6 +1087,12 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             selectedIds?: string[];
             /** Omitted for the previous whole-system overview; opt in to 'due' for reminders. */
             scope?: ReviewOverviewScope;
+            /** While an action runs: the organize pickers offer no create. */
+            busy?: boolean;
+            /** The open organize dialog: its draft (EMPTY_BULK_ORGANIZE_DRAFT when it opens) and one control's edit. */
+            organize?: { draft?: Partial<BulkOrganizeDraft>; edit?: BulkOrganizeDraftEdit };
+            /** An open picker, searched by `query`; later pages send the view's `revision`. */
+            picker?: { kind: NativeBulkPicker['kind']; query?: string; offset?: number; limit?: number; revision?: string };
             offset: number;
             limit: number;
             revision?: string;

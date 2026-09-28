@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildArchiveTaskItems, getArchivedTaskRow, selectArchivedTasks, sortArchivedTasks } from './archive-view-model';
-import { buildContextsTokenIndex, buildContextsViewModel } from './contexts-view-model';
+import { buildContextsTokenIndex, buildContextsViewModel, getContextsTokenPicker } from './contexts-view-model';
 import { createDateFormatter } from './date';
 import { getTranslator } from './i18n';
 import { loadTranslations } from './i18n/i18n-loader';
@@ -20,6 +20,7 @@ import {
 } from './list-views-model.replay';
 import { EMPTY_LIST_FILTER_STATE } from './list-filter-state';
 import { createNativeHostContract } from './native-host-contract';
+import { matchesPickerQuery } from './native-host-contract-menu-views';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
@@ -243,6 +244,54 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         const saved = saveData.mock.lastCall?.[0] as { tasks: { id: string; status: string }[]; projects: { id: string; status: string }[] };
         expect(saved.tasks.find(({ id }) => id === 'c-reopen')?.status).toBe('next');
         expect(saved.projects.find(({ id }) => id === 'p-shelved')?.status).toBe('active');
+    });
+
+    it('searches the bulk bar\'s token pickers as mobile\'s token picker does, one window at a time under the view\'s revision', async () => {
+        const { host } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const selectedIds = ['c-call', 'c-email'];
+        const read = (picker: Record<string, unknown>) => {
+            const result = host.getContextsView({ selectedIds, picker: picker as never, offset: 0, limit: 1 });
+            if (!result.ok) throw new Error(result.error.message);
+            return result.value;
+        };
+        const state = useTaskStore.getState();
+        const model = buildContextsViewModel({ index: buildContextsTokenIndex(state.tasks), settings: state.settings, selectedTokens: [], matchMode: 'all', searchQuery: '' });
+        const tasksById = Object.fromEntries(state.tasks.map((task) => [task.id, task]));
+        // TokenPickerModal's filter, as mobile's Contexts screen runs it.
+        const mobileFilter = (tokens: string[], query: string) => {
+            const normalized = query.trim().toLowerCase();
+            return normalized ? tokens.filter((token) => token.toLowerCase().includes(normalized)) : tokens;
+        };
+        for (const [field, mode, query] of [['tags', 'add', ' WOR'], ['tags', 'remove', 'ork '], ['contexts', 'add', 'PHO'], ['contexts', 'remove', ''], ['contexts', 'add', 'zzz']] as const) {
+            const { tokens } = getContextsTokenPicker({ field, action: mode, activeTasks: model.activeTasks, selectedIds, tasksById, t });
+            const view = read({ field, mode, query });
+            expect(view.bulk?.picker).toEqual({ field, mode, total: mobileFilter(tokens, query).length, items: mobileFilter(tokens, query) });
+            // The Inbox tokens' rule.
+            expect(view.bulk?.picker?.items).toEqual(tokens.filter((token) => matchesPickerQuery(token, query)));
+        }
+        expect(read({ field: 'tags', mode: 'add', query: ' WOR' }).bulk?.picker?.items).toContain('#work');
+        // Without a picker, or without a selection, there is none.
+        expect(read({ field: 'tags', mode: 'add' }).bulk?.tokenActions).toHaveLength(4);
+        const plain = host.getContextsView({ selectedIds, offset: 0, limit: 1 });
+        expect(plain.ok && plain.value.bulk?.picker).toBeNull();
+        const unselected = host.getContextsView({ picker: { field: 'tags', mode: 'add' }, offset: 0, limit: 1 });
+        expect(unselected.ok && unselected.value.bulk).toBeNull();
+
+        // One window at a time, under the view's revision.
+        const all = read({ field: 'contexts', mode: 'add' });
+        const total = all.bulk!.picker!.total;
+        expect(total).toBeGreaterThan(1);
+        const second = read({ field: 'contexts', mode: 'add', offset: 1, limit: 1, revision: all.revision });
+        expect(second.bulk?.picker?.items).toEqual([all.bulk!.picker!.items[1]]);
+        const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
+        expect(host.getContextsView({ selectedIds, picker: { field: 'contexts', mode: 'add', offset: 1 }, offset: 0, limit: 1 })).toMatchObject(invalid);
+        expect(host.getContextsView({ selectedIds, picker: { field: 'people', mode: 'add' } as never, offset: 0, limit: 1 })).toMatchObject(invalid);
+        expect(host.getContextsView({ selectedIds, picker: { field: 'tags', mode: 'swap' } as never, offset: 0, limit: 1 })).toMatchObject(invalid);
+        expect(host.getContextsView({ selectedIds, picker: { field: 'tags', mode: 'add', query: 7 } as never, offset: 0, limit: 1 })).toMatchObject(invalid);
+        expect(host.getContextsView({ selectedIds, picker: { field: 'tags', mode: 'add', limit: 101 }, offset: 0, limit: 1 })).toMatchObject(invalid);
+        await useTaskStore.getState().updateTask('c-call', { title: 'Call the office' });
+        expect(host.getContextsView({ selectedIds, picker: { field: 'contexts', mode: 'add', offset: 1, revision: all.revision }, offset: 0, limit: 1 }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
     it('counts only Contexts tasks actually changed by a bulk tag removal', async () => {
@@ -531,6 +580,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         const host = createNativeHostContract();
         const requestId = generateUUID();
         expect(host.getContextsView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getContextsView({ selectedIds: ['x'], picker: { field: 'tags', mode: 'add', query: 'w' }, offset: 0, limit: 1 }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getArchiveView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTrashView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getHistoryView({ tab: 'archived' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });

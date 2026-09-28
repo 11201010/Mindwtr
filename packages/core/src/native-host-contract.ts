@@ -2626,6 +2626,7 @@ export type NativeContextsChip = {
     /** The selection after tapping this chip. */
     next: { tokens: string[]; matchMode: ContextOrTagMatchMode };
 };
+export type NativeContextsTokenAction = ContextsTokenPicker & { field: BulkTaskTokenField; mode: BulkTaskTokenMode; enabled: boolean };
 export type NativeContextsView = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
@@ -2643,9 +2644,11 @@ export type NativeContextsView = {
         countLabel: string;
         exitLabel: string;
         statuses: { status: TaskStatus; label: string }[];
-        tokenActions: (ContextsTokenPicker & { field: BulkTaskTokenField; mode: BulkTaskTokenMode; enabled: boolean })[];
+        tokenActions: NativeContextsTokenAction[];
         deleteLabel: string;
         deleteConfirmation: ListConfirmation;
+        /** Only when `picker` is sent: that token action's tokens matching its `query` (the Inbox tokens' rule), one window of them. */
+        picker: { field: BulkTaskTokenField; mode: BulkTaskTokenMode; total: number; items: string[] } | null;
     } | null;
 };
 export type NativeContextsAction =
@@ -2995,24 +2998,41 @@ function createListViewMethods(deps: ListViewDeps) {
     return {
         getContextsView(input: {
             tokens?: string[]; matchMode?: ContextOrTagMatchMode; searchQuery?: string; selectedIds?: string[];
+            /** The bulk bar's open token picker, searched by `query`; later pages send the view's `revision`. */
+            picker?: { field: BulkTaskTokenField; mode: BulkTaskTokenMode; query?: string; offset?: number; limit?: number; revision?: string };
             offset: number; limit: number; revision?: string;
         }): NativeHostResult<NativeContextsView> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
+            const picker = isObjectRecord(input) ? input.picker : undefined;
             if (!isObjectRecord(input) || !isWindow(input)
                 || (input.tokens !== undefined && !isStringList(input.tokens, 500))
                 || (input.matchMode !== undefined && input.matchMode !== 'all' && input.matchMode !== 'any')
                 || (input.searchQuery !== undefined && (typeof input.searchQuery !== 'string' || input.searchQuery.length > 2000))
-                || (input.selectedIds !== undefined && !isIdList(input.selectedIds, true))) {
-                return fail('INVALID_INPUT', 'Valid tokens, match mode, search, selected ids, offset, bounded limit, and revision for later pages are required');
+                || (input.selectedIds !== undefined && !isIdList(input.selectedIds, true))
+                || (picker !== undefined && !(isObjectRecord(picker)
+                    && (picker.field === 'tags' || picker.field === 'contexts') && (picker.mode === 'add' || picker.mode === 'remove')
+                    && (picker.query === undefined || (typeof picker.query === 'string' && picker.query.length <= 500))
+                    && isWindow({ offset: picker.offset ?? 0, limit: picker.limit ?? NATIVE_HOST_MAX_WINDOW, revision: picker.revision })))) {
+                return fail('INVALID_INPUT', 'Valid tokens, match mode, search, selected ids, picker, offset, bounded limit, and revision for later pages are required');
             }
             const now = new Date();
             const revision = deps.revision(now);
             if (input.revision !== undefined && input.revision !== revision) return fail('STALE_REVISION', 'Contexts changed; restart paging from offset zero');
+            if ((picker?.offset ?? 0) > 0 && picker?.revision !== revision) return fail('STALE_REVISION', 'Contexts changed; open the picker again');
             const t = deps.t();
             const tokens = input.tokens ?? [];
             const matchMode = resolveContextsMatchMode(tokens, input.matchMode ?? 'all');
             const selectedIds = input.selectedIds ?? [];
+            // RN's token picker search: the open picker's tokens that match its query.
+            const tokenPicker = (actions: NativeContextsTokenAction[]): NonNullable<NativeContextsView['bulk']>['picker'] => {
+                if (!picker) return null;
+                const { field, mode, query } = picker;
+                const items = actions.find((action) => action.field === field && action.mode === mode)!.tokens
+                    .filter((token) => query === undefined || matchesPickerQuery(token, query));
+                const offset = picker.offset ?? 0;
+                return { field, mode, total: items.length, items: items.slice(offset, offset + (picker.limit ?? NATIVE_HOST_MAX_WINDOW)) };
+            };
             const view = cached('contexts', JSON.stringify([revision, tokens, matchMode, input.searchQuery ?? '', selectedIds]), () => {
                 const { state, areaById, projectById, selection } = areaScope();
                 // Counted once per data change, whatever the selection.
@@ -3067,7 +3087,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 rows: view.model.tasks.slice(input.offset, input.offset + input.limit).map((task) => toNativeTaskRow(task, view.titles, deps.rowMeta(task, now))),
                 empty: view.empty,
                 selectedIds: view.selected,
-                bulk: view.bulk,
+                bulk: view.bulk && { ...view.bulk, picker: tokenPicker(view.bulk.tokenActions) },
             } };
         },
 

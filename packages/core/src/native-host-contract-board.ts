@@ -5,8 +5,8 @@
  *
  * getBoardView reads the five columns under one revision, each with its first
  * `limit` cards; getBoardList pages a column's cards, or the filter sheet's tokens
- * and projects, under that revision. The host keeps the filter state the view
- * returns and sends it back, with a `filterEdit` to change it.
+ * and projects (searched by a picker `query`), under that revision. The host keeps
+ * the filter state the view returns and sends it back, with a `filterEdit` to change it.
  *
  * runBoardAction writes with a request UUID: while a save is owed, a retry only
  * saves (native-request-receipts.ts). A move and Delete are target-state, so a
@@ -39,6 +39,7 @@ import {
     type BoardFilterState,
     type BoardStatus,
 } from './board-view-model';
+import { matchesPickerQuery } from './native-host-contract-menu-views';
 import { matchesDuplicateSource } from './store-helpers';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
 import {
@@ -254,12 +255,19 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         const columns = buildBoardColumns({ tasks, criteria: resolved.criteria, searchQuery: filters.searchQuery, projects: state.projects, now, t });
         const cardText = getBoardCardText(t);
         const timeEstimatesEnabled = resolveFeatureFlags(state.settings).timeEstimates;
+        const tokenItem = (value: string) => ({
+            value, state: filters.tokens.includes(value) ? 'included' as const : filters.excludedTokens.includes(value) ? 'excluded' as const : 'none' as const,
+        });
+        const projectItem = (project: (typeof options.projects)[number]) => ({ ...project, selected: filters.projects.includes(project.id) });
         const lists = {
-            tokens: pagedList(options.tokens, (value) => ({
-                value, state: filters.tokens.includes(value) ? 'included' as const : filters.excludedTokens.includes(value) ? 'excluded' as const : 'none' as const,
-            })),
-            projects: pagedList(options.projects, (project) => ({ ...project, selected: filters.projects.includes(project.id) })),
+            tokens: pagedList(options.tokens, tokenItem),
+            projects: pagedList(options.projects, projectItem),
             chips: pagedList(resolved.chips, (chip): NativeBoardChip => ({ id: chip.id, label: chip.label, excluded: chip.excluded, edit: chip.edit as BoardFilterEdit })),
+        };
+        // The sheet's pickers narrowed by their search (the Inbox tokens' rule): a token by its text, a project by its title.
+        const search = {
+            tokens: (query: string) => pagedList(options.tokens.filter((value) => matchesPickerQuery(value, query)), tokenItem),
+            projects: (query: string) => pagedList(options.projects.filter((project) => matchesPickerQuery(project.title, query)), projectItem),
         };
         const view: Omit<NativeBoardView, 'version' | 'revision' | 'columns'> = {
             filters,
@@ -291,7 +299,7 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 errorTitle: cardText.errorTitle,
             },
         };
-        return { view, columns, lists, badges, timeEstimatesEnabled };
+        return { view, columns, lists, search, badges, timeEstimatesEnabled };
     }
 
     /** The Board for these filters (after an edit), with its revision; null for invalid input. */
@@ -440,11 +448,13 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         /**
          * A later window of a column's cards ('cards' with its status), or of the filter
          * sheet's 'tokens', 'projects' or 'chips'. Send the view's filters and its revision.
+         * A picker's search goes in as `query` ('tokens' and 'projects' only), from offset zero.
          */
         getBoardList(input: {
             filters?: NativeBoardFilters;
             list: NativeBoardList;
             status?: BoardStatus;
+            query?: string;
             offset: number;
             limit: number;
             revision: string;
@@ -452,9 +462,10 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const valid = isObjectRecord(input) && typeof input.revision === 'string' && isWindow(input)
-                && (input.list === 'tokens' || input.list === 'projects' || input.list === 'chips' || (input.list === 'cards' && isBoardStatus(input.status)));
+                && (input.list === 'tokens' || input.list === 'projects' || input.list === 'chips' || (input.list === 'cards' && isBoardStatus(input.status)))
+                && (input.query === undefined || (isText(input.query) && (input.list === 'tokens' || input.list === 'projects')));
             const read = valid ? readBoard({ filters: input.filters }) : null;
-            if (!read) return fail('INVALID_INPUT', 'The view\'s filters, a list (a column\'s status for cards), a valid window and its revision are required');
+            if (!read) return fail('INVALID_INPUT', 'The view\'s filters, a list (a column\'s status for cards), a picker query only for tokens or projects, a valid window and its revision are required');
             if (read.revision !== input.revision) return fail('STALE_REVISION', 'The Board changed; read it again');
             const { board, now } = read;
             let total: number;
@@ -464,7 +475,9 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 total = column.tasks.length;
                 items = cards(board, column.tasks.slice(input.offset, input.offset + input.limit), now);
             } else {
-                const list = board.lists[input.list];
+                const list = input.query !== undefined && (input.list === 'tokens' || input.list === 'projects')
+                    ? board.search[input.list](input.query)
+                    : board.lists[input.list];
                 total = list.total;
                 items = list.page(input.offset, input.limit);
             }

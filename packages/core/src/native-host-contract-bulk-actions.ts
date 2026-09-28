@@ -35,6 +35,10 @@
  *   project or area takes the request UUID as its ID, so a replay after a restart
  *   finds the row it made (renamed, archived or deleted since) and adds nothing.
  *
+ * Review's selection offers the same dialog: the organize view, its pickers and the
+ * draft's Apply check are exported for native-host-contract-review-views.ts, and
+ * createBulkOrganizeDestination takes `list: 'review'`.
+ *
  * Every write takes a request UUID and retries exactly (native-request-receipts.ts):
  * while its save is owed (SAVE_FAILED) a retry only saves. Each write is
  * target-state, so a replay after a restart writes nothing. Undo is its own
@@ -44,6 +48,7 @@
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
  */
+import type { BulkOrganizeTaskUpdateInput } from './bulk-organize';
 import { addBulkOrganizeArea, addBulkOrganizeProject } from './bulk-organize-create';
 import { collectBulkTaskTokens, type BulkTaskTokenMode } from './bulk-task-tokens';
 import { safeParseDate, type DateFormatter } from './date';
@@ -224,6 +229,138 @@ const exactDestination = (kind: 'project' | 'area', query: string): Project | Ar
     return normalized ? getBulkOrganizeAreaOptions(state.areas).find((area) => area.name.toLowerCase() === normalized) : undefined;
 };
 
+/** A draft as the host sends it, completed from the empty one; null when a field is not one the dialog holds. */
+const readDraftShape = (value: unknown): BulkOrganizeDraft | null => {
+    if (value === undefined) return EMPTY_BULK_ORGANIZE_DRAFT;
+    if (!isObjectRecord(value) || Object.keys(value).some((key) => !DRAFT_KEYS.has(key))) return null;
+    const draft = { ...EMPTY_BULK_ORGANIZE_DRAFT, ...value } as BulkOrganizeDraft;
+    const valid = (draft.status === BULK_ORGANIZE_KEEP || BULK_ORGANIZE_STATUS_OPTIONS.includes(draft.status))
+        && isText(draft.projectChoice, 200) && isText(draft.areaChoice, 200)
+        && (Object.keys(TEXT_LIMITS) as BulkOrganizeTextField[]).every((field) => isText(draft[field], TEXT_LIMITS[field]))
+        && BULK_ORGANIZE_DATE_FIELDS.every((field) => draft[field] === '' || isDay(draft[field]));
+    return valid ? draft : null;
+};
+/** Whether the draft's project and area choices are ones the dialog offers now. */
+const offersChoices = (draft: BulkOrganizeDraft): boolean => {
+    const state = useTaskStore.getState();
+    const isChoice = (choice: string, ids: Set<string>) => choice === BULK_ORGANIZE_KEEP || choice === BULK_ORGANIZE_NONE || ids.has(choice);
+    return isChoice(draft.projectChoice, new Set(getBulkOrganizeProjectOptions(state.projects).map((project) => project.id)))
+        && isChoice(draft.areaChoice, new Set(getBulkOrganizeAreaOptions(state.areas).map((area) => area.id)));
+};
+/** A draft as the host sends it, completed from the empty one; null when a choice is not one the dialog offers. */
+const readDraft = (value: unknown): BulkOrganizeDraft | null => {
+    const draft = readDraftShape(value);
+    return draft && offersChoices(draft) ? draft : null;
+};
+const readEdit = (value: unknown): BulkOrganizeDraftEdit | null => {
+    if (!isObjectRecord(value)) return null;
+    switch (value.type) {
+        case 'setStatus':
+        case 'setProject':
+        case 'setArea':
+            return typeof value.value === 'string' ? value as BulkOrganizeDraftEdit : null;
+        case 'setText':
+            return typeof value.field === 'string' && value.field in TEXT_LIMITS && typeof value.value === 'string' ? value as BulkOrganizeDraftEdit : null;
+        default:
+            return null;
+    }
+};
+
+/**
+ * Bulk Organize's dialog for the draft the host keeps and one control's edit, as the
+ * lists (getBulkActions) and Review (getReviewOverview) show it. Null when the draft or
+ * the edit is not valid, or names a project or area the dialog does not offer.
+ */
+export function buildNativeBulkOrganizeView(
+    organize: { draft?: unknown; edit?: unknown },
+    context: { selectedCount: number; t: (key: string) => string; formatDate: DateFormatter },
+): NativeBulkOrganizeView | null {
+    const sent = readDraft(organize.draft);
+    const edit = organize.edit === undefined ? null : readEdit(organize.edit);
+    const draft = sent && (organize.edit === undefined ? sent : edit ? readDraft(applyBulkOrganizeDraftEdit(sent, edit)) : null);
+    if (!draft) return null;
+    const state = useTaskStore.getState();
+    const { t, formatDate } = context;
+    const dialog = buildBulkOrganizeDialogModel({
+        draft, projects: getBulkOrganizeProjectOptions(state.projects), areas: getBulkOrganizeAreaOptions(state.areas), selectedCount: context.selectedCount, t,
+    });
+    const now = new Date();
+    return {
+        ...dialog,
+        draft,
+        statuses: dialog.statuses.map((status) => ({ ...status, edit: { type: 'setStatus', value: status.value } })),
+        waitingFor: dialog.waitingFor ? { ...dialog.waitingFor, value: draft.delegateWho } : null,
+        dates: dialog.dates.map(({ field, label }) => {
+            const model = buildBulkOrganizeDateFieldModel({ label, value: draft[field], now, t, formatDate });
+            return {
+                ...model,
+                field,
+                quickDates: model.quickDates.map((chip) => ({ ...chip, edit: { type: 'setText', field, value: chip.value } })),
+            };
+        }),
+        contexts: { ...dialog.contexts, value: draft.contexts },
+        tags: { ...dialog.tags, value: draft.tags },
+    };
+}
+
+/**
+ * Bulk Organize's project or area picker for a draft: Keep and None, then the options
+ * whose label matches `query` (the Inbox tokens' rule), one window of them. `create` and
+ * `submit` are what mobile's picker offers for the search; none while `busy` (Apply runs).
+ */
+export function buildNativeBulkOrganizePicker(input: {
+    kind: 'project' | 'area';
+    query?: string;
+    draft: BulkOrganizeDraft;
+    busy: boolean;
+    t: (key: string) => string;
+    offset: number;
+    limit: number;
+}): NativeBulkPicker {
+    const { kind, query, draft, t } = input;
+    const state = useTaskStore.getState();
+    const isProject = kind === 'project';
+    const current = isProject ? draft.projectChoice : draft.areaChoice;
+    const set = (value: string): BulkOrganizeDraftEdit => ({ type: isProject ? 'setProject' : 'setArea', value });
+    const choice = (value: string, label: string) => ({ value, label, selected: current === value, edit: set(value) });
+    const options = isProject
+        // In mobile's picker order (TaskEditProjectPicker sorts core's title-ordered options by `order`).
+        ? [...getBulkOrganizeProjectOptions(state.projects)].sort(compareProjectsByPickerOrder).map((project) => ({ id: project.id, label: project.title }))
+        : getBulkOrganizeAreaOptions(state.areas).map((area) => ({ id: area.id, label: area.name }));
+    // Keep and None stay whatever the search; the options narrow.
+    const items = [
+        choice(BULK_ORGANIZE_KEEP, isProject ? tFallback(t, 'bulk.keepProject', 'Keep project') : tFallback(t, 'bulk.keepArea', 'Keep area')),
+        choice(BULK_ORGANIZE_NONE, isProject ? t('taskEdit.noProjectOption') : t('taskEdit.noAreaOption')),
+        ...options.filter((option) => query === undefined || matchesPickerQuery(option.label, query)).map((option) => choice(option.id, option.label)),
+    ];
+    let create: NativeBulkPicker['create'] = null;
+    let submit: NativeBulkPicker['submit'] = null;
+    // Mobile hides Create and ignores Done while Apply runs.
+    const name = input.busy ? '' : (query ?? '').trim();
+    if (name) {
+        const exact = exactDestination(kind, name);
+        const createLabel = t(isProject ? 'projects.create' : 'areas.create');
+        create = exact ? null : { name, label: `+ ${createLabel} "${name}"`, accessibilityLabel: `${createLabel}: ${name}` };
+        submit = exact ? { edit: set(exact.id) } : { create: name };
+    }
+    return { kind, total: items.length, items: page(items, input), create, submit };
+}
+
+/** The remove-tag picker: the selection's tags matching `query` (the Inbox tokens' rule), one window of them. */
+export function buildNativeRemoveTagPicker(tags: readonly string[], query: string | undefined, window: { offset: number; limit: number }): NativeBulkPicker {
+    const items = tags.filter((tag) => query === undefined || matchesPickerQuery(tag, query))
+        .map((tag) => ({ value: tag, label: tag, selected: false, edit: null }));
+    return { kind: 'removeTag', total: items.length, items: page(items, window), create: null, submit: null };
+}
+
+/** Apply's organize input for a draft as the host sends it; refused when a choice is not offered or Waiting names no person. */
+export function readBulkOrganizeApply(value: unknown): NativeHostResult<BulkOrganizeTaskUpdateInput> {
+    const draft = readDraft(value);
+    if (!draft) return fail('INVALID_INPUT', 'A Bulk organize draft with choices the dialog offers is required');
+    if (draft.status === 'waiting' && !draft.delegateWho.trim()) return fail('INVALID_INPUT', 'Waiting needs the person these tasks wait for');
+    return { ok: true, value: buildBulkOrganizeInput(draft) };
+}
+
 export function createBulkActionMethods(deps: BulkActionDeps) {
     const durableSave = async (): Promise<NativeHostResult<null>> => {
         if (useTaskStore.getState().persistenceFailure) {
@@ -281,43 +418,6 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
     };
     const selectableIds = (rows: Row[]) => rows.filter((row) => !row.readOnly).map((row) => row.id);
     const selectAllRevision = (ids: string[]) => `${ids.length}:${paramsKey(ids)}`;
-
-    /** A draft as the host sends it, completed from the empty one; null when a field is not one the dialog holds. */
-    const readDraftShape = (value: unknown): BulkOrganizeDraft | null => {
-        if (value === undefined) return EMPTY_BULK_ORGANIZE_DRAFT;
-        if (!isObjectRecord(value) || Object.keys(value).some((key) => !DRAFT_KEYS.has(key))) return null;
-        const draft = { ...EMPTY_BULK_ORGANIZE_DRAFT, ...value } as BulkOrganizeDraft;
-        const valid = (draft.status === BULK_ORGANIZE_KEEP || BULK_ORGANIZE_STATUS_OPTIONS.includes(draft.status))
-            && isText(draft.projectChoice, 200) && isText(draft.areaChoice, 200)
-            && (Object.keys(TEXT_LIMITS) as BulkOrganizeTextField[]).every((field) => isText(draft[field], TEXT_LIMITS[field]))
-            && BULK_ORGANIZE_DATE_FIELDS.every((field) => draft[field] === '' || isDay(draft[field]));
-        return valid ? draft : null;
-    };
-    /** Whether the draft's project and area choices are ones the dialog offers now. */
-    const offersChoices = (draft: BulkOrganizeDraft): boolean => {
-        const state = useTaskStore.getState();
-        const isChoice = (choice: string, ids: Set<string>) => choice === BULK_ORGANIZE_KEEP || choice === BULK_ORGANIZE_NONE || ids.has(choice);
-        return isChoice(draft.projectChoice, new Set(getBulkOrganizeProjectOptions(state.projects).map((project) => project.id)))
-            && isChoice(draft.areaChoice, new Set(getBulkOrganizeAreaOptions(state.areas).map((area) => area.id)));
-    };
-    /** A draft as the host sends it, completed from the empty one; null when a choice is not one the dialog offers. */
-    const readDraft = (value: unknown): BulkOrganizeDraft | null => {
-        const draft = readDraftShape(value);
-        return draft && offersChoices(draft) ? draft : null;
-    };
-    const readEdit = (value: unknown): BulkOrganizeDraftEdit | null => {
-        if (!isObjectRecord(value)) return null;
-        switch (value.type) {
-            case 'setStatus':
-            case 'setProject':
-            case 'setArea':
-                return typeof value.value === 'string' ? value as BulkOrganizeDraftEdit : null;
-            case 'setText':
-                return typeof value.field === 'string' && value.field in TEXT_LIMITS && typeof value.value === 'string' ? value as BulkOrganizeDraftEdit : null;
-            default:
-                return null;
-        }
-    };
 
     /** The rows an action takes: its `taskIds`, or its Select all resolved now. */
     const resolveTarget = (list: NativeBulkList, action: Record<string, unknown>): string[] | NativeHostResult<never> => {
@@ -450,71 +550,18 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
             });
 
             let organize: NativeBulkOrganizeView | null = null;
-            let draft = EMPTY_BULK_ORGANIZE_DRAFT;
             if (input.organize) {
-                const sent = readDraft(input.organize.draft);
-                const edit = input.organize.edit === undefined ? null : readEdit(input.organize.edit);
-                const next = sent && (input.organize.edit === undefined ? sent : edit ? readDraft(applyBulkOrganizeDraftEdit(sent, edit)) : null);
-                if (!next) return fail('INVALID_INPUT', 'A Bulk organize draft and edit with choices the dialog offers are required');
-                draft = next;
-                const projects = getBulkOrganizeProjectOptions(state.projects);
-                const areas = getBulkOrganizeAreaOptions(state.areas);
-                const dialog = buildBulkOrganizeDialogModel({ draft, projects, areas, selectedCount: selection.length, t });
-                const now = new Date();
-                const formatDate = deps.formatDate();
-                organize = {
-                    ...dialog,
-                    draft,
-                    statuses: dialog.statuses.map((status) => ({ ...status, edit: { type: 'setStatus', value: status.value } })),
-                    waitingFor: dialog.waitingFor ? { ...dialog.waitingFor, value: draft.delegateWho } : null,
-                    dates: dialog.dates.map(({ field, label }) => {
-                        const model = buildBulkOrganizeDateFieldModel({ label, value: draft[field], now, t, formatDate });
-                        return {
-                            ...model,
-                            field,
-                            quickDates: model.quickDates.map((chip) => ({ ...chip, edit: { type: 'setText', field, value: chip.value } })),
-                        };
-                    }),
-                    contexts: { ...dialog.contexts, value: draft.contexts },
-                    tags: { ...dialog.tags, value: draft.tags },
-                };
+                organize = buildNativeBulkOrganizeView(input.organize, { selectedCount: selection.length, t, formatDate: deps.formatDate() });
+                if (!organize) return fail('INVALID_INPUT', 'A Bulk organize draft and edit with choices the dialog offers are required');
             }
 
             let picker: NativeBulkPicker | null = null;
             if (input.picker) {
                 const { kind, query } = input.picker;
-                const choice = (value: string, label: string, selected: boolean, edit: BulkOrganizeDraftEdit | null) => ({ value, label, selected, edit });
-                let items: NativeBulkPicker['items'];
-                let create: NativeBulkPicker['create'] = null;
-                let submit: NativeBulkPicker['submit'] = null;
-                if (kind === 'removeTag') {
-                    items = tokens.filter((token) => query === undefined || matchesPickerQuery(token, query))
-                        .map((token) => choice(token, token, false, null));
-                } else {
-                    const isProject = kind === 'project';
-                    const current = isProject ? draft.projectChoice : draft.areaChoice;
-                    const set = (value: string): BulkOrganizeDraftEdit => ({ type: isProject ? 'setProject' : 'setArea', value });
-                    const options = isProject
-                        // In mobile's picker order (TaskEditProjectPicker sorts core's title-ordered options by `order`).
-                        ? [...getBulkOrganizeProjectOptions(state.projects)].sort(compareProjectsByPickerOrder).map((project) => ({ id: project.id, label: project.title }))
-                        : getBulkOrganizeAreaOptions(state.areas).map((area) => ({ id: area.id, label: area.name }));
-                    // Keep and None stay whatever the search; the options narrow.
-                    items = [
-                        choice(BULK_ORGANIZE_KEEP, isProject ? tFallback(t, 'bulk.keepProject', 'Keep project') : tFallback(t, 'bulk.keepArea', 'Keep area'), current === BULK_ORGANIZE_KEEP, set(BULK_ORGANIZE_KEEP)),
-                        choice(BULK_ORGANIZE_NONE, isProject ? t('taskEdit.noProjectOption') : t('taskEdit.noAreaOption'), current === BULK_ORGANIZE_NONE, set(BULK_ORGANIZE_NONE)),
-                        ...options.filter((option) => query === undefined || matchesPickerQuery(option.label, query))
-                            .map((option) => choice(option.id, option.label, current === option.id, set(option.id))),
-                    ];
-                    // Mobile hides Create and ignores Done while Apply runs.
-                    const name = input.busy === true ? '' : (query ?? '').trim();
-                    if (name) {
-                        const exact = exactDestination(kind, name);
-                        const createLabel = t(isProject ? 'projects.create' : 'areas.create');
-                        create = exact ? null : { name, label: `+ ${createLabel} "${name}"`, accessibilityLabel: `${createLabel}: ${name}` };
-                        submit = exact ? { edit: set(exact.id) } : { create: name };
-                    }
-                }
-                picker = { kind, total: items.length, items: page(items, { offset: input.picker.offset ?? 0, limit: input.picker.limit ?? NATIVE_HOST_MAX_WINDOW }), create, submit };
+                const window = { offset: input.picker.offset ?? 0, limit: input.picker.limit ?? NATIVE_HOST_MAX_WINDOW };
+                picker = kind === 'removeTag'
+                    ? buildNativeRemoveTagPicker(tokens, query, window)
+                    : buildNativeBulkOrganizePicker({ kind, query, draft: organize?.draft ?? EMPTY_BULK_ORGANIZE_DRAFT, busy: input.busy === true, t, ...window });
             }
 
             return {
@@ -553,11 +600,12 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
          * the draft with it chosen (a project resets the area to Keep). Writes no task.
          * Reuse `requestId` to retry. A new project or area takes the request UUID as its
          * ID: a replay after a restart answers with that row and writes nothing, choosing
-         * it only while the dialog still offers it.
+         * it only while the dialog still offers it. Review's organize dialog (getReviewOverview)
+         * is the same dialog: send `list: 'review'`.
          */
         async createBulkOrganizeDestination(input: {
             requestId: string;
-            list: NativeBulkList;
+            list: NativeBulkList | 'review';
             kind: 'project' | 'area';
             name: string;
             draft?: Partial<BulkOrganizeDraft>;
@@ -567,7 +615,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
             // Only the shape here: what the dialog offers is checked when the request first runs,
             // so a retry that owes only a save is never refused by a change since.
             const draft = isObjectRecord(input) ? readDraftShape(input.draft) : null;
-            if (!isObjectRecord(input) || !BULK_LISTS.includes(input.list) || !TASK_LIST_BULK_SCREENS[input.list].organize
+            if (!isObjectRecord(input) || (input.list !== 'review' && (!BULK_LISTS.includes(input.list) || !TASK_LIST_BULK_SCREENS[input.list].organize))
                 || (input.kind !== 'project' && input.kind !== 'area') || !isText(input.name) || !input.name.trim() || !draft) {
                 return fail('INVALID_INPUT', 'A request UUID, a list that offers Bulk organize, a project or area name and a valid draft are required');
             }
@@ -661,10 +709,9 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     }
                     case 'organize': {
                         if (!screen.organize) return fail('INVALID_INPUT', 'This list does not offer Bulk organize');
-                        const draft = readDraft(action.draft);
-                        if (!draft) return fail('INVALID_INPUT', 'A Bulk organize draft with choices the dialog offers is required');
-                        if (draft.status === 'waiting' && !draft.delegateWho.trim()) return fail('INVALID_INPUT', 'Waiting needs the person these tasks wait for');
-                        const write = planBulkOrganize(taskIds, state._tasksById, buildBulkOrganizeInput(draft));
+                        const apply = readBulkOrganizeApply(action.draft);
+                        if (!apply.ok) return apply;
+                        const write = planBulkOrganize(taskIds, state._tasksById, apply.value);
                         return write && write.kind === 'update' && !hasLanded(write.updates) ? perform(write, t) : unchanged();
                     }
                     case 'trashTasks':
