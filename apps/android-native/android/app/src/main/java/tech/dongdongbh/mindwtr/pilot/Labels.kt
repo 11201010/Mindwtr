@@ -64,6 +64,8 @@ val LABEL_KEYS = listOf(
     "nav.calendar", "nav.board", "filters.contextMatchMode", "filters.tagMatchMode", "filters.matchAny", "bulk.moveTo",
     // Settings and the editor's View tab: RN's editor tabs and Settings' header; the screens' words are core's views.
     "markdown.edit", "markdown.preview", "settings.title",
+    // Mind Sweep's screen name (its words are core's view).
+    "mindSweep.title",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */

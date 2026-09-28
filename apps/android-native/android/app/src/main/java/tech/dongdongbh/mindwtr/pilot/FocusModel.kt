@@ -34,6 +34,8 @@ class FocusModel(private val menu: MenuModel, private val saved: SavedStateHandl
     var reordering by mutableStateOf(saved.get<Boolean>("focusReorder") == true); private set
     /** The sheet's lists (tokens, projects, saved filters) read past their first window, with the Focus revision they belong to. */
     var lists by mutableStateOf<Pair<String, Map<String, List<JSONObject>>>?>(null); private set
+    /** The filter picker's search: core's tokens or projects matching the typed query, from offset zero, at Focus's revision. */
+    var pickerFound by mutableStateOf<JSONObject?>(null); private set
 
     private fun keepState(value: JSONObject) { state = value; saved["focusControls"] = value.toString() }
     fun keepDialog(value: JSONObject?) { dialog = value; saved["focusDialog"] = value?.toString() }
@@ -67,8 +69,51 @@ class FocusModel(private val menu: MenuModel, private val saved: SavedStateHandl
 
     fun open(kind: String) = keepDialog(JSONObject().put("kind", kind))
 
-    /** The filter sheet's picker page (tokens or projects; null: its first page). */
-    fun page(name: String?) { dialog?.let { keepDialog(JSONObject(it.toString()).apply { if (name == null) remove("page") else put("page", name) }) } }
+    /** The filter sheet's picker page (tokens or projects; null: its first page); its search starts empty. */
+    fun page(name: String?) {
+        pickerFound = null
+        dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("query"); if (name == null) remove("page") else put("page", name) }) }
+    }
+
+    private var searched = 0
+
+    /** The picker's search box: kept with the sheet as typed, then core's matching tokens or projects once typing pauses (the Inbox picker's). */
+    fun pickerQuery(name: String, text: String) {
+        dialog?.let { keepDialog(JSONObject(it.toString()).put("query", text)) }
+        val mine = ++searched
+        main.postDelayed({ if (mine == searched) searchPicker(name, text) }, 200)
+    }
+
+    /**
+     * Core's [name] options (tokens or projects) matching [query] through getFocusControlsList, from offset zero at Focus's revision, to
+     * [depth] (a More reads one window deeper); a blank query shows the sheet's own. Focus that changed meanwhile is read again, and its
+     * new revision runs the search again (the sheet's LaunchedEffect), so a typed search never stays unanswered.
+     */
+    fun searchPicker(name: String, query: String, depth: Int = WINDOW) {
+        val revision = shell.focus?.revision ?: return
+        if (query.isBlank()) { pickerFound = null; return }
+        val sent = state.toString()
+        shell.background(listOf(Part.MenuDialog), { runtime ->
+            val items = JSONArray()
+            var total: Int
+            try {
+                do {
+                    val window = runtime.menuRead("focusList", JSONObject().put("controls", JSONObject(sent)).put("list", name).put("offset", items.length())
+                        .put("limit", WINDOW).put("revision", revision).put("query", query).toString())
+                    total = window.getInt("total")
+                    val next = window.getJSONArray("items")
+                    for (index in 0 until next.length()) items.put(next.get(index))
+                } while (next.length() > 0 && items.length() < minOf(depth, total))
+                JSONObject().put("name", name).put("query", query).put("revision", revision).put("total", total).put("items", items)
+            } catch (failure: Exception) {
+                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+                null
+            }
+        }) { found, mine ->
+            if (found != null && shell.fresh(mine, Part.MenuDialog)) pickerFound = found
+            else if (found == null) shell.refreshFocus()
+        }
+    }
 
     /** A disclosure in the filter sheet (time estimate, energy, more filters), open or folded. */
     fun toggle(id: String) { dialog?.let { keepDialog(JSONObject(it.toString()).put(id, !it.optBoolean(id))) } }

@@ -45,7 +45,7 @@ import org.json.JSONObject
  * Filters controls with the Mind Sweep pill beside them, the active filters with Clear, Process Inbox (Mind Sweep takes its slot
  * while the Inbox is empty), core's "All areas" line, core's headings (a folding one folds, kept on the device under RN's key)
  * and rows, core's empty state, and RN's bulk bar while selecting. The controls scroll with the rows, so landscape shows rows.
- * Mind Sweep is drawn disabled: its flow is not built here. The list is read on every resume and after every command.
+ * Mind Sweep opens RN's Mind Sweep (MindSweep.kt). The list is read on every resume and after every command.
  */
 @Composable
 fun InboxList(model: InboxViewModel, modifier: Modifier) = with(model.menu) {
@@ -66,7 +66,9 @@ fun InboxList(model: InboxViewModel, modifier: Modifier) = with(model.menu) {
                 Column(Modifier.padding(top = 6.dp)) {
                     Box(Modifier.padding(horizontal = 16.dp)) {
                         view.optJSONObject("process")?.let { ProcessButton(model, it) }
-                            ?: ActionButton(Lucide.Brain, view.getJSONObject("mindSweep").getString("label"), false, dimmed = true) {}
+                            ?: view.getJSONObject("mindSweep").let { sweep ->
+                                ActionButton(Lucide.Brain, sweep.getString("label"), idle, sweep.getString("accessibilityLabel")) { openMindSweep() }
+                            }
                     }
                     Text(view.getString("scopeLabel"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(start = 16.dp, bottom = 8.dp))
                 }
@@ -112,7 +114,7 @@ private fun InboxToolbar(model: InboxViewModel, view: JSONObject) = with(model.m
                 openDialog("filters")
             }
         }
-        view.getJSONObject("mindSweep").takeIf { it.getString("placement") == "accessory" }?.let { MindSweepPill(it) }
+        view.getJSONObject("mindSweep").takeIf { it.getString("placement") == "accessory" }?.let { MindSweepPill(it, idle) { openMindSweep() } }
     }
 }
 
@@ -137,13 +139,14 @@ private fun DirectControl(icon: ImageVector, label: String, selected: Boolean?, 
     }
 }
 
-/** RN's Mind Sweep pill beside the controls (core's label), drawn disabled: this app has no Mind Sweep flow yet. */
+/** RN's Mind Sweep pill beside the controls (core's label): it opens RN's Mind Sweep. */
 @Composable
-private fun MindSweepPill(mindSweep: JSONObject) {
+private fun MindSweepPill(mindSweep: JSONObject, enabled: Boolean, action: () -> Unit) {
     val c = LocalTheme.current.colors
     val label = mindSweep.getString("accessibilityLabel")
     Row(Modifier.heightIn(min = 36.dp).clip(RoundedCornerShape(18.dp)).background(c.filterBg).border(1.dp, c.border, RoundedCornerShape(18.dp))
-        .clearAndSetSemantics { contentDescription = label; role = Role.Button; disabled() }.fade(0.45f).padding(horizontal = 12.dp),
+        .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (enabled) onClick { action(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.45f).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Icon(Lucide.Brain, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))
         Text(mindSweep.getString("label"), style = rnText(14, 600), color = c.secondaryText, maxLines = 2)
@@ -159,8 +162,8 @@ private fun ProcessButton(model: InboxViewModel, process: JSONObject) = with(mod
 }
 
 /**
- * RN's primary action row: a tint wash with a tint border (Material 3: the filled container), the glyph, and the label. Mind
- * Sweep in this slot (an empty Inbox) is drawn disabled, dimmed, as TalkBack hears it.
+ * RN's primary action row: a tint wash with a tint border (Material 3: the filled container), the glyph, and the label: Process
+ * Inbox, or Mind Sweep in this slot (an empty Inbox).
  */
 @Composable
 private fun ActionButton(icon: ImageVector, label: String, enabled: Boolean, description: String = label, dimmed: Boolean = false, action: () -> Unit) {

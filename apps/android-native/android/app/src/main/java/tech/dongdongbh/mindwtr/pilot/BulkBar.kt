@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -52,6 +54,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -187,13 +190,15 @@ private fun TextAction(label: String, color: Color, enabled: Boolean, action: ()
         .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 12.dp))
 }
 
-/** RN's modal input: bordered, radius 8, the input background; [value] as typed. */
+/** RN's modal input: bordered, radius 8, the input background; [value] as typed; [onDone] is the keyboard's Done (RN's onSubmitEditing). */
 @Composable
-private fun ModalInput(value: String, placeholder: String, description: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+private fun ModalInput(value: String, placeholder: String, description: String, modifier: Modifier = Modifier, enabled: Boolean = true, onDone: (() -> Unit)? = null,
+                       onChange: (String) -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(8.dp)
-    BasicTextField(value, onChange, singleLine = true, textStyle = rnText(14, 400).copy(color = c.text), cursorBrush = SolidColor(c.tint),
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = modifier.fillMaxWidth().semantics { contentDescription = description },
+    BasicTextField(value, onChange, enabled = enabled, singleLine = true, textStyle = rnText(14, 400).copy(color = c.text), cursorBrush = SolidColor(c.tint),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = onDone?.let { done -> KeyboardActions(onDone = { done() }) } ?: KeyboardActions.Default,
+        modifier = modifier.fillMaxWidth().semantics { contentDescription = description },
         decorationBox = { inner ->
             Box(Modifier.heightIn(min = 42.dp).clip(shape).background(c.inputBg).border(1.dp, c.border, shape).padding(horizontal = 12.dp, vertical = 8.dp),
                 contentAlignment = Alignment.CenterStart) {
@@ -207,7 +212,7 @@ private fun ModalInput(value: String, placeholder: String, description: String, 
  * RN's Bulk organize (TaskListBulkOrganizeModal): core's title and subtitle, then Status (core's chips), Project and Area (core's
  * pickers, Keep and None first), the person for Waiting, Start, Due and Review (typed as a local day, the calendar from core's
  * start, core's Today and Tomorrow), Contexts and Tags, core's validation line, Cancel and Apply. Every control sends core's
- * edit (typed text core's setText) and shows the draft core answered. Picking a project or area never creates one here.
+ * edit (typed text core's setText) and shows the draft core answered. The project and area pickers can create one (core's "+ Create").
  */
 @Composable
 fun OrganizeDialog(model: InboxViewModel, open: JSONObject) = with(model.menu) {
@@ -365,7 +370,10 @@ private fun DateField(model: InboxViewModel, open: JSONObject, date: JSONObject,
 
 /**
  * Bulk Organize's project or area picker ([kind]): the search box, then core's choices (Keep and None first, whatever the
- * search), the chosen one checked. A choice sends its edit and returns to the dialog.
+ * search), the chosen one checked. A choice sends its edit and returns to the dialog. For a search no option names, core's "+ Create"
+ * row makes the project or area (core's createBulkOrganizeDestination, on disk first) and returns to the dialog with it chosen; the
+ * keyboard's Done runs core's `submit` (the match, or the create). A create that failed shows core's line; while its retry is owed,
+ * the search is locked and the row sends that exact request again.
  */
 @Composable
 private fun OrganizePicker(model: InboxViewModel, open: JSONObject, kind: String) = with(model.menu) {
@@ -381,7 +389,25 @@ private fun OrganizePicker(model: InboxViewModel, open: JSONObject, kind: String
             .background(c.cardBg).border(1.dp, c.border, shape).pointerInput(Unit) { detectTapGestures { } }.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, style = rnText(17, 700), color = c.text, modifier = Modifier.semantics { heading() })
-            SheetField(open.optString("query"), t("common.search"), "${t("common.search")} $title") { organizeQuery(it) }
+            val owed = model.failedAction?.takeIf { it.kind == "bulkCreate" }
+            ModalInput(open.optString("query"), t("common.search"), "${t("common.search")} $title", Modifier.testTag("organize-picker-search"), enabled = owed == null,
+                onDone = { if (idle) organizeSubmit() }) { organizeQuery(it) }
+            picker?.optJSONObject("create")?.let { create ->
+                val label = create.getString("label")
+                val spoken = create.getString("accessibilityLabel")
+                val canCreate = (idle || (owed != null && !model.busy))
+                val make = { organizeCreate(create.getString("name")) }
+                Box(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = "organize-create"; if (canCreate) onClick { make(); true } else disabled() }
+                    .clickable(enabled = canCreate) { make() }.padding(horizontal = 4.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
+                    if (model.busy && open.optBoolean("creating")) CircularProgressIndicator(Modifier.size(18.dp), color = c.tint, strokeWidth = 2.dp)
+                    else Text(label, style = rnText(15, 400), color = c.tint, maxLines = 2)
+                }
+            }
+            if (open.optBoolean("createFailed") || owed != null) {
+                Text(organize.getJSONObject("createFailed").getString(kind), style = rnText(15, 400), color = c.danger,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }.testTag("organize-create-failed"))
+            }
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                 for (item in picker?.menuObjects("items").orEmpty()) {
                     val on = item.getBoolean("selected")

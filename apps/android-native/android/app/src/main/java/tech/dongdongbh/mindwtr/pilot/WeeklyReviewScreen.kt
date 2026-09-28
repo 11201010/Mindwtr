@@ -51,9 +51,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -246,7 +249,7 @@ private fun LazyListScope.weeklyContent(model: InboxViewModel, shown: MenuPage, 
                             Text(process, style = rnText(15, 600), color = theme.filledText)
                         }
                     }
-                    MindSweepLink(labels.getString("mindSweep"))
+                    MindSweepLink(labels.getString("mindSweep"), enabled = menu.idle) { menu.openMindSweep() }
                 }
             }
             rows(shown.items)
@@ -329,7 +332,7 @@ private fun LazyListScope.weeklyContent(model: InboxViewModel, shown: MenuPage, 
                 if (row != null) ExpandedTask { ReviewRow(model, row) } else ProjectCard(model, item.json, labels)
             }
         }
-        else -> item(key = "completed") { CompletedStep(content, labels) }
+        else -> item(key = "completed") { CompletedStep(model, content, labels) }
     }
 }
 
@@ -447,7 +450,7 @@ private fun ExpandedTask(content: @Composable () -> Unit) {
 
 /** RN's last step: the party popper, core's heading and words, this week's look-back and core's checks, and the Mind Sweep nudge. */
 @Composable
-private fun CompletedStep(content: JSONObject, labels: JSONObject) {
+private fun CompletedStep(model: InboxViewModel, content: JSONObject, labels: JSONObject) {
     val c = LocalTheme.current.colors
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Lucide.PartyPopper, null, tint = c.tint, modifier = Modifier.padding(bottom = 20.dp).size(64.dp))
@@ -472,7 +475,7 @@ private fun CompletedStep(content: JSONObject, labels: JSONObject) {
                 Text(labels.getString("mindSweepTitle"), style = rnText(15, 700), color = c.text)
                 Text(labels.getString("mindSweepIntro"), style = rnText(13, 400, 19), color = c.secondaryText)
             }
-            MindSweepLink(labels.getString("mindSweep"), bordered = true)
+            MindSweepLink(labels.getString("mindSweep"), bordered = true, enabled = model.menu.idle) { model.menu.openMindSweep() }
         }
     }
 }
@@ -487,13 +490,15 @@ private fun SummaryRow(good: Boolean, text: String) {
     }
 }
 
-/** RN's Mind Sweep button (the Inbox step's link, the summary's bordered pill). Mind Sweep is not built: drawn disabled. */
+/** RN's Mind Sweep button (the Inbox step's link, the summary's bordered pill): it opens RN's Mind Sweep over the review. */
 @Composable
-private fun MindSweepLink(label: String, bordered: Boolean = false) {
+private fun MindSweepLink(label: String, bordered: Boolean = false, enabled: Boolean, action: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(18.dp)
-    Row(Modifier.heightIn(min = if (bordered) 36.dp else 44.dp).then(if (bordered) Modifier.clip(shape).border(1.dp, c.tint, shape).padding(horizontal = 12.dp) else Modifier)
-        .semantics { contentDescription = label; disabled() }.fade(0.45f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (bordered) 6.dp else 8.dp)) {
+    Row(Modifier.heightIn(min = if (bordered) 36.dp else 44.dp).then(if (bordered) Modifier.clip(shape).border(1.dp, c.tint, shape) else Modifier)
+        .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (enabled) onClick { action(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = action).then(if (bordered) Modifier.padding(horizontal = 12.dp) else Modifier)
+        .fade(if (enabled) 1f else 0.45f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (bordered) 6.dp else 8.dp)) {
         Icon(Lucide.Brain, null, tint = c.tint, modifier = Modifier.size(if (bordered) 16.dp else 18.dp))
         Text(label, style = rnText(if (bordered) 13 else 15, if (bordered) 700 else 600), color = c.tint)
         if (!bordered) Icon(Lucide.ChevronRight, null, tint = c.tint, modifier = Modifier.size(16.dp))

@@ -121,6 +121,9 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
         when (screen) {
             MenuScreen.Weekly -> WeeklyReview(model)
             MenuScreen.Daily -> DailyReview(model)
+            // RN's Mind Sweep modal and its check-focus page draw their own header.
+            MenuScreen.MindSweep -> MindSweepScreen(model)
+            MenuScreen.FocusChecklist -> FocusChecklistPage(model)
             else -> Column(Modifier.fillMaxSize()) {
                 val list = menu.list
                 // Settings titles RN's top bar with its open screen's title (core's words).
@@ -150,6 +153,7 @@ fun MenuScreenHost(model: InboxViewModel, screen: MenuScreen) = with(model) {
                         "calendar" -> CalendarList(model)
                         "board" -> BoardList(model)
                         "settings" -> SettingsList(model)
+                        "savedSearch" -> SavedSearchList(model)
                     }
                     if (screen == MenuScreen.Projects) ProjectsTab(model, Modifier.fillMaxSize())
                     ToastCard(model, Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))

@@ -205,8 +205,10 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 await flushPendingSave();
                 pruned += 1;
             }
-            // The settings and editor check's per-run area (69, a 12-digit run id, 2) goes too.
-            for (const area of live(store()._allAreas).filter((item) => (/^Area[0-9]{12}$/.test(item.name) && !item.name.endsWith(names.run)) || /^69[0-9]{12}2$/.test(item.name))) {
+            // The settings and editor check's per-run area (69, a 12-digit run id, 2) goes too, and the Mind Sweep and saved search
+            // check's (75, a 12-digit run id, 4).
+            for (const area of live(store()._allAreas).filter((item) => (/^Area[0-9]{12}$/.test(item.name) && !item.name.endsWith(names.run)) || /^69[0-9]{12}2$/.test(item.name)
+                || /^75[0-9]{12}4$/.test(item.name))) {
                 const result = await store().deleteArea(area.id);
                 if (!result.success) throw new Error('prune failed: ' + result.error);
                 await flushPendingSave();
@@ -228,7 +230,8 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             // lifecycle 81-86, focus 71-72, editor 91 (plus the 7 and 78 its renames append), search 51, Process Inbox 52, capture 53-59 (57 appends a line number),
             // menu 60 (plus the 1-6 of its five captures and its Someday task), review 67 (plus the 1-4 of its four captures),
             // calendar and board 68 (plus the 1-2 of its two captures; the Board's Duplicate keeps the title), toolbars 69 (plus the 1-6 of its six captures),
-            // settings and editor 70 (plus the 1 of its injected Done list task).
+            // settings and editor 70 (plus the 1 of its injected Done list task), Mind Sweep and saved search 75 (plus the 1 of its
+            // injected task and the 2-3 of its two captures).
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
                 lifecycle: /^8[1-6][0-9]{12}$/,
@@ -242,6 +245,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 calendarBoard: /^68[0-9]{12}[12]$/,
                 toolbars: /^69[0-9]{12}[1-6]$/,
                 settingsEditor: /^70[0-9]{12}1$/,
+                sweepSaved: /^75[0-9]{12}[1-3]$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);
@@ -252,6 +256,14 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 }
                 prunedChecks[check] = ids.length;
             }
+            // The Mind Sweep and saved search check's saved search (75, a 12-digit run id, 0), left by a run that stopped before its Delete.
+            const searches = store().settings.savedSearches ?? [];
+            const keptSearches = searches.filter((search) => !/^75[0-9]{12}0$/.test(search.name));
+            if (keptSearches.length !== searches.length) {
+                await store().updateSettings({ savedSearches: keptSearches });
+                await flushPendingSave();
+            }
+            prunedChecks.savedSearches = searches.length - keptSearches.length;
         }
         // Every run starts from RN's defaults for what it changes: all areas, the fixture unstarred, no project it added.
         value(await host.setAreaFilter({ included: [], excluded: [] }));

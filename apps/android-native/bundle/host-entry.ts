@@ -108,7 +108,8 @@ const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: 
     return result.value;
 };
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
-    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder'
+    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
+    | 'focusChecklistEdit'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
@@ -231,6 +232,10 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     manageList: (input) => contract.getManageSettingsList(input),
     manageCheck: (input) => contract.checkManageEditor(input),
     somedaySections: (input) => contract.getSomedaySections(input),
+    // Mind Sweep, a saved search's screen, and the Focus checklist page.
+    mindSweep: (input) => contract.getMindSweep(input),
+    savedSearch: (input) => contract.getSavedSearchView(input),
+    focusChecklist: (input) => contract.getFocusChecklist(input),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -258,6 +263,11 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     focusCriterion: (input) => contract.removeFocusFilterCriterion(input),
     focusDelete: (input) => contract.deleteFocusFilter(input),
     focusReorder: (input) => contract.reorderFocus(input),
+    // Bulk organize's new project or area, Mind Sweep's Add, a saved search's Delete, and a Focus checklist page edit.
+    bulkCreate: (input) => contract.createBulkOrganizeDestination(input),
+    mindSweepAdd: (input) => contract.addMindSweepItem(input),
+    savedSearchDelete: (input) => contract.deleteSavedSearch(input),
+    focusChecklistEdit: (input) => contract.editFocusChecklist(input),
     // Settings: General's and GTD's controls, Manage's editor Save and Delete, and Manage's Someday section rename, reorder and delete.
     generalSetting: (input) => contract.setGeneralSetting(input),
     gtdSetting: (input) => contract.setGtdSetting(input),

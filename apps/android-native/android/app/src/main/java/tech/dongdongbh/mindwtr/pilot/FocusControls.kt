@@ -440,10 +440,19 @@ private fun FocusFilterSheet(model: InboxViewModel, controls: JSONObject, open: 
         }
         if (picker != null) {
             val window = sheet.getJSONObject(picker)
-            val options = collection(picker, window, revision)
+            // RN's picker search: core's matching options (the query from offset zero), read again whenever Focus changes, since a
+            // tap changes the options' states.
+            val query = open.optString("query")
+            val found = pickerFound?.takeIf { it.getString("name") == picker && it.getString("query") == query && it.getString("revision") == revision }
+            LaunchedEffect(revision, picker) { if (query.isNotBlank()) searchPicker(picker, query, pickerFound?.optJSONArray("items")?.length() ?: 0) }
+            val title = text.getString(if (picker == "tokens") "contexts" else "projects")
+            Box(Modifier.padding(bottom = 10.dp)) {
+                SheetField(query, text.getString("search"), "${text.getString("search")} $title") { pickerQuery(picker, it) }
+            }
+            val options = if (query.isBlank()) collection(picker, window, revision) else found?.menuObjects("items").orEmpty()
             val excluded = text.getString("excluded")
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                if (options.isEmpty()) Text(text.getString("noResults"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
+                if (options.isEmpty() && (query.isBlank() || found != null)) Text(text.getString("noResults"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp))
                 for (option in options) {
                     val label = option.optString("title").ifEmpty { option.getString("value") }
@@ -460,7 +469,8 @@ private fun FocusFilterSheet(model: InboxViewModel, controls: JSONObject, open: 
                         if (on || out) Text(if (out) excluded else text.getString("selected"), style = rnText(12, 600), color = if (out) c.danger else c.tint)
                     }
                 }
-                if (options.size < window.getInt("total")) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { loadMore(picker, window, revision) } }
+                if (query.isBlank() && options.size < window.getInt("total")) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { loadMore(picker, window, revision) } }
+                if (found != null && options.size < found.getInt("total")) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { searchPicker(picker, query, options.size + 100) } }
                 if (picker == "tokens") Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val modes = sheet.getJSONObject("matchModes")
                     for (kind in listOf("context", "tag")) modes.getJSONObject(kind).takeIf { it.getBoolean("visible") }?.let { mode ->

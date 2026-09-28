@@ -89,7 +89,9 @@ const inboxUi = source('InboxScreen.kt');
 const bulkUi = source('BulkBar.kt');
 const focusControlsUi = source('FocusControls.kt');
 const focusModelKt = source('FocusModel.kt');
-const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi, ...reviewScreens, inboxUi, bulkUi, focusControlsUi };
+// Pass 11: a saved search's screen draws the menu list machinery's page (its model is MenuModel's).
+const savedSearchUi = source('SavedSearchScreen.kt');
+const menuScreens = { moreUi, menuUi, waitingUi, somedayUi, statusListUi, archiveUi, ...reviewScreens, inboxUi, bulkUi, focusControlsUi, savedSearchUi };
 const snapshotsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/RecoverySnapshots.kt'), 'utf8');
 // Comments may name the rules below; only code is checked against them.
 const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
@@ -572,7 +574,8 @@ for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, 
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
     for (const [, rest] of body.matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
         // Core's JSON is read by key (getString("label")); a key names a field of core's text, it is not text.
-        for (const [, literal] of rest.replace(/\b(t|testTag|getString|optString|text)\("[^"]*"\)/g, '').matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+        // A test tag (a Modifier's, or one set in a control's semantics block) names the control for the checks; it is not text.
+        for (const [, literal] of rest.replace(/\b(t|testTag|getString|optString|text|getJSONObject|optJSONObject|getBoolean|optBoolean|getInt|menuText|menuObjects)\("[^"]*"\)/g, '').replace(/\btestTag = "[^"]*"/g, '').matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
             if (labelKeys.includes(literal)) continue;
             assert.doesNotMatch(literal.replace(/\$\{[^}]*\}|\$\w+/g, ''), /\p{L}/u, `${name}: hard-coded UI text "${literal}"`);
         }
@@ -799,8 +802,8 @@ assert.match(processUi, /DayPickerDialog\(row\?\.text\("date"\)/, 'the picker st
 assert.doesNotMatch(code(processUi), /"(inbox|next|waiting|someday|reference|done)"\s*->/, 'no status decides a Process Inbox control');
 assert.match(processUi, /const val PROCESSING_MODE_KEY = "mindwtr:view:inboxProcessingMode:v1"/);
 // The Inbox's Process button: core's label (99+ above 99), and TalkBack hears core's exact count as RN does; Mind Sweep takes its
-// slot while the Inbox is empty, drawn disabled (its flow is not built).
-assert.match(inboxUi, /view\.optJSONObject\("process"\)\?\.let \{ ProcessButton\(model, it\) \}\s+\?: ActionButton\(Lucide\.Brain, view\.getJSONObject\("mindSweep"\)\.getString\("label"\), false, dimmed = true\) \{\}/);
+// slot while the Inbox is empty (pass 11: it opens RN's Mind Sweep, as the pill beside the controls does).
+assert.match(inboxUi, /view\.optJSONObject\("process"\)\?\.let \{ ProcessButton\(model, it\) \}\s+\?: view\.getJSONObject\("mindSweep"\)\.let \{ sweep ->\s+ActionButton\(Lucide\.Brain, sweep\.getString\("label"\), idle, sweep\.getString\("accessibilityLabel"\)\) \{ openMindSweep\(\) \}/);
 assert.match(inboxUi, /ActionButton\(Lucide\.ListChecks, process\.getString\("label"\), writable && !busy && failedAction == null, process\.getString\("accessibilityLabel"\)\) \{ openProcessing\(\) \}/);
 assert.doesNotMatch(code(activity), /"\$inbox · \$total"/, 'the "Inbox · N" count line is gone, as in RN');
 
@@ -874,7 +877,8 @@ assert.match(coreHost, /fun menuRead\(name: String, json: String\): JSONObject =
 assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObject = callAsync\("menuCommand", name, json\)/);
 {
     // Settings' commands (pass 10) join the Menu tab's: MENU_KINDS is its own set plus SettingsModel.kt's SETTINGS_KINDS.
-    assert.match(menuModel, /"focusReorder"\) \+ SETTINGS_KINDS/);
+    // Pass 11's commands (Bulk organize's create, Mind Sweep's Add, a saved search's Delete, a Focus checklist edit) close the set.
+    assert.match(menuModel, /"focusChecklistEdit"\) \+ SETTINGS_KINDS/);
     const kinds = [...[...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind),
         ...[...new RegExp('val SETTINGS_KINDS = setOf\\(([^)]*)\\)').exec(source('SettingsModel.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind)];
     const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \(input\) => contract\.\w+\(input\),$/gm)].map(([, kind]) => kind);
@@ -1007,7 +1011,7 @@ assert.match(reviewUi, /"delete" -> confirm\(bulk\.getJSONObject\("deleteConfirm
 assert.match(rowUi, /\.clickable\(enabled = enabled, role = Role\.Button\) \{ if \(!menu\.rowStatus\(task, status\)\) changeStatus\(task, status\) \}/);
 assert.match(menuModel, /private val ROW_KINDS = mapOf\("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction"\)/);
 // The Weekly Review's project Add task creates a task: its exact request (the request UUID core makes the task's id) is on disk first.
-assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave", "manageEditor"\)/);
+assert.match(menuModel, /private val CREATES = setOf\("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave", "manageEditor", "bulkCreate", "mindSweepAdd",\s+"focusChecklistEdit"\)/);
 assert.match(menuModel, /"projectTask" -> FailedAction\("reviewTask", open\.getString\("requestId"\), addProjectTask\(open\.getString\("projectId"\), open\.optString\("text"\)\)\.toString\(\)\)/);
 assert.equal(code(weeklyUi).match(/saveCreate\(\)/g).length, 3, 'Return, Save & edit and Add all send the one persisted request');
 // A review's place is core's checkpoint, stored under core's key (RN's session keys) and sent back; Finish deletes it.
@@ -1331,6 +1335,135 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // One semantics block per control (label, role and state), as passes 6-8 ruled.
     assert(code(settingsUi).match(/\.clearAndSetSemantics \{/g).length >= 15);
     assert(code(taskViewUi).match(/\.clearAndSetSemantics \{/g).length >= 6);
+}
+
+// Pass 11: Mind Sweep, a saved search's screen and the Focus checklist page on core's new contracts; the Focus filter pickers' search;
+// Bulk organize's project and area pickers that create one.
+{
+    const sweepKt = source('MindSweep.kt');
+    const checklistKt = source('FocusChecklist.kt');
+    const pass11 = { sweepKt, checklistKt, savedSearchUi };
+    // Reads pass Kotlin's input to core unchanged; writes are core's commands, each logged as its operation.
+    for (const [name, method] of [['mindSweep', 'getMindSweep'], ['savedSearch', 'getSavedSearchView'], ['focusChecklist', 'getFocusChecklist']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
+    }
+    for (const [name, method] of [['bulkCreate', 'createBulkOrganizeDestination'], ['mindSweepAdd', 'addMindSweepItem'], ['savedSearchDelete', 'deleteSavedSearch'],
+        ['focusChecklistEdit', 'editFocusChecklist']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
+    }
+    // Every write is MenuModel's send -> perform(action) with its exact FailedAction: core's whole input with the request UUID. The two
+    // creates (a Mind Sweep capture, Bulk organize's project or area) are on disk before the call and sent again first after process death.
+    assert.match(menuModel, /"bulkCreate", "mindSweepAdd", "savedSearchDelete", "focusChecklistEdit" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(sweepKt, /menu\.create\(addAction\(group\.getString\("id"\)\)\)/, 'a Mind Sweep Add is a create: on disk first');
+    assert.match(menuModel, /create\(FailedAction\("bulkCreate", UUID\.randomUUID\(\)\.toString\(\), JSONObject\(\)\.put\("list", list\)\.put\("kind", kind\)\.put\("name", name\)/, 'Bulk organize\'s create is a create: on disk first');
+    assert.match(menuModel, /shell\.failedAction\?\.takeIf \{ it\.kind == "bulkCreate" \}\?\.let \{ return retry\(it\) \}/, 'an owed create is sent again exactly');
+    for (const [name, text] of Object.entries(pass11)) {
+        assert.doesNotMatch(code(text), /menuCommand\(|\bsend\(|shell\.perform\(action|FailedAction\((?!"mindSweepAdd"|"focusChecklistEdit")/, `${name}: writes only through MenuModel.command, act or create`);
+    }
+    // A write core refused, or whose write did not land (ACTION_FAILED, as core's contracts say for these three), owes nothing: Mind Sweep's
+    // failure line, the checklist's toast and core's list, or the picker's line show instead of the failure message.
+    assert.match(menuModel, /private val LANDLESS = setOf\("mindSweepAdd", "focusChecklistEdit", "bulkCreate"\)/);
+    assert.match(menuModel, /\|\| \(action\.kind in LANDLESS && failure\.message\?\.startsWith\("ACTION_FAILED"\) == true\)/);
+    assert.match(menuModel, /if \(refused && action\.kind in LANDLESS\) \{\s+shell\.acknowledged\(action\)\s+shell\.ui \{ landless\(action, failure\) \}\s+return@perform/);
+    // Navigation: the Inbox's Mind Sweep (its pill and its empty-Inbox button) and the Weekly Review's open it; the More sheet's saved
+    // searches open their screen; Mind Sweep and the checklist page go back to the screen they opened over; the checklist page opens
+    // only from its route (RN's editor never calls onFocusMode), which a debug build takes from a launch extra.
+    assert.equal(code(inboxUi).match(/openMindSweep\(\)/g).length, 2);
+    assert.equal(code(weeklyUi).match(/openMindSweep\(\)/g).length, 2);
+    assert.match(menuModel, /private fun isSavedSearch\(id: String\) = more\?\.collection\("savedSearches"\)\?\.any \{ it\.getString\("id"\) == id && it\.getString\("route"\)\.startsWith\("\/saved-search\/"\) \} == true/);
+    assert.match(menuModel, /else -> if \(isSavedSearch\(id\)\) openSavedSearch\(id\)/);
+    assert.match(menuModel, /leave\(if \(flow \|\| over\) MenuScreen\.entries\.firstOrNull \{ it\.name == saved\.get<String>\(if \(over\) "screenFrom" else "reviewFrom"\) \} else null\)/);
+    assert.match(activity, /if \(BuildConfig\.DEBUG && savedInstanceState == null\) intent\.getStringExtra\(FOCUS_CHECKLIST_EXTRA\)\?\.let\(model\.menu::openFocusChecklist\)/);
+    assert.equal(code(kotlinFiles.concat([sweepKt, checklistKt]).join('\n')).match(/openFocusChecklist\(|::openFocusChecklist/g).length, 2, 'the checklist page opens only from its route');
+    assert.match(menuUi, /MenuScreen\.MindSweep -> MindSweepScreen\(model\)\s+MenuScreen\.FocusChecklist -> FocusChecklistPage\(model\)/);
+    assert.match(menuUi, /"savedSearch" -> SavedSearchList\(model\)/);
+    // Mind Sweep: RN's React state in a synced file while the screen is open (the Bundle names the screen), so rotation and process death
+    // keep it; the controls carry core's scope and steps; Add waits for core's view of the text as typed; an answer counts once, for its sweep.
+    assert.match(sweepKt, /var state by mutableStateOf\(if \(menu\.screen == MenuScreen\.MindSweep\) stored\(\) \?: fresh\(\) else fresh\(\)\.also \{ file\.delete\(\) \}\)/);
+    assert.match(sweepKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(value\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+    for (const control of ['start', 'back', 'next']) assert.match(sweepKt, new RegExp(`\\{ step\\(${control}\\.getInt\\("step"\\)\\) \\}`), `${control} carries core's step`);
+    assert.match(sweepKt, /scope\(option\.getString\("value"\)\)/);
+    assert.match(sweepKt, /if \(viewDraft != state\.getString\("draft"\) \|\| group\.getJSONObject\("add"\)\.getBoolean\("disabled"\)\) return/);
+    assert.match(sweepKt, /private fun ours\(action: FailedAction\) = menu\.screen == MenuScreen\.MindSweep && state\.getString\("requestId"\) == action\.id/);
+    assert.match(sweepKt, /\.put\("state", sent\.getJSONObject\("sweep"\)\)\.put\("draft", sent\.getString\("draft"\)\)\.put\("addFailed", sent\.getBoolean\("addFailed"\)\)/);
+    // A saved search: the menu list machinery reads core's view for its ID (windows of 50, More); Delete asks core's question, then RN goes back.
+    assert.match(menuModel, /"savedSearch" -> JSONObject\(\)\.put\("id", own\.optString\("id"\)\)/);
+    assert.match(savedSearchUi, /confirm\(delete\.getJSONObject\("confirm"\), JSONObject\(\)\.put\("id", view\.getString\("id"\)\), "savedSearchDelete"\)/);
+    assert.match(menuModel, /"savedSearchDelete" -> if \(screen == MenuScreen\.SavedSearch && own\("savedSearch"\)\.optString\("id"\) == JSONObject\(action\.title\)\.getString\("id"\)\) closeScreen\(\)/);
+    assert.match(savedSearchUi, /TaskRowItem\(model, it, status = RowStatus\.Badge\)/, 'rows keep the lists\' own commands and editor');
+    // The Focus checklist page: every edit is core's (the item's toggle and remove, a rename with the typed text, an add with a new item
+    // UUID), named by the item's id and placed right before it is sent, with the task revision core gave last; a refusal reads core's list.
+    assert.match(checklistKt, /val action = FailedAction\("focusChecklistEdit", UUID\.randomUUID\(\)\.toString\(\),\s+JSONObject\(\)\.put\("id", task\)\.put\("taskRevision", made\.getString\("revision"\)\)\.put\("edit", edit\)\.toString\(\)\)/);
+    assert.match(checklistKt, /made\.getJSONArray\("order"\)\.ids\(\)\.indexOf\(next\.getString\("itemId"\)\)\.takeIf \{ it >= 0 \}\?\.let \{ JSONObject\(next\.toString\(\)\)\.put\("index", it\) \}/);
+    assert.equal(code(checklistKt).match(/put\("index"/g).length, 1, 'a position is set in one place, right before the send');
+    assert.match(checklistKt, /known\.put\(task, JSONObject\(\)\.put\("revision", reply\.getString\("taskRevision"\)\)/);
+    assert.match(checklistKt, /item\.getJSONObject\("edits"\)\.getJSONObject\("toggle"\)/);
+    assert.match(checklistKt, /enqueue\(item\.getJSONObject\("edits"\)\.getJSONObject\("remove"\)\)/);
+    assert.deepEqual([...code(checklistKt).matchAll(/put\("kind", "(\w+)"\)/g)].map(([, kind]) => kind).sort(), ['add', 'rename', 'toggle'], 'only core\'s edit kinds');
+    assert.match(checklistKt, /if \(message\.startsWith\("ACTION_FAILED"\)\) page\?\.getJSONObject\("error"\)/);
+    // Correction pass 1 (review finding 1): a checklist edit has every native write's durability. The queue (each edit with its task),
+    // the request UUID with core and the revisions are in a synced file, written before the request goes; the request itself is on
+    // disk first (MenuModel's create path, so after process death it is sent again first with its original revision, and a failed
+    // save keeps its exact retry); the queue is read back at boot and goes on once that request is settled.
+    assert.match(checklistKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+    assert.match(checklistKt, /sending = true\s+sent = action\.id\s+keep\(\)\s+menu\.create\(action\)/, 'the queue and the request UUID are on disk before the request goes');
+    assert.match(checklistKt, /queue = stored\.menuObjects\("queue"\)\s+sent = stored\.menuText\("sent"\)\s+known = stored\.getJSONObject\("known"\)/);
+    assert.match(menuModel, /val focusChecklist = FocusChecklistModel\(this, saved, File\(dir, "focus-checklist"\)\)/);
+    assert.match(menuModel, /refresh\(\)\s+\/\/[^\n]*\s+focusChecklist\.resume\(\)\s+\}/, 'after boot the waiting edits go on, after a request left on disk');
+    assert.equal(code(checklistKt).match(/if \(action\.id != sent\) return/g).length, 2, 'an answer counts only for the exact request with core');
+    assert.equal(code(checklistKt).match(/(?<!fun )\bkeep\(\)/g).length, 8, 'every change of the queue is on disk');
+    // Correction pass 1 (finding 2): the queue belongs to the task, not the page: an answer moves it on whether the page is open or not,
+    // a page read gives any task's revision, and a waiting edit for a task not read yet reads that task first.
+    assert.match(checklistKt, /keep\(\)\s+pump\(\)\s+if \(menu\.list == "focusChecklist" && task == taskId\) reload\(\)/);
+    assert.match(checklistKt, /val made = known\.optJSONObject\(task\) \?: return reload\(task\)/);
+    assert.doesNotMatch(code(checklistKt.slice(checklistKt.indexOf('private fun pump()'), checklistKt.indexOf('fun done('))), /menu\.list/, 'the next edit goes whatever page is open');
+    assert.match(checklistKt, /if \(menu\.list == "focusChecklist" && id == taskId\) \{\s+shell\.readSucceeded\(\)\s+page = next/);
+    // Correction pass 1 (finding 3): a later window that went stale drops the partial view and reads the whole view again from
+    // offset 0, a bounded number of times (then core's failure shows), on the checklist page and in Mind Sweep.
+    assert.match(checklistKt, /internal fun <T> wholeView\(read: \(\) -> T\): T \{\s+repeat\(STALE_READS - 1\) \{\s+try \{\s+return read\(\)\s+\} catch \(failure: Exception\) \{\s+if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+\}\s+\}\s+return read\(\)/);
+    assert.match(checklistKt, /private const val STALE_READS = 3/);
+    assert.match(checklistKt, /private fun read\(runtime: CoreHost, id: String\): JSONObject = wholeView \{/);
+    assert.match(sweepKt, /private fun read\(runtime: CoreHost, sent: JSONObject\): JSONObject = wholeView \{/);
+    assert.equal(code(checklistKt + sweepKt).match(/startsWith\("STALE_REVISION"\)/g).length, 1, 'no reader keeps a partial view: only wholeView catches a stale window');
+    // Correction pass 1 (finding 4): the device check settles an injected failure it left owed (the exact request, through the app's
+    // Try again), waits until the retry lock and the request on disk are gone, and fails loudly when it cannot.
+    const sweepCheck = readFileSync(resolve(app, 'scripts/check-sweep-saved-device.mjs'), 'utf8');
+    assert.match(sweepCheck, /const restore = async \(\) => \{\s+for \(const name of PROPS\) \{ try \{ setProp\(name, ''\); \} catch \{ \/\* device gone \*\/ \} \}\s+await settleOwed\(\);/);
+    assert.match(sweepCheck, /if \(!retry && !pendingOnDisk\(\)\) \{/);
+    assert.match(sweepCheck, /RESTORE FAILED: \$\{owed\} is still owed[^\n]*\n\s+process\.exitCode = 1;/);
+    assert.equal(sweepCheck.match(/owed = '/g).length, 2, 'each injected failure is named while its retry is owed');
+    assert.equal(sweepCheck.match(/(?<!let )owed = null;/g).length, 3, 'and cleared once settled');
+    // Focus's filter pickers search as the Inbox's: core's matches from offset zero at Focus's revision; a changed Focus is read again.
+    assert.match(focusModelKt, /runtime\.menuRead\("focusList", JSONObject\(\)\.put\("controls", JSONObject\(sent\)\)\.put\("list", name\)\.put\("offset", items\.length\(\)\)\s+\.put\("limit", WINDOW\)\.put\("revision", revision\)\.put\("query", query\)\.toString\(\)\)/);
+    assert.match(focusModelKt, /else if \(found == null\) shell\.refreshFocus\(\)/);
+    assert.match(focusControlsUi, /LaunchedEffect\(revision, picker\) \{ if \(query\.isNotBlank\(\)\) searchPicker\(picker, query,/);
+    // Bulk organize's pickers: core's create row and the keyboard's Done (core's submit, after the text as typed is read); a create
+    // answers with core's draft, which the dialog keeps.
+    assert.match(bulkUi, /picker\?\.optJSONObject\("create"\)\?\.let \{ create ->/);
+    assert.match(bulkUi, /organizeCreate\(create\.getString\("name"\)\)/);
+    assert.match(menuModel, /submit\.optJSONObject\("edit"\)\?\.let \{ edit -> organizePicker\(null\); organizeEdit\(edit\) \} \?: submit\.menuText\("create"\)\?\.let\(::organizeCreate\)/);
+    assert.match(menuModel, /"bulkCreate" -> dialog\?\.takeIf \{ it\.optString\("kind"\) == "organize" \}\?\.let \{ open ->\s+keepDialog\(JSONObject\(open\.toString\(\)\)\.put\("draft", reply\.getJSONObject\("draft"\)\)/);
+    // No Kotlin policy, dates, colors or literal text in the new files; one semantics block per control.
+    for (const [name, text] of Object.entries(pass11)) {
+        assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b|s\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping`);
+        assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|LocalTime|java\.time|java\.util\.Calendar|Calendar\.getInstance|GregorianCalendar|Instant\b|\.format\(|toLocal|currentTimeMillis|\bDate\(|TimeZone/, `${name}: no Kotlin date math, formatting or parsing`);
+        assert.doesNotMatch(code(text), new RegExp(`${STATUS}(?:\\s*,\\s*${STATUS})*\\s*->\\s*${STATUS}`), `${name}: no status-to-status map`);
+        assert.doesNotMatch(code(text), /\bColor\(|Color\.(Black|White|Red|Green|Blue|Gray|Yellow|Cyan|Magenta|DarkGray|LightGray|Transparent)\b|parseColor|"#[0-9A-Fa-f]{3,8}"|0x[0-9A-Fa-f]{8}/, `${name} writes a color; colors live only in Theme.kt`);
+        for (const [, key] of code(text).matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
+        for (const [, rest] of code(text).matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
+            for (const [, literal] of rest.replace(/\b(t|testTag|getString|optString|text|getJSONObject|optJSONObject|getBoolean|optBoolean|getInt|menuText|menuObjects)\("[^"]*"\)/g, '').replace(/\btestTag = "[^"]*"/g, '').matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+                if (labelKeys.includes(literal)) continue;
+                assert.doesNotMatch(literal.replace(/\$\{[^}]*\}|\$\w+/g, ''), /\p{L}/u, `${name}: hard-coded UI text "${literal}"`);
+            }
+        }
+        // The screens (the composables after each model) reach core only through their model.
+        const ui = code(text).slice(Math.max(0, code(text).indexOf('@Composable')));
+        assert.doesNotMatch(ui, /runtime\.|menuCommand\(|menuRead\(|shell\.perform/, `${name}: the screen reaches core only through its model`);
+        assert.doesNotMatch(code(text), /\.clickable\(enabled = [^\n]*\.semantics \{ contentDescription|\.semantics \{ contentDescription[^\n]*\}\s*\.clickable\(enabled/, `${name}: no control with a clickable and a separate semantics block`);
+    }
+    assert(code(sweepKt).match(/\.clearAndSetSemantics \{/g).length >= 3);
+    assert(code(checklistKt).match(/\.clearAndSetSemantics \{/g).length >= 4);
+    assert(code(savedSearchUi).match(/\.clearAndSetSemantics \{/g).length >= 2);
 }
 
 const fakeCore = `
@@ -1901,4 +2034,5 @@ console.log('Contexts, Trash, Review and the reviews: core\'s views, core\'s act
 console.log('Calendar and Board: core\'s views under one revision, core\'s actions through perform, composer and Duplicate on disk first, a drop is one core action, no Kotlin date math or policy');
 console.log('Toolbars and bulk: the Inbox on core\'s view, core\'s bulk bar and Focus controls through perform with exact requests, a saved Focus filter on disk first, stateless Select all, no deprecated Archive fields, no Kotlin policy');
 console.log('Settings and the editor\'s View tab: core\'s settings and task views through CoreHost, writes through perform with exact requests, device writes under RN\'s keys, checklist edits as core\'s edits in the one save');
+console.log('Mind Sweep, saved searches and the Focus checklist page: core\'s views through CoreHost, captures and Bulk organize creates on disk first, checklist edits compare-and-set on core\'s task revision, on disk before they go and moved on whatever page is open, stale windows read again whole, Focus picker search, no Kotlin policy');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

@@ -21,8 +21,9 @@ import java.util.UUID
  * contract (native-host-contract-menu-views.ts), History's Archive, Contexts and Trash (the list views block of
  * native-host-contract.ts), Review with the Weekly and Daily Review (native-host-contract-review-views.ts), and the Calendar and
  * the Board (CalendarModel.kt, BoardModel.kt, on native-host-contract-calendar.ts and native-host-contract-board.ts), the Inbox
- * tab's list (native-host-contract-inbox-view.ts), the lists' selection mode (native-host-contract-bulk-actions.ts), and Focus's
- * controls (FocusModel.kt, on native-host-contract-focus-controls.ts).
+ * tab's list (native-host-contract-inbox-view.ts), the lists' selection mode (native-host-contract-bulk-actions.ts), Focus's
+ * controls (FocusModel.kt, on native-host-contract-focus-controls.ts), Mind Sweep (MindSweep.kt), a saved search's screen
+ * (native-host-contract-saved-search.ts), and the Focus checklist page (FocusChecklist.kt).
  * Kotlin keeps only RN's screen state: which sheet, screen and dialog are open, the session choices RN keeps in React
  * state, and the device choices RN keeps under its keys. Every row, heading, count, label, filter and edit is core's.
  * Reads and commands run on InboxViewModel's paths (perform, background, freshness, the exact-retry lock).
@@ -35,12 +36,23 @@ private const val WINDOW = 100
 /** The Menu tab's commands (host-entry.ts MENU_COMMANDS); core can refuse each before writing. */
 val MENU_KINDS = setOf("activateProject", "somedayMove", "somedayUndo", "somedayTask", "somedaySection", "taskListSort", "archiveAction",
     "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction", "boardCreate",
-    "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder") + SETTINGS_KINDS
+    "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd", "savedSearchDelete",
+    "focusChecklistEdit") + SETTINGS_KINDS
 /**
  * The creates whose exact request waits on disk until core answers: Someday's, the Weekly Review's project Add task, the
- * Calendar composer's Save, the Board's Duplicate, a saved Focus filter, and Settings › Manage's editor Save (a new area or person).
+ * Calendar composer's Save, the Board's Duplicate, a saved Focus filter, Settings › Manage's editor Save (a new area or person),
+ * Bulk organize's new project or area, and a Mind Sweep capture; and a Focus checklist page edit, whose request (its task revision
+ * and edit) keeps the same durability, so after process death it is sent again first with its original revision.
  */
-private val CREATES = setOf("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave", "manageEditor")
+private val CREATES = setOf("somedayTask", "somedaySection", "reviewTask", "calendarCreate", "boardCreate", "focusSave", "manageEditor", "bulkCreate", "mindSweepAdd",
+    "focusChecklistEdit")
+
+/**
+ * The commands whose ACTION_FAILED means core's write did not land (core's contracts say so): Mind Sweep's Add (RN's "add failed"
+ * line), a Focus checklist edit (RN's error toast, then core's list) and Bulk organize's create (RN's "failed to create" line).
+ * Like a refusal, nothing is owed.
+ */
+private val LANDLESS = setOf("mindSweepAdd", "focusChecklistEdit", "bulkCreate")
 
 /** The lists with RN's selection mode on core's bulk contract (getBulkActions, runBulkAction). */
 val BULK_LISTS = setOf("inbox", "waiting", "someday", "reference", "done")
@@ -54,6 +66,8 @@ enum class MenuScreen(val title: String) {
     Waiting("waiting.title"), Someday("someday.title"), Reference("nav.reference"), History("nav.history"),
     Contexts("contexts.title"), Trash("trash.title"), Review("nav.review"), Projects("projects.title"), Weekly("nav.review"), Daily("nav.review"),
     Calendar("nav.calendar"), Board("nav.board"), Settings("settings.title"),
+    // RN's Mind Sweep modal, a saved search's screen (its stack title), and the Focus checklist page (check-focus).
+    MindSweep("mindSweep.title"), SavedSearch("search.title"), FocusChecklist("taskEdit.checklist"),
 }
 
 /** Core's bulk actions (Contexts, Trash, Review): each ends RN's selection mode once core answers. */
@@ -187,6 +201,10 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     var pickerFound by mutableStateOf<JSONObject?>(null); private set
     /** RN's Settings: its own screens, reads and writes (SettingsModel.kt). */
     val settings = SettingsModel(this, saved)
+    /** RN's Mind Sweep (MindSweep.kt): its screen state on disk while it is open. */
+    val sweep = MindSweepModel(this, File(dir, "mind-sweep"))
+    /** RN's Focus checklist page (FocusChecklist.kt): its edits wait on disk, whatever page is open. */
+    val focusChecklist = FocusChecklistModel(this, saved, File(dir, "focus-checklist"))
 
     /** The core read behind the open screen (History shows Done or Archive), or behind the quick-access tab when it shows. */
     val list: String? get() = when (screen) {
@@ -202,6 +220,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         MenuScreen.Calendar -> "calendar"
         MenuScreen.Board -> "board"
         MenuScreen.Settings -> "settings"
+        MenuScreen.MindSweep -> "mindSweep"
+        MenuScreen.SavedSearch -> "savedSearch"
+        MenuScreen.FocusChecklist -> "focusChecklist"
         MenuScreen.Projects -> null
         null -> when {
             shell.screen == Screen.Projects && quickView != "projects" -> quickView
@@ -264,10 +285,34 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             "board" -> open(MenuScreen.Board)
             "settings" -> open(MenuScreen.Settings)
             "projects" -> openProjects(null)
+            else -> if (isSavedSearch(id)) openSavedSearch(id)
         }
     }
 
-    fun opens(id: String) = id in setOf("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash", "calendar", "board", "settings")
+    fun opens(id: String) = id in setOf("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash", "calendar", "board", "settings") || isSavedSearch(id)
+
+    /** A saved search of the More sheet (core's route `/saved-search/<id>`). */
+    private fun isSavedSearch(id: String) = more?.collection("savedSearches")?.any { it.getString("id") == id && it.getString("route").startsWith("/saved-search/") } == true
+
+    /** RN's saved search screen (`/saved-search/<id>`), pushed over the tabs under RN's stack header. */
+    fun openSavedSearch(id: String) {
+        editOwn("savedSearch") { put("id", id) }
+        open(MenuScreen.SavedSearch)
+    }
+
+    /** RN's Mind Sweep (the Inbox's button, the Weekly Review's link): a new sweep, full screen over the screen it opens from. */
+    fun openMindSweep() {
+        saved["screenFrom"] = screen?.name
+        sweep.reset()
+        open(MenuScreen.MindSweep)
+    }
+
+    /** RN's check-focus route for [taskId], over the screen it opens from (RN reaches it only by its route; see FocusChecklist.kt). */
+    fun openFocusChecklist(taskId: String) {
+        saved["screenFrom"] = screen?.name
+        focusChecklist.reset(taskId)
+        open(MenuScreen.FocusChecklist)
+    }
 
     /**
      * RN's Projects: the quick-access tab while it holds Projects, else RN's Projects stack screen (the tile core shows then);
@@ -327,7 +372,11 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         // A Settings sub-screen goes back to the screen it opened from, as RN's stack pops it.
         if (screen == MenuScreen.Settings && settings.back()) return
         val flow = screen == MenuScreen.Weekly || screen == MenuScreen.Daily
-        leave(if (flow) MenuScreen.entries.firstOrNull { it.name == saved.get<String>("reviewFrom") } else null)
+        // Mind Sweep (RN's modal) and the Focus checklist page (RN's pushed route) go back to the screen they opened over; the sweep
+        // forgets its state, as RN's modal does.
+        val over = screen == MenuScreen.MindSweep || screen == MenuScreen.FocusChecklist
+        if (screen == MenuScreen.MindSweep) sweep.forget()
+        leave(if (flow || over) MenuScreen.entries.firstOrNull { it.name == saved.get<String>(if (over) "screenFrom" else "reviewFrom") } else null)
         if (list != null) refresh()
     }
 
@@ -387,6 +436,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             "weekly" -> JSONObject().put("checkpoint", prefs.getString(WEEKLY_REVIEW_KEY, null) ?: JSONObject.NULL)
                 .put("expandedProjectId", own.opt("expandedProjectId") ?: JSONObject.NULL)
             "daily" -> JSONObject().put("checkpoint", prefs.getString(DAILY_REVIEW_KEY, null) ?: JSONObject.NULL)
+            "savedSearch" -> JSONObject().put("id", own.optString("id"))
             else -> JSONObject()
         }
     }
@@ -501,6 +551,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (list == "calendar") return@whenIdle calendar.reload()
         if (list == "board") return@whenIdle board.reload()
         if (list == "settings") return@whenIdle settings.reload()
+        if (list == "mindSweep") return@whenIdle sweep.reload()
+        if (list == "focusChecklist") return@whenIdle focusChecklist.reload()
         val params = params(list)
         // A row tap (selectionEdit) or a Bulk Organize control's edit goes to core's bar once, with the selection as it is now.
         val bulk = bulkInput(list)?.apply {
@@ -528,6 +580,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (list == "calendar") return calendar.refresh()
         if (list == "board") return board.refresh()
         if (list == "settings") return settings.refresh()
+        if (list == "mindSweep") return sweep.refresh()
+        if (list == "focusChecklist") return focusChecklist.refresh()
         val params = params(list)
         val bulk = bulkInput(list)
         val shown = page
@@ -1127,14 +1181,39 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
 
     /** Bulk Organize's project or area picker ([kind]; null closes it), its search as typed. */
     fun organizePicker(kind: String?) {
-        dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("query"); if (kind == null) remove("picker") else put("picker", kind) }) }
+        dialog?.let { keepDialog(JSONObject(it.toString()).apply { remove("query"); remove("createFailed"); if (kind == null) remove("picker") else put("picker", kind) }) }
         if (kind != null) reload()
     }
 
     fun organizeQuery(text: String) {
-        dialog?.let { keepDialog(JSONObject(it.toString()).put("query", text)) }
+        dialog?.let { keepDialog(JSONObject(it.toString()).put("query", text).apply { remove("createFailed") }) }
         val mine = ++organizeTyped
         main.postDelayed({ if (mine == organizeTyped) reload() }, 200)
+    }
+
+    /**
+     * The picker's "+ Create" row (core's `create.name`): core's createBulkOrganizeDestination with the draft and a new request UUID
+     * (the new project's or area's id), on disk before the call. While its retry is owed, the row sends that exact request again.
+     */
+    fun organizeCreate(name: String) {
+        shell.failedAction?.takeIf { it.kind == "bulkCreate" }?.let { return retry(it) }
+        val open = dialog?.takeIf { it.optString("kind") == "organize" } ?: return
+        val kind = open.menuText("picker") ?: return
+        val list = list ?: return
+        if (!idle) return
+        keepDialog(JSONObject(open.toString()).put("creating", true).apply { remove("createFailed") })
+        create(FailedAction("bulkCreate", UUID.randomUUID().toString(), JSONObject().put("list", list).put("kind", kind).put("name", name)
+            .put("draft", open.optJSONObject("draft") ?: JSONObject()).toString()))
+    }
+
+    /** The picker's search box Done (RN's onSubmitEditing): the text as typed is read first, then core's `submit` runs: its match, or its create. */
+    fun organizeSubmit() {
+        ++organizeTyped
+        reload()
+        whenIdle {
+            val submit = page?.bulk?.optJSONObject("picker")?.optJSONObject("submit") ?: return@whenIdle
+            submit.optJSONObject("edit")?.let { edit -> organizePicker(null); organizeEdit(edit) } ?: submit.menuText("create")?.let(::organizeCreate)
+        }
     }
 
     /**
@@ -1193,6 +1272,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         "calendarAction", "calendarCreate", "boardAction", "boardCreate" -> JSONObject(action.title).put("requestId", action.id)
         // A bulk action (its list and core's action) and Focus's commands (the control state and the command's own input).
         "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder" -> JSONObject(action.title).put("requestId", action.id)
+        // Bulk organize's create, Mind Sweep's Add, a saved search's Delete and a Focus checklist edit: core's whole input and the request UUID.
+        "bulkCreate", "mindSweepAdd", "savedSearchDelete", "focusChecklistEdit" -> JSONObject(action.title).put("requestId", action.id)
         // Settings: core's whole input and the request UUID; Manage's Someday section writes are target-state and take none.
         "generalSetting", "gtdSetting", "manageEditor", "manageDelete" -> JSONObject(action.title).put("requestId", action.id)
         "somedayRename", "somedayReorder", "somedayDelete" -> JSONObject(action.title)
@@ -1208,6 +1289,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             runtime.menuCommand(action.kind, input(action))
         } catch (failure: Exception) {
             val refused = UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }
+                || (action.kind in LANDLESS && failure.message?.startsWith("ACTION_FAILED") == true)
             if (refused && action.kind in CREATES) shell.ui { store.delete() }
             // A refused composer Save wrote nothing: the composer's next Save gets a fresh request UUID.
             if (refused && action.kind == "calendarCreate") shell.ui { calendar.refused(action) }
@@ -1219,6 +1301,13 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             if (refused && action.kind == "somedayUndo") {
                 Log.w(CoreHost.TAG, "Someday Undo refused: ${failure.message?.substringBefore(':')}")
                 shell.ui { undoFailed() }; return@perform
+            }
+            // A Mind Sweep Add, a Focus checklist edit or a Bulk organize create that wrote nothing shows RN's own line or toast, not
+            // the failure message; nothing is owed (an owed retry that now wrote nothing is settled too).
+            if (refused && action.kind in LANDLESS) {
+                shell.acknowledged(action)
+                shell.ui { landless(action, failure) }
+                return@perform
             }
             throw failure
         }
@@ -1283,6 +1372,23 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             "bulkAction" -> bulkDone(action, reply)
             "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder" -> focusControls.done(action, reply)
             in SETTINGS_KINDS -> settings.done(action, reply)
+            // Bulk organize's new project or area: the draft core answered (it chosen), and the dialog again.
+            "bulkCreate" -> dialog?.takeIf { it.optString("kind") == "organize" }?.let { open ->
+                keepDialog(JSONObject(open.toString()).put("draft", reply.getJSONObject("draft")).apply { remove("picker"); remove("query"); remove("creating"); remove("createFailed") })
+            }
+            "mindSweepAdd" -> sweep.added(action, reply)
+            "focusChecklistEdit" -> focusChecklist.done(action, reply)
+            // RN goes back after its Delete (to the screen before, or the tabs).
+            "savedSearchDelete" -> if (screen == MenuScreen.SavedSearch && own("savedSearch").optString("id") == JSONObject(action.title).getString("id")) closeScreen()
+        }
+    }
+
+    /** A LANDLESS command that wrote nothing: Mind Sweep's failure line, the checklist's toast and core's list, or the picker's line. */
+    private fun landless(action: FailedAction, failure: Exception) {
+        when (action.kind) {
+            "mindSweepAdd" -> sweep.refused(action)
+            "focusChecklistEdit" -> focusChecklist.refused(action, failure)
+            else -> dialog?.takeIf { it.optString("kind") == "organize" }?.let { keepDialog(JSONObject(it.toString()).put("createFailed", true).apply { remove("creating") }) }
         }
     }
 
@@ -1332,5 +1438,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             }
         }
         refresh()
+        // Focus checklist edits a dead process left waiting go on (after that request, when it was one of them).
+        focusChecklist.resume()
     }
 }
