@@ -1750,6 +1750,7 @@ export const daOverrides: Record<string, string> = {
     'agenda.todaysFocus': 'Dagens fokus',
     'agenda.focusHint': 'Klik på stjernen på en opgave nedenfor for at tilføje den til dagens fokus (maks. {{count}}).',
     'agenda.addToFocus': 'Tilføj til dagens fokus',
+    'agenda.focusWhenAvailable': 'Tilføj til fokus, når den bliver tilgængelig',
     'agenda.removeFromFocus': 'Fjern fra fokus',
     'agenda.maxFocusItems': 'Max {{count}} fokuselement(er)',
     'projects.addToFocus': 'Tilføj til fokus',

@@ -11,6 +11,7 @@ import {
 } from './recurrence';
 import { canonicalizeStringMapForComparison } from './sync-signatures';
 import { computeRelativeStartTime } from './task-relative-start';
+import { isTaskActionable } from './task-status';
 import type {
     Attachment,
     Recurrence,
@@ -152,11 +153,12 @@ const TASK_DRAFT_FIELDS: { [K in TaskDraftField]: FieldSpec<K> } = {
     },
     status: {
         fromTask: (task) => task.status,
-        // Moving a draft to Inbox drops its star; leaving Done drops its
+        // Leaving the active workflow or moving to Inbox drops its star; leaving Done drops its
         // completion timestamp. The reverse star→Next transition belongs to
         // focusedToday below, so direction is explicit at the write seam.
         onSet: (draft) => {
-            const focusedToday = draft.status === 'inbox' ? false : draft.focusedToday;
+            const focusedToday = draft.status === 'inbox' || !isTaskActionable(draft.status)
+                ? false : draft.focusedToday;
             const completedAt = draft.status === 'done' ? draft.completedAt : '';
             return focusedToday === draft.focusedToday && completedAt === draft.completedAt
                 ? draft
@@ -166,9 +168,11 @@ const TASK_DRAFT_FIELDS: { [K in TaskDraftField]: FieldSpec<K> } = {
     focusedToday: {
         fromTask: (task) => task.isFocusedToday === true,
         // Starring is a clarifying action: an Inbox draft becomes Next.
-        onSet: (draft) => draft.focusedToday && draft.status === 'inbox'
-            ? { ...draft, status: 'next' }
-            : draft,
+        onSet: (draft) => {
+            if (!draft.focusedToday) return draft;
+            if (draft.status === 'inbox') return { ...draft, status: 'next' };
+            return isTaskActionable(draft.status) ? draft : { ...draft, focusedToday: false };
+        },
     },
     contexts: {
         fromTask: (task) => task.contexts?.join(', ') || '',

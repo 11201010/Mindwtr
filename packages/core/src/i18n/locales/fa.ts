@@ -1668,6 +1668,7 @@ export const faOverrides: Record<string, string> = {
         'agenda.todaysFocus': 'تمرکز امروز',
         'agenda.focusHint': 'برای افزودن هر کار به تمرکز امروز (حداکثر {{count}})، روی ستاره آن کلیک کنید.',
         'agenda.addToFocus': 'افزودن به تمرکز امروز',
+        'agenda.focusWhenAvailable': 'وقتی در دسترس شد به تمرکز اضافه کن',
         'agenda.removeFromFocus': 'حذف از تمرکز',
         'agenda.maxFocusItems': 'حداکثر {{count}} مورد تمرکز',
         'projects.addToFocus': 'افزودن به تمرکز',

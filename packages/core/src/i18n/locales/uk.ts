@@ -1640,6 +1640,7 @@ export const ukOverrides: Record<string, string> = {
     "agenda.todaysFocus": "Сьогоднішній Фокус",
     "agenda.focusHint": "Клацніть зірочку будь-якого завдання нижче, щоб додати його до сьогоднішнього фокусу (макс. {{count}}).",
     "agenda.addToFocus": "Додайте до сьогоднішнього фокусу",
+    "agenda.focusWhenAvailable": "Додати до фокусу, коли стане доступним",
     "agenda.removeFromFocus": "Видалити з фокусу",
     "agenda.maxFocusItems": "Макс. {{count}} фокусних елементів",
     "projects.addToFocus": "Додайте до фокусу",

@@ -51,9 +51,18 @@ describe('task-draft', () => {
         expect(backToInbox.status).toBe('inbox');
         expect(backToInbox.focusedToday).toBe(false);
 
-        // Any other status keeps the star.
+        // An active Waiting follow-up keeps the star.
         const toWaiting = setTaskDraftField(draft, 'status', 'waiting');
         expect(toWaiting.focusedToday).toBe(true);
+    });
+
+    it('drops a draft star on Done or Reference and refuses to star those statuses', () => {
+        const starred = createTaskDraft({ ...baseTask, isFocusedToday: true });
+        for (const status of ['done', 'reference', 'archived'] as const) {
+            const changed = setTaskDraftField(starred, 'status', status);
+            expect(changed.focusedToday).toBe(false);
+            expect(setTaskDraftField(changed, 'focusedToday', true).focusedToday).toBe(false);
+        }
     });
 
     it('retains a Someday-section assignment across status changes', () => {

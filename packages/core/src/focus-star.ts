@@ -6,6 +6,8 @@ import {
 } from './task-utils';
 import { formatFocusTaskLimitText } from './focus-utils';
 import { tFallback } from './i18n';
+import { isTaskActionable } from './task-status';
+import type { TaskDraft } from './task-draft';
 
 /**
  * The Today's Focus star as one module: every surface that toggles a task's
@@ -89,6 +91,44 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
         blockedReason,
         labelKey: 'agenda.addToFocus',
         patch: { isFocusedToday: true },
+    };
+}
+
+/** Resolve an editor's unsaved values against the same Focus rules as a task row. */
+export function resolveTaskEditorFocusStar(
+    task: Task,
+    draft: TaskDraft,
+    context: FocusStarContext,
+): FocusStarAction & { queued: boolean } {
+    const candidate: Task = {
+        ...task,
+        status: draft.status === 'inbox' ? 'next' : draft.status,
+        startTime: draft.startTime || undefined,
+        dueDate: draft.dueDate || undefined,
+        reviewAt: draft.reviewAt || undefined,
+        projectId: draft.projectId || undefined,
+        sectionId: draft.sectionId || undefined,
+        isFocusedToday: false,
+    };
+    const add = resolveFocusStarAction(candidate, {
+        ...context,
+        tasks: context.tasks.some((item) => item.id === task.id)
+            ? context.tasks.map((item) => item.id === task.id ? candidate : item)
+            : [...context.tasks, candidate],
+        focusedCount: Math.max(0, context.focusedCount - (task.isFocusedToday && !isTaskFutureFocusCandidate(task, context.now) ? 1 : 0)),
+    });
+    const available = !task.deletedAt && isTaskActionable(draft.status);
+    return {
+        ...add,
+        ...(!available ? { canToggle: false, blockedReason: 'clarify' as const } : {}),
+        ...(draft.focusedToday ? {
+            isFocused: true,
+            canToggle: true,
+            blockedReason: null,
+            labelKey: 'agenda.removeFromFocus' as const,
+            patch: { isFocusedToday: false },
+        } : {}),
+        queued: isTaskFutureFocusCandidate(candidate, context.now),
     };
 }
 

@@ -1095,7 +1095,7 @@ export const computeProjectDerivedState = (
 // their historical focus flag but should not consume today's focus limit —
 // the Focus views never show them, so a counted-but-invisible star would eat
 // a slot the user cannot free.
-const isTaskCountedAsFocused = (task: Task, now: Date): boolean => (
+export const isTaskCountedAsFocused = (task: Task, now: Date): boolean => (
     !task.deletedAt
     && isTaskFocusedNow(task, now)
     && task.status !== 'done' && task.status !== 'reference' && task.status !== 'archived'

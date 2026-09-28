@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from './types';
+import { createTaskDraft, setTaskDraftField } from './task-draft';
 import {
     canStarNewCapture,
     getFocusStarBlockedText,
     resolveFocusStarAction,
+    resolveTaskEditorFocusStar,
     resolveTaskFocusCreation,
     type FocusStarContext,
 } from './focus-star';
@@ -72,6 +74,53 @@ describe('resolveFocusStarAction', () => {
         expect(action).toMatchObject({ canToggle: true, blockedReason: null });
         const recurring = makeTask({ recurrence: { rule: 'daily' }, dueDate: '2099-01-01' });
         expect(resolveFocusStarAction(recurring, baseContext()).blockedReason).toBe('deferred');
+    });
+});
+
+describe('resolveTaskEditorFocusStar', () => {
+    const now = new Date('2026-09-28T12:00:00.000Z');
+    it('uses draft status and start date, and keeps queued stars outside the current cap', () => {
+        const task = makeTask({ status: 'inbox' });
+        const draft = setTaskDraftField(createTaskDraft(task), 'startTime', '2026-10-04');
+        const action = resolveTaskEditorFocusStar(task, draft, baseContext({ now, focusedCount: 3, tasks: [task] }));
+        expect(action).toMatchObject({ canToggle: true, queued: true, blockedReason: null });
+        expect(resolveTaskEditorFocusStar(task, setTaskDraftField(draft, 'status', 'waiting'),
+            baseContext({ now, focusedCount: 3, tasks: [task] })).blockedReason).toBe('deferred');
+        expect(resolveTaskEditorFocusStar(task, setTaskDraftField(draft, 'startTime', ''),
+            baseContext({ now, focusedCount: 3, tasks: [task] })).blockedReason).toBe('limit');
+    });
+
+    it('preserves the incumbent Focus slot while toggling a saved star in the draft', () => {
+        const task = makeTask({ isFocusedToday: true });
+        const draft = setTaskDraftField(createTaskDraft(task), 'focusedToday', false);
+        expect(resolveTaskEditorFocusStar(task, draft, baseContext({ tasks: [task], focusedCount: 3 })))
+            .toMatchObject({ canToggle: true, blockedReason: null });
+        expect(resolveTaskEditorFocusStar(task, createTaskDraft(task), baseContext({ tasks: [task], focusedCount: 3 })))
+            .toMatchObject({ isFocused: true, canToggle: true });
+    });
+
+    it('does not treat a due date alone as a queued Focus request', () => {
+        const task = makeTask({});
+        const draft = setTaskDraftField(createTaskDraft(task), 'dueDate', '2026-10-04');
+        expect(resolveTaskEditorFocusStar(task, draft, baseContext({ now, focusedCount: 3, tasks: [task] })))
+            .toMatchObject({ queued: false, blockedReason: 'limit' });
+    });
+
+    it('blocks Done, Reference and deleted drafts while allowing Inbox clarification', () => {
+        const inbox = makeTask({ status: 'inbox' });
+        expect(resolveTaskEditorFocusStar(inbox, createTaskDraft(inbox), baseContext({ tasks: [inbox] })))
+            .toMatchObject({ canToggle: true });
+        for (const status of ['done', 'reference'] as const) {
+            const task = makeTask({ status, reviewAt: '2020-01-01' });
+            expect(resolveTaskEditorFocusStar(task, createTaskDraft(task), baseContext({ tasks: [task] })))
+                .toMatchObject({ canToggle: false, blockedReason: 'clarify' });
+            const oldStar = { ...task, isFocusedToday: true };
+            expect(resolveTaskEditorFocusStar(oldStar, createTaskDraft(oldStar), baseContext({ tasks: [oldStar] })))
+                .toMatchObject({ isFocused: true, canToggle: true, blockedReason: null });
+        }
+        const deleted = makeTask({ deletedAt: '2026-01-02T00:00:00.000Z' });
+        expect(resolveTaskEditorFocusStar(deleted, createTaskDraft(deleted), baseContext()))
+            .toMatchObject({ canToggle: false });
     });
 });
 

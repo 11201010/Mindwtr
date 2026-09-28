@@ -1703,6 +1703,7 @@ export const jaOverrides: Record<string, string> = {
         'agenda.todaysFocus': '今日のフォーカス',
         'agenda.focusHint': '下のタスクのスターをクリックすると、今日のフォーカスに追加できます（最大{{count}}件）。',
         'agenda.addToFocus': '今日のフォーカスに追加',
+        'agenda.focusWhenAvailable': '利用可能になったらフォーカスに追加',
         'agenda.removeFromFocus': 'フォーカスから外す',
         'agenda.maxFocusItems': 'フォーカスは最大{{count}}件です',
         'projects.addToFocus': 'フォーカスに追加',

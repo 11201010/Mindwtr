@@ -5,6 +5,7 @@ import renderer, { act } from 'react-test-renderer';
 
 import {
   archiveSectionForProjectArchive,
+  isTaskFutureFocusCandidate,
   type Project,
   type Section,
   type Task,
@@ -46,6 +47,7 @@ vi.mock('@mindwtr/core', async () => {
     sections: [],
     _allSections: [],
     _allTasks: [],
+    _tasksById: new Map<string, Task>(),
     _allProjects: [] as Project[],
     areas: [],
     settings: { features: {}, ai: {}, gtd: { taskEditor: { order: [], hidden: [] } } },
@@ -61,6 +63,11 @@ vi.mock('@mindwtr/core', async () => {
       allTags: [],
       contextTokenUsage: [],
       tagTokenUsage: [],
+      activeTasksByStatus: new Map([['next', storeState.tasks]]),
+      projectMap: new Map(storeState.projects.map((project) => [project.id, project])),
+      focusedCount: storeState.tasks.filter((task: Task) => task.isFocusedToday && !actual.isTaskFutureFocusCandidate(task)).length,
+      sequentialProjectIds: new Set<string>(),
+      sequentialWithinSectionProjectIds: new Set<string>(),
     }),
   };
   storeState._allProjects = storeState.projects;
@@ -192,7 +199,15 @@ describe('TaskEditModal', () => {
       taskEditStore.current._allSections = [];
       taskEditStore.current.tasks = [];
       taskEditStore.current._allTasks = [];
-      taskEditStore.current.getDerivedState = () => ({ allContexts: [], allTags: [], contextTokenUsage: [], tagTokenUsage: [] });
+      taskEditStore.current._tasksById = new Map();
+      taskEditStore.current.settings = { features: {}, ai: {}, gtd: { taskEditor: { order: [], hidden: [] } } };
+      taskEditStore.current.getDerivedState = () => ({
+        allContexts: [], allTags: [], contextTokenUsage: [], tagTokenUsage: [],
+        activeTasksByStatus: new Map([['next', taskEditStore.current!.tasks]]),
+        projectMap: new Map(taskEditStore.current!.projects.map((project: Project) => [project.id, project])),
+        focusedCount: taskEditStore.current!.tasks.filter((task: Task) => task.isFocusedToday && !isTaskFutureFocusCandidate(task)).length,
+        sequentialProjectIds: new Set<string>(), sequentialWithinSectionProjectIds: new Set<string>(),
+      });
     }
   });
 
@@ -212,6 +227,9 @@ describe('TaskEditModal', () => {
     taskEditStore.current!.getDerivedState = () => ({
       allContexts: ['@active-only', '@arch', '@done-only'], allTags: [],
       contextTokenUsage: [{ token: '@active-only', count: 1, lastUsedAt: 0 }], tagTokenUsage: [],
+      activeTasksByStatus: new Map([['next', taskEditStore.current!.tasks]]),
+      projectMap: new Map(taskEditStore.current!.projects.map((project: Project) => [project.id, project])),
+      focusedCount: 0, sequentialProjectIds: new Set<string>(), sequentialWithinSectionProjectIds: new Set<string>(),
     });
 
     let tree!: renderer.ReactTestRenderer;
@@ -459,6 +477,7 @@ describe('TaskEditModal', () => {
     expect(tree.root.findAll((node) => node.props.accessibilityRole === 'tab')).toHaveLength(0);
     const preview = tree.root.findByType('TaskEditViewTab' as any);
     expect(preview.props.readOnly).toBe(true);
+    expect(tree.root.findAllByProps({ testID: 'task-edit-focus-star' })).toHaveLength(0);
     expect(preview.props.mergedTask).toEqual(expect.objectContaining({
       title: 'Historical task',
       description: 'Full historical notes',
@@ -973,6 +992,131 @@ describe('TaskEditModal', () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Focus star in the draft until Save and drops it on discard', async () => {
+    const task: Task = {
+      id: 'focus-edit', title: 'Focus edit', status: 'next', tags: [], contexts: [],
+      createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    taskEditStore.current!.tasks = [task];
+    taskEditStore.current!._allTasks = [task];
+    taskEditStore.current!._tasksById = new Map([[task.id, task]]);
+    const onClose = vi.fn();
+    const onSave = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={task} onClose={onClose} onSave={onSave} />);
+    });
+    const star = () => tree.root.find((node) => node.props.testID === 'task-edit-focus-star');
+    expect(star().props.accessibilityState).toMatchObject({ selected: false, disabled: false });
+    act(() => star().props.onPress());
+    expect(star().props.accessibilityState.selected).toBe(true);
+    expect(onSave).not.toHaveBeenCalled();
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    act(() => tree.root.find((node) => node.props.accessibilityLabel === 'common.close'
+      && typeof node.props.onPress === 'function').props.onPress());
+    const buttons = (alertSpy.mock.calls[0]?.[2] ?? []) as { onPress?: () => void }[];
+    act(() => buttons[1]?.onPress?.());
+    expect(onSave).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={task} onClose={onClose} onSave={onSave} />);
+    });
+    expect(star().props.accessibilityState.selected).toBe(false);
+    act(() => star().props.onPress());
+    await act(async () => {
+      tree.root.find((node) => node.props.accessibilityLabel === 'common.save'
+        && typeof node.props.onPress === 'function').props.onPress();
+    });
+    expect(onSave).toHaveBeenCalledWith(task.id, expect.objectContaining({ isFocusedToday: true }));
+  });
+
+  it('refuses a draft Focus star when the last slot fills before Save', async () => {
+    const task: Task = {
+      id: 'focus-late', title: 'Focus later', status: 'next', tags: [], contexts: [],
+      createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    const other = { ...task, id: 'focus-other' };
+    taskEditStore.current!.tasks = [task, other];
+    taskEditStore.current!._allTasks = [task, other];
+    taskEditStore.current!._tasksById = new Map([[task.id, task], [other.id, other]]);
+    taskEditStore.current!.settings = { features: {}, ai: {}, gtd: { focusTaskLimit: 1 } };
+    const onSave = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={task} onClose={vi.fn()} onSave={onSave} />);
+    });
+    act(() => tree.root.findByProps({ testID: 'task-edit-focus-star' }).props.onPress());
+    taskEditStore.current!.tasks = [task, { ...other, isFocusedToday: true }];
+    await act(async () => {
+      tree.root.find((node) => node.props.accessibilityLabel === 'common.save'
+        && typeof node.props.onPress === 'function').props.onPress();
+    });
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('disables Focus on Done and clears a saved star when the draft becomes Done', async () => {
+    const task: Task = {
+      id: 'focus-done', title: 'Finished', status: 'done', tags: [], contexts: [],
+      createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    taskEditStore.current!.tasks = [task];
+    taskEditStore.current!._allTasks = [task];
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={task} onClose={vi.fn()} onSave={vi.fn()} />);
+    });
+    expect(tree.root.findByProps({ testID: 'task-edit-focus-star' }).props.accessibilityState.disabled).toBe(true);
+    act(() => tree.unmount());
+
+    const starred = { ...task, status: 'next' as const, isFocusedToday: true };
+    taskEditStore.current!.tasks = [starred];
+    taskEditStore.current!._allTasks = [starred];
+    taskEditStore.current!._tasksById = new Map([[starred.id, starred]]);
+    const onSave = vi.fn();
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={starred} onClose={vi.fn()} onSave={onSave} />);
+    });
+    const form = tree.root.findByType('TaskEditFormTab' as any);
+    act(() => form.props.renderField('status').props.setDraftField('status', 'done'));
+    expect(tree.root.findByProps({ testID: 'task-edit-focus-star' }).props.accessibilityState)
+      .toMatchObject({ selected: false, disabled: true });
+    await act(async () => {
+      tree.root.find((node) => node.props.accessibilityLabel === 'common.save'
+        && typeof node.props.onPress === 'function').props.onPress();
+    });
+    expect(onSave).toHaveBeenCalledWith(starred.id,
+      expect.objectContaining({ status: 'done', isFocusedToday: false }));
+  });
+
+  it('sends an edited queued start date through Save and keeps the draft on refusal', async () => {
+    const queued: Task = {
+      id: 'queued-edit', title: 'Queued', status: 'next', startTime: '2099-01-01', isFocusedToday: true,
+      tags: [], contexts: [], createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    const current = { ...queued, id: 'current-edit', startTime: undefined };
+    taskEditStore.current!.tasks = [queued, current];
+    taskEditStore.current!._allTasks = [queued, current];
+    taskEditStore.current!._tasksById = new Map([[queued.id, queued], [current.id, current]]);
+    taskEditStore.current!.settings = { features: {}, ai: {}, gtd: { focusTaskLimit: 1 } };
+    const onSave = vi.fn(() => ({ success: false, error: 'Focus limit of 1 reached' }));
+    const onClose = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={queued} onClose={onClose} onSave={onSave} />);
+    });
+    expect(tree.root.findByProps({ testID: 'task-edit-focus-star' }).props.accessibilityLabel)
+      .toContain('Focus when available');
+    const form = tree.root.findByType('TaskEditFormTab' as any);
+    act(() => form.props.renderField('startTime').props.setDraftField('startTime', ''));
+    await act(async () => {
+      tree.root.find((node) => node.props.accessibilityLabel === 'common.save'
+        && typeof node.props.onPress === 'function').props.onPress();
+    });
+    expect(onSave).toHaveBeenCalledWith(queued.id, expect.objectContaining({ startTime: undefined }));
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('can save from the discard confirmation', async () => {

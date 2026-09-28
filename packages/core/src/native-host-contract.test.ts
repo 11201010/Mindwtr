@@ -1208,6 +1208,7 @@ describe('native host contract', () => {
                 id: 'edit',
                 readOnly: false,
                 draft,
+                focusStar: expect.objectContaining({ isFocused: false, canToggle: false, queued: false, blockedReason: 'deferred' }),
                 ...buildTaskEditorModel({
                     task: stored, draft, settings: state.settings, projects: state.projects, sections: state.sections,
                     areas: state.areas, tasks: state.tasks, people: state.people, contexts: allContexts, tags: allTags,
@@ -1254,6 +1255,70 @@ describe('native host contract', () => {
             expect(host.getTaskEditorModel({ id: 'archived-project' })).toMatchObject({ ok: true, value: { readOnly: true } });
             expect(host.getTaskEditorModel({ id: 'deleted' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
             expect(host.getTaskEditorModel({ id: '' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        });
+
+        it('uses edited start dates for queued Focus', async () => {
+            const host = await activateEditor([
+                editTask(),
+                task('other', '2026-09-01T00:00:00.000Z', { status: 'next', isFocusedToday: true }),
+            ], { gtd: { focusTaskLimit: 1 } });
+            const opened = host.getTaskEditorModel({ id: 'edit' });
+            if (!opened.ok) throw new Error('Editor did not open');
+            expect(opened.value.focusStar).toMatchObject({ canToggle: false, blockedReason: 'limit' });
+            const future = host.editTaskDraft({
+                id: 'edit', draft: opened.value.draft,
+                edit: { type: 'fields', patch: { startTime: '2099-01-01' } },
+            });
+            if (!future.ok) throw new Error('Draft edit failed');
+            expect(future.value.focusStar).toMatchObject({ canToggle: true, queued: true });
+            expect(await host.saveTaskDraft({
+                id: 'edit', base: { startTime: '', focusedToday: false },
+                patch: { startTime: '2099-01-01', focusedToday: true },
+            })).toMatchObject({ ok: true, value: { draft: { focusedToday: true } } });
+            expect(storedTask()).toMatchObject({ isFocusedToday: true, startTime: '2099-01-01' });
+
+        });
+
+        it('rejects a Focus star when the last slot fills before Save', async () => {
+            const host = await activateEditor([
+                editTask(),
+                task('other', '2026-09-01T00:00:00.000Z', { status: 'next' }),
+            ], { gtd: { focusTaskLimit: 1 } });
+            expect((await useTaskStore.getState().updateTask('other', { isFocusedToday: true })).success).toBe(true);
+            expect(await host.saveTaskDraft({
+                id: 'edit', base: { focusedToday: false }, patch: { focusedToday: true },
+            })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            expect(storedTask()?.isFocusedToday).toBeFalsy();
+        });
+
+        it('rejects moving an already-queued star into a full current Focus', async () => {
+            const host = await activateEditor([
+                editTask({ startTime: '2099-01-01', isFocusedToday: true }),
+                task('other', '2026-09-01T00:00:00.000Z', { status: 'next', isFocusedToday: true }),
+            ], { gtd: { focusTaskLimit: 1 } });
+            expect(await host.saveTaskDraft({
+                id: 'edit', base: { startTime: '2099-01-01' }, patch: { startTime: '' },
+            })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            expect(storedTask()).toMatchObject({ startTime: '2099-01-01', isFocusedToday: true });
+        });
+
+        it('does not offer Focus for Done and clears a draft star on Done transition', async () => {
+            const host = await activateEditor([
+                editTask({ isFocusedToday: true }),
+                task('done-task', '2026-09-01T00:00:00.000Z', { status: 'done' }),
+            ]);
+            expect(host.getTaskEditorModel({ id: 'done-task' }))
+                .toMatchObject({ ok: true, value: { focusStar: { canToggle: false } } });
+            const opened = host.getTaskEditorModel({ id: 'edit' });
+            if (!opened.ok) throw new Error('Editor did not open');
+            const changed = host.editTaskDraft({
+                id: 'edit', draft: opened.value.draft,
+                edit: { type: 'fields', patch: { status: 'done' } },
+            });
+            expect(changed).toMatchObject({ ok: true, value: { draft: { status: 'done', focusedToday: false } } });
+            expect(await host.saveTaskDraft({
+                id: 'edit', base: { status: 'next' }, patch: { status: 'done' },
+            })).toMatchObject({ ok: true, value: { draft: { focusedToday: false } } });
         });
 
         it('changes the revision on a task edit, a people change, a layout change and a language change', async () => {

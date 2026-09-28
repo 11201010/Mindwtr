@@ -18,6 +18,7 @@ import {
     getNextDataChangeAt,
     getNextProjectOrder,
     getTaskOrder,
+    isTaskCountedAsFocused,
     getReferenceTaskFieldClears,
     matchesDuplicateSource,
     isRestorableProjectArchiveSection,
@@ -708,7 +709,10 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             return actionFail(preparedUpdates.error);
         }
         const isPromotingTaskFocus = preparedUpdates.updates.isFocusedToday === true && existingTask.isFocusedToday !== true;
-        if (isPromotingTaskFocus && !isTaskFutureFocusCandidate({ ...existingTask, ...preparedUpdates.updates })) {
+        const focusNow = new Date();
+        const isFillingFocusSlot = !isTaskCountedAsFocused(existingTask, focusNow)
+            && isTaskCountedAsFocused({ ...existingTask, ...preparedUpdates.updates }, focusNow);
+        if (isFillingFocusSlot) {
             const focusTaskLimit = normalizeFocusTaskLimit(currentState.settings.gtd?.focusTaskLimit);
             const focusedCount = currentState.getFocusedCount();
             if (focusedCount >= focusTaskLimit) {
@@ -885,6 +889,12 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 scope: 'store',
                 category: 'storage',
                 context: { releaseCheck: 'v1.3.3/scheduled-focus-queue', operation: 'update' },
+            });
+        }
+        if (isFillingFocusSlot && isTaskFutureFocusCandidate(existingTask, focusNow)) {
+            logInfo('Queued Focus activated', {
+                scope: 'store', category: 'storage',
+                context: { releaseCheck: 'v1.3.3/editor-focus-star' },
             });
         }
         return actionOk();

@@ -2,6 +2,7 @@ import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
+import { logInfo } from './logger';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { getProjectSectionsForView, getSequentialProjectTaskCues, isSelectableProjectForTaskAssignment, type ProjectSequenceTaskCue } from './project-utils';
@@ -53,7 +54,7 @@ import {
 } from './task-editor-schedule';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
 import { getProjectRowStatus } from './project-row-meta';
-import { getFocusStarBlockedText } from './focus-star';
+import { collectFocusEligibilityTasks, getFocusStarBlockedText, resolveTaskEditorFocusStar, type FocusStarAction } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import {
     buildFocusTaskSections,
@@ -258,6 +259,7 @@ export type NativeTaskEditorModel = TaskEditorModel & {
     readOnly: boolean;
     /** createTaskDraft(task). Fields whose value is undefined are absent over JSON. */
     draft: TaskDraft;
+    focusStar: FocusStarAction & { queued: boolean; blockedText: string | null };
 };
 
 const CAPTURE_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
@@ -1004,13 +1006,26 @@ export function createNativeHostContract() {
     // day and minute ride along in the revision as in the other views.
     const taskEditorModel = (task: Task, draft: TaskDraft, now: Date, checklist?: ChecklistItem[]): NativeTaskEditorModel => {
         const state = useTaskStore.getState();
-        const { allContexts, allTags } = state.getDerivedState();
+        const derived = state.getDerivedState();
+        const { allContexts, allTags } = derived;
+        const focusTaskLimit = normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit);
+        const focusStar = resolveTaskEditorFocusStar(task, draft, {
+            tasks: collectFocusEligibilityTasks(derived.activeTasksByStatus),
+            projects: derived.projectMap,
+            sections: state.sections,
+            focusedCount: derived.focusedCount,
+            focusTaskLimit,
+            sequentialProjectIds: derived.sequentialProjectIds,
+            sectionScopedProjectIds: derived.sequentialWithinSectionProjectIds,
+            now,
+        });
         return {
             version: NATIVE_HOST_CONTRACT_VERSION,
             revision: `${revision()}:${displayRevision(now)}`,
             id: task.id,
             readOnly: isInArchivedProject(task),
             draft,
+            focusStar: { ...focusStar, blockedText: getFocusStarBlockedText(translate, focusStar, focusTaskLimit) },
             ...buildTaskEditorModel({
                 task,
                 draft,
@@ -1936,6 +1951,13 @@ export function createNativeHostContract() {
                     .filter((field) => isSameDraftValue(current[field], base[field]))
                     .map((field) => [field, patch[field]]));
                 const draft = clearInvalidTaskDraftSection(applyTaskDraftPatch(current, pending), state.sections);
+                if (draft.focusedToday && !task.isFocusedToday) {
+                    const focused = taskEditorModel(task, { ...draft, focusedToday: false }, new Date()).focusStar;
+                    if (!focused.canToggle) {
+                        return fail('ACTION_FAILED', getFocusStarBlockedText(translate, focused,
+                            normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit)) ?? 'Focus unavailable');
+                    }
+                }
                 // One write, as React Native's editor saves: draft fields, checklist and attachments together.
                 updates = buildTaskEditUpdatePatch({
                     draft,
@@ -1961,6 +1983,12 @@ export function createNativeHostContract() {
                 const saved = await save();
                 if (!saved.ok) return saved;
                 const savedTask = useTaskStore.getState()._tasksById.get(input.id) ?? task;
+                if (!task.isFocusedToday && savedTask.isFocusedToday) {
+                    logInfo('Editor Focus star saved', {
+                        scope: 'native-host', category: 'storage',
+                        context: { releaseCheck: 'v1.3.3/editor-focus-star' },
+                    });
+                }
                 return { ok: true, value: { id: input.id, draft: createTaskDraft(savedTask) } };
             } catch (error) {
                 const failure = useTaskStore.getState().persistenceFailure;

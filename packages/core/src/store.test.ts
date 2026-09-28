@@ -1157,6 +1157,23 @@ describe('TaskStore', () => {
         expect(mockStorage.saveData).not.toHaveBeenCalled();
     });
 
+    it('rejects moving a queued Focus star into a full current Focus', async () => {
+        const { addTask, updateSettings, updateTask } = useTaskStore.getState();
+        await updateSettings({ gtd: { focusTaskLimit: 1 } });
+        const queued = await addTask('Queued focus', {
+            status: 'next', startTime: '2099-01-01', isFocusedToday: true,
+        });
+        const current = await addTask('Current focus', { status: 'next', isFocusedToday: true });
+        expect(queued.success && current.success).toBe(true);
+        expect(useTaskStore.getState().getFocusedCount()).toBe(1);
+        const result = await updateTask(queued.id!, { startTime: undefined });
+        expect(result).toEqual({ success: false, error: 'Focus limit of 1 reached' });
+        expect(useTaskStore.getState()._tasksById.get(queued.id!)).toMatchObject({
+            isFocusedToday: true, startTime: '2099-01-01',
+        });
+        expect(useTaskStore.getState().getFocusedCount()).toBe(1);
+    });
+
     it('keeps the star and status invariant on task updates', async () => {
         const { addTask, updateTask } = useTaskStore.getState();
 

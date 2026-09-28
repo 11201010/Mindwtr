@@ -28,6 +28,12 @@ import { Task,
     sortViewSectionDefinitions,
     tFallback,
     toggleTaskEditorToken, } from '@mindwtr/core';
+import {
+    collectFocusEligibilityTasks,
+    getFocusStarBlockedText,
+    normalizeFocusTaskLimit,
+    resolveTaskEditorFocusStar,
+} from '@mindwtr/core';
 import { taskDraftToUpdatePatch } from '@mindwtr/core/task-draft';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -198,6 +204,11 @@ function TaskEditModalInner({
         allTags = [],
         contextTokenUsage = [],
         tagTokenUsage = [],
+        activeTasksByStatus,
+        projectMap,
+        focusedCount,
+        sequentialProjectIds,
+        sequentialWithinSectionProjectIds,
     } = useTaskStore((state) => {
         const derived = state.getDerivedState();
         return {
@@ -225,6 +236,11 @@ function TaskEditModalInner({
             allTags: derived.allTags,
             contextTokenUsage: derived.contextTokenUsage,
             tagTokenUsage: derived.tagTokenUsage,
+            activeTasksByStatus: derived.activeTasksByStatus,
+            projectMap: derived.projectMap,
+            focusedCount: derived.focusedCount,
+            sequentialProjectIds: derived.sequentialProjectIds,
+            sequentialWithinSectionProjectIds: derived.sequentialWithinSectionProjectIds,
         };
     }, shallow);
     const contextHistory = useMemo(
@@ -323,6 +339,7 @@ function TaskEditModalInner({
         sections,
         task,
         tasks,
+        translate: t,
         visible,
     });
     const recurrenceWeekdayButtons = useMemo(() => getLocalizedWeekdayButtons(language, 'narrow'), [language]);
@@ -601,6 +618,29 @@ function TaskEditModalInner({
             checklist: taskEditDraft.checklist,
         };
     }, [task, taskEditDraft]);
+    const focusStar = useMemo(() => {
+        if (!task || !taskEditDraft || readOnly || task.deletedAt || task.status === 'archived') return undefined;
+        const limit = normalizeFocusTaskLimit(settings.gtd?.focusTaskLimit);
+        const action = resolveTaskEditorFocusStar(task, taskEditDraft.draft, {
+            tasks: collectFocusEligibilityTasks(activeTasksByStatus),
+            projects: projectMap,
+            sections,
+            focusedCount,
+            focusTaskLimit: limit,
+            sequentialProjectIds,
+            sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+        });
+        const blocked = getFocusStarBlockedText(t, action, limit);
+        const label = tFallback(t, action.labelKey, action.isFocused ? 'Remove from focus' : "Add to today's focus");
+        const queuedHint = tFallback(t, 'agenda.focusWhenAvailable', 'Focus when available');
+        return {
+            focused: action.isFocused,
+            disabled: !action.canToggle,
+            label: blocked ?? (action.queued ? (action.isFocused ? `${label}. ${queuedHint}` : queuedHint) : label),
+            onToggle: () => setDraftField('focusedToday', !action.isFocused),
+        };
+    }, [activeTasksByStatus, focusedCount, projectMap, readOnly, sections, sequentialProjectIds,
+        sequentialWithinSectionProjectIds, settings, setDraftField, t, task, taskEditDraft]);
 
     const [customRecurrenceVisible, setCustomRecurrenceVisible] = useState(false);
     const [customInterval, setCustomInterval] = useState(1);
@@ -1100,6 +1140,7 @@ function TaskEditModalInner({
                 >
                     <SandboxWorkspaceCue />
                     <TaskEditHeader
+                        focusStar={focusStar}
                         onDone={readOnly ? onClose : handleDone}
                         onClose={readOnly ? onClose : handleAttemptClose}
                         onShare={handleShare}

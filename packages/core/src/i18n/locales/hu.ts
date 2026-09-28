@@ -1644,6 +1644,7 @@ export const huOverrides: Record<string, string> = {
     'agenda.todaysFocus': 'Mai fókusz',
     'agenda.focusHint': 'Kattintson a csillagra bármelyik alábbi feladatnál, hogy hozzáadja a mai fókuszhoz (legfeljebb {{count}}).',
     'agenda.addToFocus': 'Hozzáadás a mai fókuszhoz',
+    'agenda.focusWhenAvailable': 'Hozzáadás a fókuszhoz, amikor elérhető',
     'agenda.removeFromFocus': 'Eltávolítás a fókuszból',
     'agenda.maxFocusItems': 'Legfeljebb {{count}} fókuszelem',
     'projects.addToFocus': 'Hozzáadás a fókuszhoz',

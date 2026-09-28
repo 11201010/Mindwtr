@@ -3,7 +3,11 @@ import {
     areDraftAttachmentsDirty,
     clearInvalidTaskDraftSection,
     flushPendingSave,
+    collectFocusEligibilityTasks,
+    getFocusStarBlockedText,
     generateUUID,
+    normalizeFocusTaskLimit,
+    resolveTaskEditorFocusStar,
     type Attachment,
     type AttachmentDraftSettlementInput,
     type MarkdownSelection,
@@ -123,6 +127,7 @@ type UseTaskEditStateParams = {
     sections: { id: string; projectId?: string; deletedAt?: string | null }[];
     task: Task | null;
     tasks: Task[];
+    translate?: (key: string) => string;
     visible: boolean;
 };
 
@@ -136,6 +141,7 @@ export function useTaskEditState({
     sections,
     task,
     tasks,
+    translate = (key) => key,
     visible,
 }: UseTaskEditStateParams) {
     const liveTask = React.useMemo(() => {
@@ -438,6 +444,28 @@ export function useTaskEditState({
                 completedAt: undefined,
             };
         }
+        if (mode === 'save' && updates?.isFocusedToday === true && !currentTask.isFocusedToday) {
+            const state = useTaskStore.getState();
+            const latestTask = state._tasksById.get(currentTask.id) ?? currentTask;
+            const derived = state.getDerivedState();
+            const limit = normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit);
+            const action = resolveTaskEditorFocusStar(latestTask, {
+                ...saveDraftState.draft,
+                focusedToday: false,
+            }, {
+                tasks: collectFocusEligibilityTasks(derived.activeTasksByStatus),
+                projects: derived.projectMap,
+                sections: state.sections,
+                focusedCount: derived.focusedCount,
+                focusTaskLimit: limit,
+                sequentialProjectIds: derived.sequentialProjectIds,
+                sectionScopedProjectIds: derived.sequentialWithinSectionProjectIds,
+            });
+            if (!action.canToggle) {
+                onSaveError(getFocusStarBlockedText(translate, action, limit) ?? 'Focus unavailable');
+                return false;
+            }
+        }
         const pendingCancellation = pendingCancellationPatchRef.current;
         if (pendingCancellation) {
             if (mode === 'cancel' && updates) {
@@ -492,6 +520,13 @@ export function useTaskEditState({
         saveAwaitingDurabilityRef.current = false;
         pendingCancellationPatchRef.current = null;
         setCancelRetryPending(false);
+        if (mode === 'save' && !currentTask.isFocusedToday
+            && useTaskStore.getState()._tasksById.get(currentTask.id)?.isFocusedToday) {
+            void logInfo('Editor Focus star saved', {
+                scope: 'task-edit',
+                extra: { releaseCheck: 'v1.3.3/editor-focus-star' },
+            });
+        }
         if (mode === 'cancel') {
             void logInfo('Mobile task cancellation draft saved', {
                 scope: 'task-edit',
@@ -514,6 +549,7 @@ export function useTaskEditState({
         sections,
         settleCurrentAttachmentDraft,
         taskEditDraft,
+        translate,
         clearTaskEditActivitySession,
         writePatch,
     ]);

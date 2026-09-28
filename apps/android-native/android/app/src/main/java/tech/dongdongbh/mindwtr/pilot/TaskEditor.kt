@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -109,6 +110,7 @@ class EditorModel(val source: String) {
     private val reply = root.getJSONObject("model").also { check(it.getInt("version") == 1) { "Unsupported core contract" } }
     val id: String = reply.getString("id")
     val readOnly = reply.getBoolean("readOnly")
+    val focusStar: JSONObject = reply.getJSONObject("focusStar")
     /** createTaskDraft(task), each field as JSON text. A field core left unset is absent here and reads as null. */
     val draft: Map<String, String> = reply.getJSONObject("draft").let { d -> d.keys().asSequence().associateWith { draftLiteral(d.get(it)) } }
     private val layout = reply.getJSONObject("layout")
@@ -405,6 +407,19 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
                 Box(Modifier.size(44.dp).clickable(enabled = !busy && !failed, role = Role.Button, onClick = leave)
                     .semantics { contentDescription = closeLabel }, contentAlignment = Alignment.CenterStart) {
                     Icon(Lucide.X, null, tint = c.tint, modifier = Modifier.size(22.dp).fade(if (!busy && !failed) 1f else 0.5f))
+                }
+                if (editor.text("status") != "archived") {
+                    val focused = editor.flag("focusedToday")
+                    val star = editor.view.focusStar
+                    val blocked = star.optString("blockedText").takeIf { it.isNotEmpty() && it != "null" }
+                    val starEnabled = !locked && (focused || star.getBoolean("canToggle"))
+                    val actionLabel = t(if (focused) "agenda.removeFromFocus" else "agenda.addToFocus")
+                    val starLabel = blocked ?: if (star.getBoolean("queued")) {
+                        if (focused) "$actionLabel. ${t("agenda.focusWhenAvailable")}" else t("agenda.focusWhenAvailable")
+                    } else actionLabel
+                    FocusStar(focused, !starEnabled, 22, Modifier.size(44.dp)
+                        .clickable(enabled = starEnabled, role = Role.Button) { editFields(mapOf("focusedToday" to !focused)) }
+                        .semantics { contentDescription = starLabel; if (!starEnabled) disabled() })
                 }
             }
             Spacer(Modifier.weight(1f))

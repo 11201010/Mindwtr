@@ -1697,6 +1697,7 @@ export const en: Record<string, string> = {
         'agenda.todaysFocus': "Today's Focus",
         'agenda.focusHint': "Click the star on any task below to add it to today's focus (max {{count}}).",
         'agenda.addToFocus': "Add to today's focus",
+        'agenda.focusWhenAvailable': 'Focus when available',
         'agenda.removeFromFocus': 'Remove from focus',
         'agenda.maxFocusItems': 'Max {{count}} focus item(s)',
         'projects.addToFocus': 'Add to focus',

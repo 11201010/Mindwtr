@@ -1575,6 +1575,7 @@ export const zhHans: Record<string, string> = {
         'agenda.todaysFocus': '今日焦点',
         'agenda.focusHint': '点击下方任务右侧的星标，将其加入今日焦点（最多 {{count}} 项）。',
         'agenda.addToFocus': '加入今日焦点',
+        'agenda.focusWhenAvailable': '可用时加入焦点',
         'agenda.removeFromFocus': '从焦点中移除',
         'agenda.maxFocusItems': '最多 {{count}} 个焦点任务',
         'agenda.inProgress': '进行中',

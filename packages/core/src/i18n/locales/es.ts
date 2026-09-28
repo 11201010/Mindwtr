@@ -1644,6 +1644,7 @@ export const esOverrides: Record<string, string> = {
 'agenda.todaysFocus': "Enfoque de hoy",
 'agenda.focusHint': "Haz clic en la estrella de cualquier tarea de abajo para añadirla al enfoque de hoy (máx. {{count}}).",
 'agenda.addToFocus': "Añadir al enfoque de hoy",
+'agenda.focusWhenAvailable': 'Añadir al enfoque cuando esté disponible',
 'agenda.removeFromFocus': "Quitar de la lista de enfoque",
 'agenda.maxFocusItems': "Máximo {{count}} elementos de enfoque",
 'projects.addToFocus': "Añadir al enfoque",
