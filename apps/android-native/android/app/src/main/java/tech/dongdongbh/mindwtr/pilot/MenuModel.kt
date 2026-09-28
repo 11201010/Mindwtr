@@ -366,6 +366,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (list != null) refresh()
     }
 
+    /** A system entry's tab or capture (EntryPoints.kt): the sheet closes and an open screen is left, as RN's router replaces it. */
+    fun toTabs() {
+        closeSheet()
+        if (screen != null) leave(null)
+    }
+
     private fun leave(back: MenuScreen?) {
         if (screen == MenuScreen.Projects) shell.closeProject()
         screen = back

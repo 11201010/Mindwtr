@@ -306,6 +306,17 @@ const runNetDeadline = async (port: string, mode: string, signal: AbortSignal) =
 };
 
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
+/** What an entry point opened, by kind only: never its URL, route text, or shared text. */
+const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
+    const entry = result.ok ? result.value as { route: string | null; taskId: string | null; projectId: string | null; search: unknown; capture: unknown; notice: unknown } : null;
+    const outcome = !entry ? 'refused' : entry.capture ? 'capture' : entry.notice ? 'notice' : entry.taskId ? 'task' : entry.projectId ? 'project'
+        : entry.search ? 'search' : entry.route ? 'screen' : 'nothing';
+    const kind = ['link', 'share', 'createNote'].includes(input?.kind as string) ? input.kind as string : 'other';
+    try {
+        logInfo('Native Android entry point', { scope: 'native-android', extra: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
+    } catch { /* a diagnostic sink must not change what the entry opens */ }
+    return result;
+};
 /**
  * The Menu tab's reads (native-host-contract-menu-views.ts; History's tabs, Archive, Contexts and Trash from the list views
  * block; the Review screen and the Weekly and Daily Review from native-host-contract-review-views.ts; the Calendar and the
@@ -364,6 +375,9 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
+    // A link, text share or assistant note (native-host-contract-entry-points.ts), and the capture popup's Import .txt.
+    entryPoint: (input) => logEntryPoint(input, contract.resolveNativeEntryPoint(input)),
+    captureImport: (input) => contract.planQuickCaptureImport(input),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {

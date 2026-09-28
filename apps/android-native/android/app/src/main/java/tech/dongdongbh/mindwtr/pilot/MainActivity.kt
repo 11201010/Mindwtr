@@ -1,5 +1,6 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
@@ -106,6 +107,8 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         model.attach()
+        // A link, share or assistant note that launched the app (a recreated screen already has it: EntryRouter keeps it).
+        if (savedInstanceState == null) model.entries.receive(intent)
         setContent {
             // Core resolves RN's theme during the boot; until it ends, RN's default follows the system.
             // RN's app lock gate (AppLock.kt) replaces the screens while locked.
@@ -118,6 +121,9 @@ class MainActivity : FragmentActivity() {
                         isAppearanceLightNavigationBars = !theme.isDark
                     }
                 }
+                // A waiting entry opens once the app is free (EntryRouter.pump); a system capture that ended puts the app behind the previous one.
+                LaunchedEffect(writable, busy, failedAction, editor == null, processing?.hidden, capture?.pending, menu.screen, entries.pending) { entries.pump() }
+                LaunchedEffect(leaveApp) { if (leaveApp) { leftApp(); moveTaskToBack(true) } }
                 val open = editor
                 val flow = processing?.takeUnless { it.hidden }
                 val searching = search
@@ -177,6 +183,13 @@ class MainActivity : FragmentActivity() {
                 }
             } } }
         }
+    }
+
+    /** RN's MainActivity is singleTask: a link, share or note sent while the app runs arrives here. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        model.entries.receive(intent)
     }
 }
 

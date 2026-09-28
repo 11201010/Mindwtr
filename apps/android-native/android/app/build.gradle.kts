@@ -4,6 +4,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The app's link scheme by build type (D6): the development build has its own, so RN's app on the same phone keeps
+// mindwtr:// links; the upgrade harness keeps its RN build's scheme; a release keeps RN's. The manifest's link filter, the
+// shortcuts (scripts/build-shortcuts.mjs), and BuildConfig.URL_SCHEME (the scheme core reads links for) use it.
+val urlSchemes = mapOf("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr")
+fun com.android.build.api.dsl.ApplicationBuildType.urlScheme() {
+    val scheme = urlSchemes.getValue(name)
+    buildConfigField("String", "URL_SCHEME", "\"$scheme\"")
+    manifestPlaceholders["urlScheme"] = scheme
+}
+
 android {
     namespace = "tech.dongdongbh.mindwtr.pilot"
     compileSdk = 36
@@ -19,13 +29,19 @@ android {
     }
 
     buildTypes {
+        getByName("debug") { urlScheme() }
+        getByName("release") { urlScheme() }
         // Upgrade harness only (scripts/check-upgrade-device.mjs): installs in place over the
         // RN v1.3.2 harness build, package tech.dongdongbh.mindwtr.upgradetest, and opens its files.
         create("upgradetest") {
             initWith(getByName("debug"))
             buildConfigField("boolean", "RN_STORAGE", "true")
+            urlScheme()
         }
     }
+
+    // RN's app shortcuts, generated per build type (buildShortcuts below).
+    sourceSets { urlSchemes.keys.forEach { getByName(it).res.srcDir(layout.buildDirectory.dir("generated/shortcuts/$it/res")) } }
 
     // BuildConfig.DEBUG gates the lifecycle check's fault hooks.
     buildFeatures { compose = true; buildConfig = true }
@@ -76,4 +92,15 @@ val buildCoreBundle by tasks.registering(Exec::class) {
     )
     outputs.file("src/main/assets/core-host.js")
 }
-tasks.named("preBuild") { dependsOn(buildCoreBundle) }
+val buildShortcuts by tasks.registering(Exec::class) {
+    workingDir = rootProject.projectDir.resolve("../../..")
+    val out = layout.buildDirectory.dir("generated/shortcuts").get().asFile
+    commandLine(listOf("node", "apps/android-native/scripts/build-shortcuts.mjs", out.path) + urlSchemes.map { (type, scheme) -> "$type=$scheme" })
+    inputs.files(
+        workingDir.resolve("apps/mobile/plugins/android-app-shortcuts.js"),
+        workingDir.resolve("apps/android-native/scripts/build-shortcuts.mjs"),
+    )
+    inputs.property("urlSchemes", urlSchemes.toString())
+    outputs.dir(out)
+}
+tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts) }

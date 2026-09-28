@@ -380,7 +380,7 @@ assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
 // User actions go through perform: the three commands with their action, the reads the user asked for without one.
 assert.equal(code(model).match(/\bperform\(action\)/g).length, 14, 'complete, editor save, Reset checklist, task star, project star, status, project create, area filter, saved search, Process Inbox answer, the storage retry, and the capture popup\'s capture, lines and picker create');
-assert.equal(code(model).match(/\bperform\s*\{/g).length, 9, 'editor, reload, Try again, two More (Focus, a project), open project, open Process Inbox, open the capture popup, a Focus control\'s edit');
+assert.equal(code(model).match(/\bperform\s*\{/g).length, 10, 'editor, reload, Try again, two More (Focus, a project), open project, open Process Inbox, open the capture popup, a Focus control\'s edit, Import .txt');
 // Background reads (resume, each minute, after a command) never take busy, so they disable no control and never
 // turn a user's tap away: only perform sets busy, and its guard knows nothing of reads in flight.
 const backgroundFn = code(model.slice(model.indexOf('internal fun <T> background('), model.indexOf('internal fun perform(')));
@@ -1156,7 +1156,7 @@ for (const [kind, fn] of [['capture', 'sendCapture'], ['captureLines', 'sendLine
     assert.match(model, new RegExp(`keepCapture\\(current\\.copy\\(pending = action[^)]*\\)\\)\\s+${fn}\\(action\\)`), `${kind}: the request is persisted before the call`);
 }
 assert.match(model, /FailedAction\("capture", current\.captureId, current\.text, patch = mapOf\("options" to current\.options\.toString\(\), "openAfterSave" to "\$openAfterSave"\)\)/);
-assert.match(model, /FailedAction\("captureLines", current\.lineIds\.first\(\), current\.text,\s*patch = mapOf\("options" to current\.options\.toString\(\), "captureIds" to current\.lineIds\.joinToString\(","\)\)\)/);
+assert.match(model, /FailedAction\("captureLines", current\.lineIds\.first\(\), current\.linesText \?: current\.text,\s*patch = mapOf\("options" to current\.options\.toString\(\), "captureIds" to current\.lineIds\.joinToString\(","\)\)\)/);
 assert.match(model, /failedAction = action\s+when \(action\.kind\) \{ "capture" -> sendCapture\(action\); "captureLines" -> sendLines\(action\); else -> sendPicker\(action\) \}/,
     'after process death an uncertain capture is sent again with the same IDs');
 assert.match(model, /if \(action\.kind in CAPTURE_KINDS\) storedCapture\?\.let \{ keepCapture\(it\.copy\(pending = action\)\) \}/, 'a new screen reopens the popup on an owed capture, never re-sends it');
@@ -1907,6 +1907,106 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert(code(savedSearchUi).match(/\.clearAndSetSemantics \{/g).length >= 2);
 }
 
+// Pass B1 (entry points): RN's activity name as an alias with RN's link, share and assistant intents and RN's app shortcuts, the
+// development build's own scheme, and a router that opens what core's resolveNativeEntryPoint names; Import .txt in the popup.
+{
+    const entryKt = source('EntryPoints.kt');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
+    // The alias is RN's component name (widgets, icons and pinned shortcuts launch it) and carries every public entry point; the
+    // activity itself (singleTask, as RN's) has no filter, and nothing runs in another process (one engine, one writer).
+    const alias = manifest.match(/<activity-alias\s[\s\S]*?<\/activity-alias>/g) ?? [];
+    assert.equal(alias.length, 1, 'one activity alias');
+    assert.match(alias[0], /android:name="\$\{applicationId\}\.MainActivity"/);
+    assert.match(alias[0], /android:targetActivity="\.MainActivity"/);
+    assert.match(alias[0], /android:exported="true"/);
+    const filters = alias[0].match(/<intent-filter>[\s\S]*?<\/intent-filter>/g);
+    const filter = (action) => filters.find((entry) => entry.includes(`android:name="${action}"`));
+    assert.match(filter('android.intent.action.MAIN'), /android\.intent\.category\.LAUNCHER/);
+    assert.match(filter('android.intent.action.VIEW'), /category\.DEFAULT[\s\S]*category\.BROWSABLE[\s\S]*<data android:scheme="\$\{urlScheme\}" \/>/);
+    assert.match(filter('android.intent.action.SEND'), /category\.DEFAULT[\s\S]*<data android:mimeType="text\/plain" \/>/);
+    assert.doesNotMatch(filter('android.intent.action.SEND'), /image|audio|video|application|SEND_MULTIPLE/, 'files wait for the attachments pass');
+    assert.match(filter('com.google.android.gms.actions.CREATE_NOTE'), /category\.DEFAULT[\s\S]*category\.VOICE[\s\S]*mimeType="text\/plain"[\s\S]*mimeType="\*\/\*"/);
+    assert.match(alias[0], /android:name="android\.app\.shortcuts"\s+android:resource="@xml\/mindwtr_shortcuts"/);
+    assert.equal(manifest.match(/category\.LAUNCHER/g).length, 1, 'one launcher entry: the alias');
+    const mainActivity = manifest.match(/<activity\s[^>]*android:name="\.MainActivity"[^>]*\/>/)?.[0] ?? assert.fail('MainActivity has no filter of its own');
+    assert.match(mainActivity, /android:launchMode="singleTask"/);
+    assert.doesNotMatch(manifest, /android:process=/);
+    // D6: each build type's scheme, and the scheme reaches the manifest, the shortcuts and BuildConfig from one map.
+    assert.match(gradle, /val urlSchemes = mapOf\("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr"\)/);
+    assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
+    for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
+    assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts\) \}/);
+    // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
+    // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
+    const { createRequire } = await import('node:module');
+    const rnShortcuts = createRequire(import.meta.url)('../../mobile/plugins/android-app-shortcuts.js').__testables;
+    const { buildShortcuts } = await import('./build-shortcuts.mjs');
+    const rnXml = rnShortcuts.buildShortcutsXml('tech.dongdongbh.mindwtr');
+    const ids = (xml) => [...xml.matchAll(/android:shortcutId="([^"]+)"/g)].map(([, id]) => id);
+    const capabilities = (xml) => [...xml.matchAll(/<capability android:name="([^"]+)"/g)].map(([, id]) => id);
+    for (const scheme of ['mindwtr-native-dev', 'mindwtr-upgradetest', 'mindwtr']) {
+        const { xml, strings } = buildShortcuts(scheme);
+        assert.deepEqual(ids(xml), ['capture', 'inbox', 'focus', 'waiting', 'someday', 'projects', 'review', 'calendar', 'add_task_inbox', 'open_focus', 'open_calendar']);
+        assert.deepEqual(ids(xml), ids(rnXml));
+        assert.deepEqual(capabilities(xml), capabilities(rnXml));
+        assert.equal(strings, rnShortcuts.SHORTCUTS_STRINGS_XML);
+        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///').replace(/android:data="mindwtr:\/\/\/capture-quick" \/>/,
+            'android:targetPackage="tech.dongdongbh.mindwtr"\n      android:targetClass="tech.dongdongbh.mindwtr.androidwidget.QuickCaptureActivity" />'), rnXml);
+        assert.doesNotMatch(xml, /QuickCaptureActivity|targetPackage/);
+    }
+    // Core's buildCreateNoteCapture mirrors RN's MainActivity (the name, else the Assistant's text, else EXTRA_TEXT; the note when
+    // it differs): if RN's rule changes, this fails, and core's mirror must change with it.
+    const startupTrace = readFileSync(resolve(app, '../mobile/plugins/android-startup-trace.js'), 'utf8');
+    assert.match(startupTrace, /val rawTitle = intent\.getStringExtra\("com\.google\.android\.gms\.actions\.extra\.NAME"\)\?\.trim\(\)\.orEmpty\(\)\s+val rawText = \(\s+intent\.getStringExtra\("com\.google\.android\.gms\.actions\.extra\.TEXT"\)\s+\?: intent\.getStringExtra\(Intent\.EXTRA_TEXT\)\s+\)\?\.trim\(\)\.orEmpty\(\)\s+val title = when \{\s+rawTitle\.isNotBlank\(\) -> rawTitle\s+rawText\.isNotBlank\(\) -> rawText\s+else -> return\s+\}/);
+    assert.match(startupTrace, /if \(rawText\.isNotBlank\(\) && rawText != title\) \{\s+builder\.appendQueryParameter\("note", rawText\)/);
+    // Kotlin reads the intent's data and text extras as strings only (no stream, no parcel), inside runCatching, and sends them to
+    // core unchanged with the build's scheme; the Assistant's extras are RN's.
+    const intentRead = code(entryKt.slice(entryKt.indexOf('fun Intent.entryInput()'), entryKt.indexOf('fun Context.readPickedText')));
+    assert.match(intentRead, /= runCatching \{/);
+    assert.match(intentRead, /Intent\.ACTION_VIEW -> dataString\?\.let \{ JSONObject\(\)\.put\("kind", "link"\)\.put\("url", it\)\.put\("scheme", BuildConfig\.URL_SCHEME\) \}/);
+    assert.match(intentRead, /Intent\.ACTION_SEND -> if \(type\?\.startsWith\("text\/plain"\) != true\) null else/);
+    assert.match(intentRead, /\.extra\("text", getStringExtra\(Intent\.EXTRA_TEXT\)\)\.extra\("title", getCharSequenceExtra\(Intent\.EXTRA_TITLE\)\?\.toString\(\)\)\s+\.extra\("subject", getStringExtra\(Intent\.EXTRA_SUBJECT\)\)/);
+    assert.match(intentRead, /\.extra\("text", getStringExtra\(NOTE_TEXT\)\)\.extra\("extraText", getStringExtra\(Intent\.EXTRA_TEXT\)\)/);
+    assert.match(entryKt, /private const val NOTE_NAME = "com\.google\.android\.gms\.actions\.extra\.NAME"\s+private const val NOTE_TEXT = "com\.google\.android\.gms\.actions\.extra\.TEXT"/);
+    assert.doesNotMatch(code(entryKt), /EXTRA_STREAM|getParcelable|getSerializable|getBundleExtra/);
+    // The entry waits in the saved state until core answers it, opens only while the app is free, reads core's answer in one
+    // perform (a capture's popup view too), and opens it once the action ends: the editor through whenIdle, as it refuses while busy.
+    assert.match(entryKt, /var pending by mutableStateOf\(saved\.get<String>\("entry"\)\); private set/);
+    assert.match(entryKt, /pending = input\.toString\(\)\s+saved\["entry"\] = pending/);
+    assert.match(entryKt, /if \(!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture\?\.pending != null\s+\|\| menu\.screen == MenuScreen\.MindSweep\) return/);
+    assert.match(entryKt, /val reply = runtime\.menuRead\("entryPoint", input\)/);
+    assert.match(entryKt, /runtime\.openQuickCapture\(\)\s+runtime\.quickCaptureView\(JSONObject\(\)\.put\("text", open\.getString\("text"\)\)\.put\("options", open\.getJSONObject\("options"\)\)\.toString\(\)\)/);
+    assert.match(entryKt, /ui \{ menu\.whenIdle \{ open\(reply, view\) \} \}\s+\} finally \{\s+ui \{ forget\(input\) \}/);
+    assert.match(entryKt, /highlight\(id\); menu\.whenIdle \{ openEditor\(id, "view"\) \}/);
+    assert.match(activity, /if \(savedInstanceState == null\) model\.entries\.receive\(intent\)/);
+    assert.match(activity, /override fun onNewIntent\(intent: Intent\) \{\s+super\.onNewIntent\(intent\)\s+setIntent\(intent\)\s+model\.entries\.receive\(intent\)/);
+    assert.match(activity, /LaunchedEffect\(writable, busy, failedAction, editor == null, processing\?\.hidden, capture\?\.pending, menu\.screen, entries\.pending\) \{ entries\.pump\(\) \}/);
+    assert.match(activity, /LaunchedEffect\(leaveApp\) \{ if \(leaveApp\) \{ leftApp\(\); moveTaskToBack\(true\) \} \}/);
+    assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, contract\.resolveNativeEntryPoint\(input\)\),$/m);
+    assert.match(hostEntry, /^\s+captureImport: \(input\) => contract\.planQuickCaptureImport\(input\),$/m);
+    assert.match(hostEntry, /releaseCheck: 'v1\.3\.3\/native-android-entry-point', kind, outcome \}/);
+    // A system capture (RN's origin=system) puts the app behind the previous one when the popup closes; Save and edit stays.
+    assert.match(model, /private fun endCapture\(\) \{\s+val back = capture\?\.returnToPreviousApp == true\s+keepCapture\(null\)\s+if \(back\) leaveApp = true/);
+    assert.equal(code(model).match(/endCapture\(\)/g).length, 4, 'Close, a saved capture that closes, and saved lines end the popup');
+    assert.match(captureUi, /\.put\("linesText", linesText \?: JSONObject\.NULL\)\.put\("returnToPreviousApp", returnToPreviousApp\)/);
+    // Import .txt: RN's text/plain picker; the file is read inside the action (off the main thread) and core plans it; Create tasks
+    // sends the file's text, on disk with the question.
+    assert.match(captureUi, /rememberLauncherForActivityResult\(ActivityResultContracts\.OpenDocument\(\)\) \{ uri -> uri\?\.let\(::importCaptureText\) \}/);
+    assert.match(captureUi, /ImportTextButton\(!locked\) \{ importText\.launch\(arrayOf\("text\/plain"\)\) \}/);
+    assert.match(captureUi, /\.clearAndSetSemantics \{ contentDescription = label; role = Role\.Button; testTag = "capture-import-text"; if \(enabled\) onClick \{ pick\(\); true \} else disabled\(\) \}/);
+    assert.match(model, /perform \{ runtime ->\s+val text = getApplication<Application>\(\)\.readPickedText\(uri\)\s+val plan = runtime\.menuRead\("captureImport"/);
+    assert.match(model, /FailedAction\("captureLines", current\.lineIds\.first\(\), current\.linesText \?: current\.text,/);
+    for (const key of ['quickAdd.bulkImportTextFile', 'quickAdd.bulkImportTextFileLabel']) assert(labelKeys.includes(key), `LABEL_KEYS lacks ${key}`);
+    // No Kotlin policy, dates, colors or literal text in the new file; RN's route names map to this app's screens only.
+    const entryCode = code(entryKt).replace(/private const val \w+ = "[^"]*"/g, '');
+    assert.doesNotMatch(entryCode, /\.(sort\w*|sorted\w*|filter\w*|groupBy|reversed|distinct\w*|partition)\b/, 'EntryPoints.kt: no Kotlin sorting, filtering, or grouping');
+    assert.doesNotMatch(entryCode, /SimpleDateFormat|DateTimeFormatter|java\.time|Calendar\.getInstance|currentTimeMillis|\bDate\(|\bColor\(|"#[0-9A-Fa-f]{3,8}"/);
+    for (const [, key] of entryCode.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `EntryPoints.kt: ${key} is not in LABEL_KEYS`);
+    assert.doesNotMatch(entryCode, /\bText\(|contentDescription|showToast\("/, 'EntryPoints.kt: every word is core\'s');
+}
+
 const fakeCore = `
 export class SqliteAdapter {
   async getData() {
@@ -2524,4 +2624,5 @@ console.log('App lock: core\'s General row read at boot and after a failed save,
 for (const file of ['device.mjs', 'check-net-device.mjs']) {
     assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);
 }
+console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');
