@@ -360,17 +360,40 @@ export type CaptureModalLinesOutcome =
      */
     | { kind: 'failed'; stage: 'validation-rejected' | 'prepare-failed' | 'transaction-rejected' };
 
+type BuildLineRequest = (line: string, projects: readonly Project[]) => Promise<CaptureModalRequest | null>;
+
 /**
- * Create one task per line in one store write, as "Create tasks" does. Each
- * line's request sees the projects earlier lines created. Shared files stay on
- * the first task only: the records share ids, so copies would alias one file.
- * Throws when a store action or `buildRequest` throws; `onWrite` runs just
- * before the batch write, so the caller can tell a throw there apart.
+ * Check every line before anything is written: a line without a request, or
+ * with a date command it cannot read, refuses the whole batch. Null: all good.
+ */
+export async function checkCaptureModalLines(input: {
+    lines: readonly string[];
+    projects: readonly Project[];
+    buildRequest: BuildLineRequest;
+}): Promise<Exclude<CaptureModalLinesOutcome, { kind: 'saved' }> | null> {
+    for (const line of input.lines) {
+        const request = await input.buildRequest(line, input.projects);
+        if (!request) return { kind: 'failed', stage: 'validation-rejected' };
+        const plan = planCaptureTask(request.input, request.options);
+        if (!plan.success && plan.reason === 'invalid-date-command') {
+            return { kind: 'refused', invalidDateCommands: plan.invalidDateCommands };
+        }
+    }
+    return null;
+}
+
+/**
+ * Create one task per line in one store write, as "Create tasks" does. Every
+ * line is checked first (checkCaptureModalLines). Each line's request sees the
+ * projects earlier lines created. Shared files stay on the first task only: the
+ * records share ids, so copies would alias one file. Throws when a store action
+ * or `buildRequest` throws; `onWrite` runs just before the batch write, so the
+ * caller can tell a throw there apart.
  */
 export async function saveCaptureModalLines(input: {
     lines: readonly string[];
     projects: readonly Project[];
-    buildRequest: (line: string, projects: readonly Project[]) => Promise<CaptureModalRequest | null>;
+    buildRequest: BuildLineRequest;
     actions: Pick<CaptureTransactionActions, 'addProject'> & {
         addTasks: (items: { title: string; initialProps: Partial<Task>; captureId?: string }[]) => Promise<StoreActionResult>;
     };
@@ -378,6 +401,8 @@ export async function saveCaptureModalLines(input: {
     captureIds?: readonly string[];
     onWrite?: () => void;
 }): Promise<CaptureModalLinesOutcome> {
+    const refusal = await checkCaptureModalLines(input);
+    if (refusal) return refusal;
     const items: { title: string; initialProps: Partial<Task>; captureId?: string }[] = [];
     let projects = input.projects;
     for (const line of input.lines) {

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { buildCaptureModalRequest, planCaptureModalRequest } from './capture-modal-model';
+import { describe, expect, it, vi } from 'vitest';
+import { buildCaptureModalRequest, planCaptureModalRequest, saveCaptureModalLines } from './capture-modal-model';
 import { parseQuickAdd } from './quick-add';
 import type { Project, Task } from './types';
 
@@ -33,5 +33,22 @@ describe('capture confirmation screen model', () => {
         expect(description('Subject', '   ')).toBeUndefined();
         expect(description('Subject /note:read later', 'Body')).toBe('Body\nread later');
         expect(description('Subject /note:read later', '')).toBe('read later');
+    });
+
+    // RN bug (apps/mobile/app/capture-modal.tsx:692-719 before the move): lines were prepared
+    // one by one, so the project an earlier line named was created before a later line's
+    // date command refused the batch.
+    it('refuses a batch with an unreadable date command before any project or task is written', async () => {
+        const addProject = vi.fn(async (title: string) => ({ id: `p-${title}`, title }) as Project);
+        const addTasks = vi.fn(async () => ({ success: true }));
+        const outcome = await saveCaptureModalLines({
+            lines: ['Plan beds +Garden plan', 'Pay rent /due:whenever'],
+            projects: [],
+            buildRequest: async (line, projects) => request(line, { projects }),
+            actions: { addProject, addTasks },
+        });
+        expect(outcome).toEqual({ kind: 'refused', invalidDateCommands: ['/due:whenever'] });
+        expect(addProject).not.toHaveBeenCalled();
+        expect(addTasks).not.toHaveBeenCalled();
     });
 });
