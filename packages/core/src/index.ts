@@ -77,6 +77,7 @@ export * from './sync-encryption-service';
 export * from './mobile-sync-utils';
 export * from './mobile-sync-service';
 export * from './mobile-background-sync';
+export * from './mobile-sync-triggers';
 export * from './diceware';
 export * from './task-utils';
 export * from './task-similarity';
