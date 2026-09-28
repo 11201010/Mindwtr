@@ -1,0 +1,977 @@
+import { readFileSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { loadTranslations } from './i18n/i18n-loader';
+import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import type {
+    NativeSyncEncryptionAction,
+    NativeSyncSettings,
+    NativeSyncSettingsHost,
+    NativeSyncWebDavFields,
+} from './native-host-contract-settings-sync';
+import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { SyncEncryptionCleanupDeferredError } from './sync-encryption-service';
+import {
+    CLOUD_PROVIDER_KEY,
+    CLOUD_TOKEN_KEY,
+    SYNC_BACKEND_KEY,
+    SYNC_PATH_KEY,
+    WEBDAV_PASSWORD_KEY,
+    WEBDAV_URL_KEY,
+    WEBDAV_USERNAME_KEY,
+} from './sync-storage-keys';
+import type { SyncEncryptionState } from './sync-encryption';
+import type { AppSettings, Project, Task } from './types';
+import { generateUUID } from './uuid';
+
+/**
+ * The frozen React Native Settings › Sync screen (sync-settings-parity.fixtures.json,
+ * captured by apps/mobile/components/settings/sync-settings-screen.parity.test.tsx),
+ * replayed through the native host contract. The replay plays the native screen: it
+ * keeps the screen's own state (the form drafts, the encryption fields, which cards
+ * are open), reads the view, sends each control's command, and lays the view out in
+ * the order React Native draws it. The device answers from the scenario's queues
+ * exactly as the React Native harness's stubs do.
+ */
+
+const device = vi.hoisted(() => ({
+    queues: {} as Record<string, unknown[]>,
+    held: [] as (() => void)[],
+    holdStarted: null as null | (() => void),
+    calls: [] as unknown[][],
+    encryption: { state: 'off' as string, unavailable: false, pending: false, incomplete: null as string | null },
+}));
+
+/** The next answer for `name`, or `fallback` when the scenario queued none. */
+const next = (name: string, fallback: unknown) => {
+    const queue = device.queues[name];
+    return queue && queue.length > 0 ? queue.shift() : fallback;
+};
+
+const hold = () => new Promise<void>((resolve) => {
+    device.held.push(resolve);
+    device.holdStarted?.();
+});
+
+/** The React Native harness's `answer`: a string answers itself, `{ error }` rejects, `{ value }` answers, 'hold' waits. */
+const answer = async (name: string, fallback: unknown): Promise<any> => {
+    const entry = next(name, fallback);
+    if (entry === 'hold') {
+        await hold();
+        return answer(name, fallback);
+    }
+    if (entry && typeof entry === 'object' && 'encryption' in entry) device.encryption.state = String((entry as { encryption: string }).encryption);
+    if (entry && typeof entry === 'object' && 'error' in entry) throw new Error(String((entry as { error: string }).error));
+    if (entry && typeof entry === 'object' && 'value' in entry) return (entry as { value: unknown }).value;
+    return entry;
+};
+
+vi.mock('./webdav', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('./webdav')>()),
+    probeWebdavSyncCompatibility: async (url: string, options: Record<string, unknown>, policy?: { requireStrongEtag?: boolean }) => {
+        device.calls.push(['probeWebdav', url, {
+            username: options.username, password: options.password, timeoutMs: options.timeoutMs,
+            requireStrongEtag: policy?.requireStrongEtag ?? null,
+        }]);
+        return answer('probe', 'strong-etag');
+    },
+}));
+vi.mock('./cloud', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('./cloud')>()),
+    cloudGetJson: async (url: string, options: Record<string, unknown>) => {
+        device.calls.push(['cloudGetJson', url, { token: options.token, timeoutMs: options.timeoutMs }]);
+        return answer('cloudGet', {});
+    },
+}));
+
+type Device = {
+    language?: string;
+    os?: 'android' | 'ios';
+    foss?: boolean;
+    dropboxAppKey?: string;
+    cloudKitStatus?: string;
+    storage?: Record<string, string>;
+    secrets?: Record<string, string>;
+    dropboxConnected?: boolean;
+    encryption?: { state?: SyncEncryptionState; unavailable?: boolean; pending?: boolean; incomplete?: string | null };
+    queues?: Record<string, unknown[]>;
+};
+type Scenario = { name: string; settings: string; data?: 'none' | 'titles'; device: Device; actions: [string, ...unknown[]][] };
+type Fixture = {
+    now: string;
+    timeZone: string;
+    deviceLocale: string;
+    tasks: Task[];
+    projects: Project[];
+    settings: Record<string, AppSettings>;
+    scenarios: Scenario[];
+    observations: Record<string, Record<string, unknown>[]>;
+};
+type Host = ReturnType<typeof createNativeHostContract>;
+
+const fixture: Fixture = JSON.parse(readFileSync(new URL('./sync-settings-parity.fixtures.json', import.meta.url), 'utf8'));
+
+const value = <T,>(result: NativeHostResult<T>): T => {
+    if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+    return result.value;
+};
+const normalize = (entry: unknown): unknown => JSON.parse(JSON.stringify(entry, (_key, item) => (item === undefined ? '<undefined>' : item)));
+
+// ---------------------------------------------------------------------------
+// The store: the fixture's data, with settings writes recorded as the harness records them.
+
+const writes: unknown[][] = [];
+let realUpdateSettings: ((...args: unknown[]) => Promise<unknown>) | null = null;
+
+async function seed(settings: AppSettings, titled: boolean) {
+    await flushPendingSave();
+    resetForTests();
+    realUpdateSettings ??= useTaskStore.getState().updateSettings as never;
+    const real = realUpdateSettings!;
+    let data = JSON.parse(JSON.stringify({
+        tasks: titled ? fixture.tasks : [], projects: titled ? fixture.projects : [], sections: [], areas: [], people: [], settings,
+    }));
+    setStorageAdapter({
+        getData: async () => data,
+        saveData: async (nextData) => {
+            data = JSON.parse(JSON.stringify(nextData));
+        },
+    });
+    useTaskStore.setState({
+        updateSettings: real,
+        _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+        settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
+    } as never);
+    await useTaskStore.getState().fetchData({ throwOnError: true });
+    await flushPendingSave();
+    useTaskStore.setState({
+        updateSettings: async (...args: unknown[]) => {
+            writes.push(['updateSettings', ...(normalize(args) as unknown[])]);
+            return real(...args);
+        },
+    } as never);
+    writes.length = 0;
+}
+
+// ---------------------------------------------------------------------------
+// The device: RN's key-value store and secret store, and the stubs the harness has.
+
+type DeviceState = {
+    os: 'android' | 'ios';
+    foss: boolean;
+    dropboxAppKey: string;
+    cloudKitStatus: string;
+    storage: Map<string, string>;
+    secrets: Map<string, string>;
+    dropboxTokens: Record<string, unknown> | null;
+    log: unknown[][];
+};
+
+function createDevice(input: Device): { state: DeviceState; host: NativeSyncSettingsHost; apply: (patch: Device) => void } {
+    const state: DeviceState = {
+        os: 'android', foss: false, dropboxAppKey: '', cloudKitStatus: 'available',
+        storage: new Map(Object.entries(input.storage ?? {})),
+        secrets: new Map(Object.entries(input.secrets ?? {})),
+        dropboxTokens: input.dropboxConnected
+            ? { accessToken: 'stored-access', refreshToken: 'stored-refresh', expiresAt: 4_102_444_800_000 }
+            : null,
+        log: [],
+    };
+    device.encryption = { state: 'off', unavailable: false, pending: false, incomplete: null };
+    const apply = (patch: Device) => {
+        if (patch.os !== undefined) state.os = patch.os;
+        if (patch.foss !== undefined) state.foss = patch.foss;
+        if (patch.dropboxAppKey !== undefined) state.dropboxAppKey = patch.dropboxAppKey;
+        if (patch.cloudKitStatus !== undefined) state.cloudKitStatus = patch.cloudKitStatus;
+        if (patch.encryption) Object.assign(device.encryption, patch.encryption);
+    };
+    apply(input);
+    device.queues = JSON.parse(JSON.stringify(input.queues ?? {}));
+    device.held.length = 0;
+    device.calls.length = 0;
+    const calls = device.calls;
+    /** A transition: 'ok' moves the state to `after`, `{ cleanup }` commits it and defers the cleanup. */
+    const transition = async (name: string, after: string, onProgress?: (progress: { phase: 'attachments' | 'documents'; completed: number; total: number }) => void): Promise<void> => {
+        const entry = next(name, 'ok');
+        if (entry === 'hold') {
+            onProgress?.({ phase: 'attachments', completed: 2, total: 5 });
+            await hold();
+            return transition(name, after, onProgress);
+        }
+        if (entry && typeof entry === 'object' && 'cleanup' in entry) {
+            device.encryption.state = after;
+            const kind = (entry as { cleanup: string }).cleanup === 'file-lock' ? 'file-lock' : 'remote-fence';
+            throw new SyncEncryptionCleanupDeferredError(undefined, new Error('cleanup'), 0, kind);
+        }
+        if (entry && typeof entry === 'object' && 'error' in entry) throw new Error(String((entry as { error: string }).error));
+        device.encryption.state = after;
+    };
+    const host: NativeSyncSettingsHost = {
+        platform: {
+            get os() { return state.os; },
+            get isFossBuild() { return state.foss; },
+            get dropboxAppKey() { return state.dropboxAppKey; },
+        },
+        storage: {
+            multiGet: async (keys) => keys.map((key) => [key, state.storage.get(key) ?? null] as const),
+            setItem: async (key, entry) => {
+                state.log.push(['setItem', key, entry]);
+                state.storage.set(key, entry);
+            },
+            multiSet: async (entries) => {
+                state.log.push(['multiSet', entries]);
+                for (const [key, entry] of entries) state.storage.set(key, entry);
+            },
+            removeItem: async (key) => {
+                state.log.push(['removeItem', key]);
+                state.storage.delete(key);
+            },
+        },
+        secrets: {
+            get: async (key) => state.secrets.get(key) ?? null,
+            set: async (key, entry) => {
+                state.log.push(['setSecret', key, entry]);
+                state.secrets.set(key, entry);
+            },
+            delete: async (key) => {
+                state.log.push(['deleteSecret', key]);
+                state.secrets.delete(key);
+            },
+        },
+        performSync: async (syncPath, options) => {
+            calls.push(['performMobileSync', syncPath ?? null, options]);
+            return answer('sync', { value: { success: true } });
+        },
+        clearSyncConfigCache: () => { calls.push(['clearSyncConfigCache']); },
+        reconcileBackgroundSync: async () => {
+            calls.push(['syncBackgroundRegistration']);
+            return { action: 'unchanged' };
+        },
+        rememberWebdavCapabilityProof: async (config) => { calls.push(['rememberWebdavCapabilityProof', config]); },
+        encryption: {
+            getStatus: async () => {
+                if (device.encryption.unavailable) throw new Error('Sync encryption state is unavailable');
+                return { state: device.encryption.state as SyncEncryptionState, incompleteTransition: device.encryption.incomplete as never };
+            },
+            getIncompleteTransition: async () => device.encryption.incomplete as never,
+            isBackendPending: async () => device.encryption.pending,
+            transitions: {
+                enable: async (passphrase, options) => {
+                    calls.push(['enableSyncEncryption', passphrase]);
+                    return transition('enable', 'enabled', options.onProgress);
+                },
+                change: async (current, nextPassphrase, options) => {
+                    calls.push(['changeSyncEncryptionPassphrase', current, nextPassphrase]);
+                    return transition('change', 'enabled', options.onProgress);
+                },
+                disable: async (options) => {
+                    calls.push(['disableSyncEncryption']);
+                    return transition('disable', 'off', options.onProgress);
+                },
+                provide: async (passphrase) => {
+                    calls.push(['provideSyncEncryptionPassphrase', passphrase]);
+                    const outcome = await answer('provide', 'ok');
+                    if (outcome === 'ok') device.encryption.state = 'enabled';
+                    if (outcome === 'no-encrypted-remote') device.encryption.state = 'off';
+                    return outcome;
+                },
+                decline: async () => { calls.push(['declineSyncEncryptionPassphrase']); },
+                randomBytes: (length) => new Uint8Array(length).fill(7),
+            },
+        },
+        log: {
+            info: (message, context) => { calls.push(['logInfo', message, context.extra]); },
+            error: () => undefined,
+        },
+        addBreadcrumb: (message) => { calls.push(['breadcrumb', message]); },
+        pickSyncFolder: async () => {
+            calls.push(['pickSyncFolder']);
+            return answer('pick', null);
+        },
+        dropbox: {
+            authorize: async (clientId) => {
+                calls.push(['authorizeDropbox', clientId]);
+                return answer('authorize', { value: { accessToken: 'staged-access', refreshToken: 'staged-refresh', expiresAt: 4_102_444_800_000 } });
+            },
+            redirectUri: () => 'mindwtr://redirect',
+            isConnected: async () => state.dropboxTokens !== null,
+            getStoredTokens: async () => state.dropboxTokens as never,
+            saveTokens: async (tokens) => {
+                calls.push(['saveDropboxTokens', tokens]);
+                state.dropboxTokens = { ...tokens };
+            },
+            clearTokens: async () => {
+                calls.push(['clearDropboxTokens']);
+                state.dropboxTokens = null;
+            },
+            disconnect: async (clientId) => {
+                calls.push(['disconnectDropbox', clientId]);
+                state.dropboxTokens = null;
+            },
+            revokeTokens: async (clientId, tokens) => { calls.push(['revokeDropboxTokens', clientId, tokens]); },
+            getValidAccessToken: async (clientId) => {
+                calls.push(['getValidDropboxAccessToken', clientId]);
+                return 'stored-access';
+            },
+            forceRefreshAccessToken: async (clientId) => {
+                calls.push(['forceRefreshDropboxAccessToken', clientId]);
+                return 'refreshed-access';
+            },
+            getValidAccessTokenForTokens: async (clientId, tokens) => {
+                calls.push(['getValidDropboxAccessTokenForTokens', clientId, tokens]);
+                return { accessToken: String(tokens.accessToken), tokens };
+            },
+            forceRefreshAccessTokenForTokens: async (clientId, tokens) => {
+                calls.push(['forceRefreshDropboxAccessTokenForTokens', clientId, tokens]);
+                return { accessToken: 'refreshed-access', tokens: { ...tokens, accessToken: 'refreshed-access' } };
+            },
+            testAccess: async (token) => {
+                calls.push(['testDropboxAccess', token]);
+                return answer('dropboxTest', undefined);
+            },
+        },
+        listRecoverySnapshots: async () => [],
+    };
+    // React Native offers iCloud only on iOS; the host binds CloudKit there.
+    Object.defineProperty(host, 'cloudKit', {
+        enumerable: true,
+        get: () => (state.os === 'ios' ? {
+            getAccountStatus: async () => {
+                calls.push(['getCloudKitAccountStatus']);
+                return state.cloudKitStatus;
+            },
+        } : undefined),
+    });
+    return { state, host, apply };
+}
+
+async function openHost(host: NativeSyncSettingsHost, language = 'en'): Promise<Host> {
+    const contract = createNativeHostContract({ syncSettings: host });
+    value(await contract.setLanguage({ storedLanguage: language, systemLocale: fixture.deviceLocale }));
+    expect(await contract.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
+    return contract;
+}
+
+// ---------------------------------------------------------------------------
+// The native screen.
+
+type Control = { label: string; tinted: boolean; disabled: boolean; busy: boolean; press: () => Promise<unknown> | void };
+type Input = { label: string | null; placeholder: string | null; shown: string; secure: boolean; type: (text: string) => Promise<unknown> | void };
+type Text = string | [string, string];
+type Drawn = { texts: Text[]; controls: Control[]; switches: { value: boolean; flip: () => Promise<unknown> | void }[]; inputs: Input[]; links: unknown[][] };
+
+const dots = (text: string) => '•'.repeat(text.length);
+
+function syncDriver(contract: Host, scenario: Scenario, dev: ReturnType<typeof createDevice>) {
+    const log = { toasts: [] as unknown[][], device: 0, writes: 0, calls: 0 };
+    let view!: NativeSyncSettings;
+    // Screen state.
+    let open = { preferences: false, history: false, snapshots: false };
+    let forms: { kind: string | null; url: string; username: string; password: string | null; token: string | null; insecure: boolean } = {
+        kind: null, url: '', username: '', password: null, token: null, insecure: false,
+    };
+    let fields: Record<string, string> = { current: '', next: '', confirm: '' };
+    const pending = new Set<Promise<unknown>>();
+
+    const took = (result: NativeHostResult<{ toasts?: { title: string; message: string; tone: string; durationMs: number | null }[] }>) => {
+        if (result.ok) for (const toast of result.value.toasts ?? []) log.toasts.push([toast.title, toast.message, toast.tone, toast.durationMs]);
+        return result;
+    };
+
+    const draft = () => (forms.kind === 'webdav' ? { url: forms.url } : forms.kind === 'selfhosted' ? { url: forms.url, token: forms.token } : {});
+
+    /** Re-reads the view and applies React Native's effects on the screen state. */
+    const refresh = () => {
+        const before = view;
+        view = value(contract.getSyncSettings({ draft: draft() }));
+        const panel = view.panel;
+        const prior = before?.panel;
+        if (!panel || (panel.kind !== 'webdav' && panel.kind !== 'selfhosted')) {
+            forms = { kind: panel?.kind ?? null, url: '', username: '', password: null, token: null, insecure: false };
+        } else if (forms.kind !== panel.kind || !prior || prior.kind !== panel.kind) {
+            // A form mounts with the stored values.
+            forms = {
+                kind: panel.kind,
+                url: panel.url.value,
+                username: panel.kind === 'webdav' ? panel.username.value : '',
+                password: null,
+                token: null,
+                insecure: panel.allowInsecureHttp.value,
+            };
+        } else {
+            // A form takes a stored value again whenever it changes.
+            if (panel.url.value !== prior.url.value) forms.url = panel.url.value;
+            if (panel.allowInsecureHttp.value !== prior.allowInsecureHttp.value) forms.insecure = panel.allowInsecureHttp.value;
+            if (panel.kind === 'webdav' && prior.kind === 'webdav') {
+                if (panel.username.value !== prior.username.value) forms.username = panel.username.value;
+                if (panel.password.mask !== prior.password.mask) forms.password = null;
+            }
+            if (panel.kind === 'selfhosted' && prior.kind === 'selfhosted' && panel.token.mask !== prior.token.mask) forms.token = null;
+        }
+        view = value(contract.getSyncSettings({ draft: draft() }));
+        // The card's fields read its own passphrases: a closed flow empties them.
+        const shownFields = new Set((view.encryption?.rows ?? []).flatMap((row) => (row.kind === 'field' ? [row.field] : [])));
+        for (const name of Object.keys(fields)) if (!shownFields.has(name as never)) fields[name] = '';
+    };
+
+    const webdavFields = (): NativeSyncWebDavFields => ({ url: forms.url, username: forms.username, password: forms.password, allowInsecureHttp: forms.insecure });
+    const selfHostedFields = () => ({ url: forms.url, token: forms.token, allowInsecureHttp: forms.insecure });
+    const formFields = () => (forms.kind === 'webdav' ? { webdav: webdavFields() } : forms.kind === 'selfhosted' ? { selfHosted: selfHostedFields() } : {});
+
+    /** Sends a command; a held device answer leaves it running, as a tap does on React Native. */
+    const send = async (command: () => Promise<NativeHostResult<any>>) => {
+        let holdStarted!: () => void;
+        const held = new Promise<void>((resolve) => { holdStarted = resolve; });
+        device.holdStarted = holdStarted;
+        const running = command().then(took);
+        pending.add(running);
+        void running.finally(() => pending.delete(running));
+        await Promise.race([running, held]);
+        device.holdStarted = null;
+        // Let a held command's reads settle as React Native's renders would.
+        for (let index = 0; index < 30; index += 1) await Promise.resolve();
+    };
+
+    const encryptionAction = (action: NativeSyncEncryptionAction) => send(async () => {
+        const needsRequest = action.type === 'submit' || action.type === 'decline';
+        const result = await contract.runSyncEncryptionAction({ ...(needsRequest ? { requestId: generateUUID() } : {}), action });
+        if (result.ok && result.value.passphrase) {
+            fields.next = result.value.passphrase;
+            fields.confirm = result.value.passphrase;
+        }
+        return result;
+    });
+
+    const lastSync = (drawn: Drawn, card: NonNullable<NativeSyncSettings['panel']>['lastSync']) => {
+        drawn.texts.push(card.title, card.status, ...card.lines);
+        if (card.error) drawn.texts.push(['danger', card.error]);
+        if (card.history) {
+            const label = open.history ? card.history.open : card.history.closed;
+            drawn.texts.push(label);
+            drawn.controls.push({ label, tinted: false, disabled: false, busy: false, press: () => { open.history = !open.history; } });
+            if (open.history) drawn.texts.push(...card.history.entries);
+        }
+    };
+
+    const control = (drawn: Drawn, entry: { label: string; description: string | null; enabled: boolean; tinted: boolean; busy: boolean }, press: () => Promise<unknown> | void) => {
+        drawn.texts.push(entry.label, ...(entry.description ? [entry.description] : []));
+        drawn.controls.push({
+            label: [entry.label, ...(entry.description ? [entry.description] : [])].join('|'),
+            tinted: entry.tinted, disabled: !entry.enabled, busy: entry.busy, press,
+        });
+    };
+
+    const layout = (): Drawn => {
+        const drawn: Drawn = { texts: [], controls: [], switches: [], inputs: [], links: [] };
+        const { texts, controls, switches, inputs } = drawn;
+        texts.push(view.title, view.backend.title, view.backend.current, view.backend.hint);
+        for (const option of view.backend.options) {
+            texts.push(option.label);
+            controls.push({
+                label: option.label, tinted: option.selected, disabled: false, busy: false,
+                press: () => send(() => contract.selectSyncBackend({ requestId: generateUUID(), option: option.option })),
+            });
+        }
+        if (view.backend.group) texts.push(view.backend.group.title, view.backend.group.description);
+        texts.push(view.guide.title);
+        controls.push({ label: `${view.guide.title}. ${view.guide.description}`, tinted: true, disabled: false, busy: false, press: () => undefined });
+        drawn.links.push(['sync-guide-link', view.guide.title, view.guide.url]);
+        if (view.off) texts.push(view.off.title, view.off.description);
+        const panel = view.panel;
+        const syncNow = () => send(() => contract.syncNow({ requestId: generateUUID(), ...formFields() }));
+        const test = () => send(() => contract.testSyncConnection(formFields()));
+        const save = () => send(() => contract.saveSyncBackend({ requestId: generateUUID(), ...formFields() }));
+        const insecureSwitch = (current: boolean) => switches.push({ value: current, flip: () => { forms.insecure = !forms.insecure; } });
+        if (panel?.kind === 'file') {
+            texts.push(panel.help.title, panel.help.text, panel.help.tip, panel.title, panel.folder.label, panel.folder.value);
+            control(drawn, panel.folder.select, () => send(() => contract.pickSyncFolder({ requestId: generateUUID() })));
+            control(drawn, panel.syncNow, syncNow);
+            lastSync(drawn, panel.lastSync);
+        } else if (panel?.kind === 'webdav') {
+            texts.push(panel.title, panel.url.label);
+            inputs.push({ label: null, placeholder: panel.url.placeholder, shown: forms.url, secure: false, type: (text) => { forms.url = text; } });
+            texts.push(panel.url.hint);
+            if (panel.url.invalid) texts.push(['danger', panel.url.invalid]);
+            texts.push(panel.allowInsecureHttp.label, panel.allowInsecureHttp.hint);
+            insecureSwitch(forms.insecure);
+            texts.push(panel.username.label);
+            inputs.push({ label: null, placeholder: panel.username.placeholder, shown: forms.username, secure: false, type: (text) => { forms.username = text; } });
+            texts.push(panel.password.label);
+            inputs.push({
+                label: null, placeholder: panel.password.placeholder, shown: forms.password === null ? panel.password.mask : dots(forms.password), secure: true,
+                type: (text) => { forms.password = text; },
+            });
+            control(drawn, panel.save, save);
+            control(drawn, panel.syncNow, syncNow);
+            control(drawn, panel.test, test);
+            lastSync(drawn, panel.lastSync);
+        } else if (panel?.kind === 'selfhosted') {
+            texts.push(panel.url.label);
+            inputs.push({ label: null, placeholder: panel.url.placeholder, shown: forms.url, secure: false, type: (text) => { forms.url = text; } });
+            texts.push(...panel.url.hints);
+            if (panel.url.invalid) texts.push(['danger', panel.url.invalid]);
+            texts.push(panel.allowInsecureHttp.label, panel.allowInsecureHttp.hint);
+            insecureSwitch(forms.insecure);
+            texts.push(panel.token.label);
+            inputs.push({
+                label: null, placeholder: panel.token.placeholder, shown: forms.token === null ? panel.token.mask : dots(forms.token), secure: true,
+                type: (text) => { forms.token = text; },
+            });
+            texts.push(panel.token.hint);
+            if (panel.token.invalid) texts.push(['danger', panel.token.invalid]);
+            control(drawn, panel.save, save);
+            control(drawn, panel.syncNow, syncNow);
+            control(drawn, panel.test, test);
+            lastSync(drawn, panel.lastSync);
+        } else if (panel?.kind === 'dropbox') {
+            texts.push(panel.title, panel.description, panel.redirect);
+            if (panel.notConfigured) texts.push(['danger', panel.notConfigured]);
+            texts.push(panel.status);
+            control(drawn, panel.connect, () => send(() => (panel.connected
+                ? contract.disconnectDropbox({ requestId: generateUUID() })
+                : contract.connectDropbox({ requestId: generateUUID() }))));
+            control(drawn, panel.test, test);
+            control(drawn, panel.syncNow, syncNow);
+            lastSync(drawn, panel.lastSync);
+        } else if (panel?.kind === 'cloudkit') {
+            texts.push(panel.help.title, panel.help.text, panel.help.status);
+            control(drawn, panel.syncNow, syncNow);
+            lastSync(drawn, panel.lastSync);
+        }
+        const card = view.encryption;
+        if (card) {
+            texts.push(card.title);
+            if (card.guide) {
+                texts.push(card.guide.title);
+                controls.push({ label: `${card.guide.title}. ${card.guide.description}`, tinted: true, disabled: false, busy: false, press: () => undefined });
+                drawn.links.push(['sync-encryption-guide-link', card.guide.title, card.guide.url]);
+            }
+            for (const row of card.rows) {
+                if (row.kind === 'text') {
+                    texts.push(row.tone === 'warning' || row.tone === 'danger' ? [row.tone, row.text] : row.text);
+                } else if (row.kind === 'field') {
+                    texts.push(row.label);
+                    const name = row.field;
+                    inputs.push({
+                        label: row.label, placeholder: null, shown: row.secure ? dots(fields[name]) : fields[name], secure: row.secure,
+                        type: (text) => {
+                            fields[name] = text;
+                            return send(() => contract.runSyncEncryptionAction({ action: { type: 'typed', field: name, value: text } }));
+                        },
+                    });
+                } else if (row.kind === 'reveal') {
+                    texts.push(row.label);
+                    controls.push({ label: row.label, tinted: true, disabled: false, busy: false, press: () => encryptionAction(row.action) });
+                } else {
+                    texts.push(row.label);
+                    controls.push({ label: row.label, tinted: row.enabled, disabled: !row.enabled, busy: row.busy, press: () => encryptionAction(row.action) });
+                }
+            }
+        }
+        const chevron = (isOpen: boolean) => (isOpen ? view.disclosure.open : view.disclosure.closed);
+        texts.push(view.preferences.title, view.preferences.description, chevron(open.preferences));
+        controls.push({
+            label: [view.preferences.title, view.preferences.description, chevron(open.preferences)].join('|'),
+            tinted: false, disabled: false, busy: false, press: () => { open.preferences = !open.preferences; },
+        });
+        if (open.preferences) {
+            for (const row of view.preferences.rows) {
+                texts.push(row.label, ...(row.hint ? [row.hint] : []));
+                switches.push({ value: row.value, flip: () => send(() => contract.setSyncPreference({ requestId: generateUUID(), key: row.key, value: !row.value })) });
+            }
+        }
+        const snapshots = view.recoverySnapshots;
+        texts.push(snapshots.title, snapshots.description, chevron(open.snapshots));
+        controls.push({
+            label: [snapshots.title, snapshots.description, chevron(open.snapshots)].join('|'),
+            tinted: false, disabled: false, busy: false, press: () => { open.snapshots = !open.snapshots; },
+        });
+        if (open.snapshots) {
+            if (snapshots.snapshots.length === 0) texts.push(snapshots.empty);
+            else texts.push(...snapshots.snapshots);
+        }
+        return drawn;
+    };
+
+    const observe = () => {
+        refresh();
+        const drawn = layout();
+        const out = normalize({
+            texts: drawn.texts,
+            controls: drawn.controls.map((entry) => [entry.label, entry.tinted, entry.disabled, entry.busy]),
+            switches: drawn.switches.map((entry) => [entry.value, false]),
+            inputs: drawn.inputs.map((entry) => [entry.label, entry.placeholder, entry.secure ? dots(entry.shown) : entry.shown, entry.secure]),
+            links: drawn.links,
+            writes: writes.slice(log.writes),
+            device: dev.state.log.slice(log.device),
+            toasts: log.toasts.splice(0),
+            calls: device.calls.slice(log.calls),
+        });
+        log.writes = writes.length;
+        log.device = dev.state.log.length;
+        log.calls = device.calls.length;
+        return out;
+    };
+
+    const labelText = (label: string, t: (key: string) => string) => (label.startsWith('k:') ? t(label.slice(2)) : label);
+    const matches = (entry: Control, label: string) => (
+        entry.label === label || entry.label.split('|')[0] === label || entry.label.startsWith(`${label}. `) || entry.label.startsWith(`${label} (`)
+    );
+
+    const perform = async (action: [string, ...unknown[]], t: (key: string) => string) => {
+        const drawn = layout();
+        const [kind, target, extra] = action;
+        switch (kind) {
+            case 'press': {
+                const label = labelText(target as string, t);
+                const entry = drawn.controls.find((item) => matches(item, label));
+                if (!entry) throw new Error(`No control ${label}`);
+                if (entry.disabled) return;
+                await entry.press();
+                return;
+            }
+            case 'switch':
+                await drawn.switches[target as number].flip();
+                return;
+            case 'type':
+                await drawn.inputs[target as number].type(extra as string);
+                return;
+            case 'release':
+                device.held.shift()?.();
+                for (let index = 0; index < 30; index += 1) await Promise.resolve();
+                await Promise.race([Promise.allSettled(Array.from(pending)), new Promise((resolve) => setTimeout(resolve, 0))]);
+                return;
+            case 'device':
+                dev.apply(target as Device);
+                return;
+            default:
+                throw new Error(`Unknown action ${String(kind)}`);
+        }
+    };
+
+    return {
+        open: async () => {
+            const opened = value(await contract.openSyncSettings());
+            for (const toast of opened.toasts) log.toasts.push([toast.title, toast.message, toast.tone, toast.durationMs]);
+        },
+        observe,
+        perform,
+        finish: async () => {
+            while (device.held.length > 0) device.held.shift()?.();
+            await Promise.allSettled(Array.from(pending));
+            contract.closeSyncSettings();
+        },
+    };
+}
+
+async function replay(scenario: Scenario, strings: Record<string, Record<string, string>>) {
+    await seed(fixture.settings[scenario.settings], scenario.data === 'titles');
+    const dev = createDevice(scenario.device);
+    const language = scenario.device.language ?? 'en';
+    const contract = await openHost(dev.host, language);
+    const t = (key: string) => strings[language]?.[key] || strings.en?.[key] || key;
+    const driver = syncDriver(contract, scenario, dev);
+    await driver.open();
+    const observations = [driver.observe()];
+    for (const action of scenario.actions) {
+        await driver.perform(action, t);
+        await flushPendingSave();
+        observations.push(driver.observe());
+    }
+    await driver.finish();
+    return observations;
+}
+
+describe('native host contract: Settings › Sync', () => {
+    const strings: Record<string, Record<string, string>> = {};
+    const originalTz = process.env.TZ;
+    beforeAll(async () => {
+        process.env.TZ = fixture.timeZone;
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(fixture.now));
+        strings.en = await loadTranslations('en');
+        strings.de = await loadTranslations('de');
+    });
+    afterAll(() => {
+        vi.useRealTimers();
+        resetForTests();
+        if (originalTz === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTz;
+    });
+
+    it.each(fixture.scenarios.map((scenario) => [scenario.name, scenario] as const))(
+        'replays the frozen React Native scenario through the contract: %s',
+        async (name, scenario) => {
+            const observations = await replay(scenario, strings);
+            expect(observations).toEqual(fixture.observations[name]);
+        },
+    );
+});
+
+// ---------------------------------------------------------------------------
+// Replays after a restart. A restart is a new host over the same store and the same
+// device (RN's key-value store and secret store keep what the first run stored),
+// with Settings › Sync opened again; the request replays with its first UUID.
+
+describe('native host contract: Settings › Sync commands replayed after a restart', () => {
+    const WEBDAV_STORED = {
+        storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com/mindwtr', [WEBDAV_USERNAME_KEY]: 'alice' },
+        secrets: { [WEBDAV_PASSWORD_KEY]: 'hunter22' },
+    };
+    const originalTz = process.env.TZ;
+    beforeAll(() => {
+        process.env.TZ = 'UTC';
+    });
+    afterAll(() => {
+        resetForTests();
+        if (originalTz === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTz;
+    });
+
+    const start = async (input: Device, settings: AppSettings = {}) => {
+        await seed(settings, false);
+        const dev = createDevice(input);
+        const contract = await openHost(dev.host);
+        value(await contract.openSyncSettings());
+        return { dev, contract };
+    };
+    const restart = async (dev: ReturnType<typeof createDevice>) => {
+        await flushPendingSave();
+        const contract = await openHost(dev.host);
+        value(await contract.openSyncSettings());
+        return contract;
+    };
+    const mark = (dev: ReturnType<typeof createDevice>) => ({ device: dev.state.log.length, writes: writes.length, calls: device.calls.length });
+    const since = (dev: ReturnType<typeof createDevice>, at: ReturnType<typeof mark>) => ({
+        device: dev.state.log.slice(at.device),
+        writes: writes.slice(at.writes),
+        calls: device.calls.slice(at.calls).filter((call) => call[0] !== 'clearSyncConfigCache' && call[0] !== 'syncBackgroundRegistration'),
+    });
+    const storedConfig = (dev: ReturnType<typeof createDevice>) => ({ storage: Object.fromEntries(dev.state.storage), secrets: Object.fromEntries(dev.state.secrets) });
+    const webdavFields = { url: 'https://dav.example.com/mindwtr', username: 'alice', password: null, allowInsecureHttp: false };
+
+    it('selectSyncBackend, Off: a replay finds Off stored and reset, writes nothing and keeps a later change', async () => {
+        const { dev, contract } = await start(WEBDAV_STORED);
+        const input = { requestId: generateUUID(), option: 'off' as const };
+        value(await contract.selectSyncBackend(input));
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBe('off');
+        await useTaskStore.getState().updateSettings({ syncPreferences: { ai: true } });
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        expect(await restarted.selectSyncBackend(input)).toEqual({ ok: true, value: { toasts: [] } });
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+        expect(useTaskStore.getState().settings.syncPreferences).toEqual({ ai: true });
+    });
+
+    it('selectSyncBackend, a complete target: a replay finds the backend proven and activates nothing', async () => {
+        const { dev, contract } = await start({ ...WEBDAV_STORED, storage: { ...WEBDAV_STORED.storage, [SYNC_BACKEND_KEY]: 'off' } });
+        const input = { requestId: generateUUID(), option: 'webdav' as const };
+        value(await contract.selectSyncBackend(input));
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBe('webdav');
+        const stored = storedConfig(dev);
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        expect(await restarted.selectSyncBackend(input)).toEqual({ ok: true, value: { toasts: [] } });
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [['breadcrumb', 'settings:syncBackend:webdav']] });
+        expect(storedConfig(dev)).toEqual(stored);
+    });
+
+    it('saveSyncBackend: a replay proves and stores the same settings again, and keeps a later change', async () => {
+        const { dev, contract } = await start({});
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
+        const input = { requestId: generateUUID(), webdav: { ...webdavFields, password: 'hunter22' } };
+        const first = value(await contract.saveSyncBackend(input));
+        expect(first.toasts.map((toast) => toast.tone)).toEqual(['success']);
+        const stored = storedConfig(dev);
+        expect(stored.storage[SYNC_BACKEND_KEY]).toBe('webdav');
+        await useTaskStore.getState().updateSettings({ syncPreferences: { language: true } });
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        value(await restarted.saveSyncBackend(input));
+        expect(storedConfig(dev)).toEqual(stored);
+        expect(since(dev, at).writes).toEqual([]);
+        expect(useTaskStore.getState().settings.syncPreferences).toEqual({ language: true });
+    });
+
+    it('syncNow: a replay syncs once more and leaves the proven folder as it was', async () => {
+        const path = 'content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json';
+        const { dev, contract } = await start({ storage: { [SYNC_BACKEND_KEY]: 'file', [SYNC_PATH_KEY]: path } });
+        const input = { requestId: generateUUID() };
+        value(await contract.syncNow(input));
+        const stored = storedConfig(dev);
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        value(await restarted.syncNow(input));
+        expect(storedConfig(dev)).toEqual(stored);
+        expect(since(dev, at).writes).toEqual([]);
+        expect(since(dev, at).calls.filter((call) => call[0] === 'performMobileSync')).toHaveLength(2);
+    });
+
+    it('testSyncConnection: a replay stores nothing but the same capability proof', async () => {
+        const { dev, contract } = await start(WEBDAV_STORED);
+        value(await contract.testSyncConnection({ webdav: webdavFields }));
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        const replayed = value(await restarted.testSyncConnection({ webdav: webdavFields }));
+        expect(replayed.toasts.map((toast) => toast.tone)).toEqual(['success']);
+        expect(since(dev, at).device).toEqual([]);
+        expect(since(dev, at).writes).toEqual([]);
+    });
+
+    it('pickSyncFolder: a replay asks the picker again; a cancel writes nothing, the same folder stores the same values', async () => {
+        const uri = 'content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json';
+        const { dev, contract } = await start({ queues: { pick: [{ value: { uri } }] } });
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'file' }));
+        const input = { requestId: generateUUID() };
+        value(await contract.pickSyncFolder(input));
+        const stored = storedConfig(dev);
+        expect(stored.storage[SYNC_BACKEND_KEY]).toBe('file');
+        let restarted = await restart(dev);
+        let at = mark(dev);
+        value(await restarted.pickSyncFolder(input));
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [['pickSyncFolder']] });
+        device.queues.pick = [{ value: { uri } }];
+        restarted = await restart(dev);
+        at = mark(dev);
+        value(await restarted.pickSyncFolder(input));
+        expect(storedConfig(dev)).toEqual(stored);
+        expect(since(dev, at).writes).toEqual([]);
+    });
+
+    it('connectDropbox: a replay finds the account connected and proven, and signs in to nothing', async () => {
+        const { dev, contract } = await start({ dropboxAppKey: 'app-key' });
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'dropbox' }));
+        const input = { requestId: generateUUID() };
+        value(await contract.connectDropbox(input));
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBe('cloud');
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        expect(await restarted.connectDropbox(input)).toEqual({ ok: true, value: { toasts: [] } });
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+    });
+
+    it('disconnectDropbox: a replay finds Dropbox gone and disconnects nothing', async () => {
+        const { dev, contract } = await start({
+            dropboxAppKey: 'app-key', dropboxConnected: true,
+            storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' },
+        });
+        const input = { requestId: generateUUID() };
+        value(await contract.disconnectDropbox(input));
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBe('off');
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        const replayed = await restarted.disconnectDropbox(input);
+        expect(replayed.ok).toBe(false);
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+        expect(dev.state.dropboxTokens).toBeNull();
+    });
+
+    it('setSyncPreference: a replay finds the option set, writes nothing and keeps a later change to another option', async () => {
+        const { dev, contract } = await start({});
+        const input = { requestId: generateUUID(), key: 'appearance' as const, value: true };
+        expect(value(await contract.setSyncPreference(input))).toEqual({ changed: true });
+        await useTaskStore.getState().updateSettings({
+            syncPreferences: { ...useTaskStore.getState().settings.syncPreferences, language: true },
+        });
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        expect(await restarted.setSyncPreference(input)).toEqual({ ok: true, value: { changed: false } });
+        expect(since(dev, at).writes).toEqual([]);
+        expect(useTaskStore.getState().settings.syncPreferences).toEqual({ appearance: true, language: true });
+    });
+
+    it('runSyncEncryptionAction, submit: a replay finds no flow open and runs no transition', async () => {
+        const { dev, contract } = await start(WEBDAV_STORED);
+        const act = (action: unknown, requestId?: string) => contract.runSyncEncryptionAction({ ...(requestId ? { requestId } : {}), action } as never);
+        value(await act({ type: 'open', flow: 'enable' }));
+        value(await act({ type: 'typed', field: 'next', value: 'correct horse' }));
+        value(await act({ type: 'typed', field: 'confirm', value: 'correct horse' }));
+        const input = { requestId: generateUUID(), action: { type: 'submit' as const, flow: 'enable' as const } };
+        value(await contract.runSyncEncryptionAction(input));
+        expect(device.encryption.state).toBe('enabled');
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        const replayed = await restarted.runSyncEncryptionAction(input);
+        expect(replayed.ok).toBe(false);
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+    });
+
+    it('runSyncEncryptionAction, decline: a replay finds no unlock flow and declines nothing', async () => {
+        const { dev, contract } = await start({ ...WEBDAV_STORED, encryption: { state: 'remote-encrypted-no-key' } });
+        value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'unlock' } }));
+        const input = { requestId: generateUUID(), action: { type: 'decline' as const } };
+        value(await contract.runSyncEncryptionAction(input));
+        expect(device.calls.some((call) => call[0] === 'declineSyncEncryptionPassphrase')).toBe(true);
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        expect((await restarted.runSyncEncryptionAction(input)).ok).toBe(false);
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+    });
+
+    it('openSyncSettings: a second open finds the stored backend already coerced and writes nothing', async () => {
+        const { dev } = await start({
+            foss: true, dropboxAppKey: 'app-key',
+            storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' },
+        });
+        expect(dev.state.log).toEqual([
+            ['setItem', SYNC_BACKEND_KEY, 'off'],
+            ['setItem', CLOUD_PROVIDER_KEY, 'selfhosted'],
+        ]);
+        const at = mark(dev);
+        await restart(dev);
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+    });
+
+    it('closeSyncSettings: drops a staged backend; commands answer until the screen opens again', async () => {
+        const { dev, contract } = await start({});
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
+        expect(value(contract.getSyncSettings()).panel?.kind).toBe('webdav');
+        expect(contract.closeSyncSettings()).toEqual({ ok: true, value: null });
+        expect(contract.getSyncSettings()).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        expect((await contract.syncNow({ requestId: generateUUID() })).ok).toBe(false);
+        expect(value(contract.closeSyncSettings())).toBeNull();
+        value(await contract.openSyncSettings());
+        expect(value(contract.getSyncSettings()).panel).toBeNull();
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBeUndefined();
+    });
+});
+
+describe('native host contract: Settings › Sync keeps secrets out of its views', () => {
+    it('never shows a password, a token or a passphrase; masks are RN\'s dots', async () => {
+        await seed({}, false);
+        const dev = createDevice({ ...{ storage: { [WEBDAV_URL_KEY]: 'https://dav.example.com' } }, secrets: { [WEBDAV_PASSWORD_KEY]: 's3cret-pass', [CLOUD_TOKEN_KEY]: 'tok-abcdefghijklmnopqrstuvwxyz' } });
+        const contract = await openHost(dev.host);
+        const views: unknown[] = [value(await contract.openSyncSettings())];
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
+        views.push(value(contract.getSyncSettings()));
+        const webdav = value(contract.getSyncSettings()).panel;
+        expect(webdav?.kind === 'webdav' && webdav.password.mask).toBe('•'.repeat('s3cret-pass'.length));
+        value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'enable' } }));
+        value(await contract.runSyncEncryptionAction({ action: { type: 'typed', field: 'next', value: 'my passphrase words' } }));
+        value(await contract.runSyncEncryptionAction({ action: { type: 'reveal' } }));
+        views.push(value(contract.getSyncSettings()));
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'selfhosted' }));
+        views.push(value(contract.getSyncSettings({ draft: { url: 'https://cloud.example.com', token: 'typed-token-abcdefghijklmnop' } })));
+        const shown = JSON.stringify(views);
+        for (const secret of ['s3cret-pass', 'tok-abcdefghijklmnopqrstuvwxyz', 'my passphrase words', 'typed-token-abcdefghijklmnop']) {
+            expect(shown).not.toContain(secret);
+        }
+        contract.closeSyncSettings();
+    });
+
+    it('answers ACTION_FAILED for a host without sync, and for encryption actions until the host has the transitions', async () => {
+        await seed({}, false);
+        const bare = createNativeHostContract();
+        value(await bare.setLanguage({ storedLanguage: 'en', systemLocale: 'en-US' }));
+        value(await bare.activate({ writeSafetyReady: true }));
+        expect(await bare.openSyncSettings()).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+
+        const dev = createDevice({ storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com' } });
+        delete (dev.host.encryption as { transitions?: unknown }).transitions;
+        const contract = await openHost(dev.host);
+        const view = value(await contract.openSyncSettings());
+        expect(view.encryption?.rows.map((row) => row.kind === 'action' && row.label)).toContain('Enable encryption');
+        value(await contract.runSyncEncryptionAction({ action: { type: 'open', flow: 'enable' } }));
+        expect(await contract.runSyncEncryptionAction({ action: { type: 'generate' } })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        contract.closeSyncSettings();
+    });
+});

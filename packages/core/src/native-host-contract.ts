@@ -221,6 +221,7 @@ import {
     type NativeFocusControlsInput,
 } from './native-host-contract-focus-controls';
 import { createSettingsMethods } from './native-host-contract-settings';
+import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 import { createTaskViewMethods, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
@@ -695,8 +696,11 @@ const applyNativeTaskDraftEdit = (
     }
 };
 
-/** One instance per serial native JS host. All reads and commands use the shared store. */
-export function createNativeHostContract() {
+/**
+ * One instance per serial native JS host. All reads and commands use the shared store.
+ * `syncSettings` binds the host's device for Settings › Sync (native-host-contract-settings-sync.ts).
+ */
+export function createNativeHostContract(options: { syncSettings?: NativeSyncSettingsHost } = {}) {
     const processId = generateUUID();
     let language: Language = 'en';
     let systemLocale: string | null = null;
@@ -1158,6 +1162,17 @@ export function createNativeHostContract() {
             dateFormatting,
             dataRevision: () => `${revision()}:${settingsRevision()}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
+        }),
+        // Settings › Sync: native-host-contract-settings-sync.ts.
+        ...createSyncSettingsMethods({
+            readiness,
+            save,
+            t: () => translate,
+            language: () => language,
+            systemLocale: () => systemLocale,
+            dataRevision: () => `${revision()}:${settingsRevision()}`,
+            requestIdPattern: CAPTURE_ID_PATTERN,
+            host: () => options.syncSettings ?? null,
         }),
 
         // The editor's View tab and checklist: native-host-contract-task-view.ts.
