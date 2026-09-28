@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef } from 'react';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
-import { generateUUID, useTaskStore, validateAttachmentForUpload, type Attachment, type Task } from '@mindwtr/core';
+import {
+    buildShareCaptureDraft,
+    generateUUID,
+    resolveEntityOpenTarget,
+    useTaskStore,
+    validateAttachmentForUpload,
+    type Attachment,
+    type Task,
+} from '@mindwtr/core';
 
 import type { ToastOptions } from '@/contexts/toast-context';
 import { logError, logInfo, logWarn } from '@/lib/app-log';
@@ -192,72 +200,36 @@ async function buildShareIntentFileCaptureParams({
     };
 }
 
-function buildShareIntentCaptureParams({
-    shareSubject,
-    shareText,
-    shareWebUrl,
-}: {
+// The capture a text or link share opens is core's (buildShareCaptureDraft), shared with the native Android app.
+function buildShareIntentCaptureParams(share: {
     shareSubject?: string | null;
     shareText?: string | null;
     shareWebUrl?: string | null;
 }): Record<string, string> | null {
-    const subject = trimSharedValue(shareSubject);
-    if (subject) {
-        // Email shares (FairEmail etc.) carry a real subject: it becomes the
-        // title, and the body/URL move to the description instead of being
-        // dumped into the title together.
-        const text = trimSharedValue(shareText);
-        const url = trimSharedValue(shareWebUrl);
-        const descriptionLines = [text, url && url !== text ? url : null]
-            .filter((line): line is string => Boolean(line));
-
-        const params: Record<string, string> = {
-            initialValue: encodeURIComponent(subject),
-        };
-        if (descriptionLines.length > 0) {
-            params.initialProps = encodeURIComponent(JSON.stringify({
-                description: descriptionLines.join('\n'),
-            } satisfies Partial<Task>));
-        }
-        return params;
-    }
-
-    const title = trimSharedValue(shareText) || trimSharedValue(shareWebUrl);
-    if (!title) return null;
-
+    const draft = buildShareCaptureDraft(share);
+    if (!draft) return null;
     const params: Record<string, string> = {
-        initialValue: encodeURIComponent(title),
+        initialValue: encodeURIComponent(draft.title),
     };
-    const url = trimSharedValue(shareWebUrl);
-    if (url && url !== title) {
+    if (draft.description !== undefined) {
         params.initialProps = encodeURIComponent(JSON.stringify({
-            description: url,
+            description: draft.description,
         } satisfies Partial<Task>));
     }
-
     return params;
 }
 
-// Deep links are untrusted input (#1017): resolve an entity-open URL to a
-// navigation target only when the id still exists in the store, and fall
-// back to the default view otherwise. Areas have no dedicated detail screen,
-// so an area link opens Projects — the closest existing view that lists them.
+// Deep links are untrusted input (#1017): core's resolveEntityOpenTarget opens an entity only while its id still
+// exists in the store, and falls back to the default view otherwise.
 function resolveEntityOpenPath(kind: EntityOpenKind, id: string): { pathname: string; params?: Record<string, string> } | null {
     const state = useTaskStore.getState();
-    if (kind === 'task') {
-        const task = state._tasksById?.get(id);
-        if (!task || task.deletedAt) return null;
-        state.setHighlightTask(id);
-        return { pathname: '/focus', params: { taskId: id, openToken: `deeplink:${Date.now()}`, taskTab: 'view' } };
+    const target = resolveEntityOpenTarget(kind, id, state);
+    if (!target) return null;
+    if (target.pathname === '/focus') {
+        state.setHighlightTask(target.taskId);
+        return { pathname: '/focus', params: { taskId: target.taskId, openToken: `deeplink:${Date.now()}`, taskTab: 'view' } };
     }
-    if (kind === 'project') {
-        const project = state._projectsById?.get(id);
-        if (!project || project.deletedAt) return null;
-        return { pathname: '/projects-screen', params: { projectId: id } };
-    }
-    const area = state._areasById?.get(id);
-    if (!area || area.deletedAt) return null;
-    return { pathname: '/projects-screen' };
+    return target.projectId ? { pathname: '/projects-screen', params: { projectId: target.projectId } } : { pathname: '/projects-screen' };
 }
 
 export function useRootLayoutExternalCapture({

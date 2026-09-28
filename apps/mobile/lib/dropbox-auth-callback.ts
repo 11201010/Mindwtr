@@ -1,21 +1,2 @@
-export const DROPBOX_NATIVE_REDIRECT_URI = 'mindwtr://redirect';
-export const DROPBOX_CALLBACK_SETTINGS_PATH = '/settings?settingsScreen=sync';
-
-const DROPBOX_CALLBACK_TARGETS = new Set([
-    DROPBOX_NATIVE_REDIRECT_URI,
-    `${DROPBOX_NATIVE_REDIRECT_URI}/`,
-    'mindwtr:///redirect',
-    'mindwtr:///redirect/',
-]);
-
-/**
- * Recognizes only the registered Dropbox callback route. OAuth query and
- * fragment values remain owned by AuthSession and are intentionally ignored.
- */
-export function isDropboxAuthCallbackUrl(value: string): boolean {
-    const queryIndex = value.indexOf('?');
-    const fragmentIndex = value.indexOf('#');
-    const suffixIndexes = [queryIndex, fragmentIndex].filter((index) => index >= 0);
-    const suffixIndex = suffixIndexes.length > 0 ? Math.min(...suffixIndexes) : value.length;
-    return DROPBOX_CALLBACK_TARGETS.has(value.slice(0, suffixIndex));
-}
+// Moved to core (packages/core/src/dropbox-auth-callback.ts): core's system-path rules route the callback.
+export { DROPBOX_CALLBACK_SETTINGS_PATH, DROPBOX_NATIVE_REDIRECT_URI, isDropboxAuthCallbackUrl } from '@mindwtr/core';
