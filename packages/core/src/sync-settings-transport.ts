@@ -42,7 +42,7 @@ import { SyncEncryptionRemoteVersionUnavailableError, isSyncEncryptionRemoteVers
 import { normalizeCloudUrl, normalizeWebdavUrl } from './sync-helpers';
 import type { SyncRunResult } from './sync-run-ports';
 import { isLikelyOfflineSyncError } from './sync-service-utils';
-import { formatSyncClockSkew, isValidSyncHttpUrl, type CloudKitAccountStatus, type SyncSettingsBackend, type SyncSettingsCloudProvider } from './sync-settings-model';
+import { formatSyncClockSkew, isValidSyncHttpUrl, redactSyncText, type CloudKitAccountStatus, type SyncSettingsBackend, type SyncSettingsCloudProvider } from './sync-settings-model';
 import {
     CLOUD_ALLOW_INSECURE_HTTP_KEY,
     CLOUD_PROVIDER_KEY,
@@ -111,6 +111,14 @@ export type SyncSettingsSyncResult = SyncRunResult & {
 };
 
 type StorageEntry = readonly [string, string];
+
+/** A device write that failed: the screen kept the stored value, and the caller may retry. */
+export class SyncSettingsWriteError extends Error {
+    constructor(cause: unknown) {
+        super(cause instanceof Error ? cause.message : String(cause));
+        this.name = 'SyncSettingsWriteError';
+    }
+}
 
 /** Cancels a read for a screen that leaves first; `done` settles once the read is applied. */
 export type SyncSettingsCancel = (() => void) & { done: Promise<void> };
@@ -313,6 +321,15 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         return !core.isConnectionAllowed(url, core.SYNC_LOCAL_INSECURE_URL_OPTIONS);
     };
 
+    /** A failure's text for a toast, without the configured secrets or URL credentials. */
+    const redact = (text: string, extra: (string | null | undefined)[] = []) => redactSyncText(text, [
+        state.webdavPassword,
+        state.cloudToken,
+        stagedDropboxCredentials?.tokens.accessToken,
+        stagedDropboxCredentials?.tokens.refreshToken,
+        ...extra,
+    ]);
+
     const formatText = (p: SyncSettingsTransportParams, key: string, replacements: Record<string, string | number>) => {
         let text = p.t(key);
         Object.entries(replacements).forEach(([name, value]) => {
@@ -448,6 +465,11 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 || storedBackend === 'cloudkit'
                 ? storedBackend
                 : 'off';
+            // React Native's rule, kept on purpose: a backend this build cannot run (Dropbox
+            // on a FOSS build or without an app key, iCloud off iOS) is turned off, and the
+            // correction is stored. What a build supports comes from the build's facts
+            // (`dropboxConfigured`, `supportsNativeICloudSync`), never from which ports a
+            // native host has bound.
             const unsupportedDropboxBackend = resolvedBackend === 'cloud'
                 && storedCloudProvider === 'dropbox'
                 && !dropboxConfigured;
@@ -553,20 +575,37 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         },
     });
 
-    /** Answers the activation it starts, or Off's stored write (React Native's screen waits for neither). */
+    /**
+     * Answers the activation it starts, or Off's write (React Native's screen waits for
+     * neither). Off's write rejects with SyncSettingsWriteError when the store refuses it.
+     */
     const handleSelectSyncBackend = (backend: 'off' | 'file' | 'webdav' | 'cloud'): Promise<void> | undefined => {
         const p = host.params();
         const { cloudProvider } = state;
         const nextBackend = backend === 'cloud'
             ? (cloudProvider === 'cloudkit' ? 'cloudkit' : 'cloud')
             : backend;
+        const previous = { syncBackend: state.syncBackend, proven: provenSyncBackend, pending: hasPendingSyncConfiguration };
         core.addBreadcrumb(`settings:syncBackend:${nextBackend}`);
         set({ syncBackend: nextBackend });
         if (nextBackend === 'off') {
             hasPendingSyncConfiguration = false;
             provenSyncBackend = 'off';
             p.resetSyncStatusForBackendSwitch();
-            return persistSyncConfigItem(SYNC_BACKEND_KEY, nextBackend, reconcileBackgroundSyncRegistration);
+            const write = host.storage.setItem(SYNC_BACKEND_KEY, nextBackend).then(() => {
+                host.clearSyncConfigCache();
+                reconcileBackgroundSyncRegistration();
+            }, (error: unknown) => {
+                host.logSettingsError(error);
+                // The store still holds the previous backend: the screen must not show Off.
+                provenSyncBackend = previous.proven;
+                hasPendingSyncConfiguration = previous.pending;
+                if (state.syncBackend === 'off') set({ syncBackend: previous.syncBackend });
+                throw new SyncSettingsWriteError(error);
+            });
+            // React Native's screen does not wait for the write; a caller that does sees the failure.
+            write.catch(() => undefined);
+            return write;
         } else if (nextBackend !== provenSyncBackend) {
             hasPendingSyncConfiguration = true;
             if (isSyncTargetComplete(nextBackend, cloudProvider)) {
@@ -707,7 +746,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 tone: 'success',
             });
         } catch (error) {
-            p.showSettingsErrorToast(p.tr('settings.syncMobile.disconnectFailed'), core.formatError(error), 5200);
+            p.showSettingsErrorToast(p.tr('settings.syncMobile.disconnectFailed'), redact(core.formatError(error)), 5200);
         } finally {
             set({ dropboxBusy: false });
         }
@@ -741,7 +780,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     5200
                 );
             } else {
-                p.showSettingsErrorToast(p.tr('settings.syncMobile.connectionFailed'), core.formatError(error), 5200);
+                p.showSettingsErrorToast(p.tr('settings.syncMobile.connectionFailed'), redact(core.formatError(error)), 5200);
             }
         } finally {
             set({ isTestingConnection: false });
@@ -1277,7 +1316,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 tr('settings.syncMobile.error'),
                 core.isSyncEncryptionRemoteVersionUnavailableError(error)
                     ? tr('settings.syncEncryptionErrorBackendIncompatible')
-                    : p.getSyncFailureToastMessage(error),
+                    : redact(p.getSyncFailureToastMessage(error), [options?.webdav?.password, options?.cloud?.token]),
             );
         } finally {
             set({ isSyncing: false });
@@ -1329,7 +1368,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     6000
                 );
             } else {
-                p.showSettingsErrorToast(p.tr('settings.syncMobile.connectionFailed'), core.formatError(error), 5200);
+                p.showSettingsErrorToast(p.tr('settings.syncMobile.connectionFailed'), redact(core.formatError(error)), 5200);
             }
         } finally {
             set({ dropboxBusy: false });
@@ -1413,7 +1452,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     ? p.tr('settings.syncMobile.dropboxTokenIsInvalidOrRevokedPleaseTapConnectDropbox')
                     : backend === 'webdav' && core.isSyncEncryptionRemoteVersionUnavailableError(error)
                         ? p.tr('settings.syncEncryptionErrorBackendIncompatible')
-                    : core.formatError(error),
+                    : redact(core.formatError(error), [effectiveWebdav.password, effectiveCloud.token]),
                 5200
             );
         } finally {

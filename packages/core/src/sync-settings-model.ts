@@ -13,6 +13,7 @@
  */
 import { decodeUriSafe } from './async-utils';
 import { resolveI18nText, translateWithFallback, type I18nTemplateValues } from './i18n';
+import { sanitizeLogMessage } from './log-sanitize';
 import { classifySyncFailure } from './mobile-sync-utils';
 import { isSettingsSyncGroupEnabled } from './settings-options';
 import { listMergeConflictSamples, summarizeMergeStats, type EntityConflictSample } from './sync-log-utils';
@@ -43,6 +44,21 @@ export const isValidSyncHttpUrl = (value: string): boolean => {
     } catch {
         return false;
     }
+};
+
+const URL_USERINFO_PATTERN = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi;
+
+/**
+ * Text shown anywhere but a form's own URL field (a status, the history, a toast):
+ * the log sanitizer's redactions, no credentials in a URL, and none of `secrets`
+ * (the configured password and token; ones shorter than 4 characters are left).
+ */
+export const redactSyncText = (text: string, secrets: readonly (string | null | undefined)[] = []): string => {
+    let result = sanitizeLogMessage(text).replace(URL_USERINFO_PATTERN, '$1');
+    for (const secret of secrets) {
+        if (secret && secret.length >= 4) result = result.split(secret).join('[redacted]');
+    }
+    return result;
 };
 
 export const formatSyncClockSkew = (ms: number): string => {
@@ -185,7 +201,7 @@ export const getSyncFailureMessage = (error: unknown, t: Translate): string => {
         default: {
             // An unclassified failure used to show only "Review Settings → Sync and
             // try again", which hid the one line that named the cause (#1151).
-            const detail = (error instanceof Error ? error.message : String(error ?? '')).trim();
+            const detail = redactSyncText((error instanceof Error ? error.message : String(error ?? '')).trim());
             return detail ? `${t('settings.syncFailureGeneric')}\n${detail}` : t('settings.syncFailureGeneric');
         }
     }
@@ -197,7 +213,7 @@ export const getSyncLastErrorText = (lastSyncError: string | undefined, t: Trans
         ? t('settings.syncFileLockUnavailable')
         : classifySyncFailure(lastSyncError) === 'fileGenerationCorrupt'
             ? t('settings.syncFileGenerationCorrupt')
-            : lastSyncError
+            : lastSyncError === undefined ? undefined : redactSyncText(lastSyncError)
 );
 
 export type CloudKitStatusDetails = { label: string; helpText: string; syncEnabled: boolean };
@@ -332,11 +348,11 @@ export const buildSyncHistoryLines = (
         entry.conflicts ? `${t('settings.lastSyncConflicts')}: ${entry.conflicts}` : null,
         entry.maxClockSkewMs > 0 ? `${t('settings.lastSyncSkew')}: ${formatSyncClockSkew(entry.maxClockSkewMs)}` : null,
         entry.timestampAdjustments > 0 ? `${t('settings.lastSyncAdjusted')}: ${entry.timestampAdjustments}` : null,
-        entry.details ? `${t('settings.syncHistoryDetails')}: ${entry.details}` : null,
+        entry.details ? `${t('settings.syncHistoryDetails')}: ${redactSyncText(entry.details)}` : null,
     ].filter(Boolean);
     return `${formatDateTime(entry.at)} • ${statusLabel}`
         + (details.length ? ` • ${details.join(' • ')}` : '')
-        + (entry.status === 'error' && entry.error ? ` • ${entry.error}` : '');
+        + (entry.status === 'error' && entry.error ? ` • ${redactSyncText(entry.error)}` : '');
 });
 
 export const SYNC_PREFERENCE_KEYS = ['appearance', 'language', 'gtd', 'savedFilters', 'externalCalendars', 'ai'] as const;

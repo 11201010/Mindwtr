@@ -36,14 +36,21 @@
  * (`NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS`): several carry a secret, which
  * must never reach disk outside the keystore, and the configuration commit is
  * itself crash-safe (the backend key is the activation flag, so a crash leaves the
- * old or the new proven configuration). They keep no request payload: a retry of
- * a request still running joins it, and a retry of one that finished answers
- * without running again. Each is also target-state, so a replay after a restart
- * writes nothing wrong: a backend already proven is not activated again, Off
- * already stored writes nothing, a save re-proves and stores the same settings, an
- * encryption submit needs its flow open (a new visit has none), and Dropbox
- * connect or disconnect does nothing when the account is already in that state.
+ * old or the new proven configuration). They keep no request payload, only a
+ * fingerprint of their input: a retry of a request still running joins it, a retry
+ * of one that finished answers without running again, and the same UUID with other
+ * input answers INVALID_INPUT. Each is also target-state or compare-and-set, so a
+ * replay after a restart writes nothing wrong: a backend already proven is not
+ * activated again, Off already stored writes nothing, a form's Save or Sync now
+ * carries the view's `configRevision` and answers STALE_REVISION once the stored
+ * configuration changed (its own commit included), an encryption submit needs its
+ * flow open (a new visit has none), and Dropbox connect or disconnect does nothing
+ * when the account is already in that state. Off answers SAVE_FAILED when the
+ * device store refuses it, and the screen keeps showing the stored backend.
  * getSyncSettings's `draft.token` is a typed token too; it is a read.
+ *
+ * The URL field shows the URL as typed; every other text (the status, the history,
+ * toasts) drops a URL's credentials and never shows the configured secrets.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -103,9 +110,24 @@ import {
     type SyncSettingsTransportHost,
     type SyncSettingsTransportParams,
     type SyncSettingsWebDavFields,
+    SyncSettingsWriteError,
 } from './sync-settings-transport';
 import { isValidCloudSyncToken } from './cloud';
-import { SYNC_BACKEND_KEY } from './sync-storage-keys';
+import {
+    CLOUD_ALLOW_INSECURE_HTTP_KEY,
+    CLOUD_PROVIDER_KEY,
+    CLOUD_TOKEN_KEY,
+    CLOUD_URL_KEY,
+    SYNC_BACKEND_KEY,
+    SYNC_PATH_BOOKMARK_KEY,
+    SYNC_PATH_KEY,
+    WEBDAV_ALLOW_INSECURE_HTTP_KEY,
+    WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY,
+    WEBDAV_PASSWORD_KEY,
+    WEBDAV_URL_KEY,
+    WEBDAV_USERNAME_KEY,
+} from './sync-storage-keys';
+import { hashComparableSignature } from './sync-signatures';
 
 type Translate = (key: string) => string;
 
@@ -278,6 +300,12 @@ export type NativeSyncEncryptionCard = {
 export type NativeSyncSettings = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
+    /**
+     * The stored sync configuration's revision (a fingerprint, secrets included but
+     * never readable). A form's Save, and its Sync now, send the revision of the view
+     * the form was built from: a configuration stored since answers STALE_REVISION.
+     */
+    configRevision: string;
     title: string;
     backend: {
         title: string;
@@ -320,6 +348,7 @@ type Screen = {
     cancels: (() => void)[];
     pending: Set<Promise<unknown>>;
     generation: number;
+    configRevision: string;
     unsubscribe: () => void;
 };
 
@@ -327,6 +356,38 @@ const MONTH_FIRST_LOCALE = /^en(?:[-_]US)?$/i;
 const PASSWORD_DOTS = '••••••••';
 const PASSPHRASE_FIELDS = new Set<string>(['current', 'next', 'confirm']);
 const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock']);
+
+/** A value's fingerprint: never readable, the same for the same value. */
+// ponytail: 32-bit FNV-1a; a collision could let one stale save through, a stronger hash if that matters.
+const fingerprint = (value: unknown): string => hashComparableSignature(JSON.stringify(value));
+/** A secret's fingerprint, or null. */
+const secretPrint = (secret: string | null | undefined) => (secret === null || secret === undefined ? null : fingerprint(['secret', secret]));
+
+const CONFIGURATION_KEYS = [
+    SYNC_BACKEND_KEY,
+    SYNC_PATH_KEY,
+    SYNC_PATH_BOOKMARK_KEY,
+    WEBDAV_URL_KEY,
+    WEBDAV_USERNAME_KEY,
+    WEBDAV_ALLOW_INSECURE_HTTP_KEY,
+    WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY,
+    CLOUD_PROVIDER_KEY,
+    CLOUD_URL_KEY,
+    CLOUD_ALLOW_INSECURE_HTTP_KEY,
+];
+
+/** The stored configuration's revision: every key the commit writes, and both secrets as fingerprints. */
+const readConfigRevision = async (host: NativeSyncSettingsHost): Promise<string> => {
+    const entries = await host.storage.multiGet(CONFIGURATION_KEYS);
+    const password = await host.secrets.get(WEBDAV_PASSWORD_KEY);
+    const token = await host.secrets.get(CLOUD_TOKEN_KEY);
+    return fingerprint([entries, secretPrint(password), secretPrint(token)]);
+};
+
+/** A form's fields as a request identity: the password or token only as fingerprints. */
+const fieldsPrint = (fields: NativeSyncWebDavFields | NativeSyncSelfHostedFields | null) => (
+    !fields ? null : 'password' in fields ? { ...fields, password: secretPrint(fields.password) } : { ...fields, token: secretPrint(fields.token) }
+);
 
 const readWebDavFields = (value: unknown): NativeSyncWebDavFields | null => (
     isObjectRecord(value) && Object.keys(value).every((key) => ['url', 'username', 'password', 'allowInsecureHttp'].includes(key))
@@ -520,7 +581,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         const transport = createTransport(host);
         const current: Screen = {
             host, transport, card: null, cardCancels: [], edgeRefresh: null, lastBusy: false, lastBackend: 'off', effectsQueued: false, opening: true,
-            snapshots: [], cancels: [], pending: new Set(), generation: 0, unsubscribe: () => undefined,
+            snapshots: [], cancels: [], pending: new Set(), generation: 0, configRevision: '', unsubscribe: () => undefined,
         };
         screen = current;
         // React Native runs these after the render a state change causes: after the
@@ -548,6 +609,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                 .catch((error) => host.log.error(error)));
         }
         await settle(current);
+        // An unreadable secret leaves no revision: a form's Save then reads as stale.
+        current.configRevision = await readConfigRevision(host).catch(() => '');
         current.opening = false;
         return current;
     };
@@ -862,6 +925,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         return {
             version: NATIVE_HOST_CONTRACT_VERSION,
             revision: `${deps.dataRevision()}:${deps.language()}:${deps.systemLocale() ?? ''}:${current.generation}`,
+            configRevision: current.configRevision,
             title: t('settings.sync'),
             backend: {
                 title: t('settings.syncBackend'),
@@ -898,37 +962,60 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         return { ok: true, value: screen };
     };
 
-    // Screen commands keep no request payload (several carry a secret): a retry of a
-    // request still running joins it, and a retry of one that finished answers without
-    // running it again. Neither survives a restart; each command is target-state instead.
+    // Screen commands keep no request payload (several carry a secret), only a fingerprint
+    // of their input: a retry of a request still running joins it, a retry of one that
+    // finished answers without running it again, and the same UUID with other input is
+    // refused. Neither survives a restart; each command is target-state or
+    // compare-and-set instead.
     // ponytail: remembers the last 50 finished request UUIDs; an older retry runs as a replay.
-    const running = new Map<string, Promise<NativeHostResult<NativeSyncCommandResult>>>();
-    const finished: string[] = [];
+    const running = new Map<string, { identity: string; result: Promise<NativeHostResult<NativeSyncCommandResult>> }>();
+    const finished = new Map<string, string>();
 
-    /** Runs a screen action under its request UUID; answers the toasts once its reads settle. */
+    /**
+     * Runs a screen action under its request UUID; answers the toasts once its reads
+     * settle. `run` may answer a refusal (STALE_REVISION); a device write the store
+     * refused answers SAVE_FAILED. Neither is remembered, so the exact retry runs.
+     */
     const runScreenAction = (
         requestId: string,
+        identity: unknown,
         current: Screen,
-        run: () => Promise<void> | void,
+        run: () => Promise<NativeHostResult<never> | void> | NativeHostResult<never> | void,
     ): Promise<NativeHostResult<NativeSyncCommandResult>> => {
+        const print = fingerprint(identity);
         const joined = running.get(requestId);
-        if (joined) return joined;
-        if (finished.includes(requestId)) return Promise.resolve({ ok: true, value: { toasts: takeToasts() } });
+        const known = joined?.identity ?? finished.get(requestId);
+        if (known !== undefined && known !== print) {
+            return Promise.resolve(fail('INVALID_INPUT', 'Request ID already belongs to another action'));
+        }
+        if (joined) return joined.result;
+        if (known !== undefined) return Promise.resolve({ ok: true, value: { toasts: takeToasts() } });
         const result = (async (): Promise<NativeHostResult<NativeSyncCommandResult>> => {
             if (screen !== current) return fail('ACTION_FAILED', 'Settings › Sync was closed; open it again');
             try {
-                await run();
+                const refused = await run();
+                if (refused && !refused.ok) return refused;
             } catch (error) {
-                return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+                const message = error instanceof Error ? error.message : String(error);
+                return fail(error instanceof SyncSettingsWriteError ? 'SAVE_FAILED' : 'ACTION_FAILED', message);
+            } finally {
+                await settle(current);
+                current.configRevision = await readConfigRevision(current.host).catch(() => current.configRevision);
             }
-            await settle(current);
-            finished.push(requestId);
-            if (finished.length > 50) finished.shift();
+            finished.set(requestId, print);
+            if (finished.size > 50) finished.delete(finished.keys().next().value as string);
             return { ok: true, value: { toasts: takeToasts() } };
         })().finally(() => running.delete(requestId));
-        running.set(requestId, result);
+        running.set(requestId, { identity: print, result });
         return result;
     };
+
+    /** A form command's compare-and-set: the stored configuration must be the one its form was built from. */
+    const refuseStaleConfiguration = async (current: Screen, revision: string): Promise<NativeHostResult<never> | null> => (
+        await readConfigRevision(current.host) === revision
+            ? null
+            : fail('STALE_REVISION', 'The stored sync configuration changed since this form was read; read the screen again')
+    );
 
     const isRequestId = (value: unknown): value is string => typeof value === 'string' && deps.requestIdPattern.test(value);
 
@@ -977,6 +1064,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             const host = deps.host();
             if (!host) return fail('ACTION_FAILED', 'Sync is not available on this host yet');
             const current = await openScreen(host);
+            // A close, or another open, while this one read: its view is gone.
+            if (screen !== current) return fail('ACTION_FAILED', 'Settings › Sync closed or opened again before it finished opening');
             return { ok: true, value: { ...buildView(current, {}), toasts: takeToasts() } };
         },
 
@@ -1009,7 +1098,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!isObjectRecord(input) || !isRequestId(input.requestId) || !offered.includes(input.option)) {
                 return fail('INVALID_INPUT', 'A request UUID and a backend option the screen offers are required');
             }
-            return runScreenAction(input.requestId, current, async () => {
+            return runScreenAction(input.requestId, ['selectSyncBackend', input.option], current, async () => {
                 if (input.option === 'off' && await isOffAlready(current)) return undefined;
                 switch (input.option) {
                     case 'dropbox':
@@ -1025,6 +1114,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         /** The WebDAV or self-hosted form's Save: proves the settings with a sync, then stores them. */
         async saveSyncBackend(input: {
             requestId: string;
+            /** The view's `configRevision` when the form was read. */
+            revision: string;
             webdav?: NativeSyncWebDavFields;
             selfHosted?: NativeSyncSelfHostedFields;
         }): Promise<NativeHostResult<NativeSyncCommandResult>> {
@@ -1033,17 +1124,20 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             const current = opened.value;
             const webdav = isObjectRecord(input) && input.webdav !== undefined ? readWebDavFields(input.webdav) : null;
             const selfHosted = isObjectRecord(input) && input.selfHosted !== undefined ? readSelfHostedFields(input.selfHosted) : null;
-            if (!isObjectRecord(input) || !isRequestId(input.requestId) || Boolean(webdav) === Boolean(selfHosted)) {
-                return fail('INVALID_INPUT', 'A request UUID and the shown form\'s fields (webdav or selfHosted) are required');
+            if (!isObjectRecord(input) || !isRequestId(input.requestId) || !isText(input.revision, 100) || Boolean(webdav) === Boolean(selfHosted)) {
+                return fail('INVALID_INPUT', 'A request UUID, the form\'s configRevision and the shown form\'s fields (webdav or selfHosted) are required');
             }
             const kind = webdav ? 'webdav' : 'selfhosted';
             const panel = panelAction(current, 'save', webdav ? { url: webdav.url } : { url: selfHosted!.url, token: selfHosted!.token });
             if (!panel || panel.kind !== kind) return fail('ACTION_FAILED', 'That form\'s Save is not available now; read the screen again');
-            return runScreenAction(input.requestId, current, () => (
-                webdav
+            const identity = ['saveSyncBackend', input.revision, fieldsPrint(webdav ?? selfHosted)];
+            return runScreenAction(input.requestId, identity, current, async () => {
+                const stale = await refuseStaleConfiguration(current, input.revision);
+                if (stale) return stale;
+                return webdav
                     ? current.transport.handleSaveWebDavSettings(webdavSettings(current, webdav))
-                    : current.transport.handleSaveSelfHostedSettings(selfHostedSettings(current, selfHosted!))
-            ));
+                    : current.transport.handleSaveSelfHostedSettings(selfHostedSettings(current, selfHosted!));
+            });
         },
 
         /**
@@ -1052,6 +1146,8 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
          */
         async syncNow(input: {
             requestId: string;
+            /** With a form's fields: the view's `configRevision` when the form was read. */
+            revision?: string;
             webdav?: NativeSyncWebDavFields;
             selfHosted?: NativeSyncSelfHostedFields;
         }): Promise<NativeHostResult<NativeSyncCommandResult>> {
@@ -1061,15 +1157,23 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             const kind = buildPanel(current, {})?.kind;
             const webdav = isObjectRecord(input) && input.webdav !== undefined ? readWebDavFields(input.webdav) : null;
             const selfHosted = isObjectRecord(input) && input.selfHosted !== undefined ? readSelfHostedFields(input.selfHosted) : null;
+            const withFields = kind === 'webdav' || kind === 'selfhosted';
             const fieldsOk = kind === 'webdav' ? Boolean(webdav) && input.selfHosted === undefined
                 : kind === 'selfhosted' ? Boolean(selfHosted) && input.webdav === undefined
                     : input?.webdav === undefined && input?.selfHosted === undefined;
-            if (!isObjectRecord(input) || !isRequestId(input.requestId) || !fieldsOk) {
-                return fail('INVALID_INPUT', 'A request UUID, and the WebDAV or self-hosted form\'s fields when that form shows, are required');
+            if (!isObjectRecord(input) || !isRequestId(input.requestId) || !fieldsOk
+                || (withFields ? !isText(input.revision, 100) : input.revision !== undefined)) {
+                return fail('INVALID_INPUT', 'A request UUID, and the WebDAV or self-hosted form\'s fields with its configRevision when that form shows, are required');
             }
             const draft = webdav ? { url: webdav.url } : selfHosted ? { url: selfHosted.url, token: selfHosted.token } : {};
             if (!panelAction(current, 'syncNow', draft)) return fail('ACTION_FAILED', 'Sync now is not available now; read the screen again');
-            return runScreenAction(input.requestId, current, () => {
+            const identity = ['syncNow', kind, input.revision ?? null, fieldsPrint(webdav ?? selfHosted)];
+            return runScreenAction(input.requestId, identity, current, async () => {
+                // A form's Sync now stores the form's settings, as its Save does.
+                if (withFields) {
+                    const stale = await refuseStaleConfiguration(current, input.revision!);
+                    if (stale) return stale;
+                }
                 switch (kind) {
                     case 'webdav':
                         return current.transport.handleSync({ backend: 'webdav', webdav: webdavSettings(current, webdav!) });
@@ -1115,7 +1219,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!isObjectRecord(input) || !isRequestId(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
             if (!current.host.pickSyncFolder) return fail('ACTION_FAILED', 'The folder picker is not available on this host yet');
             if (buildPanel(current, {})?.kind !== 'file') return fail('ACTION_FAILED', 'Select folder is not available now; read the screen again');
-            return runScreenAction(input.requestId, current, () => current.transport.handleSetSyncPath());
+            return runScreenAction(input.requestId, ['pickSyncFolder'], current, () => current.transport.handleSetSyncPath());
         },
 
         /** Dropbox's Connect: sign-in, then the account activates through its first sync. Nothing when already connected. */
@@ -1127,7 +1231,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!current.host.dropbox) return fail('ACTION_FAILED', 'Dropbox is not available on this host yet');
             const panel = buildPanel(current, {});
             if (panel?.kind !== 'dropbox' || !panel.connect.enabled) return fail('ACTION_FAILED', 'Connect Dropbox is not available now; read the screen again');
-            return runScreenAction(input.requestId, current, () => {
+            return runScreenAction(input.requestId, ['connectDropbox'], current, () => {
                 // Target state: the toggle shows Disconnect for a connected account.
                 if (panel.connected) return undefined;
                 return current.transport.handleConnectDropbox();
@@ -1143,7 +1247,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!current.host.dropbox) return fail('ACTION_FAILED', 'Dropbox is not available on this host yet');
             const panel = buildPanel(current, {});
             if (panel?.kind !== 'dropbox' || !panel.connect.enabled) return fail('ACTION_FAILED', 'Disconnect Dropbox is not available now; read the screen again');
-            return runScreenAction(input.requestId, current, () => {
+            return runScreenAction(input.requestId, ['disconnectDropbox'], current, () => {
                 // Target state: the toggle shows Connect once the account is gone.
                 if (!panel.connected) return undefined;
                 return current.transport.handleDisconnectDropbox();
@@ -1230,7 +1334,10 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                             : target!.flow === 'change' ? () => card.submitChange()
                                 : target!.flow === 'disable' ? () => card.submitDisable()
                                     : () => card.submitUnlock();
-                    const result = await runScreenAction(input.requestId!, current, async () => { await run(); });
+                    // The passphrases the submit runs with are part of its identity, as fingerprints.
+                    const fields = card.getState();
+                    const identity = ['encryption', target, secretPrint(fields.currentPassphrase), secretPrint(fields.nextPassphrase), secretPrint(fields.confirmPassphrase)];
+                    const result = await runScreenAction(input.requestId!, identity, current, async () => { await run(); });
                     return result.ok ? { ok: true, value: { ...result.value, passphrase: null } } : result;
                 }
             }

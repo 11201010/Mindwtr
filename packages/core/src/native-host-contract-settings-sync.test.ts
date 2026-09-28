@@ -13,6 +13,7 @@ import { SyncEncryptionCleanupDeferredError } from './sync-encryption-service';
 import {
     CLOUD_PROVIDER_KEY,
     CLOUD_TOKEN_KEY,
+    CLOUD_URL_KEY,
     SYNC_BACKEND_KEY,
     SYNC_PATH_KEY,
     WEBDAV_PASSWORD_KEY,
@@ -164,6 +165,8 @@ type DeviceState = {
     secrets: Map<string, string>;
     dropboxTokens: Record<string, unknown> | null;
     log: unknown[][];
+    /** Keys whose writes fail, as a full or broken store does. */
+    failKeys: Set<string>;
 };
 
 function createDevice(input: Device): { state: DeviceState; host: NativeSyncSettingsHost; apply: (patch: Device) => void } {
@@ -175,6 +178,7 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
             ? { accessToken: 'stored-access', refreshToken: 'stored-refresh', expiresAt: 4_102_444_800_000 }
             : null,
         log: [],
+        failKeys: new Set(),
     };
     device.encryption = { state: 'off', unavailable: false, pending: false, incomplete: null };
     const apply = (patch: Device) => {
@@ -215,6 +219,7 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
         storage: {
             multiGet: async (keys) => keys.map((key) => [key, state.storage.get(key) ?? null] as const),
             setItem: async (key, entry) => {
+                if (state.failKeys.has(key)) throw new Error('The device store refused the write');
                 state.log.push(['setItem', key, entry]);
                 state.storage.set(key, entry);
             },
@@ -478,9 +483,10 @@ function syncDriver(contract: Host, scenario: Scenario, dev: ReturnType<typeof c
         drawn.links.push(['sync-guide-link', view.guide.title, view.guide.url]);
         if (view.off) texts.push(view.off.title, view.off.description);
         const panel = view.panel;
-        const syncNow = () => send(() => contract.syncNow({ requestId: generateUUID(), ...formFields() }));
+        const revision = () => (forms.kind === 'webdav' || forms.kind === 'selfhosted' ? { revision: view.configRevision } : {});
+        const syncNow = () => send(() => contract.syncNow({ requestId: generateUUID(), ...revision(), ...formFields() }));
         const test = () => send(() => contract.testSyncConnection(formFields()));
-        const save = () => send(() => contract.saveSyncBackend({ requestId: generateUUID(), ...formFields() }));
+        const save = () => send(() => contract.saveSyncBackend({ requestId: generateUUID(), revision: view.configRevision, ...formFields() } as never));
         const insecureSwitch = (current: boolean) => switches.push({ value: current, flip: () => { forms.insecure = !forms.insecure; } });
         if (panel?.kind === 'file') {
             texts.push(panel.help.title, panel.help.text, panel.help.tip, panel.title, panel.folder.label, panel.folder.value);
@@ -713,11 +719,34 @@ describe('native host contract: Settings › Sync', () => {
 // device (RN's key-value store and secret store keep what the first run stored),
 // with Settings › Sync opened again; the request replays with its first UUID.
 
+// Shared by the tests below: a screen over a seeded store and a device, and a restart.
+const WEBDAV_STORED = {
+    storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com/mindwtr', [WEBDAV_USERNAME_KEY]: 'alice' },
+    secrets: { [WEBDAV_PASSWORD_KEY]: 'hunter22' },
+};
+const start = async (input: Device, settings: AppSettings = {}) => {
+    await seed(settings, false);
+    const dev = createDevice(input);
+    const contract = await openHost(dev.host);
+    value(await contract.openSyncSettings());
+    return { dev, contract };
+};
+const restart = async (dev: ReturnType<typeof createDevice>) => {
+    await flushPendingSave();
+    const contract = await openHost(dev.host);
+    value(await contract.openSyncSettings());
+    return contract;
+};
+const mark = (dev: ReturnType<typeof createDevice>) => ({ device: dev.state.log.length, writes: writes.length, calls: device.calls.length });
+const since = (dev: ReturnType<typeof createDevice>, at: ReturnType<typeof mark>) => ({
+    device: dev.state.log.slice(at.device),
+    writes: writes.slice(at.writes),
+    calls: device.calls.slice(at.calls).filter((call) => call[0] !== 'clearSyncConfigCache' && call[0] !== 'syncBackgroundRegistration'),
+});
+const storedConfig = (dev: ReturnType<typeof createDevice>) => ({ storage: Object.fromEntries(dev.state.storage), secrets: Object.fromEntries(dev.state.secrets) });
+const webdavFields = { url: 'https://dav.example.com/mindwtr', username: 'alice', password: null, allowInsecureHttp: false };
+
 describe('native host contract: Settings › Sync commands replayed after a restart', () => {
-    const WEBDAV_STORED = {
-        storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com/mindwtr', [WEBDAV_USERNAME_KEY]: 'alice' },
-        secrets: { [WEBDAV_PASSWORD_KEY]: 'hunter22' },
-    };
     const originalTz = process.env.TZ;
     beforeAll(() => {
         process.env.TZ = 'UTC';
@@ -728,27 +757,6 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         else process.env.TZ = originalTz;
     });
 
-    const start = async (input: Device, settings: AppSettings = {}) => {
-        await seed(settings, false);
-        const dev = createDevice(input);
-        const contract = await openHost(dev.host);
-        value(await contract.openSyncSettings());
-        return { dev, contract };
-    };
-    const restart = async (dev: ReturnType<typeof createDevice>) => {
-        await flushPendingSave();
-        const contract = await openHost(dev.host);
-        value(await contract.openSyncSettings());
-        return contract;
-    };
-    const mark = (dev: ReturnType<typeof createDevice>) => ({ device: dev.state.log.length, writes: writes.length, calls: device.calls.length });
-    const since = (dev: ReturnType<typeof createDevice>, at: ReturnType<typeof mark>) => ({
-        device: dev.state.log.slice(at.device),
-        writes: writes.slice(at.writes),
-        calls: device.calls.slice(at.calls).filter((call) => call[0] !== 'clearSyncConfigCache' && call[0] !== 'syncBackgroundRegistration'),
-    });
-    const storedConfig = (dev: ReturnType<typeof createDevice>) => ({ storage: Object.fromEntries(dev.state.storage), secrets: Object.fromEntries(dev.state.secrets) });
-    const webdavFields = { url: 'https://dav.example.com/mindwtr', username: 'alice', password: null, allowInsecureHttp: false };
 
     it('selectSyncBackend, Off: a replay finds Off stored and reset, writes nothing and keeps a later change', async () => {
         const { dev, contract } = await start(WEBDAV_STORED);
@@ -776,10 +784,10 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         expect(storedConfig(dev)).toEqual(stored);
     });
 
-    it('saveSyncBackend: a replay proves and stores the same settings again, and keeps a later change', async () => {
+    it('saveSyncBackend: a replay finds the configuration it stored and answers STALE_REVISION, writing nothing and keeping a later change', async () => {
         const { dev, contract } = await start({});
         value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
-        const input = { requestId: generateUUID(), webdav: { ...webdavFields, password: 'hunter22' } };
+        const input = { requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, password: 'hunter22' } };
         const first = value(await contract.saveSyncBackend(input));
         expect(first.toasts.map((toast) => toast.tone)).toEqual(['success']);
         const stored = storedConfig(dev);
@@ -787,9 +795,9 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         await useTaskStore.getState().updateSettings({ syncPreferences: { language: true } });
         const restarted = await restart(dev);
         const at = mark(dev);
-        value(await restarted.saveSyncBackend(input));
+        expect(await restarted.saveSyncBackend(input)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(storedConfig(dev)).toEqual(stored);
-        expect(since(dev, at).writes).toEqual([]);
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
         expect(useTaskStore.getState().settings.syncPreferences).toEqual({ language: true });
     });
 
@@ -937,7 +945,7 @@ describe('native host contract: Settings › Sync commands replayed after a rest
     it('a secret-bearing command keeps no payload: a retry joins the running request, and a finished one answers without running again', async () => {
         const { dev, contract } = await start({});
         value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
-        const input = { requestId: generateUUID(), webdav: { ...webdavFields, password: 'hunter22' } };
+        const input = { requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, password: 'hunter22' } };
         const at = mark(dev);
         const [first, joined] = await Promise.all([contract.saveSyncBackend(input), contract.saveSyncBackend(input)]);
         expect(value(first).toasts.map((toast) => toast.tone)).toEqual(['success']);
@@ -1030,6 +1038,124 @@ describe('native host contract: Settings › Sync keeps secrets out of its views
         device.calls.length = 0;
         expect(await contract.connectDropbox({ requestId: generateUUID() })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
         expect(device.calls).toEqual([]);
+        contract.closeSyncSettings();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Correction pass (review.md findings 1-7).
+
+describe('native host contract: Settings › Sync correction pass', () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyz012345';
+    const CREDENTIAL_URL = 'https://alice:s3cret-pw@dav.example.com/mindwtr';
+
+    it('1: turns a backend the build cannot run off when Sync opens, as React Native does, but never because a port is unbound', async () => {
+        const coerced = { [SYNC_BACKEND_KEY]: 'off', [CLOUD_PROVIDER_KEY]: 'selfhosted' };
+        let { dev } = await start({ foss: true, dropboxAppKey: 'app-key', storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' } });
+        expect(storedConfig(dev).storage).toEqual(coerced);
+        ({ dev } = await start({ storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' } }));
+        expect(storedConfig(dev).storage).toEqual(coerced);
+        ({ dev } = await start({ storage: { [SYNC_BACKEND_KEY]: 'cloudkit', [CLOUD_PROVIDER_KEY]: 'cloudkit' } }));
+        expect(storedConfig(dev).storage).toEqual(coerced);
+        // The build supports Dropbox; only the host's Dropbox port is missing.
+        dev = createDevice({ dropboxAppKey: 'app-key', storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' } });
+        delete (dev.host as { dropbox?: unknown }).dropbox;
+        value(await (await openHost(dev.host)).openSyncSettings());
+        expect(dev.state.log).toEqual([]);
+    });
+
+    it('2: answers SAVE_FAILED when Off cannot be stored, keeps showing the stored backend, and the exact retry stores Off', async () => {
+        const { dev, contract } = await start(WEBDAV_STORED);
+        dev.state.failKeys.add(SYNC_BACKEND_KEY);
+        const input = { requestId: generateUUID(), option: 'off' as const };
+        expect(await contract.selectSyncBackend(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBe('webdav');
+        expect(value(contract.getSyncSettings()).backend.options.find((option) => option.selected)?.option).toBe('webdav');
+        dev.state.failKeys.clear();
+        value(await contract.selectSyncBackend(input));
+        expect(dev.state.storage.get(SYNC_BACKEND_KEY)).toBe('off');
+        expect(value(contract.getSyncSettings()).off).not.toBeNull();
+    });
+
+    it('3: refuses a save made on a stored configuration that changed since (STALE_REVISION), so a replay never restores an older server', async () => {
+        const { dev, contract } = await start({});
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
+        const older = { requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, url: 'https://a.example.com', password: 'pw-a' } };
+        value(await contract.saveSyncBackend(older));
+        const newer = { requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, webdav: { ...webdavFields, url: 'https://b.example.com', password: 'pw-b' } };
+        expect(newer.revision).not.toBe(older.revision);
+        value(await contract.saveSyncBackend(newer));
+        const restarted = await restart(dev);
+        const at = mark(dev);
+        expect(await restarted.saveSyncBackend(older)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(await restarted.syncNow({ requestId: generateUUID(), revision: older.revision, webdav: older.webdav })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+        expect(dev.state.storage.get(WEBDAV_URL_KEY)).toBe('https://b.example.com');
+    });
+
+    it('4: shows a URL\'s credentials only in the URL field: never in the status, the history or a toast', async () => {
+        const failure = `PUT ${CREDENTIAL_URL}/data.json failed`;
+        const { contract } = await start({
+            storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: CREDENTIAL_URL, [WEBDAV_USERNAME_KEY]: 'alice' },
+            secrets: { [WEBDAV_PASSWORD_KEY]: 'hunter22' },
+            queues: { probe: [{ error: `GET ${CREDENTIAL_URL}/data.json returned 500` }] },
+        }, {
+            lastSyncStatus: 'error', lastSyncError: failure,
+            lastSyncHistory: [{ at: '2026-09-24T10:00:00.000Z', status: 'error', conflicts: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, error: failure, details: failure }],
+        });
+        const tested = value(await contract.testSyncConnection({ webdav: { ...webdavFields, url: CREDENTIAL_URL } }));
+        const view = value(contract.getSyncSettings());
+        expect(view.panel?.kind === 'webdav' && view.panel.url.value).toBe(CREDENTIAL_URL);
+        const elsewhere = { ...view, panel: { ...view.panel, url: undefined } };
+        expect(JSON.stringify([elsewhere, tested])).not.toContain('s3cret-pw');
+        expect(view.panel?.lastSync.error).toBe('PUT https://dav.example.com/mindwtr/data.json failed');
+    });
+
+    it('5: never echoes the password or token in a failure toast', async () => {
+        const { contract } = await start({
+            storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'selfhosted', [CLOUD_URL_KEY]: 'https://cloud.example.com' },
+            secrets: { [CLOUD_TOKEN_KEY]: TOKEN },
+            queues: {
+                cloudGet: [{ error: `401 for Bearer ${TOKEN}` }],
+                sync: [{ value: { success: false, error: `server echoed ${TOKEN} and token=${TOKEN}` } }],
+            },
+        });
+        const fields = { url: 'https://cloud.example.com', token: null, allowInsecureHttp: false };
+        const tested = value(await contract.testSyncConnection({ selfHosted: fields }));
+        const synced = value(await contract.syncNow({ requestId: generateUUID(), revision: value(contract.getSyncSettings()).configRevision, selfHosted: fields }));
+        expect(tested.toasts).toHaveLength(1);
+        expect(synced.toasts).toHaveLength(1);
+        expect(JSON.stringify([tested, synced])).not.toContain(TOKEN);
+    });
+
+    it('6: refuses a submit that reuses a request UUID with other passphrases (INVALID_INPUT), and never runs it', async () => {
+        const { contract } = await start({ ...WEBDAV_STORED, queues: { enable: [{ error: 'MWENC1: could not write' }] } });
+        const act = (action: unknown, requestId?: string) => contract.runSyncEncryptionAction({ ...(requestId ? { requestId } : {}), action } as never);
+        value(await act({ type: 'open', flow: 'enable' }));
+        value(await act({ type: 'typed', field: 'next', value: 'first phrase' }));
+        value(await act({ type: 'typed', field: 'confirm', value: 'first phrase' }));
+        const requestId = generateUUID();
+        value(await act({ type: 'submit', flow: 'enable' }, requestId));
+        expect(device.calls.filter((call) => call[0] === 'enableSyncEncryption')).toHaveLength(1);
+        value(await act({ type: 'typed', field: 'next', value: 'second phrase' }));
+        value(await act({ type: 'typed', field: 'confirm', value: 'second phrase' }));
+        expect(await act({ type: 'submit', flow: 'enable' }, requestId)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(device.calls.filter((call) => call[0] === 'enableSyncEncryption')).toHaveLength(1);
+        value(await act({ type: 'submit', flow: 'enable' }, generateUUID()));
+        expect(device.calls.filter((call) => call[0] === 'enableSyncEncryption')).toHaveLength(2);
+    });
+
+    it('7: answers a cancelled open, and leaves the toasts queued, when the screen closed or opened again while it read', async () => {
+        await seed({}, false);
+        const dev = createDevice({ foss: true, storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' } });
+        const contract = await openHost(dev.host);
+        const closed = contract.openSyncSettings();
+        contract.closeSyncSettings();
+        expect(await closed).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        const replaced = contract.openSyncSettings();
+        const current = contract.openSyncSettings();
+        expect(await replaced).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        expect(value(await current).backend.current).toBe('Off');
         contract.closeSyncSettings();
     });
 });

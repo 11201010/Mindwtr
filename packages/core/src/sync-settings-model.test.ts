@@ -13,6 +13,7 @@ import {
     getSyncPreferenceValues,
     getSyncSelfHostedFormState,
     getSyncWebDavFormState,
+    redactSyncText,
     isSyncBackendOptionSelected,
     isValidSyncHttpUrl,
     resolveSyncBackendSelection,
@@ -92,5 +93,16 @@ describe('sync settings model', () => {
         expect(getSyncFolderLabel('content://com.android.externalstorage.documents/tree/primary%3AMy%20Sync', t)).toBe('My Sync');
         expect(getSyncFolderLabel('file:///var/mobile/Containers/Shared/Sync/data.json', t)).toBe('data.json');
         expect(getSyncFolderLabel(null, t)).toBe('common.notSet');
+    });
+
+    it('keeps credentials and secrets out of the status, the history and failure messages', () => {
+        const url = 'https://alice:s3cret-pw@dav.example.com/data.json';
+        expect(getSyncLastErrorText(`PUT ${url} failed`, t)).toBe('PUT https://dav.example.com/data.json failed');
+        const entry = { at: 'A', status: 'error' as const, conflicts: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, error: `GET ${url}`, details: url };
+        expect(buildSyncHistoryLines([entry], t, (iso) => iso).join()).not.toContain('s3cret-pw');
+        expect(getSyncFailureMessage(new Error(`request failed: token=abc123secretvalue at ${url}`), t)).toBe(
+            'settings.syncFailureGeneric\nrequest failed: token=[redacted] at https://dav.example.com/data.json',
+        );
+        expect(redactSyncText('echo hunter22 twice: hunter22', ['hunter22', null, ''])).toBe('echo [redacted] twice: [redacted]');
     });
 });

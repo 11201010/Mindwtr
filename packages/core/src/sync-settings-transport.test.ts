@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSyncSettingsTransport, type SyncSettingsSyncResult, type SyncSettingsToast, type SyncSettingsTransportHost } from './sync-settings-transport';
+import { createSyncSettingsTransport, SyncSettingsWriteError, type SyncSettingsSyncResult, type SyncSettingsToast, type SyncSettingsTransportHost } from './sync-settings-transport';
 import { SYNC_BACKEND_KEY, SYNC_PATH_BOOKMARK_KEY, SYNC_PATH_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY } from './sync-storage-keys';
 
 const picked = { value: null as unknown };
@@ -55,7 +55,7 @@ function setup(syncResults: SyncSettingsSyncResult[]) {
         dropbox: {} as SyncSettingsTransportHost['dropbox'],
         core: { addBreadcrumb: () => undefined },
     };
-    return { transport: createSyncSettingsTransport(host), storage, secrets, toasts, syncs };
+    return { transport: createSyncSettingsTransport(host), host, storage, secrets, toasts, syncs };
 }
 
 const fields = { allowInsecureHttp: false, password: 'secret', url: ' https://dav.example.com/ ', username: 'alice' };
@@ -124,5 +124,29 @@ describe('sync settings transport', () => {
         expect(syncs[0]).toMatchObject({ configOverride: { backend: 'file', syncPath: 'file:///new/data.json', syncPathBookmark: null } });
         expect(storage.get(SYNC_PATH_KEY)).toBe('file:///new/data.json');
         expect(storage.has(SYNC_PATH_BOOKMARK_KEY)).toBe(false);
+    });
+
+    it('keeps showing the stored backend when Off cannot be stored, and rejects so the caller can say so', async () => {
+        const { transport, storage, host } = setup([]);
+        storage.set(SYNC_BACKEND_KEY, 'webdav');
+        storage.set(WEBDAV_URL_KEY, 'https://dav.example.com');
+        await transport.load().done;
+        const setItem = host.storage.setItem;
+        host.storage.setItem = async (key, value) => {
+            if (key === SYNC_BACKEND_KEY) throw new Error('The device store refused the write');
+            return setItem(key, value);
+        };
+        await expect(transport.handleSelectSyncBackend('off')).rejects.toBeInstanceOf(SyncSettingsWriteError);
+        expect(storage.get(SYNC_BACKEND_KEY)).toBe('webdav');
+        expect(transport.getState().syncBackend).toBe('webdav');
+        expect(transport.getProven()).toEqual({ backend: 'webdav', cloudProvider: 'selfhosted', pending: false });
+    });
+
+    it('never echoes the password in a failure toast', async () => {
+        const { transport, toasts } = setup([{ success: false, error: 'server said: bad password secret-pw for alice' }]);
+        await transport.load().done;
+        await transport.handleSaveWebDavSettings({ ...fields, password: 'secret-pw' });
+        expect(toasts).toHaveLength(1);
+        expect(JSON.stringify(toasts)).not.toContain('secret-pw');
     });
 });
