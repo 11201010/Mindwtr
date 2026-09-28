@@ -36,8 +36,13 @@
  * - GTD › Pomodoro's alert notice: the host checks Android's exact-alarm
  *   permission (Android 12+) and shows `pomodoro.controls.alarmNotice` only
  *   while it is denied; its action opens the system's Alarms & reminders page.
- * - GTD › Capture's Android capture intent panel is platform wiring (a native
- *   module and its token); its texts are the `settings.automationCapture*` keys.
+ * - GTD › Capture's automation capture card (Android's capture intent): the
+ *   token lives in the app's no-backup files (React Native's
+ *   CaptureIntentConfigStore.kt), never in core. Send the stored config's
+ *   `enabled` as `captureIntent` to getGtdSettings (null when it cannot be read,
+ *   and show `capture.captureIntent.messages.loadFailed`). The switch sets the
+ *   stored config itself, a target-state write: on keeps a token already there,
+ *   off deletes it. Then read the view again.
  * - GTD screen state, reset on every visit: the text fields' drafts, the open
  *   task editor groups (see `taskEditor.expandedResetKey`), the field sheet, the
  *   default-area picker, and whether the auto-start notice showed.
@@ -639,20 +644,25 @@ export function createSettingsMethods(deps: SettingsDeps) {
         /**
          * Settings › GTD: the hub and its six sub-screens in one view (draw the one
          * the host is on; a link's `screen` opens a sub-screen). `taskOpenMode` is
-         * the stored `mindwtr:view:taskOpenMode:v1` text. Each control's `edit`
-         * goes to setGtdSetting.
+         * the stored `mindwtr:view:taskOpenMode:v1` text; `captureIntent` is the
+         * stored capture intent config on a device that has one. Each control's
+         * `edit` goes to setGtdSetting.
          */
-        getGtdSettings(input: { taskOpenMode?: string | null } = {}): NativeHostResult<NativeGtdSettings> {
+        getGtdSettings(input: { taskOpenMode?: string | null; captureIntent?: { enabled: boolean | null } } = {}): NativeHostResult<NativeGtdSettings> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isObjectRecord(input) || (input.taskOpenMode !== undefined && input.taskOpenMode !== null && !isText(input.taskOpenMode, 100))) {
-                return fail('INVALID_INPUT', 'taskOpenMode must be the stored text or null');
+            if (!isObjectRecord(input) || (input.taskOpenMode !== undefined && input.taskOpenMode !== null && !isText(input.taskOpenMode, 100))
+                || (input.captureIntent !== undefined && (!isObjectRecord(input.captureIntent)
+                    || Object.keys(input.captureIntent).some((key) => key !== 'enabled')
+                    || (typeof input.captureIntent.enabled !== 'boolean' && input.captureIntent.enabled !== null)))) {
+                return fail('INVALID_INPUT', 'taskOpenMode must be the stored text or null, and captureIntent { enabled } a boolean or null');
             }
             const state = useTaskStore.getState();
             const model = buildGtdSettingsModel({
                 settings: state.settings,
                 areas: state.areas,
                 taskOpenMode: readGtdTaskOpenMode(input.taskOpenMode),
+                ...(input.captureIntent ? { captureIntent: { enabled: input.captureIntent.enabled } } : {}),
                 t: deps.t(),
             });
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };

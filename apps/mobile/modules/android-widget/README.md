@@ -97,7 +97,7 @@ their capture dialogs use the app's localized payload as usual.
 ## Quick capture dialog
 
 `QuickCaptureActivity` writes `<filesDir>/pending-captures/<uuid>.json` in the
-schema `apps/mobile/lib/pending-captures.ts` (`parsePendingCapture`) reads,
+schema core's `packages/core/src/pending-captures.ts` (`parsePendingCapture`) reads,
 through `PendingCaptureWriter` (temp file + rename), then bumps the stored
 payload's `inboxCount` and redraws every widget. The tile, app shortcut,
 capture notification and all three widgets launch it by explicit class name.

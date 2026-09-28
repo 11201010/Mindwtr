@@ -6,9 +6,10 @@
  * (components/settings/gtd-settings-screen.tsx) and the native host contract
  * (native-host-contract-settings.ts).
  *
- * The screen reads two things from the device, not from settings: the task
+ * The screen reads three things from the device, not from settings: the task
  * open mode (a device-local choice, passed in) and, on Android, whether exact
- * alarms are allowed (the caller checks it for the Pomodoro alert's notice).
+ * alarms are allowed (the caller checks it for the Pomodoro alert's notice) and
+ * whether the capture intent is on (passed in).
  */
 import { compareAreasByOrder } from './task-utils';
 import { getDefaultTaskAreaMode, resolveDefaultNewTaskAreaId } from './area-utils';
@@ -456,6 +457,25 @@ export type GtdSettingsModel = {
         quickAddAutoClean: GtdSettingsToggle;
         naturalLanguageDates: GtdSettingsToggle;
         markdownEditorAssist: GtdSettingsToggle;
+        /**
+         * Android's automation capture card under the Capture card (React Native's
+         * AndroidCaptureIntentSection); null where the device has no capture intent.
+         * The switch turns the stored capture token on or off: on keeps a token
+         * already stored, off deletes it, so off then on makes a new token. While
+         * on, the token row shows the host's stored token, selectable, with a copy
+         * button. The token never passes through core.
+         */
+        captureIntent: {
+            label: string;
+            description: string;
+            /** On while the stored config holds a token. */
+            value: boolean;
+            /** While the stored config is unread or unreadable; the host also disables it while its write runs. */
+            disabled: boolean;
+            token: { label: string; copyLabel: string } | null;
+            /** Toasts: `copied` as info; `copyFailed`, `loadFailed` (the config cannot be read) and `updateFailed` (the switch's write failed) as errors. */
+            messages: { copied: string; copyFailed: string; loadFailed: string; updateFailed: string };
+        } | null;
     };
     review: {
         title: string;
@@ -499,6 +519,8 @@ export function buildGtdSettingsModel(input: {
     /** The store's areas; deleted ones are skipped. */
     areas: readonly Area[];
     taskOpenMode: GtdTaskOpenMode;
+    /** Android's stored capture intent config; `enabled` is null while it is unread or unreadable. Absent where the device has none. */
+    captureIntent?: { enabled: boolean | null };
     t: Translate;
 }): GtdSettingsModel {
     const { settings, t } = input;
@@ -655,6 +677,21 @@ export function buildGtdSettingsModel(input: {
         quickAddAutoClean: toggle(t('settings.quickAddAutoClean'), t('settings.quickAddAutoCleanDesc'), quickAddAutoClean, flip('quickAddAutoClean', quickAddAutoClean)),
         naturalLanguageDates: toggle(t('settings.naturalLanguageDates'), t('settings.naturalLanguageDatesDesc'), naturalLanguageDates, flip('naturalLanguageDates', naturalLanguageDates)),
         markdownEditorAssist: toggle(t('settings.markdownEditorAssist'), t('settings.markdownEditorAssistDesc'), markdownEditorAssist, flip('markdownEditorAssist', markdownEditorAssist)),
+        captureIntent: input.captureIntent ? {
+            label: tr('settings.automationCapture'),
+            description: tr('settings.automationCaptureDesc'),
+            value: input.captureIntent.enabled === true,
+            disabled: input.captureIntent.enabled === null,
+            token: input.captureIntent.enabled === true
+                ? { label: tr('settings.automationCaptureToken'), copyLabel: tr('settings.automationCaptureCopyToken') }
+                : null,
+            messages: {
+                copied: tr('settings.automationCaptureCopied'),
+                copyFailed: tr('settings.automationCaptureCopyFailed'),
+                loadFailed: tr('settings.automationCaptureLoadFailed'),
+                updateFailed: tr('settings.automationCaptureUpdateFailed'),
+            },
+        } : null,
     };
 
     // Review and Inbox.

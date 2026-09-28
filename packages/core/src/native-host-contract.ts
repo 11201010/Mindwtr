@@ -226,6 +226,7 @@ export { NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS, type NativeSyncSettingsHost 
 import { createTaskViewMethods, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
+import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -1181,6 +1182,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
 
         // The Mind Sweep screen: native-host-contract-mind-sweep.ts.
         ...createMindSweepMethods({ readiness, save, t: () => translate, revision: (now) => `${revision()}:${displayRevision(now)}` }),
+        // The pending-captures queue and context automation: native-host-contract-capture-ingest.ts.
+        ...createCaptureIngestMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN }),
         // A saved search's screen: native-host-contract-saved-search.ts.
         ...createSavedSearchMethods({
             readiness,

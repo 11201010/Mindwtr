@@ -71,17 +71,14 @@ const EXCLUDED_DIR_NAMES = new Set([
  * shrink: add the key to en.ts, delete the line here.
  *
  * These are whole features that never got i18n keys at all, not stragglers — the
- * People manager, saved filters, and the context-automation notifications.
+ * People manager and saved filters. (The context-automation notifications' five
+ * `contextAutomation.*` keys are missing too; their call site moved to core's
+ * context-automation.ts, which this scan does not read.)
  * Translating them is its own task; adding them to en.ts alone would break locale
  * parity for the five full-parity locales.
  */
 const KNOWN_MISSING_KEYS = new Set([
   'areas.newHint',
-  'contextAutomation.manyNextActionsTitle',
-  'contextAutomation.moreTasksLine',
-  'contextAutomation.noNextActionsBody',
-  'contextAutomation.noNextActionsTitle',
-  'contextAutomation.oneNextActionTitle',
   'people.edit',
   'people.empty',
   'people.namePlaceholder',

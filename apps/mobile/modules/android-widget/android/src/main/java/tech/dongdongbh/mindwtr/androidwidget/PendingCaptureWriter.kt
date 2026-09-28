@@ -13,7 +13,7 @@ import org.json.JSONObject
 
 /**
  * Appends one item to the pending-captures queue (#845 contract): native code
- * never writes the app database. `apps/mobile/lib/pending-captures.ts`
+ * never writes the app database. Core's `packages/core/src/pending-captures.ts`
  * (`parsePendingCapture`) reads `<filesDir>/pending-captures/<uuid>.json` on
  * the next app start or foreground and creates the Inbox task through the
  * normal store path.

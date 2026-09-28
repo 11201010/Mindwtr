@@ -88,6 +88,8 @@ export * from './mobile-sync-configuration-transaction';
 export * from './sync-settings-model';
 export * from './sync-settings-transport';
 export * from './sync-encryption-card';
+export * from './pending-captures';
+export * from './context-automation';
 export * from './diceware';
 export * from './task-utils';
 export * from './task-similarity';

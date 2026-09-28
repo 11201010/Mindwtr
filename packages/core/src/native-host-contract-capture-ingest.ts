@@ -1,0 +1,150 @@
+/**
+ * The native host contract for work that arrives while the app is closed: the
+ * pending-captures queue (pending-captures.ts) and context automation
+ * (context-automation.ts). Kept in its own file and spread into
+ * createNativeHostContract. The native runner boots the host, activates it
+ * after the validated load, replays its journal, then calls these; Kotlin only
+ * lists, reads and deletes files and posts the notification.
+ *
+ * Only functions read this module's imports from native-host-contract.ts, so the
+ * import cycle between the two files is safe.
+ */
+import {
+    buildContextAutomationNotification,
+    createContextAutomationThrottle,
+    parseContextAutomationHeadlessTaskData,
+    type ContextAutomationNotification,
+} from './context-automation';
+import { tFallback, type TranslateFn } from './i18n';
+import { logError, logInfo, logWarn } from './logger';
+import type { NativeHostResult } from './native-host-contract';
+import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
+import { drainPendingCaptureQueue, type PendingCaptureLog, type PendingCaptureQueuePort } from './pending-captures';
+import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
+import { useTaskStore } from './store';
+
+type CaptureIngestDeps = {
+    readiness: () => NativeHostResult<null>;
+    save: () => Promise<NativeHostResult<null>>;
+    t: () => TranslateFn;
+    requestIdPattern: RegExp;
+};
+
+// React Native's app log shape onto core's logger.
+const log: PendingCaptureLog = {
+    info: (message, context) => logInfo(message, { scope: context.scope, context: context.extra }),
+    warn: (message, context) => logWarn(message, { scope: context.scope, context: context.extra }),
+    error: (error, context) => logError(String(context.extra?.message ?? 'Pending capture failed'), {
+        scope: context.scope,
+        context: context.extra,
+        error,
+    }),
+};
+
+const isQueuePort = (value: unknown): value is PendingCaptureQueuePort => (
+    isObjectRecord(value)
+    && typeof value.list === 'function'
+    && typeof value.read === 'function'
+    && typeof value.delete === 'function'
+);
+
+const isOptionalText = (value: unknown) => value === undefined || value === null || isText(value, 2000);
+
+export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
+    // React Native's drainPendingCapturesFromStore: one drain at a time, since each
+    // reads a file, writes the store, then deletes the file.
+    let drainChain: Promise<unknown> = Promise.resolve();
+    const throttle = createContextAutomationThrottle();
+
+    // React Native's flushPendingTaskActionSave: resolves only once the store's
+    // writes are durable. Exhausted save retries leave a persistence failure,
+    // so a replay recovers it before its queue file may go.
+    const flushDurably = async (): Promise<void> => {
+        let saved = await deps.save();
+        if (!saved.ok && saved.error.code === 'SAVE_FAILED') {
+            await useTaskStore.getState().retryPersistence();
+            saved = await deps.save();
+        }
+        if (!saved.ok) throw new Error(saved.error.message);
+    };
+
+    return {
+        /**
+         * Drains the pending-captures queue into the store. `queue` lists, reads and
+         * deletes the files under the app's `files/pending-captures/`. Captures,
+         * check-offs and defers are stored; `audio` and `pomodoro` items stay in the
+         * queue untouched. A file is deleted only after its write is durable.
+         * `ingested` counts the items stored and removed.
+         *
+         * Every call drains again, so a replay after a restart is safe: a capture is
+         * created under its own UUID and a replay finds that task; a check-off or
+         * defer checks the task first and finds it done or deferred. The request ID
+         * names the journal entry. In sandbox mode, or during a workspace switch,
+         * nothing is read.
+         */
+        async ingestPendingCaptures(input: { requestId: string; queue: PendingCaptureQueuePort }): Promise<NativeHostResult<{ ingested: number }>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+                || !isQueuePort(input.queue)) {
+                return fail('INVALID_INPUT', 'A request UUID and a queue with list, read and delete are required');
+            }
+            const queue = input.queue;
+            const run = drainChain.then(async () => {
+                if (isSandboxMode() || isWorkspaceTransitionActive()) return 0;
+                const { addTask, updateTask, addProject, projects, areas, tasks, people, settings } = useTaskStore.getState();
+                return drainPendingCaptureQueue({
+                    addTask,
+                    updateTask,
+                    addProject,
+                    projects,
+                    areas,
+                    tasks,
+                    people,
+                    settings,
+                    getTasks: () => useTaskStore.getState()._allTasks,
+                    flushPendingSave: flushDurably,
+                    queue,
+                    log,
+                });
+            });
+            drainChain = run.catch(() => undefined);
+            try {
+                return { ok: true, value: { ingested: await run } };
+            } catch (error) {
+                return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        },
+
+        /**
+         * An automation trigger, as the ACTIVATE_CONTEXT or DEACTIVATE_CONTEXT
+         * broadcast carries it: its `url`, or its `action` and `context` extras.
+         * Answers the notification to post, or null: data it cannot read,
+         * deactivation, a repeat within 10 s or a start past the window's budget,
+         * and a context with no next action post nothing. Nothing is written, so
+         * a replay after a restart builds the same notification again; the
+         * throttle is per process, as in React Native.
+         */
+        runContextAutomation(input: { url?: string | null; action?: string | null; context?: string | null }): NativeHostResult<{
+            notification: ContextAutomationNotification | null;
+        }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isOptionalText(input.url) || !isOptionalText(input.action) || !isOptionalText(input.context)) {
+                return fail('INVALID_INPUT', 'url, action and context are optional text');
+            }
+            const payload = parseContextAutomationHeadlessTaskData(input);
+            if (!payload || throttle.wasRecentlyHandled(payload)) return { ok: true, value: { notification: null } };
+            const state = useTaskStore.getState();
+            const t = deps.t();
+            const notification = buildContextAutomationNotification(payload, {
+                tasks: state.tasks,
+                projects: state.projects,
+                settings: state.settings,
+                now: new Date(),
+                resolveText: (key, fallback) => tFallback(t, key, fallback),
+            });
+            return { ok: true, value: { notification } };
+        },
+    };
+}
