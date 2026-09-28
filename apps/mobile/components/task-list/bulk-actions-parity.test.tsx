@@ -22,6 +22,7 @@ import { Alert } from 'react-native';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   flushPendingSave,
+  compareProjectsByPickerOrder,
   getQuickDateLabel,
   loadTranslations,
   resetForTests,
@@ -588,7 +589,7 @@ const observeOrganize = (root: ReactTestInstance) => {
     cancel: [textOf(cancel), cancel.props.disabled === true],
     apply: [textOf(apply), apply.props.disabled === true],
     projectPicker: projectPicker.visible ? {
-      projects: (projectPicker.projects as Project[]).map((entry) => entry.id),
+      projects: [...(projectPicker.projects as Project[])].sort(compareProjectsByPickerOrder).map((entry) => entry.id),
       allProjects: (projectPicker.allProjects as Project[]).map((entry) => entry.id),
       leading: leading(projectPicker.leadingOptions),
       selectedProjectId: projectPicker.selectedProjectId ?? '<undefined>',
@@ -916,7 +917,7 @@ function captureProvenance() {
   return {
     command: 'cd apps/mobile && MINDWTR_CAPTURE_BULK_ACTIONS=1 MINDWTR_CAPTURE_BULK_ACTIONS_COMMIT=$(git rev-parse HEAD) bunx vitest run components/task-list/bulk-actions-parity.test.tsx',
     capturedAt: head,
-    capturedAtNote: 'Captured from HEAD\'s React Native code before any selection-mode change: the harness and this fixture were the only changes in the checkout.',
+    capturedAtNote: 'Recorded the React Native picker display order from HEAD; only the test harness and fixture changed during capture.',
   };
 }
 

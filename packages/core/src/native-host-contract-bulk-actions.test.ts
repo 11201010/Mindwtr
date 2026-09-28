@@ -293,6 +293,9 @@ describe('native host contract: selection mode', () => {
             expect(ids()).toEqual(['p-launch', 'p-home']);
             // A search keeps that order ("h" is in both titles).
             expect(ids('h')).toEqual(['p-launch', 'p-home']);
+            // Equal custom orders keep the title order passed to the mobile picker.
+            await useTaskStore.getState().updateProject('p-launch', { order: 10 });
+            expect(ids()).toEqual(['p-home', 'p-launch']);
         });
 
         it('the organize pickers lead with Keep and None, and search the rest', async () => {

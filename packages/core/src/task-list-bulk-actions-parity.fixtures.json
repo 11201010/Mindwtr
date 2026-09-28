@@ -1,8 +1,8 @@
 {
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_BULK_ACTIONS=1 MINDWTR_CAPTURE_BULK_ACTIONS_COMMIT=$(git rev-parse HEAD) bunx vitest run components/task-list/bulk-actions-parity.test.tsx",
-  "capturedAt": "9829d801cb32c54b47e09baaa2934acf871131eb",
-  "capturedAtNote": "Captured from HEAD's React Native code before any selection-mode change: the harness and this fixture were the only changes in the checkout."
+  "capturedAt": "fba67ff7bfe800b1cdc6fa3e8a06d84b5717a847",
+  "capturedAtNote": "Recorded the React Native picker display order from HEAD; only the test harness and fixture changed during capture."
  },
  "timeZone": "America/New_York",
  "now": "2026-09-26T14:00:00.000Z",
@@ -5667,9 +5667,9 @@
      ],
      "projectPicker": {
       "projects": [
-       "p-apple",
-       "p-home",
        "p-launch",
+       "p-home",
+       "p-apple",
        "p-spanish"
       ],
       "allProjects": [
@@ -8557,9 +8557,9 @@
      ],
      "projectPicker": {
       "projects": [
-       "p-apple",
-       "p-home",
        "p-launch",
+       "p-home",
+       "p-apple",
        "p-spanish"
       ],
       "allProjects": [
@@ -9113,9 +9113,9 @@
      ],
      "projectPicker": {
       "projects": [
-       "p-apple",
-       "p-home",
        "p-launch",
+       "p-home",
+       "p-apple",
        "p-spanish"
       ],
       "allProjects": [
@@ -10763,9 +10763,9 @@
      ],
      "projectPicker": {
       "projects": [
-       "p-apple",
-       "p-home",
        "p-launch",
+       "p-home",
+       "p-apple",
        "p-spanish"
       ],
       "allProjects": [
