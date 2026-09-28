@@ -75,6 +75,12 @@ export const getPersistenceStatus = () => ({
     generation: pendingVersion,
     failed: useTaskStore.getState().persistenceFailure !== null,
 });
+// Each queued snapshot's generation. Every saved change moves the generation on and takes
+// its snapshot in the same step, so a snapshot tagged g holds every change saved at
+// generation g or before: a save of it makes all of them durable.
+const snapshotGenerations = new WeakMap<AppData, number>();
+/** The generation (getPersistenceStatus's) a save-queue snapshot was taken at; undefined for data the queue did not build. */
+export const getSaveSnapshotGeneration = (data: AppData): number | undefined => snapshotGenerations.get(data);
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
 const getSaveRetryDelayMs = (attempt: number): number => {
     const cappedAttempt = Math.max(0, attempt - 1);
@@ -385,9 +391,11 @@ const enqueuePendingSave = (
 ) => {
     if (explicitVersion === undefined) pendingVersion += 1;
     const version = explicitVersion ?? pendingVersion;
+    const snapshot = sanitizeAppDataForStorage(data);
+    snapshotGenerations.set(snapshot, version);
     pendingSaves.push({
         version,
-        data: sanitizeAppDataForStorage(data),
+        data: snapshot,
         onErrorCallbacks: onError ? [onError] : [],
         attempts: 0,
     });

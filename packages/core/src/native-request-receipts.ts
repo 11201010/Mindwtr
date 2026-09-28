@@ -1,7 +1,9 @@
 import type { NativeHostResult } from './native-host-contract';
-import { useTaskStore } from './store';
+import { SqliteAdapter, type SqliteAdapterOptions, type SqliteClient } from './sqlite-adapter';
+import { getPersistenceStatus, getSaveSnapshotGeneration, useTaskStore } from './store';
 import type { StoreActionResult } from './store-types';
-import type { Task } from './types';
+import type { AppData, Task } from './types';
+import { deterministicHash128, generateDeterministicUUID } from './uuid';
 
 /**
  * Exact-retry bookkeeping for native host writes, shared by every contract write
@@ -26,16 +28,20 @@ import type { Task } from './types';
  * Any other failure means the write did not land: it leaves no receipt, so the
  * same request can run again.
  *
- * Receipts live in memory. They cover the window in which a save is owed. After
- * a durable acknowledgment, a restart or an eviction, a replay runs the write
- * again (the native app journals every write and replays it after process death),
- * so every write must be safe to run again after a later change:
+ * The native host keeps receipts on disk too (loadNativeRequestReceipts,
+ * NativeReceiptSqliteAdapter): a write's receipt commits in the same SQLite
+ * transaction as its data, so the journal's replay after process death answers a
+ * landed request from its first reply and runs nothing. Without that table (other
+ * hosts, tests), or for a write whose data a save committed before its receipt
+ * existed, a replay runs the write again, so every write must also be safe to run
+ * again after a later change:
  *
  * - target-state: a replay of a request that already landed writes nothing;
  * - compare-and-set: a write to existing rows carries the revision the view showed
  *   for each (revisionOf) and refuses rows changed since (refuseStale), so a
  *   replay never undoes a later change;
- * - a create names its row by the request UUID, so a replay finds the row it made.
+ * - a create names its row by the request UUID (a second row by requestRowId), so
+ *   a replay finds the row it made.
  */
 export type NativeRequestReceipts = {
     run<T>(requestId: unknown, payload: string, write: () => Promise<NativeHostResult<T> | NativeUnsavedWrite<T>>): Promise<NativeHostResult<T>>;
@@ -141,6 +147,129 @@ export const taskRevisionsOf = (ids: readonly string[]): NativeRevisions => {
     }));
 };
 
+/**
+ * A revision for many rows at once (a Select all, a context's carriers): their count and
+ * a 128-bit hash of their `id@revision` entries. Deterministic, so a token a view gave
+ * before a restart still matches after it while those rows are unchanged.
+ */
+export const revisionsToken = (entries: readonly string[]): string => `${entries.length}:${
+    deterministicHash128(JSON.stringify(entries)).map((part) => part.toString(16).padStart(8, '0')).join('')}`;
+
+/**
+ * The ID of a row a request creates beside its main row (a capture's new project),
+ * derived from the request UUID and the row's `role`: a retry finds that row by it.
+ */
+export const requestRowId = (requestId: string, role: string): string => generateDeterministicUUID(`${requestId.toLowerCase()}:${role}`);
+
+// Durable receipts: the native host only (loadNativeRequestReceipts turns them on).
+type StoredReceipt = { payload: string; reply: unknown; savedAt: string };
+type PendingReceipt = { payload: string; reply: unknown; generation: number };
+let durableReceipts: Map<string, StoredReceipt> | null = null;
+/** Landed, not committed yet; `generation` is the store's when it landed (every change it made is saved at or before it). */
+const pendingReceipts = new Map<string, PendingReceipt>();
+let receiptedWritesRunning = 0;
+
+const RECEIPTS_TABLE = `CREATE TABLE IF NOT EXISTS native_request_receipts (
+    request_id TEXT PRIMARY KEY,
+    method TEXT NOT NULL,
+    reply TEXT NOT NULL,
+    saved_at TEXT NOT NULL
+)`;
+const RECEIPT_DAYS = 30;
+
+const recordPendingReceipt = (requestId: string, payload: string, reply: unknown) => {
+    pendingReceipts.set(requestId, { payload, reply, generation: getPersistenceStatus().generation });
+};
+
+/**
+ * Native host boot, before the journal's replay: creates the receipts table (`method` is the
+ * request's command and input as its receipt compares them, `reply` its first reply as JSON)
+ * and loads it. From then on every landed request's receipt is kept on disk.
+ */
+export async function loadNativeRequestReceipts(client: SqliteClient): Promise<number> {
+    await client.run(RECEIPTS_TABLE);
+    const rows = await client.all<{ request_id: string; method: string; reply: string; saved_at: string }>(
+        'SELECT request_id, method, reply, saved_at FROM native_request_receipts',
+    );
+    durableReceipts = new Map(rows.map((row) => [row.request_id, { payload: row.method, reply: JSON.parse(row.reply), savedAt: row.saved_at }]));
+    pendingReceipts.clear();
+    receiptedWritesRunning = 0;
+    return durableReceipts.size;
+}
+
+/** After the journal's boot replay: drops receipts older than 30 days. */
+export async function pruneNativeRequestReceipts(client: SqliteClient, now = new Date()): Promise<number> {
+    // ponytail: a fixed 30-day window; a journal entry older than that replays without its receipt (the write rules above still hold).
+    const cutoff = new Date(now.getTime() - RECEIPT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    await client.run('DELETE FROM native_request_receipts WHERE saved_at < ?', [cutoff]);
+    let pruned = 0;
+    for (const [id, receipt] of durableReceipts ?? []) {
+        if (receipt.savedAt >= cutoff) continue;
+        durableReceipts!.delete(id);
+        pruned += 1;
+    }
+    return pruned;
+}
+
+/** Tests only: back to receipts in memory. */
+export const resetNativeRequestReceipts = () => {
+    durableReceipts = null;
+    pendingReceipts.clear();
+    receiptedWritesRunning = 0;
+};
+
+/**
+ * The native host's SQLite adapter. A save of a queued snapshot also commits, in the same
+ * transaction, every pending receipt whose changes that snapshot holds (landed at its
+ * generation or before), and never one whose changes it lacks. While a receipt is pending
+ * or a receipted write runs it offers no saveTask, so the store saves whole snapshots and
+ * no later change reaches the disk before that receipt.
+ */
+export class NativeReceiptSqliteAdapter extends SqliteAdapter {
+    private readonly receiptClient: SqliteClient;
+    private readonly carried = new WeakMap<AppData, { ids: string[]; savedAt: string }>();
+
+    constructor(client: SqliteClient, options?: SqliteAdapterOptions) {
+        super(client, options);
+        this.receiptClient = client;
+        const saveTask = this.saveTask;
+        Object.defineProperty(this, 'saveTask', {
+            get: () => (pendingReceipts.size === 0 && receiptedWritesRunning === 0 ? saveTask : undefined),
+        });
+    }
+
+    protected override async beforeCommit(write: { data: AppData } | { task: Task }): Promise<void> {
+        // A single task's save runs only while no receipt is pending (see saveTask above).
+        if (!('data' in write)) return;
+        const generation = getSaveSnapshotGeneration(write.data);
+        if (generation === undefined) return;
+        const savedAt = new Date().toISOString();
+        const ids: string[] = [];
+        for (const [id, receipt] of pendingReceipts) {
+            if (receipt.generation > generation) continue;
+            await this.receiptClient.run(
+                'INSERT INTO native_request_receipts (request_id, method, reply, saved_at) VALUES (?, ?, ?, ?) ON CONFLICT(request_id) DO NOTHING',
+                [id, receipt.payload, JSON.stringify(receipt.reply ?? null), savedAt],
+            );
+            ids.push(id);
+        }
+        this.carried.set(write.data, { ids, savedAt });
+    }
+
+    override async saveData(data: AppData): Promise<void> {
+        await super.saveData(data);
+        // Committed: those receipts are durable. After a rollback they stay pending for the next save.
+        const carried = this.carried.get(data);
+        this.carried.delete(data);
+        for (const id of carried?.ids ?? []) {
+            const receipt = pendingReceipts.get(id);
+            if (!receipt) continue;
+            pendingReceipts.delete(id);
+            durableReceipts?.set(id, { payload: receipt.payload, reply: receipt.reply, savedAt: carried!.savedAt });
+        }
+    }
+}
+
 const REQUEST_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 
 type Receipt = {
@@ -198,6 +327,13 @@ export function createNativeRequestReceipts(options: {
                 known.running = finishing;
                 return finishing as Promise<NativeHostResult<T>>;
             }
+            // Landed and saved before a restart (or evicted since): its first reply, and nothing runs.
+            const stored = durableReceipts?.get(requestId);
+            if (stored) {
+                return Promise.resolve(stored.payload === payload
+                    ? { ok: true, value: stored.reply as T }
+                    : { ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
+            }
             if (!makeRoom()) {
                 return Promise.resolve({
                     ok: false,
@@ -208,23 +344,32 @@ export function createNativeRequestReceipts(options: {
             receipts.set(requestId, receipt);
             receipt.running = (async (): Promise<NativeHostResult<unknown>> => {
                 let outcome: NativeHostResult<T> | NativeUnsavedWrite<T>;
+                const durable = durableReceipts !== null;
+                if (durable) receiptedWritesRunning += 1;
                 try {
-                    outcome = await write();
-                } catch (error) {
-                    outcome = { ok: false, error: { code: 'ACTION_FAILED', message: error instanceof Error ? error.message : String(error) } };
-                }
-                if (!outcome.ok && outcome.error.code === 'SAVE_FAILED') {
-                    // It landed; only its save failed. A retry saves and never writes again.
+                    try {
+                        outcome = await write();
+                    } catch (error) {
+                        outcome = { ok: false, error: { code: 'ACTION_FAILED', message: error instanceof Error ? error.message : String(error) } };
+                    }
+                    if (!outcome.ok && outcome.error.code === 'SAVE_FAILED') {
+                        // It landed; only its save failed. A retry saves and never writes again.
+                        receipt.written = true;
+                        receipt.value = 'value' in outcome ? outcome.value : undefined;
+                        if (durable) recordPendingReceipt(requestId, payload, receipt.value);
+                        return { ok: false, error: outcome.error };
+                    }
+                    if (!outcome.ok) {
+                        receipts.delete(requestId);
+                        return outcome;
+                    }
                     receipt.written = true;
-                    receipt.value = 'value' in outcome ? outcome.value : undefined;
-                    return { ok: false, error: outcome.error };
+                    receipt.value = outcome.value;
+                    // Pending from here: the save below commits it with the snapshot that holds this write.
+                    if (durable) recordPendingReceipt(requestId, payload, receipt.value);
+                } finally {
+                    if (durable) receiptedWritesRunning -= 1;
                 }
-                if (!outcome.ok) {
-                    receipts.delete(requestId);
-                    return outcome;
-                }
-                receipt.written = true;
-                receipt.value = outcome.value;
                 return save(receipt);
             })().finally(() => { receipt.running = null; });
             return receipt.running as Promise<NativeHostResult<T>>;

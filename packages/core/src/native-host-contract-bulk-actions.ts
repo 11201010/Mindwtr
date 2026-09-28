@@ -15,7 +15,8 @@
  * - Select all is stateless, as on Archive: send `selectAll: { except }` (the rows
  *   deselected since) and the view returns `selectAll: { params, revision, except }`,
  *   the object an action takes. The action resolves it again and refuses with
- *   STALE_REVISION once the rows on screen changed.
+ *   STALE_REVISION once the rows on screen changed, unless no row it covers now
+ *   needs a write (then changed: false, as for the replay of one that landed).
  * - `params` are the list view's own inputs as last sent (the returned
  *   `filters.state`, no `filterEdit`, no paging). A row that a filter or a folded
  *   heading hides is not on screen: it leaves the selection and Select all skips it,
@@ -67,13 +68,13 @@ import {
     isText,
     matchesPickerQuery,
     page,
-    paramsKey,
     type createMenuViewMethods,
 } from './native-host-contract-menu-views';
 import {
     createNativeRequestReceipts,
     isRevisions,
     refuseStaleTasks,
+    revisionsToken,
     runStoreWrite,
     settleWrite,
     taskRevisionOf,
@@ -437,14 +438,18 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
     // Each row's revision is in it: a change to any selected row, on screen or not, makes Select all stale.
     const selectAllRevision = (ids: string[]) => {
         const { _tasksById } = useTaskStore.getState();
-        return `${ids.length}:${paramsKey(ids.map((id) => {
+        return revisionsToken(ids.map((id) => {
             const task = _tasksById.get(id);
             return `${id}@${task ? taskRevisionOf(task) : ''}`;
-        }))}`;
+        }));
     };
 
-    /** The rows an action takes: its `taskIds`, or its Select all resolved now. */
-    const resolveTarget = (list: NativeBulkList, action: Record<string, unknown>): string[] | NativeHostResult<never> => {
+    /**
+     * The rows an action takes: its `taskIds`, or its Select all resolved now. `current` is
+     * false once Select all's revision no longer holds: the action is STALE_REVISION unless
+     * no row it covers now needs a write (a replay of one that landed: its rows changed).
+     */
+    const resolveTarget = (list: NativeBulkList, action: Record<string, unknown>): { taskIds: string[]; current: boolean } | NativeHostResult<never> => {
         if (action.taskIds !== undefined && action.selectAll !== undefined) return fail('INVALID_INPUT', 'Send taskIds or selectAll, not both');
         if (action.selectAll === undefined) {
             if (!isIdList(action.taskIds)) return fail('INVALID_INPUT', 'Task IDs or Select all are required');
@@ -452,7 +457,7 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 const task = liveTask(id);
                 return !task || readOnly(task);
             });
-            return invalid ? fail('INVALID_INPUT', 'Every task must exist, not be in Trash, and be editable') : action.taskIds;
+            return invalid ? fail('INVALID_INPUT', 'Every task must exist, not be in Trash, and be editable') : { taskIds: action.taskIds, current: true };
         }
         const selectAll = action.selectAll;
         if (!isObjectRecord(selectAll) || typeof selectAll.revision !== 'string' || (selectAll.except !== undefined && !isIdList(selectAll.except, true))) {
@@ -461,10 +466,10 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
         const read = listRows(list, selectAll.params);
         if (!read.ok) return read;
         const ids = selectableIds(read.value.rows);
-        if (selectAllRevision(ids) !== selectAll.revision) return fail('STALE_REVISION', 'The list changed; select all again');
+        const current = selectAllRevision(ids) === selectAll.revision;
         const except = new Set(selectAll.except as string[] | undefined);
         const selected = ids.filter((id) => !except.has(id));
-        return selected.length > 0 ? selected : fail('INVALID_INPUT', 'Select all selects no task');
+        return current && selected.length === 0 ? fail('INVALID_INPUT', 'Select all selects no task') : { taskIds: selected, current };
     };
 
     const toToast = (write: TaskListBulkWrite, t: (key: string) => string): NativeListToast<NativeBulkAction> | null => {
@@ -479,9 +484,14 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
         };
     };
     const unchanged = (): ActionOutcome => ({ ok: true, value: { changed: false, toast: null } });
-    /** The write, compare-and-set on the rows it changes against `revisions` (none under Select all: its revision covered them). */
-    const perform = async (write: TaskListBulkWrite, t: (key: string) => string, revisions: NativeRevisions | undefined): Promise<ActionOutcome> => {
-        const ids = write.kind === 'update' ? write.updates.map(({ id }) => id) : write.taskIds;
+    /**
+     * The write, compare-and-set against `revisions` (none under Select all: its revision covered
+     * them) on `ids`: the rows it changes, or those of them not at the target yet.
+     */
+    const perform = async (
+        write: TaskListBulkWrite, t: (key: string) => string, revisions: NativeRevisions | undefined,
+        ids = write.kind === 'update' ? write.updates.map(({ id }) => id) : write.taskIds,
+    ): Promise<ActionOutcome> => {
         const stale = revisions ? refuseStaleTasks(ids, revisions) : null;
         if (stale) return stale;
         const written = await runStoreWrite(() => runTaskListBulkWrite(useTaskStore.getState(), write));
@@ -728,13 +738,20 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     return unchanged();
                 }
                 const target = resolveTarget(list, action);
-                if (!Array.isArray(target)) return target;
-                const taskIds = target;
+                if ('ok' in target) return target;
+                const { taskIds } = target;
+                // Target state first: rows that already hold it need no write, and none left is
+                // changed: false. Then compare-and-set: a stale Select all refuses the rest.
+                const run = (write: TaskListBulkWrite | null, casIds?: string[]): Promise<ActionOutcome> | ActionOutcome => {
+                    if (!write) return unchanged();
+                    return target.current ? perform(write, t, revisions, casIds) : fail('STALE_REVISION', 'The list changed; select all again');
+                };
                 switch (action.type) {
                     case 'moveTasks': {
                         if (!getBulkMoveStatusOptions(screen.status).includes(action.status)) return fail('INVALID_INPUT', 'This list does not offer that status');
-                        if (taskIds.every((id) => state._tasksById.get(id)?.status === action.status)) return unchanged();
-                        return perform({ kind: 'move', taskIds, status: action.status }, t, revisions);
+                        // Mobile moves every selected row; only the rows not there yet are compared.
+                        const moving = taskIds.filter((id) => state._tasksById.get(id)?.status !== action.status);
+                        return run(moving.length > 0 ? { kind: 'move', taskIds, status: action.status } : null, moving);
                     }
                     case 'editTaskTokens': {
                         if (action.field !== 'tags' || (action.mode !== 'add' && action.mode !== 'remove')
@@ -743,18 +760,17 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                             || !action.values.every((value) => isText(value) && value.trim().length > 0)) {
                             return fail('INVALID_INPUT', 'Tags to add, or tags to remove where the list offers it, are required');
                         }
-                        const write = planBulkTagEdit(taskIds, state._tasksById, action.mode, action.values);
-                        return write ? perform(write, t, revisions) : unchanged();
+                        return run(planBulkTagEdit(taskIds, state._tasksById, action.mode, action.values));
                     }
                     case 'organize': {
                         if (!screen.organize) return fail('INVALID_INPUT', 'This list does not offer Bulk organize');
                         const apply = readBulkOrganizeApply(action.draft);
                         if (!apply.ok) return apply;
                         const write = planBulkOrganize(taskIds, state._tasksById, apply.value);
-                        return write && write.kind === 'update' && !hasLanded(write.updates) ? perform(write, t, revisions) : unchanged();
+                        return run(write && write.kind === 'update' && !hasLanded(write.updates) ? write : null);
                     }
                     case 'trashTasks':
-                        return perform({ kind: 'trash', taskIds }, t, revisions);
+                        return run(taskIds.length > 0 ? { kind: 'trash', taskIds } : null);
                     default:
                         return fail('INVALID_INPUT', 'This list does not offer that action');
                 }

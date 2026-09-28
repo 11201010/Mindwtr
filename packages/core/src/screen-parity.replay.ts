@@ -2,12 +2,18 @@
  * Test support only (imported by the native host contract tests; not exported).
  * Loads a frozen React Native screen fixture, seeds the store as the mobile harness
  * does, records the store calls the harness records, and opens a native host over
- * that store; replayAfterRestart replays a request on a new host.
+ * that store; replayAfterRestart replays a request on a new host. openSqliteHost
+ * runs the host over a real SQLite file with its request receipts, as the app does.
  */
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
-import type { AppSettings, Area, Project, Task } from './types';
+import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
+import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
+import { flushPendingSave, getPersistenceStatus, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import type { AppData, AppSettings, Area, Project, Task } from './types';
 
 export const loadScreenFixture = <T,>(name: string): T => JSON.parse(
     readFileSync(new URL(`./${name}-parity.fixtures.json`, import.meta.url), 'utf8'),
@@ -97,4 +103,108 @@ export async function replayAfterRestart<T>(replay: (host: ScreenHost) => Promis
     const before = data();
     const result = await replay(host);
     return { result, wrote: data().some((entry, index) => entry !== before[index]) };
+}
+
+type Statement = { run: (...params: unknown[]) => unknown; all: (...params: unknown[]) => unknown[]; get: (...params: unknown[]) => unknown };
+type Database = { exec: (sql: string) => void; close: () => void; prepare?: (sql: string) => Statement; query?: (sql: string) => Statement };
+const require = createRequire(import.meta.url);
+const openDatabase = (file: string): Database => {
+    const bun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+    const Database = bun
+        ? (require('bun:sqlite') as { Database: new (file: string) => Database }).Database
+        : (require('node:sqlite') as { DatabaseSync: new (file: string) => Database }).DatabaseSync;
+    return new Database(file);
+};
+// bun:sqlite takes the parameters as one array, node:sqlite as arguments.
+const clientOf = (database: Database): SqliteClient => {
+    const statement = (sql: string) => {
+        const prepared = database.prepare ? database.prepare(sql) : database.query!(sql);
+        return (method: keyof Statement, params: unknown[] = []) => (database.prepare ? prepared[method](...params) : prepared[method](params));
+    };
+    return {
+        run: async (sql, params) => { statement(sql)('run', params); },
+        all: async <T,>(sql: string, params?: unknown[]) => statement(sql)('all', params) as T[],
+        get: async <T,>(sql: string, params?: unknown[]) => (statement(sql)('get', params) ?? undefined) as T | undefined,
+        exec: async (sql) => { database.exec(sql); },
+    };
+};
+
+/** A SQLite file and a client over it, for a test's own adapter. */
+export const openScratchSqlite = (file: string) => {
+    const database = openDatabase(file);
+    return { client: clientOf(database), close: () => database.close() };
+};
+
+/**
+ * The native host over a real SQLite file, booted as the app boots it: core's receipt
+ * adapter, the receipts table loaded before activation. `wrap` sees every SQL call (to
+ * hold one, or fail one). `restart()` is process death: nothing in memory survives
+ * (the store, the receipts, the connection); the host boots again from the file.
+ */
+export async function openSqliteHost(seed: Partial<AppData>, wrap: (client: SqliteClient) => SqliteClient = (client) => client) {
+    const dir = mkdtempSync(join(tmpdir(), 'mindwtr-receipts-'));
+    const file = join(dir, 'mindwtr.db');
+    let database = openDatabase(file);
+    await new SqliteAdapter(clientOf(database)).saveData({
+        tasks: [], projects: [], sections: [], areas: [], people: [], settings: {}, ...JSON.parse(JSON.stringify(seed)),
+    });
+    const boot = async () => {
+        resetForTests();
+        resetNativeRequestReceipts();
+        useTaskStore.setState({
+            _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
+            settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
+        } as never);
+        const client = wrap(clientOf(database));
+        setStorageAdapter(new NativeReceiptSqliteAdapter(client));
+        await loadNativeRequestReceipts(client);
+        const host = createNativeHostContract();
+        value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
+        value(await host.activate({ writeSafetyReady: true }));
+        return host;
+    };
+    let host = await boot();
+    const receiptIds = async () => (await clientOf(database).all<{ request_id: string }>('SELECT request_id FROM native_request_receipts ORDER BY request_id'))
+        .map((row) => row.request_id);
+    return {
+        get host() { return host; },
+        /** The file itself, outside the host's connection wrapper. */
+        client: () => clientOf(database),
+        sql: <T,>(query: string, params?: unknown[]) => clientOf(database).all<T>(query, params),
+        receiptIds,
+        async restart() {
+            const status = getPersistenceStatus();
+            if (status.queued || status.inFlight || status.immediate) throw new Error('Restart with a save still queued: flush the change first');
+            database.close();
+            database = openDatabase(file);
+            host = await boot();
+            return host;
+        },
+        /**
+         * A replay after process death: restart, then `replay` the request. `wrote` says whether the
+         * store's data changed; `receipts` whether the receipts table did.
+         */
+        async replay<T>(replay: (restarted: ScreenHost) => Promise<NativeHostResult<T>>) {
+            const restarted = await this.restart();
+            const data = () => {
+                const state = useTaskStore.getState();
+                return [state._allTasks, state._allProjects, state._allSections, state._allAreas, state._allPeople, state.settings];
+            };
+            const before = data();
+            const receiptsBefore = await receiptIds();
+            const result = await replay(restarted);
+            await flushPendingSave();
+            return {
+                result,
+                wrote: data().some((entry, index) => entry !== before[index]),
+                receipts: JSON.stringify(await receiptIds()) !== JSON.stringify(receiptsBefore),
+            };
+        },
+        async close() {
+            await flushPendingSave();
+            resetNativeRequestReceipts();
+            database.close();
+            rmSync(dir, { recursive: true, force: true });
+        },
+    };
 }

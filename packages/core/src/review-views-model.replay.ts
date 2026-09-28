@@ -856,7 +856,7 @@ async function replayDaily(contract: Contract, part: ReviewFixturePart, scenario
                 // The editor is its own contract; its save closes it.
                 const updates = target as { title: string };
                 const task = useTaskStore.getState()._tasksById.get(editor!)!;
-                ok(await contract.updateTask({ id: task.id, base: { title: task.title }, patch: { title: updates.title } }));
+                ok(await contract.updateTask({ id: task.id, base: { title: task.title }, patch: { title: updates.title }, requestId: requestId() }));
                 editor = null;
                 return;
             }

@@ -151,7 +151,8 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, isRevision, refuseStale, requestRowId, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
+import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { buildQuickAddParseOptions } from './quick-add';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { resolveFeatureFlags } from './resolve-feature-flags';
@@ -1464,25 +1465,32 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                     if (task.startTime === intent.updates.startTime && task.timeEstimate === intent.updates.timeEstimate) return unchanged(answer);
                     return stale(task, composer.taskRevision) ?? written(() => store.updateTask(task.id, intent.updates), answer);
                 }
+                // A `+Project` this request creates takes an id from the request and the project's
+                // name (as a quick capture's does), found first: a replay uses it, renamed since or not.
+                const projectId = intent.projectToCreate ? requestRowId(requestId, `project:${intent.projectToCreate.name.trim().toLowerCase()}`) : null;
+                const planned = projectId ? applyComposerCreatedProject(intent.draft, projectId) : intent.draft;
                 const existing = taskById(createdId);
                 if (existing) {
-                    // A replay after a restart: the project is found by name, the task by the request ID.
-                    return matchesPlan(existing, intent.draft.title, intent.draft.props)
+                    // A replay after a restart: the task is found by the request ID.
+                    return matchesPlan(existing, planned.title, planned.props)
                         ? unchanged(answer)
                         : fail('INVALID_INPUT', 'Request ID already belongs to another task');
                 }
+                const made = projectId ? store._allProjects.find((project) => project.id === projectId) : undefined;
+                // Deleted or archived since: never made again, and the task is not written.
+                if (made && !isSelectableProjectForTaskAssignment(made)) return fail('STALE_REVISION', 'The project this request created is gone');
                 const landed = await runStoreWrite(async () => {
-                    let draft = intent.draft;
-                    if (intent.projectToCreate) {
+                    let draft = planned;
+                    if (intent.projectToCreate && !made) {
                         const { name, color, initialProps } = intent.projectToCreate;
-                        const project = await useTaskStore.getState().addProject(name, color, initialProps);
+                        const project = await useTaskStore.getState().addProject(name, color, { ...initialProps, id: projectId! });
                         if (!project) return { success: false, error: 'Project creation failed' };
-                        draft = applyComposerCreatedProject(draft, project.id);
+                        draft = applyComposerCreatedProject(intent.draft, project.id);
                     }
                     return useTaskStore.getState().addTask(draft.title, draft.props, { captureId: requestId });
                 });
                 // Acknowledged only once the task exists. A project without its task did not
-                // land the request: no receipt, and a retry finds the project by name and adds
+                // land the request: no receipt, and a retry finds the project by its id and adds
                 // the task.
                 if (!taskById(createdId)) return fail('ACTION_FAILED', landed.ok ? 'Task creation failed' : landed.error.message);
                 return settleWrite(landed, result({ ...answer, changed: true }));

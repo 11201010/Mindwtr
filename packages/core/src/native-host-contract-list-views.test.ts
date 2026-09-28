@@ -22,7 +22,7 @@ import { EMPTY_LIST_FILTER_STATE } from './list-filter-state';
 import { createNativeHostContract, type NativeArchiveAction, type NativeContextsAction, type NativeContextsView, type NativeHostResult, type NativeTrashAction } from './native-host-contract';
 import { revisionOf, taskRevisionOf } from './native-request-receipts';
 import { replayAfterRestart, value } from './screen-parity.replay';
-import { matchesPickerQuery } from './native-host-contract-menu-views';
+import { matchesPickerQuery, paramsKey } from './native-host-contract-menu-views';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
@@ -708,6 +708,78 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         recorder.log.length = 0;
         expect(await host.runArchiveAction({ requestId: generateUUID(), action: { type: 'moveTasksToInbox', selectAll: view.selectAll! } })).toMatchObject(stale);
         expect(recorder.log).toEqual([]);
+    });
+
+    it('refuses an Archive Select all once a row synced to a revision the old 32-bit token could not tell apart', async () => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        // Two revisions of ar-milk whose old token (the count and a 32-bit FNV hash) was the same.
+        const first = { rev: 1, revBy: 'd', updatedAt: '2026-09-24T00:03:26.283Z' };
+        const second = { rev: 1, revBy: 'd', updatedAt: '2026-09-24T00:11:45.726Z' };
+        expect(paramsKey([`ar-milk@${revisionOf(first)}`])).toBe(paramsKey([`ar-milk@${revisionOf(second)}`]));
+        const sync = (revision: typeof first) => useTaskStore.setState({
+            _allTasks: store()._allTasks.map((task) => (task.id === 'ar-milk' ? { ...task, ...revision } : task)),
+        });
+        sync(first);
+        const view = value(host.getArchiveView({ filters: { ...EMPTY_LIST_FILTER_STATE, searchQuery: 'milk' }, selectAll: {}, offset: 0, limit: 100 }));
+        expect(view.selectedCount).toBe(1);
+        // Another device's version of the row arrives.
+        sync(second);
+        recorder.log.length = 0;
+        expect(await host.runArchiveAction({ requestId: generateUUID(), action: { type: 'trashTasks', selectAll: view.selectAll! } })).toMatchObject(stale);
+        expect(recorder.log).toEqual([]);
+    });
+
+    // A replay of a request that landed finds its target held: changed: false, before any revision compare.
+    const landed = { ok: true, value: { changed: false, toast: null } };
+    it.each([
+        ['setTaskStatus', (view: NativeContextsView): NativeContextsAction => ({ type: 'setTaskStatus', taskId: 'c-call', status: 'done', taskRevision: contextsRow(view, 'c-call') })],
+        ['moveTasks', (view: NativeContextsView): NativeContextsAction => ({ type: 'moveTasks', taskIds: ['c-call', 'c-email'], status: 'someday', taskRevisions: view.taskRevisions })],
+    ] as const)('Contexts %s: a replay after a restart of a request that landed answers changed: false', async (_name, request) => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const view = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
+        const input = { requestId: generateUUID(), action: request(view) };
+        expect(await host.runContextsAction(input)).toMatchObject({ ok: true, value: { changed: true } });
+        recorder.log.length = 0;
+        expect(await replayAfterRestart((current) => current.runContextsAction(input))).toEqual({ result: landed, wrote: false });
+        expect(recorder.log).toEqual([]);
+    });
+
+    it('Contexts moveTasks: a row another device moved there already is no conflict; the rest move', async () => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const view = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
+        const input = { requestId: generateUUID(), action: { type: 'moveTasks' as const, taskIds: ['c-call', 'c-email'], status: 'someday' as const, taskRevisions: view.taskRevisions } };
+        // The request never ran; another device files c-call under Someday.
+        await store().updateTask('c-call', { status: 'someday' });
+        recorder.log.length = 0;
+        expect(await replayAfterRestart((current) => current.runContextsAction(input))).toMatchObject({ result: { ok: true, value: { changed: true } } });
+        // Mobile's call: every selected row.
+        expect(recorder.log).toEqual([['batchMoveTasks', ['c-call', 'c-email'], 'someday']]);
+        expect(stored('c-email').status).toBe('someday');
+    });
+
+    it.each([
+        ['moveToInbox', (host: Host): NativeArchiveAction => ({ type: 'moveToInbox', taskId: 'ar-milk', taskRevision: archiveRow(host, 'ar-milk') })],
+        ['moveTasksToInbox', (host: Host): NativeArchiveAction => ({ type: 'moveTasksToInbox', taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: archiveSelection(host) })],
+        ['moveTasksToInbox under Select all', (host: Host): NativeArchiveAction => ({ type: 'moveTasksToInbox', selectAll: value(host.getArchiveView({ selectAll: {}, offset: 0, limit: 100 })).selectAll! })],
+        ['trashTasks under Select all', (host: Host): NativeArchiveAction => ({ type: 'trashTasks', selectAll: value(host.getArchiveView({ selectAll: {}, offset: 0, limit: 100 })).selectAll! })],
+        ['reactivateProject', (host: Host): NativeArchiveAction => ({ type: 'reactivateProject', projectId: 'p-report', projectRevision: archiveProject(host, 'p-report') })],
+    ] as const)('Archive %s: a replay after a restart of a request that landed answers changed: false', async (_name, request) => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const input = { requestId: generateUUID(), action: request(host) };
+        expect(await host.runArchiveAction(input)).toMatchObject({ ok: true, value: { changed: true } });
+        recorder.log.length = 0;
+        expect(await replayAfterRestart((current) => current.runArchiveAction(input))).toEqual({ result: landed, wrote: false });
+        expect(recorder.log).toEqual([]);
+    });
+
+    it('Archive moveTasksToInbox: a row another device restored already is no conflict; the rest move', async () => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const input = { requestId: generateUUID(), action: { type: 'moveTasksToInbox' as const, taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: archiveSelection(host) } };
+        await store().updateTask('ar-milk', { status: 'inbox' });
+        recorder.log.length = 0;
+        expect(await replayAfterRestart((current) => current.runArchiveAction(input))).toMatchObject({ result: { ok: true, value: { changed: true } } });
+        expect(recorder.log).toEqual([['batchMoveTasks', ['ar-milk', 'ar-nodate'], 'inbox']]);
+        expect(stored('ar-nodate').status).toBe('inbox');
     });
 
     const trashView = (host: Host, selected?: { taskIds: string[]; projectIds: string[] }) => value(host.getTrashView({ selected, offset: 0, limit: 100 }));

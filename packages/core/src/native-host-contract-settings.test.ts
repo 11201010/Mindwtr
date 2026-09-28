@@ -6,7 +6,9 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { getTranslator } from './i18n';
 import { buildManagePersonRow, isManageAreaNameTaken, isManageEditorSaveDisabled, sortManageAreas, sortManagePeople } from './manage-settings-model';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import { paramsKey } from './native-host-contract-menu-views';
 import type { NativeManageDeleteTarget, NativeManageEditorTarget, NativeManageSettings } from './native-host-contract-settings';
+import { revisionOf } from './native-request-receipts';
 import { getPersonTaskCounts } from './people';
 import { replayAfterRestart } from './screen-parity.replay';
 import { buildSettingsAdvancedMenu, buildSettingsMenu, getSettingsSyncBadge } from './settings-menu-model';
@@ -857,6 +859,25 @@ describe('native host contract: Settings', () => {
             expect(area(input.requestId.toLowerCase())).toBeUndefined();
         });
 
+        // Fails with in-memory receipts only: the replay finds no row under its request UUID and
+        // no live "Gone", so the store's addArea restores a-gone again (changed: true). Nothing in
+        // the data tells "landed, then deleted" from "never landed". Durable request receipts close
+        // it: the lead's durable-receipt test replays this request from its stored first reply
+        // ("durable receipts: a Manage restore of a same-named deleted area, replayed after it was
+        // deleted again and a restart, answers its first reply").
+        it.fails('saveManageEditor, new area named like a deleted one: a replay after the restored area was deleted again keeps it deleted', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: { type: 'newArea' as const }, name: 'Gone', color: '#14b8a6' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            expect(value(await host.deleteManageItem({ requestId: generateUUID(), target: shown(host, 'area', 'a-gone').delete }))).toEqual({ changed: true });
+            const deleted = area('a-gone')!.deletedAt;
+            expect(deleted).toEqual(expect.any(String));
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveManageEditor(input));
+            expect({ result, wrote }).toEqual({ result: unchanged, wrote: false });
+            expect(area('a-gone')?.deletedAt).toBe(deleted);
+            expect(useTaskStore.getState().areas.filter((entry) => entry.name === 'Gone')).toEqual([]);
+        });
+
         it('saveManageEditor, new person: named by the request UUID, so a replay finds them renamed and adds nothing', async () => {
             const host = await open();
             const input = { requestId: generateUUID(), target: { type: 'newPerson' as const }, name: 'Eve', note: 'Designer' };
@@ -956,6 +977,23 @@ describe('native host contract: Settings', () => {
             expect(result).toMatchObject(stale);
             expect(wrote).toBe(false);
             expect(useTaskStore.getState()._allProjects.find((project) => project.id === 'p-yard')?.tagIds).toEqual(['#Garden', '#web']);
+        });
+
+        it('saveManageEditor, tag: never renames the tag of a task synced to a revision the old 32-bit token could not tell apart', async () => {
+            const host = await open();
+            // Two revisions of t-call, #urgent's only carrier, whose old token (the count and a 32-bit FNV hash) was the same.
+            const first = { rev: 1, revBy: 'd', updatedAt: '2026-09-24T00:02:43.758Z' };
+            const second = { rev: 2, revBy: 'd', updatedAt: '2026-09-24T00:07:22.393Z' };
+            expect(paramsKey([`t-call@${revisionOf(first)}`])).toBe(paramsKey([`t-call@${revisionOf(second)}`]));
+            const sync = (revision: typeof first) => useTaskStore.setState({
+                _allTasks: useTaskStore.getState()._allTasks.map((task) => (task.id === 't-call' ? { ...task, ...revision } : task)),
+            });
+            sync(first);
+            const input = { requestId: generateUUID(), target: shown(host, 'tag', '#urgent').edit, name: 'later' };
+            // Another device's version of the task arrives before the rename runs.
+            sync(second);
+            expect(await host.saveManageEditor(input)).toMatchObject(stale);
+            expect(taskOf('t-call').tags).toEqual(['#urgent']);
         });
 
         it('checks a row\'s target as the view sent it, and refuses a write from a view read before a change', async () => {

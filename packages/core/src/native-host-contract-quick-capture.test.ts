@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { configureDateFormatting } from './date';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeQuickCaptureView } from './native-host-contract-quick-capture';
+import { requestRowId } from './native-request-receipts';
 import type { QuickCaptureOptions } from './quick-capture-model';
 import { loadQuickCaptureFixture, seedQuickCaptureStore, type QuickCaptureFixture } from './quick-capture-model.replay';
 import { replayAfterRestart } from './screen-parity.replay';
@@ -408,6 +409,85 @@ describe('native host contract: the capture popup', () => {
         }
         expect([capture.captureId, lines.captureIds[1]].map((id) => useTaskStore.getState()._tasksById.get(id.toLowerCase())?.title))
             .toEqual(['Call Bob', 'Call the plumber']);
+    });
+
+    // A capture's new project lands, then its task write fails: the request did not land, so it runs again.
+    const failTaskWrites = async (name: 'addTask' | 'addTasks', write: () => Promise<unknown>) => {
+        const real = useTaskStore.getState()[name];
+        useTaskStore.setState({ [name]: async () => ({ success: false, error: 'Task store refused' }) });
+        try {
+            expect(await write()).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        } finally {
+            useTaskStore.setState({ [name]: real });
+        }
+    };
+    const madeProjects = () => useTaskStore.getState()._allProjects
+        .filter((project) => !fixture.projects.some((seeded) => seeded.id === project.id))
+        .map((project) => [project.id, project.title, Boolean(project.deletedAt)]);
+    const renameProject = async (title: string, to: string) => {
+        const project = useTaskStore.getState()._allProjects.find((entry) => entry.title === title)!;
+        await useTaskStore.getState().updateProject(project.id, { title: to });
+    };
+    const deleteProject = (title: string) => useTaskStore.getState()
+        .deleteProject(useTaskStore.getState()._allProjects.find((entry) => entry.title === title)!.id);
+
+    it('gives a capture\'s new project an id from the capture ID: a replay after its task failed uses it, renamed since, and never makes another', async () => {
+        const { host } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const capture = { text: 'Plan beds +Garden plan', options, captureId: generateUUID() };
+        const taskId = capture.captureId.toLowerCase();
+        const projectId = requestRowId(capture.captureId, 'project:garden plan');
+        await failTaskWrites('addTask', () => host.submitQuickCapture(capture));
+        await renameProject('Garden plan', 'Beds');
+
+        const replay = await replayAfterRestart((restarted) => restarted.submitQuickCapture(capture));
+        expect(replay.result).toMatchObject({ ok: true, value: { kind: 'saved', taskId, projectId } });
+        expect(madeProjects()).toEqual([[projectId, 'Beds', false]]);
+        expect(useTaskStore.getState()._tasksById.get(taskId)).toMatchObject({ title: 'Plan beds', projectId });
+        // Landed now: a later replay answers from the task in the renamed project.
+        expect(await replayAfterRestart((restarted) => restarted.submitQuickCapture(capture)))
+            .toMatchObject({ result: { ok: true, value: { kind: 'saved', taskId, projectId } }, wrote: false });
+
+        // A project deleted since is not made again: refused, and nothing is written.
+        const other = { text: 'Sort boxes +Attic', options, captureId: generateUUID() };
+        const atticId = requestRowId(other.captureId, 'project:attic');
+        await failTaskWrites('addTask', () => host.submitQuickCapture(other));
+        await deleteProject('Attic');
+        const gone = await replayAfterRestart((restarted) => restarted.submitQuickCapture(other));
+        expect(gone).toMatchObject({ result: { ok: false, error: { code: 'STALE_REVISION' } }, wrote: false });
+        expect(madeProjects()).toEqual([[projectId, 'Beds', false], [atticId, 'Attic', true]]);
+        expect(useTaskStore.getState()._tasksById.has(other.captureId.toLowerCase())).toBe(false);
+    });
+
+    it('gives a batch\'s new projects ids from its first capture ID and their names: a replay after its task write failed uses them, renamed since', async () => {
+        const { host } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const snapshotFileName = value(await host.createQuickCaptureSnapshot())!.fileName;
+        const lines = { text: 'Plan beds +Garden plan\nFile receipts +Taxes\nWater +Garden plan', options, captureIds: [generateUUID(), generateUUID(), generateUUID()], snapshotFileName };
+        const gardenId = requestRowId(lines.captureIds[0], 'project:garden plan');
+        const taxesId = requestRowId(lines.captureIds[0], 'project:taxes');
+        await failTaskWrites('addTasks', () => host.submitQuickCaptureLines(lines));
+        await renameProject('Garden plan', 'Beds');
+        await renameProject('Taxes', 'Paperwork');
+
+        // A batch after a restart takes a new snapshot first.
+        const replay = await replayAfterRestart(async (restarted) => restarted.submitQuickCaptureLines({
+            ...lines, snapshotFileName: value(await restarted.createQuickCaptureSnapshot())!.fileName,
+        }));
+        expect(replay.result).toEqual({ ok: true, value: { kind: 'saved', taskIds: lines.captureIds.map((id) => id.toLowerCase()) } });
+        expect(madeProjects()).toEqual([[gardenId, 'Beds', false], [taxesId, 'Paperwork', false]]);
+        expect(lines.captureIds.map((id) => useTaskStore.getState()._tasksById.get(id.toLowerCase())?.projectId)).toEqual([gardenId, taxesId, gardenId]);
+
+        // A project deleted since is not made again: refused, and nothing is written.
+        const other = { ...lines, text: 'Sort boxes +Attic\nSweep', captureIds: [generateUUID(), generateUUID()], snapshotFileName: value(await host.createQuickCaptureSnapshot())!.fileName };
+        const atticId = requestRowId(other.captureIds[0], 'project:attic');
+        await failTaskWrites('addTasks', () => host.submitQuickCaptureLines(other));
+        await deleteProject('Attic');
+        const gone = await replayAfterRestart(async (restarted) => restarted.submitQuickCaptureLines({
+            ...other, snapshotFileName: value(await restarted.createQuickCaptureSnapshot())!.fileName,
+        }));
+        expect(gone).toMatchObject({ result: { ok: false, error: { code: 'STALE_REVISION' } }, wrote: false });
+        expect(madeProjects()).toEqual([[gardenId, 'Beds', false], [taxesId, 'Paperwork', false], [atticId, 'Attic', true]]);
     });
 
     it('windows a long picker list and counts every match', async () => {

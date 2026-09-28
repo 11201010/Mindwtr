@@ -54,6 +54,7 @@ export * from './native-host-contract-project-section-order';
 export * from './native-host-contract-quick-capture';
 export * from './native-host-contract-task-save';
 export * from './task-creation';
+export { NativeReceiptSqliteAdapter, loadNativeRequestReceipts, pruneNativeRequestReceipts } from './native-request-receipts';
 export * from './legacy-json-import';
 export { buildNewProject, MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 export { nameNotifyListener } from './store-notify-profiler';

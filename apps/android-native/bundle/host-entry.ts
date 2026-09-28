@@ -1,14 +1,17 @@
 import {
     DEFAULT_GLOBAL_SEARCH_FILTERS,
+    NativeReceiptSqliteAdapter,
     STATUS_COLORS_BY_THEME,
-    SqliteAdapter,
+    type SqliteAdapter,
     TASK_PRIORITY_COLORS,
     createNativeHostContract,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
+    loadNativeRequestReceipts,
     logInfo,
     logWarn,
     planLegacyJsonImport,
+    pruneNativeRequestReceipts,
     setStorageAdapter,
     splitSqlStatements,
     sqliteHasAnyData,
@@ -67,7 +70,8 @@ const sqlite: SqliteClient = {
 };
 
 type LoadedData = Awaited<ReturnType<SqliteAdapter['getData']>>;
-class ValidatedSqliteAdapter extends SqliteAdapter {
+// Core's receipt adapter: a write's request receipt commits in the same transaction as its data.
+class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter {
     latestData: LoadedData | null = null;
 
     override async getData(): Promise<LoadedData> {
@@ -438,6 +442,8 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false): 
     const adapter = new ValidatedSqliteAdapter(sqlite, { rejectConcurrentWrites: true });
     // Schema setup may write only after the native host's validated checkpoint.
     setStorageAdapter(adapter);
+    // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt.
+    await loadNativeRequestReceipts(sqlite);
     await adapter.getData();
     if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
     const result = await activateAndVerify(adapter, recoveryLoad);
@@ -1362,6 +1368,10 @@ globalThis.MindwtrHost = {
             if (!read) throw new Error(`INVALID_INPUT: no menu read ${name}`);
             return unwrap(read(JSON.parse(json) as never));
         });
+    },
+    /** After the journal's boot replay: drops request receipts older than 30 days. */
+    pruneReceipts(): string {
+        return submit(async () => ({ pruned: await pruneNativeRequestReceipts(sqlite) }));
     },
     /** Debug builds only: runNetCheck against check-net-device.mjs's server on `port`. */
     netCheck(port: string): string {

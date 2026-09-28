@@ -174,6 +174,7 @@ import {
     refuseStaleProjects,
     refuseStaleTasks,
     revisionOf,
+    revisionsToken,
     runStoreWrite,
     settleWrite,
     taskRevisionOf,
@@ -876,13 +877,6 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     };
     let cachedProjectNotesKey = '';
     let cachedProjectNotesBlocks: ResolvedMarkdownBlock[] | null = null;
-    // Per task, the last draft save the store accepted and the task it produced. The
-    // same request against that same task is a retry: the store may have rewritten
-    // fields it saved (a recurrence's series stamp, a deferred star), so the field
-    // comparison alone cannot recognise it. Any other write to the task replaces its
-    // object, which ends the entry.
-    // ponytail: keeps the 50 most recently saved tasks; an older task's retry falls back to the field comparison.
-    const draftSaves = new Map<string, { key: string; task: Task | undefined }>();
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -1311,6 +1305,19 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
         }
     };
+    // Exact retries of this block's writes that take a request UUID (the editor's, createProject, saveSearch).
+    const receipts = createNativeRequestReceipts({
+        save: async () => {
+            if (useTaskStore.getState().persistenceFailure) {
+                try {
+                    await useTaskStore.getState().retryPersistence();
+                } catch (error) {
+                    return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+                }
+            }
+            return save();
+        },
+    });
 
     // Mobile opens a task in an archived project read-only.
     const isInArchivedProject = (task: Task): boolean => Boolean(task.projectId)
@@ -1852,27 +1859,18 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             }
             const trimmedQuery = input.query.trim();
             const name = input.name?.trim() || trimmedQuery;
-            const state = useTaskStore.getState();
-            const savedSearches = state.settings.savedSearches || [];
-            // The request UUID names the new search: a replay, even after a restart, finds the
-            // search this request made and writes nothing; another search under it is refused.
-            const id = input.requestId.toLowerCase();
-            const made = savedSearches.find((search) => search.id === id);
-            if (made && (made.query !== trimmedQuery || made.name !== name)) return fail('INVALID_INPUT', 'Request ID already belongs to another search');
-            const resolved = made ? { search: made, existing: false } : resolveSavedSearch(savedSearches, trimmedQuery, name, id);
-            try {
-                if (!made && !resolved.existing) {
-                    await state.updateSettings({ savedSearches: [...savedSearches, resolved.search] });
-                } else if (useTaskStore.getState().persistenceFailure) {
-                    await useTaskStore.getState().retryPersistence();
-                }
-                const saved = await save();
-                if (!saved.ok) return saved;
-                return { ok: true, value: { id: resolved.search.id, existing: resolved.existing } };
-            } catch (error) {
-                const failure = useTaskStore.getState().persistenceFailure;
-                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
-            }
+            return receipts.run(input.requestId, JSON.stringify(['saveSearch', trimmedQuery, name]), async () => {
+                const savedSearches = useTaskStore.getState().settings.savedSearches || [];
+                // The request UUID names the new search: a replay finds the search this request
+                // made and writes nothing; another search under it is refused.
+                const id = input.requestId.toLowerCase();
+                const made = savedSearches.find((search) => search.id === id);
+                if (made && (made.query !== trimmedQuery || made.name !== name)) return fail('INVALID_INPUT', 'Request ID already belongs to another search');
+                const resolved = made ? { search: made, existing: false } : resolveSavedSearch(savedSearches, trimmedQuery, name, id);
+                const answer = { id: resolved.search.id, existing: resolved.existing };
+                if (made || resolved.existing) return { ok: true, value: answer };
+                return settleWrite(await runStoreWrite(() => useTaskStore.getState().updateSettings({ savedSearches: [...savedSearches, resolved.search] })), answer);
+            });
         },
 
         /**
@@ -2236,6 +2234,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             id: string;
             base: Partial<NativeEditableFields>;
             patch: Partial<NativeEditableFields>;
+            requestId: string;
         }): Promise<NativeHostResult<{ id: string; changed: boolean }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -2257,101 +2256,92 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 return fail('INVALID_INPUT', `base and patch fields must match${fields}`);
             }
 
-            const state = useTaskStore.getState();
-            const task = state._tasksById.get(input.id);
-            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
-            const taskProject = task.projectId
-                ? state._allProjects.find((project) => project.id === task.projectId)
-                : undefined;
-            if (taskProject?.status === 'archived') {
-                return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
-            }
+            if (typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
 
-            for (const key of patchKeys) {
-                const field = key as keyof NativeEditableFields;
-                const value = input.patch[field];
-                switch (field) {
-                    case 'title':
-                        if (typeof value !== 'string' || !value.trim()) return fail('INVALID_INPUT', 'title must be a non-blank string');
-                        break;
-                    case 'status':
-                        if (typeof value !== 'string' || !EDITOR_STATUSES.some((status) => status === value)) {
-                            return fail('INVALID_INPUT', 'status must be an editable status');
-                        }
-                        break;
-                    case 'description':
-                        if (value != null && typeof value !== 'string') return fail('INVALID_INPUT', 'description must be a string or null');
-                        break;
-                    case 'priority':
-                        if (value != null && !EDITOR_PRIORITIES.some((priority) => priority === value)) {
-                            return fail('INVALID_INPUT', 'priority must be an editable priority or null');
-                        }
-                        break;
-                    case 'projectId':
-                        if (value != null) {
-                            const project = typeof value === 'string'
-                                ? state._allProjects.find((candidate) => candidate.id === value)
-                                : undefined;
-                            if (!project || !isSelectableProjectForTaskAssignment(project)) {
-                                return fail('INVALID_INPUT', 'projectId must reference an editable project or null');
+            // The editor compares each field with its base, so a replay after a later change back to
+            // the base would write again: the request's receipt answers it instead.
+            return receipts.run<{ id: string; changed: boolean }>(input.requestId, JSON.stringify(['updateTask', input.id, input.base, input.patch]), async () => {
+                const state = useTaskStore.getState();
+                const task = state._tasksById.get(input.id);
+                if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+                const taskProject = task.projectId
+                    ? state._allProjects.find((project) => project.id === task.projectId)
+                    : undefined;
+                if (taskProject?.status === 'archived') {
+                    return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
+                }
+
+                for (const key of patchKeys) {
+                    const field = key as keyof NativeEditableFields;
+                    const value = input.patch[field];
+                    switch (field) {
+                        case 'title':
+                            if (typeof value !== 'string' || !value.trim()) return fail('INVALID_INPUT', 'title must be a non-blank string');
+                            break;
+                        case 'status':
+                            if (typeof value !== 'string' || !EDITOR_STATUSES.some((status) => status === value)) {
+                                return fail('INVALID_INPUT', 'status must be an editable status');
                             }
-                        }
-                        break;
-                    case 'startTime':
-                    case 'dueDate':
-                        if (value != null && !isValidEditorDate(value)) {
-                            return fail('INVALID_INPUT', `${field} must be a valid date or datetime`);
-                        }
-                        break;
-                }
-            }
-
-            const resultingStatus = Object.prototype.hasOwnProperty.call(input.patch, 'status')
-                ? input.patch.status
-                : task.status;
-            if (resultingStatus === 'reference') {
-                for (const field of ['priority', 'startTime', 'dueDate'] as const) {
-                    if (Object.prototype.hasOwnProperty.call(input.patch, field) && input.patch[field] != null) {
-                        return fail('INVALID_INPUT', `${field} cannot be set while status is reference`);
+                            break;
+                        case 'description':
+                            if (value != null && typeof value !== 'string') return fail('INVALID_INPUT', 'description must be a string or null');
+                            break;
+                        case 'priority':
+                            if (value != null && !EDITOR_PRIORITIES.some((priority) => priority === value)) {
+                                return fail('INVALID_INPUT', 'priority must be an editable priority or null');
+                            }
+                            break;
+                        case 'projectId':
+                            if (value != null) {
+                                const project = typeof value === 'string'
+                                    ? state._allProjects.find((candidate) => candidate.id === value)
+                                    : undefined;
+                                if (!project || !isSelectableProjectForTaskAssignment(project)) {
+                                    return fail('INVALID_INPUT', 'projectId must reference an editable project or null');
+                                }
+                            }
+                            break;
+                        case 'startTime':
+                        case 'dueDate':
+                            if (value != null && !isValidEditorDate(value)) {
+                                return fail('INVALID_INPUT', `${field} must be a valid date or datetime`);
+                            }
+                            break;
                     }
                 }
-            }
 
-            const updates: Partial<Task> = {};
-            const conflicts: string[] = [];
-            for (const key of patchKeys) {
-                const field = key as keyof NativeEditableFields;
-                const current = normalizeEditorValue(field, task[field]);
-                const base = normalizeEditorValue(field, input.base[field]);
-                const next = normalizeEditorValue(field, input.patch[field]);
-                if (current === base) {
-                    if (current !== next) Object.assign(updates, { [field]: next === null ? undefined : next });
-                } else if (current !== next) {
-                    conflicts.push(field);
-                }
-            }
-            if (conflicts.length > 0) {
-                return fail('STALE_REVISION', `Task changed while editing: ${conflicts.join(', ')}`);
-            }
-
-            const changed = Object.keys(updates).length > 0;
-            try {
-                if (changed) {
-                    const result = await useTaskStore.getState().updateTask(input.id, updates);
-                    if (!result.success) {
-                        const failure = useTaskStore.getState().persistenceFailure;
-                        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? result.error ?? 'Task update failed');
+                const resultingStatus = Object.prototype.hasOwnProperty.call(input.patch, 'status')
+                    ? input.patch.status
+                    : task.status;
+                if (resultingStatus === 'reference') {
+                    for (const field of ['priority', 'startTime', 'dueDate'] as const) {
+                        if (Object.prototype.hasOwnProperty.call(input.patch, field) && input.patch[field] != null) {
+                            return fail('INVALID_INPUT', `${field} cannot be set while status is reference`);
+                        }
                     }
-                } else if (useTaskStore.getState().persistenceFailure) {
-                    await useTaskStore.getState().retryPersistence();
                 }
-                const saved = await save();
-                if (!saved.ok) return saved;
-                return { ok: true, value: { id: input.id, changed } };
-            } catch (error) {
-                const failure = useTaskStore.getState().persistenceFailure;
-                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
-            }
+
+                const updates: Partial<Task> = {};
+                const conflicts: string[] = [];
+                for (const key of patchKeys) {
+                    const field = key as keyof NativeEditableFields;
+                    const current = normalizeEditorValue(field, task[field]);
+                    const base = normalizeEditorValue(field, input.base[field]);
+                    const next = normalizeEditorValue(field, input.patch[field]);
+                    if (current === base) {
+                        if (current !== next) Object.assign(updates, { [field]: next === null ? undefined : next });
+                    } else if (current !== next) {
+                        conflicts.push(field);
+                    }
+                }
+                if (conflicts.length > 0) {
+                    return fail('STALE_REVISION', `Task changed while editing: ${conflicts.join(', ')}`);
+                }
+
+                const changed = Object.keys(updates).length > 0;
+                if (!changed) return { ok: true, value: { id: input.id, changed } };
+                return settleWrite(await runStoreWrite(() => useTaskStore.getState().updateTask(input.id, updates)), { id: input.id, changed });
+            });
         },
 
         getTaskEditorModel(input: { id: string }): NativeHostResult<NativeTaskEditorModel> {
@@ -2428,7 +2418,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         /**
          * Save draft fields. `base` holds each field's value when editing began; a field
          * changed since by another writer is a conflict, unless it already holds the new
-         * value. A repeat of the same request after a failed save writes nothing new.
+         * value. A repeat of the same `requestId` (after a failed save, or a replay) writes nothing new.
          * `checklist` saves the editor's checklist in the same write, as React Native saves
          * it with the draft: `base` is the saved checklist the editor loaded (getTaskView's
          * checklistBase), `value` the edited one; it conflicts like a field, and empty items
@@ -2440,6 +2430,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             base: Partial<TaskDraft>;
             patch: Partial<TaskDraft>;
             checklist?: { base: ChecklistItem[]; value: ChecklistItem[] };
+            requestId: string;
         }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -2469,43 +2460,43 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 return fail('INVALID_INPUT', `base and patch fields must match${named}`);
             }
 
-            const state = useTaskStore.getState();
-            const task = state._tasksById.get(input.id);
-            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
-            if (isInArchivedProject(task)) return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
+            if (typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
 
-            const base = toDraftValues(input.base);
-            const patch = toDraftValues(input.patch);
-            for (const field of fields) {
-                const value = patch[field];
-                let valid = DRAFT_VALUE_CHECKS[field](value);
-                if (valid && field === 'projectId' && value && value !== task.projectId) {
-                    const project = state._projectsById.get(value as string);
-                    valid = Boolean(project && isSelectableProjectForTaskAssignment(project));
-                }
-                if (valid && field === 'areaId' && value && value !== task.areaId) {
-                    valid = state.areas.some((area) => area.id === value && !area.deletedAt);
-                }
-                if (valid && field === 'sectionId' && value) {
-                    // A named section must be live in the project the draft ends up in.
-                    const projectId = Object.prototype.hasOwnProperty.call(patch, 'projectId') ? patch.projectId : task.projectId;
-                    valid = state.sections.some((section) => section.id === value && section.projectId === projectId && !section.deletedAt);
-                }
-                if (!valid) return fail('INVALID_INPUT', `${field} is not a valid value`);
-            }
+            const focusedBefore = useTaskStore.getState()._tasksById.get(input.id)?.isFocusedToday === true;
+            // A repeat answers from the request's receipt: the store may rewrite fields it saved (a
+            // recurrence's series stamp, a deferred star), so comparing fields cannot recognise it.
+            const payload = JSON.stringify(['saveTaskDraft', input.id, input.base, input.patch, checklistHalf ?? null]);
+            const result = await receipts.run(input.requestId, payload, async () => {
+                const state = useTaskStore.getState();
+                const task = state._tasksById.get(input.id);
+                if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+                if (isInArchivedProject(task)) return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
 
-            if ((patch.status ?? task.status) === 'reference') {
-                for (const field of ['priority', 'timeEstimate'] as const) {
-                    if (patch[field]) return fail('INVALID_INPUT', `${field} cannot be set while status is reference`);
+                const base = toDraftValues(input.base);
+                const patch = toDraftValues(input.patch);
+                for (const field of fields) {
+                    const value = patch[field];
+                    let valid = DRAFT_VALUE_CHECKS[field](value);
+                    if (valid && field === 'projectId' && value && value !== task.projectId) {
+                        const project = state._projectsById.get(value as string);
+                        valid = Boolean(project && isSelectableProjectForTaskAssignment(project));
+                    }
+                    if (valid && field === 'areaId' && value && value !== task.areaId) {
+                        valid = state.areas.some((area) => area.id === value && !area.deletedAt);
+                    }
+                    if (valid && field === 'sectionId' && value) {
+                        // A named section must be live in the project the draft ends up in.
+                        const projectId = Object.prototype.hasOwnProperty.call(patch, 'projectId') ? patch.projectId : task.projectId;
+                        valid = state.sections.some((section) => section.id === value && section.projectId === projectId && !section.deletedAt);
+                    }
+                    if (!valid) return fail('INVALID_INPUT', `${field} is not a valid value`);
                 }
-            }
 
-            const key = JSON.stringify([input.base, input.patch, checklistHalf ?? null]);
-            const lastSave = draftSaves.get(input.id);
-            if (lastSave && lastSave.task !== task) draftSaves.delete(input.id);
-            const isRetry = lastSave?.key === key && lastSave.task === task;
-            let updates: Partial<Task> | null = {};
-            if (!isRetry) {
+                if ((patch.status ?? task.status) === 'reference') {
+                    for (const field of ['priority', 'timeEstimate'] as const) {
+                        if (patch[field]) return fail('INVALID_INPUT', `${field} cannot be set while status is reference`);
+                    }
+                }
                 const current = createTaskDraft(task);
                 // A lost reply must compare the title the shared serializer saved.
                 // Blank input falls back to the original base, never a concurrent title.
@@ -2553,41 +2544,23 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                     }
                 }
                 // One write, as React Native's editor saves: draft fields, checklist and attachments together.
-                updates = buildTaskEditUpdatePatch({
+                const updates = buildTaskEditUpdatePatch({
                     draft,
                     checklist: checklistChanges ? checklistChanges.value : task.checklist,
                     attachments: task.attachments,
                 }, task);
                 if (!updates) return fail('INVALID_INPUT', 'title must not be blank');
+                if (Object.keys(updates).length === 0) return { ok: true, value: { id: input.id, draft: current } };
+                const landed = await runStoreWrite(() => useTaskStore.getState().updateTask(input.id, updates));
+                return settleWrite(landed, { id: input.id, draft: createTaskDraft(useTaskStore.getState()._tasksById.get(input.id) ?? task) });
+            });
+            if (result.ok && !focusedBefore && useTaskStore.getState()._tasksById.get(input.id)?.isFocusedToday) {
+                logInfo('Editor Focus star saved', {
+                    scope: 'native-host', category: 'storage',
+                    context: { releaseCheck: 'v1.3.3/editor-focus-star' },
+                });
             }
-
-            try {
-                if (Object.keys(updates).length > 0) {
-                    const result = await useTaskStore.getState().updateTask(input.id, updates);
-                    if (!result.success) {
-                        const failure = useTaskStore.getState().persistenceFailure;
-                        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? result.error ?? 'Task update failed');
-                    }
-                    draftSaves.delete(input.id);
-                    draftSaves.set(input.id, { key, task: useTaskStore.getState()._tasksById.get(input.id) });
-                    if (draftSaves.size > 50) draftSaves.delete(draftSaves.keys().next().value as string);
-                } else if (useTaskStore.getState().persistenceFailure) {
-                    await useTaskStore.getState().retryPersistence();
-                }
-                const saved = await save();
-                if (!saved.ok) return saved;
-                const savedTask = useTaskStore.getState()._tasksById.get(input.id) ?? task;
-                if (!task.isFocusedToday && savedTask.isFocusedToday) {
-                    logInfo('Editor Focus star saved', {
-                        scope: 'native-host', category: 'storage',
-                        context: { releaseCheck: 'v1.3.3/editor-focus-star' },
-                    });
-                }
-                return { ok: true, value: { id: input.id, draft: createTaskDraft(savedTask) } };
-            } catch (error) {
-                const failure = useTaskStore.getState().persistenceFailure;
-                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
-            }
+            return result;
         },
 
         // -------------------------------------------------------------------
@@ -2661,31 +2634,17 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 || typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) {
                 return fail('INVALID_INPUT', 'Project title, area ID, and request UUID are required');
             }
-            // The request UUID names the project: a replay, even after a restart, finds the project
-            // this request made (renamed, archived or deleted since) and writes nothing.
+            // The request UUID names the project: a replay finds the project this request made
+            // (renamed, archived or deleted since) and writes nothing.
             const id = input.requestId.toLowerCase();
-            try {
+            return receipts.run(input.requestId, JSON.stringify(['createProject', input.title, input.areaId]), async () => {
                 const state = useTaskStore.getState();
-                if (state._allProjects.some((project) => project.id === id)) {
-                    if (state.persistenceFailure) await state.retryPersistence();
-                    const saved = await save();
-                    if (!saved.ok) return saved;
-                    return { ok: true, value: { id } };
-                }
+                if (state._allProjects.some((project) => project.id === id)) return { ok: true, value: { id } };
                 const area = state.areas.find((candidate) => candidate.id === input.areaId && !candidate.deletedAt);
                 // A live project with this title in the area is reused, as mobile does: its ID is the answer.
                 const created = await state.addProject(input.title, area?.color || DEFAULT_PROJECT_COLOR, { areaId: area?.id, id });
-                if (!created) {
-                    const failure = useTaskStore.getState().persistenceFailure;
-                    return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? useTaskStore.getState().error ?? 'Project creation failed');
-                }
-                const saved = await save();
-                if (!saved.ok) return saved;
-                return { ok: true, value: { id: created.id } };
-            } catch (error) {
-                const failure = useTaskStore.getState().persistenceFailure;
-                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
-            }
+                return created ? { ok: true, value: { id: created.id } } : fail('ACTION_FAILED', useTaskStore.getState().error ?? 'Project creation failed');
+            });
         },
 
         /** `taskRevision` is the row's: a task changed since is not written (STALE_REVISION). */
@@ -3846,13 +3805,16 @@ function createListViewMethods(deps: ListViewDeps) {
             archivedCount: allArchived.length,
             shownCount: params.segment === 'tasks' ? archivedTasks.length : projects.length,
             // Select all's rows and each one's revision: any change to them makes its bulk action stale.
-            selectAllRevision: `${visibleIds.length}:${paramsKey(visibleIds.map((id) => `${id}@${taskRevisionOf(state._tasksById.get(id)!)}`))}`,
+            selectAllRevision: revisionsToken(visibleIds.map((id) => `${id}@${taskRevisionOf(state._tasksById.get(id)!)}`)),
             titles: projectTitles(),
         };
     });
 
-    /** Select all's task ids now, or STALE_REVISION once the rows shown differ from those it was offered for. */
-    const resolveSelectAll = (selectAll: unknown): string[] | NativeHostResult<never> => {
+    /**
+     * Select all's task ids now, and whether its revision still holds (`current`: the rows
+     * shown are those it was offered for, each at the revision shown).
+     */
+    const resolveSelectAll = (selectAll: unknown): { ids: string[]; current: boolean } | NativeHostResult<never> => {
         const params = isObjectRecord(selectAll) && isObjectRecord(selectAll.params) && selectAll.params.filterEdit === undefined
             ? readArchiveParams(selectAll.params)
             : null;
@@ -3861,10 +3823,10 @@ function createListViewMethods(deps: ListViewDeps) {
             return fail('INVALID_INPUT', 'Select all needs the view\'s params, its revision and the rows deselected since');
         }
         const view = buildArchive(params, deps.revision(new Date()));
-        if (view.selectAllRevision !== revision) return fail('STALE_REVISION', 'Archive changed; select all again');
+        const current = view.selectAllRevision === revision;
         const deselected = new Set(except);
         const ids = view.visibleIds.filter((id) => !deselected.has(id));
-        return ids.length > 0 ? ids : fail('INVALID_INPUT', 'Select all selects no task');
+        return current && ids.length === 0 ? fail('INVALID_INPUT', 'Select all selects no task') : { ids, current };
     };
 
     return {
@@ -3984,7 +3946,10 @@ function createListViewMethods(deps: ListViewDeps) {
                         if (!TASK_STATUSES.includes(action.status) || !isRevision(action.taskRevision)) {
                             return fail('INVALID_INPUT', 'A task status and the revision the view showed are required');
                         }
-                        if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                        const task = liveTask(action.taskId);
+                        if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                        // Target state first: a replay of a status that landed writes nothing.
+                        if (task.status === action.status) return { ok: true, value: { changed: false, toast: null } };
                         // Compare-and-set: a replay never undoes a change made to the task after the view.
                         const refused = refuseStaleTasks([action.taskId], { [action.taskId]: action.taskRevision });
                         if (refused) return refused;
@@ -3996,7 +3961,11 @@ function createListViewMethods(deps: ListViewDeps) {
                             || !isIdList(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds) || action.taskIds.some((id) => !liveTask(id))) {
                             return fail('INVALID_INPUT', 'A bulk status and tasks that exist, with the revision the view showed for each, are required');
                         }
-                        const refused = refuseStaleTasks(action.taskIds, action.taskRevisions);
+                        // Target state first: tasks already there are not compared, and none left writes nothing.
+                        // Mobile's call still moves every selected task.
+                        const moving = action.taskIds.filter((id) => liveTask(id)?.status !== action.status);
+                        if (moving.length === 0) return { ok: true, value: { changed: false, toast: null } };
+                        const refused = refuseStaleTasks(moving, action.taskRevisions);
                         if (refused) return refused;
                         const written = await write(() => store.batchMoveTasks(action.taskIds, action.status));
                         return settleWrite(written, { changed: true, toast: doneToast(action.taskIds.length, t) });
@@ -4181,14 +4150,19 @@ function createListViewMethods(deps: ListViewDeps) {
             if (!isObjectRecord(input) || !isObjectRecord(input.action)) return fail('INVALID_INPUT', 'A request UUID and an action are required');
             const action = input.action as NativeArchiveAction;
             return receipts.run(input.requestId, JSON.stringify(['archive', action]), async () => {
+                // Target state, checked before any revision: a replay of a request that landed writes nothing.
+                const unchanged: ListActionOutcome<NativeArchiveAction> = { ok: true, value: { changed: false, toast: null } };
                 let resolved = action as ResolvedArchiveAction;
                 if ((action.type === 'moveTasksToInbox' || action.type === 'trashTasks') && 'selectAll' in action && action.selectAll !== undefined) {
                     if ('taskIds' in action) return fail('INVALID_INPUT', 'Send taskIds or selectAll, not both');
                     // Resolved inside the receipt: a retry of a landed request never resolves it again.
-                    const ids = resolveSelectAll(action.selectAll);
-                    if (!Array.isArray(ids)) return ids;
+                    const selected = resolveSelectAll(action.selectAll);
+                    if ('ok' in selected) return selected;
+                    // Its rows are archived tasks: none left is a move or delete that landed.
+                    if (selected.ids.length === 0) return unchanged;
+                    if (!selected.current) return fail('STALE_REVISION', 'Archive changed; select all again');
                     // Its revision held each row's revision, so the rows are as shown.
-                    resolved = { type: action.type, taskIds: ids, taskRevisions: taskRevisionsOf(ids) };
+                    resolved = { type: action.type, taskIds: selected.ids, taskRevisions: taskRevisionsOf(selected.ids) };
                 }
                 const shared = await performTaskAction('archive', resolved);
                 if (shared) return shared as ListActionOutcome<NativeArchiveAction>;
@@ -4201,7 +4175,9 @@ function createListViewMethods(deps: ListViewDeps) {
                     case 'moveToInbox': {
                         const { taskId, taskRevision } = resolved;
                         if (!isRevision(taskRevision)) return fail('INVALID_INPUT', 'A task and the revision the view showed are required');
-                        if (!liveTask(taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                        const task = liveTask(taskId);
+                        if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
+                        if (task.status === 'inbox') return unchanged;
                         return staleTask(taskId, taskRevision) ?? done(await write(() => moveArchivedTaskToInbox(store, taskId)));
                     }
                     case 'moveTasksToInbox': {
@@ -4209,7 +4185,10 @@ function createListViewMethods(deps: ListViewDeps) {
                         if (!isIdList(taskIds) || !isRevisions(taskRevisions, taskIds) || taskIds.some((id) => !liveTask(id))) {
                             return fail('INVALID_INPUT', 'Tasks that exist, with the revision the view showed for each, are required');
                         }
-                        return refuseStaleTasks(taskIds, taskRevisions) ?? done(await write(() => moveArchivedTasksToInbox(store, taskIds)));
+                        // Tasks already in the Inbox are not compared (mobile's call still moves every selected task).
+                        const moving = taskIds.filter((id) => liveTask(id)?.status !== 'inbox');
+                        if (moving.length === 0) return unchanged;
+                        return refuseStaleTasks(moving, taskRevisions) ?? done(await write(() => moveArchivedTasksToInbox(store, taskIds)));
                     }
                     case 'setCompletedAt': {
                         const { taskId, taskRevision } = resolved;
@@ -4224,13 +4203,15 @@ function createListViewMethods(deps: ListViewDeps) {
                             return fail('INVALID_INPUT', 'A completion timestamp, or a local day and time, for a completed task is required');
                         }
                         // Target state: a replay of a time that already landed writes nothing.
-                        if (task.completedAt === completedAt) return { ok: true, value: { changed: false, toast: null } };
+                        if (task.completedAt === completedAt) return unchanged;
                         return staleTask(taskId, taskRevision) ?? done(await write(() => setArchivedTaskCompletedAt(store, taskId, completedAt)));
                     }
                     case 'reactivateProject': {
                         const { projectId, projectRevision } = resolved;
                         if (!isRevision(projectRevision)) return fail('INVALID_INPUT', 'A project and the revision the view showed are required');
-                        if (!liveProject(projectId)) return fail('INVALID_INPUT', 'Project is not available');
+                        const project = liveProject(projectId);
+                        if (!project) return fail('INVALID_INPUT', 'Project is not available');
+                        if (project.status === 'active') return unchanged;
                         return staleProject(projectId, projectRevision) ?? done(await write(() => reactivateArchivedProject(store, projectId)));
                     }
                     case 'trashProject': {

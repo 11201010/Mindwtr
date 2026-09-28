@@ -1085,7 +1085,7 @@ describe('native host contract', () => {
         expect(await host.setAreaFilter({ included: [], excluded: [] }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.completeTask({ id: 'x', taskRevision: 'r' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.updateTask({ id: 'x', base: { title: 'x' }, patch: { title: 'y' } }))
+        expect(await host.updateTask({ id: 'x', base: { title: 'x' }, patch: { title: 'y' }, requestId: newRequestId() }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.activate({ writeSafetyReady: true })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(saveData).not.toHaveBeenCalled();
@@ -1219,7 +1219,7 @@ describe('native host contract', () => {
         expect(host.getTaskEditor({ id: '' })).toEqual({
             ok: false, error: { code: 'INVALID_INPUT', message: 'Task ID is required' },
         });
-        expect(await host.updateTask({ id: '', base: {}, patch: {} })).toEqual({
+        expect(await host.updateTask({ id: '', base: {}, patch: {}, requestId: newRequestId() })).toEqual({
             ok: false, error: { code: 'INVALID_INPUT', message: 'Task ID is required' },
         });
     });
@@ -1252,7 +1252,7 @@ describe('native host contract', () => {
         });
 
         let settled = false;
-        const saving = host.updateTask({ id: 'edit', base, patch }).then((result) => {
+        const saving = host.updateTask({ id: 'edit', base, patch, requestId: newRequestId() }).then((result) => {
             settled = true;
             return result;
         });
@@ -1273,12 +1273,12 @@ describe('native host contract', () => {
     it('clears descriptions the same way as the mobile task draft', async () => {
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z', { description: 'Old notes' })]);
         saveData.mockClear();
-        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: '' } }))
+        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: '' }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: true } });
         const savedData = saveData.mock.calls.at(-1)?.[0] as { tasks: Task[] };
         expect(savedData.tasks.find(({ id }) => id === 'edit')?.description).toBeUndefined();
         expect(host.getTaskEditor({ id: 'edit' })).toMatchObject({ ok: true, value: { fields: { description: null } } });
-        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: null } }))
+        expect(await host.updateTask({ id: 'edit', base: { description: 'Old notes' }, patch: { description: null }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: false } });
     });
 
@@ -1312,7 +1312,7 @@ describe('native host contract', () => {
         ]);
         saveData.mockClear();
 
-        const result = await host.updateTask({ id: 'edit', base, patch } as never);
+        const result = await host.updateTask({ id: 'edit', base, patch, requestId: newRequestId() } as never);
         expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         if (!result.ok) {
             if (name === 'base and patch key mismatch') {
@@ -1333,7 +1333,7 @@ describe('native host contract', () => {
     it('rejects an empty patch without writing', async () => {
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z', { rev: 2 })]);
         saveData.mockClear();
-        expect(await host.updateTask({ id: 'edit', base: {}, patch: {} })).toMatchObject({
+        expect(await host.updateTask({ id: 'edit', base: {}, patch: {}, requestId: newRequestId() })).toMatchObject({
             ok: false, error: { code: 'INVALID_INPUT' },
         });
         expect(saveData).not.toHaveBeenCalled();
@@ -1365,7 +1365,7 @@ describe('native host contract', () => {
         const host = await activateWith([task('reference-edit', '2026-09-01T00:00:00.000Z', { status: taskStatus, rev: 11 })]);
         saveData.mockClear();
 
-        const result = await host.updateTask({ id: 'reference-edit', base, patch });
+        const result = await host.updateTask({ id: 'reference-edit', base, patch, requestId: newRequestId() });
         expect(result).toEqual({
             ok: false, error: { code: 'INVALID_INPUT', message: `${field} cannot be set while status is reference` },
         });
@@ -1382,6 +1382,7 @@ describe('native host contract', () => {
         saveData.mockClear();
 
         expect(await host.updateTask({
+            requestId: newRequestId(),
             id: 'archived-project-task', base: { title: 'archived-project-task' }, patch: { title: 'Changed' },
         })).toEqual({
             ok: false,
@@ -1395,7 +1396,7 @@ describe('native host contract', () => {
         const value = '2026-09-23T10:00:00+05:30';
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z')]);
 
-        expect(await host.updateTask({ id: 'edit', base: { dueDate: null }, patch: { dueDate: value } }))
+        expect(await host.updateTask({ id: 'edit', base: { dueDate: null }, patch: { dueDate: value }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: true } });
         const savedData = saveData.mock.calls.at(-1)?.[0] as { tasks: Task[] };
         expect(savedData.tasks.find(({ id }) => id === 'edit')?.dueDate).toBe(value);
@@ -1408,7 +1409,7 @@ describe('native host contract', () => {
         const revAfterOtherWrite = useTaskStore.getState()._tasksById.get('edit')?.rev;
         saveData.mockClear();
 
-        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' } }))
+        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' }, requestId: newRequestId() }))
             .toEqual({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } });
         expect(useTaskStore.getState()._tasksById.get('edit')).toMatchObject({ title: 'Other writer', rev: revAfterOtherWrite });
         expect(saveData).not.toHaveBeenCalled();
@@ -1419,18 +1420,18 @@ describe('native host contract', () => {
         expect((await useTaskStore.getState().updateTask('edit', { description: 'Other notes' })).success).toBe(true);
         await flushPendingSave();
 
-        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' } }))
+        expect(await host.updateTask({ id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' }, requestId: newRequestId() }))
             .toEqual({ ok: true, value: { id: 'edit', changed: true } });
         expect(useTaskStore.getState()._tasksById.get('edit')).toMatchObject({ title: 'My edit', description: 'Other notes' });
     });
 
-    it('acknowledges a repeated edit without a second store write', async () => {
+    it('answers a repeated request with its first reply, without a second store write', async () => {
         const host = await activateWith([task('edit', '2026-09-01T00:00:00.000Z', { title: 'Original' })]);
-        const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' } };
+        const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'My edit' }, requestId: newRequestId() };
         saveData.mockClear();
         expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'edit', changed: true } });
         const revAfterFirstWrite = useTaskStore.getState()._tasksById.get('edit')?.rev;
-        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'edit', changed: false } });
+        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'edit', changed: true } });
         expect(useTaskStore.getState()._tasksById.get('edit')?.rev).toBe(revAfterFirstWrite);
         expect(saveData).toHaveBeenCalledTimes(1);
     });
@@ -1439,7 +1440,7 @@ describe('native host contract', () => {
         const host = await activateWith([task('recurring', '2026-09-01T00:00:00.000Z', {
             status: 'next', recurrence: { rule: 'daily', strategy: 'fluid' }, dueDate: '2026-09-20',
         })]);
-        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' } };
+        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' }, requestId: newRequestId() };
         expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: true } });
         const afterFirst = useTaskStore.getState()._allTasks;
         const followUps = afterFirst.filter((item) => item.id !== 'recurring' && item.status !== 'done' && item.status !== 'archived');
@@ -1447,7 +1448,7 @@ describe('native host contract', () => {
         expect(followUps).toHaveLength(1);
         const completedRev = afterFirst.find(({ id }) => id === 'recurring')?.rev;
 
-        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: false } });
+        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: true } });
         expect(useTaskStore.getState()._allTasks).toHaveLength(2);
         expect(useTaskStore.getState()._allTasks.find(({ id }) => id === 'recurring')?.rev).toBe(completedRev);
     });
@@ -1456,7 +1457,7 @@ describe('native host contract', () => {
         const host = await activateWith([task('recurring', '2026-09-01T00:00:00.000Z', {
             status: 'next', recurrence: { rule: 'daily', strategy: 'fluid' }, dueDate: '2026-09-20',
         })]);
-        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' } };
+        const input = { id: 'recurring', base: { status: 'next' }, patch: { status: 'done' }, requestId: newRequestId() };
         saveData.mockClear();
         saveData.mockRejectedValue(new Error('disk unavailable'));
 
@@ -1469,7 +1470,7 @@ describe('native host contract', () => {
         expect(useTaskStore.getState()._allTasks.filter((item) => item.id !== 'recurring' && item.status !== 'done' && item.status !== 'archived')).toHaveLength(1);
 
         saveData.mockResolvedValue(undefined);
-        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: false } });
+        expect(await host.updateTask(input)).toEqual({ ok: true, value: { id: 'recurring', changed: true } });
         const savedData = saveData.mock.calls.at(-1)?.[0] as { tasks: Task[] };
         expect(savedData.tasks.find(({ id }) => id === 'recurring')?.status).toBe('done');
         expect(savedData.tasks.filter((item) => item.id !== 'recurring' && item.status !== 'done' && item.status !== 'archived'))
@@ -1622,6 +1623,7 @@ describe('native host contract', () => {
             if (!future.ok) throw new Error('Draft edit failed');
             expect(future.value.focusStar).toMatchObject({ canToggle: true, queued: true });
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { startTime: '', focusedToday: false },
                 patch: { startTime: '2099-01-01', focusedToday: true },
             })).toMatchObject({ ok: true, value: { draft: { focusedToday: true } } });
@@ -1636,6 +1638,7 @@ describe('native host contract', () => {
             ], { gtd: { focusTaskLimit: 1 } });
             expect((await useTaskStore.getState().updateTask('other', { isFocusedToday: true })).success).toBe(true);
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { focusedToday: false }, patch: { focusedToday: true },
             })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
             expect(storedTask()?.isFocusedToday).toBeFalsy();
@@ -1647,6 +1650,7 @@ describe('native host contract', () => {
                 task('other', '2026-09-01T00:00:00.000Z', { status: 'next', isFocusedToday: true }),
             ], { gtd: { focusTaskLimit: 1 } });
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { startTime: '2099-01-01' }, patch: { startTime: '' },
             })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
             expect(storedTask()).toMatchObject({ startTime: '2099-01-01', isFocusedToday: true });
@@ -1667,6 +1671,7 @@ describe('native host contract', () => {
             });
             expect(changed).toMatchObject({ ok: true, value: { draft: { status: 'done', focusedToday: false } } });
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { status: 'next' }, patch: { status: 'done' },
             })).toMatchObject({ ok: true, value: { draft: { focusedToday: false } } });
         });
@@ -1711,6 +1716,7 @@ describe('native host contract', () => {
             saveData.mockClear();
 
             const result = await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit',
                 base: { title: 'Original', dueDate: '', projectId: 'p-work', relativeStartOffset: null as never },
                 patch: { title: '  Mine  ', dueDate: '2026-10-01', projectId: 'p-home', relativeStartOffset: null as never },
@@ -1732,6 +1738,7 @@ describe('native host contract', () => {
             saveData.mockClear();
 
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'edit', base: { title: 'Original', description: 'Old notes' }, patch: { title: 'Mine', description: 'New notes' },
             })).toEqual({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: title' } });
             expect(storedTask()).toMatchObject({ title: 'Other writer', description: 'Old notes', rev: revBefore });
@@ -1743,13 +1750,14 @@ describe('native host contract', () => {
                 editTask({ isFocusedToday: true }),
                 task('complete', '2026-09-01T00:00:00.000Z', { status: 'next' }),
             ]);
-            expect(await host.saveTaskDraft({ id: 'edit', base: { status: 'next' }, patch: { status: 'inbox' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { status: 'next' }, patch: { status: 'inbox' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: true, value: { draft: { status: 'inbox', focusedToday: false } } });
             expect(storedTask()).toMatchObject({ status: 'inbox', isFocusedToday: false });
 
             // Status goes first, so the chosen completion time survives its cascade.
             const completedAt = '2026-09-20T10:00:00.000Z';
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'complete', base: { completedAt: '', status: 'next' }, patch: { completedAt, status: 'done' },
             })).toMatchObject({ ok: true, value: { draft: { status: 'done', completedAt } } });
             expect(storedTask('complete')).toMatchObject({ status: 'done', completedAt });
@@ -1813,7 +1821,7 @@ describe('native host contract', () => {
 
         it('retries a failed save exactly, without a second write', async () => {
             const host = await activateEditor([editTask()]);
-            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
+            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' }, requestId: newRequestId() };
             saveData.mockClear();
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
@@ -1905,12 +1913,12 @@ describe('native host contract', () => {
         it.each([
             {
                 name: 'a recurrence series stamp',
-                input: { id: 'edit', base: { recurrence: '', recurrenceRRule: '' }, patch: { recurrence: 'weekly', recurrenceRRule: 'FREQ=WEEKLY;BYDAY=MO' } },
+                input: { id: 'edit', base: { recurrence: '', recurrenceRRule: '' }, patch: { recurrence: 'weekly', recurrenceRRule: 'FREQ=WEEKLY;BYDAY=MO' }, requestId: newRequestId() },
                 saved: { recurrence: { rule: 'weekly', byDay: ['MO'] } },
             },
             {
                 name: 'a star queued for a future start',
-                input: { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } },
+                input: { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' }, requestId: newRequestId() },
                 saved: { startTime: '2027-01-04', isFocusedToday: true },
             },
         ] as const)('retries exactly after $name', async ({ input, saved }) => {
@@ -1929,30 +1937,30 @@ describe('native host contract', () => {
         it('keeps retry state per task: A, then B, then the exact retry of A', async () => {
             const host = await activateEditor([editTask(), task('b', '2026-09-01T00:00:00.000Z'), task('other', '2026-09-01T00:00:00.000Z')]);
             // The store keeps the star queued for its future start.
-            const inputA = { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' } };
+            const inputA = { id: 'edit', base: { focusedToday: false, startTime: '' }, patch: { focusedToday: true, startTime: '2027-01-04' }, requestId: newRequestId() };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
             const savedA = storedTask();
             expect(savedA).toMatchObject({ startTime: '2027-01-04', isFocusedToday: true });
 
             saveData.mockResolvedValue(undefined);
-            expect(await host.saveTaskDraft({ id: 'b', base: { title: 'b' }, patch: { title: 'B' } })).toMatchObject({ ok: true });
+            expect(await host.saveTaskDraft({ id: 'b', base: { title: 'b' }, patch: { title: 'B' }, requestId: newRequestId() })).toMatchObject({ ok: true });
             // An unrelated write, through another path, between the failure and the retry.
             expect((await useTaskStore.getState().updateTask('other', { title: 'Other' })).success).toBe(true);
             expect(await host.saveTaskDraft(inputA)).toMatchObject({ ok: true, value: { draft: { focusedToday: true } } });
             expect(storedTask()).toBe(savedA);
         }, 15_000);
 
-        it('drops a task\'s retry state when another path writes that task', async () => {
+        it('answers a retry after another path wrote the task with the first reply, writing nothing', async () => {
             const host = await activateEditor([editTask({ description: 'Old notes' })]);
-            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } };
+            const input = { id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' }, requestId: newRequestId() };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
             saveData.mockResolvedValue(undefined);
             expect((await useTaskStore.getState().updateTask('edit', { description: 'Other notes' })).success).toBe(true);
             const afterOtherWrite = storedTask();
-            // The field comparison takes over: the title already holds its new value, so nothing is written.
-            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true, value: { draft: { title: 'Mine', description: 'Other notes' } } });
+            // The request's receipt answers: its first reply, and nothing is written.
+            expect(await host.saveTaskDraft(input)).toMatchObject({ ok: true, value: { draft: { title: 'Mine', description: 'Old notes' } } });
             expect(storedTask()).toBe(afterOtherWrite);
         }, 15_000);
 
@@ -1966,17 +1974,17 @@ describe('native host contract', () => {
                 { projectId: 'p-home', sectionId: 's-plan' },
             ]) {
                 const base = Object.fromEntries(Object.keys(patch).map((field) => [field, field === 'projectId' ? 'p-work' : 's-plan']));
-                expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toEqual({
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch, requestId: newRequestId() })).toEqual({
                     ok: false, error: { code: 'INVALID_INPUT', message: 'sectionId is not a valid value' },
                 });
             }
             expect(saveData).not.toHaveBeenCalled();
             expect(storedTask()).toBe(before);
 
-            expect(await host.saveTaskDraft({ id: 'edit', base: { sectionId: 's-plan' }, patch: { sectionId: 's-ship' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { sectionId: 's-plan' }, patch: { sectionId: 's-ship' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: true, value: { draft: { sectionId: 's-ship' } } });
             // Moving projects without naming a section still drops the old one, as in the mobile editor.
-            expect(await host.saveTaskDraft({ id: 'edit', base: { projectId: 'p-work' }, patch: { projectId: 'p-home' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { projectId: 'p-work' }, patch: { projectId: 'p-home' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: true, value: { draft: { projectId: 'p-home', sectionId: '' } } });
         });
 
@@ -1987,6 +1995,7 @@ describe('native host contract', () => {
             ]);
             const updateTask = vi.spyOn(useTaskStore.getState(), 'updateTask');
             expect(await host.saveTaskDraft({
+                requestId: newRequestId(),
                 id: 'via-host', base: { status: 'inbox', startTime: '' }, patch: { status: 'inbox', startTime: '2026-10-01' },
             })).toMatchObject({ ok: true });
             // The mobile editor: the same draft edit through its save composition, then the store.
@@ -2056,7 +2065,7 @@ describe('native host contract', () => {
 
         it('rejects read-only tasks and invalid drafts without writing', async () => {
             const host = createNativeHostContract();
-            expect(await host.saveTaskDraft({ id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' } }))
+            expect(await host.saveTaskDraft({ id: 'edit', base: { title: 'Original' }, patch: { title: 'Mine' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
             getData.mockResolvedValue(editorData([
                 editTask(),
@@ -2066,9 +2075,9 @@ describe('native host contract', () => {
             const before = { edit: storedTask(), archived: storedTask('archived-project') };
             saveData.mockClear();
 
-            expect(await host.saveTaskDraft({ id: 'archived-project', base: { title: 'archived-project' }, patch: { title: 'Mine' } }))
+            expect(await host.saveTaskDraft({ id: 'archived-project', base: { title: 'archived-project' }, patch: { title: 'Mine' }, requestId: newRequestId() }))
                 .toEqual({ ok: false, error: { code: 'INVALID_INPUT', message: 'Task is read-only while its project is archived' } });
-            expect(await host.saveTaskDraft({ id: 'missing', base: { title: 'x' }, patch: { title: 'y' } }))
+            expect(await host.saveTaskDraft({ id: 'missing', base: { title: 'x' }, patch: { title: 'y' }, requestId: newRequestId() }))
                 .toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
             const invalid: Array<[Record<string, unknown>, Record<string, unknown>, string]> = [
                 [{}, {}, 'patch must include a draft field'],
@@ -2085,7 +2094,7 @@ describe('native host contract', () => {
                 [{ relativeStartOffset: null }, { relativeStartOffset: { amount: 1.5, unit: 'day' } }, 'relativeStartOffset is not a valid value'],
             ];
             for (const [base, patch, message] of invalid) {
-                expect(await host.saveTaskDraft({ id: 'edit', base, patch } as never)).toEqual({
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch, requestId: newRequestId() } as never)).toEqual({
                     ok: false, error: { code: 'INVALID_INPUT', message },
                 });
             }
@@ -2195,7 +2204,7 @@ describe('native host contract', () => {
                 expect(moved.fields.relativeStart).toMatchObject({ active: true, amount: 2, unit: 'day' });
 
                 const { base, patch } = changes(draft, json(moved.draft));
-                expect(await host.saveTaskDraft({ id: 'edit', base, patch })).toMatchObject({ ok: true });
+                expect(await host.saveTaskDraft({ id: 'edit', base, patch, requestId: newRequestId() })).toMatchObject({ ok: true });
                 expect(storedTask()).toMatchObject({
                     dueDate: '2026-10-05', startTime: '2026-10-03', relativeStartOffset: { amount: -2, unit: 'day' },
                 });
@@ -3275,7 +3284,7 @@ describe('native host contract: replays after a restart', () => {
 
     it('updateTask: a replay after a later edit of the same field is stale; after it landed, it writes nothing', async () => {
         const host = await open();
-        const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' } };
+        const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' }, requestId: newRequestId() };
         expect(unwrap(await host.updateTask(input))).toEqual({ id: 'a', changed: true });
         expect(await replayAfterRestart((restarted) => restarted.updateTask(input))).toEqual({ result: { ok: true, value: { id: 'a', changed: false } }, wrote: false });
         expect((await store().updateTask('a', { title: 'Theirs' })).success).toBe(true);
@@ -3287,7 +3296,7 @@ describe('native host contract: replays after a restart', () => {
 
     it('saveTaskDraft: a replay after a later edit of the same field is stale; after it landed, it writes nothing', async () => {
         const host = await open();
-        const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' } };
+        const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' }, requestId: newRequestId() };
         expect(unwrap(await host.saveTaskDraft(input)).draft.title).toBe('Mine');
         const landed = await replayAfterRestart((restarted) => restarted.saveTaskDraft(input));
         expect(landed).toMatchObject({ result: { ok: true, value: { id: 'a', draft: { title: 'Mine' } } }, wrote: false });

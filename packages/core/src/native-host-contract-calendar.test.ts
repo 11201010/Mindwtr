@@ -21,7 +21,7 @@ import { createDateFormatter } from './date';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
 import type { NativeCalendarEntry, NativeCalendarFeed, NativeCalendarView } from './native-host-contract-calendar';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
-import { taskRevisionOf } from './native-request-receipts';
+import { requestRowId, taskRevisionOf } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -424,6 +424,48 @@ describe('native host contract: Calendar', () => {
         expect(kitchens()).toHaveLength(1);
         expect(useTaskStore.getState()._tasksById.get(input.requestId.toLowerCase())).toMatchObject({ title: 'Pick paint', projectId: kitchens()[0].id });
         expect(recorder.log.map(([name]) => name)).toEqual(['addProject', 'addTask']);
+    });
+
+    it('names a composer\'s new project from the request: a replay after its task failed uses it, renamed since, and refuses it deleted', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const save = (title: string, day: string) => {
+            const opened = value(host.openCalendarComposer({ day, calendar: ready })).composer!;
+            const composer = value(host.editCalendarComposer({ composer: opened.composer, edit: { type: 'title', title }, calendar: ready }));
+            return { requestId: generateUUID(), action: { type: 'saveComposer' as const, composer: composer.composer }, calendar: ready };
+        };
+        const failTask = async (input: ReturnType<typeof save>) => {
+            const addTask = useTaskStore.getState().addTask;
+            useTaskStore.setState({ addTask: async () => ({ success: false, error: 'Task store refused' }) });
+            expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            useTaskStore.setState({ addTask });
+        };
+        const projectNamed = (title: string) => useTaskStore.getState()._allProjects.find((project) => project.title === title)!;
+        const made = () => useTaskStore.getState()._allProjects
+            .filter((project) => !fixture.projects.some((seeded) => seeded.id === project.id))
+            .map((project) => [project.id, project.title, Boolean(project.deletedAt)]);
+
+        const input = save('Pick paint +Kitchen', '2026-10-31');
+        const taskId = input.requestId.toLowerCase();
+        const projectId = requestRowId(input.requestId, 'project:kitchen');
+        await failTask(input);
+        await useTaskStore.getState().updateProject(projectNamed('Kitchen').id, { title: 'Paint' });
+        const replay = await replayAfterRestart((restarted) => restarted.runCalendarAction(input));
+        expect(replay.result).toMatchObject({ ok: true, value: { changed: true, taskId } });
+        expect(made()).toEqual([[projectId, 'Paint', false]]);
+        expect(useTaskStore.getState()._tasksById.get(taskId)).toMatchObject({ title: 'Pick paint', projectId });
+        // Landed now: a later replay answers from the task in the renamed project.
+        expect(await replayAfterRestart((restarted) => restarted.runCalendarAction(input)))
+            .toMatchObject({ result: { ok: true, value: { changed: false, taskId } }, wrote: false });
+
+        // A project deleted since is not made again: refused, and nothing is written.
+        const other = save('Hang shelf +Garage', '2026-10-30');
+        await failTask(other);
+        await useTaskStore.getState().deleteProject(projectNamed('Garage').id);
+        const gone = await replayAfterRestart((restarted) => restarted.runCalendarAction(other));
+        expect(gone).toMatchObject({ result: { ok: false, error: { code: 'STALE_REVISION' } }, wrote: false });
+        expect(made()).toEqual([[projectId, 'Paint', false], [requestRowId(other.requestId, 'project:garage'), 'Garage', true]]);
+        expect(useTaskStore.getState()._tasksById.has(other.requestId.toLowerCase())).toBe(false);
     });
 
     it('lets a move that owes its save finish even when its slot is taken since', async () => {

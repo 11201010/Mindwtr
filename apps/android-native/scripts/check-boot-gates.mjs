@@ -264,6 +264,21 @@ const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongd
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
 assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrentWrites: true \}\)/);
+// Durable request receipts: core's adapter commits a write's receipt in its data's transaction (the hook right before
+// COMMIT in both data saves, into native_request_receipts), and boot loads them before activation and the journal's replay.
+{
+    assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
+    const bootBody = hostEntry.slice(hostEntry.indexOf('boot(legacyState'), hostEntry.indexOf('window(offset'));
+    const bootOrder = ['setStorageAdapter(adapter)', 'await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'contract.activate('].map((text) => bootBody.indexOf(text));
+    assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
+    assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
+    const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
+    assert.match(coreAdapter, /await this\.beforeCommit\(\{ data \}\);\s*saveStep = 'commit';\s*const commitStartedAt = Date\.now\(\);\s*await runTimed\('COMMIT'\);/);
+    assert.match(coreAdapter, /await this\.beforeCommit\(\{ task \}\);\s*await this\.client\.run\('COMMIT'\);/);
+    const coreReceipts = readFileSync(resolve(app, '../../packages/core/src/native-request-receipts.ts'), 'utf8');
+    assert.match(coreReceipts, /CREATE TABLE IF NOT EXISTS native_request_receipts \(/);
+    assert.match(coreReceipts, /class NativeReceiptSqliteAdapter extends SqliteAdapter \{[\s\S]*?protected override async beforeCommit\([\s\S]*?INSERT INTO native_request_receipts/);
+}
 assert.match(sqliteBridge, /PRAGMA synchronous = FULL/);
 // Nothing writes the RN database before its .prewrite snapshot: the open sets only foreign_keys (a connection
 // setting), and WAL (which rewrites a rollback-journal header) and synchronous follow VACUUM INTO or the
@@ -2059,6 +2074,9 @@ export function assertNativeLegacyBackupSafe() { globalThis.events.push('legacyC
 // Core compares every persisted field; the fake compares the whole snapshot.
 export function legacyImportMismatch(merged, saved) { return JSON.stringify(merged) === JSON.stringify(saved) ? null : 'tasks'; }
 export function splitSqlStatements(sql) { return [sql]; }
+export class NativeReceiptSqliteAdapter extends SqliteAdapter {}
+export async function loadNativeRequestReceipts() { globalThis.receiptsLoadedAt = globalThis.events.length; return 0; }
+export async function pruneNativeRequestReceipts() { return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); }
 // The debug net check's WebDAV calls: bundled, never run here.
@@ -2261,6 +2279,9 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
 // Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
 assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
+// Receipts load before the validated load, so before activation and any replay; pruning is Kotlin's call after its replay.
+assert.equal(ready.receiptsLoadedAt, 0);
+assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: true, value: { pruned: 3 } });
 // The capture popup: every call passes Kotlin's JSON to core unchanged; the snapshot comes wrapped, null in sandbox mode.
 {
     const draft = { text: 'Call @phone', options: { addAnother: false } };

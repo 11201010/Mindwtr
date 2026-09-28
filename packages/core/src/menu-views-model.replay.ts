@@ -281,7 +281,7 @@ export async function replayMenuViewsScenario(options: {
 
     const changeStatus = async (id: string, status: Task['status']) => {
         if (contract) {
-            ok(await contract.updateTask({ id, base: { status: taskById(id).status }, patch: { status } }));
+            ok(await contract.updateTask({ id, base: { status: taskById(id).status }, patch: { status }, requestId: generateUUID() }));
         } else {
             await store().updateTask(id, { status });
         }

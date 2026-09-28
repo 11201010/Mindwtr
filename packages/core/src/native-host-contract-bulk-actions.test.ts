@@ -4,7 +4,8 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeBulkAction } from './native-host-contract-bulk-actions';
 import { createBulkOrganizeArea, createBulkOrganizeProject } from './bulk-organize-create';
-import { taskRevisionOf, taskRevisionsOf } from './native-request-receipts';
+import { paramsKey } from './native-host-contract-menu-views';
+import { revisionOf, taskRevisionOf, taskRevisionsOf } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import {
@@ -283,6 +284,37 @@ describe('native host contract: selection mode', () => {
                 .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
             expect(log).toEqual([]);
         });
+
+        it('refuses with STALE_REVISION once a row synced to a revision the old 32-bit token could not tell apart', async () => {
+            freezeClock();
+            const { host, log } = await open();
+            // Two revisions of r-wifi whose old token (the count and a 32-bit FNV hash) was the same.
+            const first = { rev: 3, revBy: 'd', updatedAt: '2026-09-24T00:03:47.549Z' };
+            const second = { rev: 3, revBy: 'd', updatedAt: '2026-09-24T00:08:28.592Z' };
+            expect(paramsKey([`r-wifi@${revisionOf(first)}`])).toBe(paramsKey([`r-wifi@${revisionOf(second)}`]));
+            const sync = (revision: typeof first) => useTaskStore.setState({
+                _allTasks: useTaskStore.getState()._allTasks.map((task) => (task.id === 'r-wifi' ? { ...task, ...revision } : task)),
+            });
+            sync(first);
+            const view = value(host.getBulkActions({ list: 'reference', params: { filters: { searchQuery: 'wifi' } }, selectAll: {} }));
+            expect(view.selectedCount).toBe(1);
+            // Another device's version of the row arrives.
+            sync(second);
+            expect(await host.runBulkAction({ requestId: requestId(), list: 'reference', action: { type: 'trashTasks', selectAll: view.selectAll! } }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(log).toEqual([]);
+            expect(useTaskStore.getState()._tasksById.get('r-wifi')?.deletedAt).toBeUndefined();
+        });
+
+        it('holds across a restart: a new host takes the Select all an old one showed', async () => {
+            freezeClock();
+            const { host, log } = await open();
+            const view = value(host.getBulkActions({ list: 'inbox', selectAll: {} }));
+            const input = { requestId: requestId(), list: 'inbox' as const, action: { type: 'editTaskTokens', field: 'tags', mode: 'add', values: ['urgent'], selectAll: view.selectAll! } as NativeBulkAction };
+            const { result } = await replayAfterRestart((restarted) => restarted.runBulkAction(input));
+            expect(result).toMatchObject({ ok: true, value: { changed: true } });
+            expect(log).toEqual([['batchUpdateTasks', expect.any(Array)]]);
+        });
     });
 
     describe('selection', () => {
@@ -401,8 +433,8 @@ describe('native host contract: selection mode', () => {
             const action: NativeBulkAction = { type: 'trashTasks', selectAll: view.selectAll! };
             expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }))).toMatchObject({ changed: true });
             log.length = 0;
-            // The trashed rows left the Inbox, so the stored revision no longer matches: core refuses before any write.
-            expect(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            // The trashed rows left the Inbox: Select all now covers no row to delete, checked before its revision.
+            expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }))).toEqual({ changed: false, toast: null });
             expect(log).toEqual([]);
         });
 
@@ -469,6 +501,37 @@ describe('native host contract: selection mode', () => {
             expect(result).toMatchObject(stale);
             expect(wrote).toBe(false);
             expect(task('i-call').tags).toEqual(['#health']);
+        });
+
+        const selectAll = (host: Host) => value(host.getBulkActions({ list: 'inbox', selectAll: {} })).selectAll!;
+        it.each([
+            ['moveTasks', (host: Host): NativeBulkAction => withRevisions(host, 'inbox', { type: 'moveTasks', taskIds: ['i-call', 'i-milk'], status: 'next' })],
+            ['moveTasks under Select all', (host: Host): NativeBulkAction => ({ type: 'moveTasks', status: 'next', selectAll: selectAll(host) })],
+            ['editTaskTokens (a tag add) under Select all', (host: Host): NativeBulkAction => ({ type: 'editTaskTokens', field: 'tags', mode: 'add', values: ['urgent'], selectAll: selectAll(host) })],
+            ['organize under Select all', (host: Host): NativeBulkAction => ({ type: 'organize', draft: { tags: 'later' }, selectAll: selectAll(host) })],
+            ['trashTasks under Select all', (host: Host): NativeBulkAction => ({ type: 'trashTasks', selectAll: selectAll(host) })],
+        ] as const)('%s: a replay of a request that landed answers changed: false and writes nothing', async (_name, build) => {
+            freezeClock();
+            const { host, log } = await open();
+            const input = { requestId: requestId(), list: 'inbox' as const, action: build(host) };
+            expect(value(await host.runBulkAction(input))).toMatchObject({ changed: true });
+            log.length = 0;
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runBulkAction(input));
+            expect(result).toEqual({ ok: true, value: { changed: false, toast: null } });
+            expect(wrote).toBe(false);
+            expect(log).toEqual([]);
+        });
+
+        it('moveTasks: a row another device moved there already is no conflict; the rest move', async () => {
+            freezeClock();
+            const { host, log } = await open();
+            const input = { requestId: requestId(), list: 'inbox' as const, action: withRevisions(host, 'inbox', { type: 'moveTasks', taskIds: ['i-call', 'i-milk'], status: 'next' }) };
+            // The request never ran; another device files i-call under Next.
+            await useTaskStore.getState().updateTask('i-call', { status: 'next' });
+            log.length = 0;
+            const { result } = await replayAfterRestart((restarted) => restarted.runBulkAction(input));
+            expect(result).toMatchObject({ ok: true, value: { changed: true } });
+            expect([task('i-call').status, task('i-milk').status]).toEqual(['next', 'next']);
         });
     });
 

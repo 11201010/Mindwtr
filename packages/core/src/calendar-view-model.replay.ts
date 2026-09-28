@@ -114,7 +114,11 @@ export async function seedCalendarStore(
             return result;
         },
         addProject: async (title, color, props) => {
-            record('addProject', [title, color, props]);
+            // The contract names a composer's new project from the request (an `id` prop); React Native
+            // lets the store draw one, so the log leaves that id out, as the harness records the call.
+            const { id: _id, ...rest } = props ?? {};
+            const shown = props && 'id' in props ? (Object.keys(rest).length > 0 ? rest : undefined) : props;
+            record('addProject', [title, color, shown]);
             const result = await real.addProject(title, color, props);
             if (result?.id) recorder.createdIds.set(result.id, `<created:${title}>`);
             return result;

@@ -112,8 +112,8 @@ import {
     type ManageUntranslatedText,
 } from './manage-settings-model';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-host-contract';
-import { fail, firstWindow, isObjectRecord, isPaging, isText, page, paramsKey, type NativeWindow } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, isRevision, refuseStale, revisionOf, runStoreWrite, settleWrite } from './native-request-receipts';
+import { fail, firstWindow, isObjectRecord, isPaging, isText, page, type NativeWindow } from './native-host-contract-menu-views';
+import { createNativeRequestReceipts, isRevision, refuseStale, revisionOf, revisionsToken, runStoreWrite, settleWrite } from './native-request-receipts';
 import { getPersonNameKey, getPersonTaskCounts } from './people';
 import { SETTINGS_THEME_VALUE_SET } from './settings-options';
 import {
@@ -386,7 +386,7 @@ export function createSettingsMethods(deps: SettingsDeps) {
         if (type === 'tag') _allProjects.forEach((project) => add(project, project.tagIds));
         return (name: string) => {
             const carriers = byKey.get(keyOf(name)) ?? [];
-            return `${carriers.length}:${paramsKey([...carriers].sort())}`;
+            return revisionsToken([...carriers].sort());
         };
     };
 

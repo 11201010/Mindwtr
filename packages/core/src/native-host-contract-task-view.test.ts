@@ -331,6 +331,7 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
         expect(edited.draft.status).toBe('done');
         const rev = stored('t-list').rev ?? 0;
         const saved = value(await host.saveTaskDraft({
+            requestId: generateUUID(),
             id: 't-list', base: { status: 'next' }, patch: { status: 'done' }, checklist: { base, value: edited.checklist },
         }));
         const done = [item('c1', true, 'Milk **2%**'), item('c2', true, 'Bread')];
@@ -353,6 +354,7 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
         expect(edited.status).toBe('next');
         // Status equals the loaded value, so the host sends no status.
         value(await host.saveTaskDraft({
+            requestId: generateUUID(),
             id: 't-list', base: {}, patch: {}, checklist: { base, value: [...ticked.checklist, item('blank', true, '  ')] },
         }));
         expect(writes).toEqual([['updateTask', 't-list', { checklist: [item('c1', true, 'Milk **2%**'), item('c2', true, 'Bread')] }]]);
@@ -361,7 +363,7 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
         writes.length = 0;
         const rev = stored('t-list').rev;
         const current = stored('t-list').checklist as ChecklistItem[];
-        expect(await host.saveTaskDraft({ id: 't-list', base: {}, patch: {}, checklist: { base, value: current } })).toMatchObject({ ok: true });
+        expect(await host.saveTaskDraft({ id: 't-list', base: {}, patch: {}, checklist: { base, value: current }, requestId: generateUUID() })).toMatchObject({ ok: true });
         expect(writes).toEqual([]);
         expect(stored('t-list').rev).toBe(rev);
     });
@@ -373,12 +375,14 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
         await useTaskStore.getState().updateTask('t-open', { checklist: [item('o1', true), item('o2')] });
         writes.length = 0;
         expect(await host.saveTaskDraft({
+            requestId: generateUUID(),
             id: 't-open', base: { title: 'Open list' }, patch: { title: 'Renamed' }, checklist: { base, value: [...base, item('o3')] },
         })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION', message: 'Task changed while editing: checklist' } });
         expect(writes).toEqual([]);
         expect(stored('t-open').title).toBe('Open list');
         // A checklist that already holds the new value is no conflict.
         expect(await host.saveTaskDraft({
+            requestId: generateUUID(),
             id: 't-open', base: { title: 'Open list' }, patch: { title: 'Renamed' }, checklist: { base, value: [item('o1', true), item('o2')] },
         })).toMatchObject({ ok: true });
         expect(writes).toEqual([['updateTask', 't-open', { title: 'Renamed' }]]);
@@ -389,7 +393,7 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
         const saveData = vi.fn().mockResolvedValue(undefined);
         const host = await openHost(saveData);
         const base = stored('t-list').checklist as ChecklistItem[];
-        const input = { id: 't-list', base: { status: 'next' as const }, patch: { status: 'done' as const }, checklist: { base, value: [item('c1', true, 'Milk **2%**'), item('c2', true, 'Bread')] } };
+        const input = { id: 't-list', base: { status: 'next' as const }, patch: { status: 'done' as const }, checklist: { base, value: [item('c1', true, 'Milk **2%**'), item('c2', true, 'Bread')] }, requestId: generateUUID() };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.saveTaskDraft(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         expect(writes).toHaveLength(1);
@@ -407,10 +411,10 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
             null, { base }, { base: null, value: base }, { base, value: [{ id: 'a', title: 'A' }] }, { base, value: [{ ...base[0], extra: 1 }] },
             { base, value: Array.from({ length: 1_001 }, (_, index) => item(`i${index}`)) },
         ]) {
-            expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {}, checklist: checklist as never })).toMatchObject(invalid);
+            expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {}, checklist: checklist as never, requestId: generateUUID() })).toMatchObject(invalid);
         }
-        expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {} })).toMatchObject(invalid);
-        expect(await host.saveTaskDraft({ id: 't-archived', base: {}, patch: {}, checklist: { base: [item('x1')], value: [] } })).toMatchObject(invalid);
+        expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {}, requestId: generateUUID() })).toMatchObject(invalid);
+        expect(await host.saveTaskDraft({ id: 't-archived', base: {}, patch: {}, checklist: { base: [item('x1')], value: [] }, requestId: generateUUID() })).toMatchObject(invalid);
         expect(writes).toEqual([]);
     });
 });
@@ -495,6 +499,6 @@ it('is NOT_READY until storage is activated', async () => {
     const draft = createTaskDraft(TASKS[2]);
     expect(host.getTaskView({ id: 't-open' })).toMatchObject(notReady);
     expect(host.editTaskChecklist({ id: 't-open', draft, checklist: [], edit: { kind: 'add' } })).toMatchObject(notReady);
-    expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {}, checklist: { base: [], value: [] } })).toMatchObject(notReady);
+    expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {}, checklist: { base: [], value: [] }, requestId: generateUUID() })).toMatchObject(notReady);
     expect(await host.resetTaskChecklist({ id: 't-open', requestId: generateUUID(), taskRevision: 'r' })).toMatchObject(notReady);
 });
