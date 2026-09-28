@@ -5101,6 +5101,348 @@ final class FoundationUITests: XCTestCase {
         XCTFail("Area rename control could not be scrolled into view")
     }
 
+    private func openProjectAreaManager(_ app: XCUIApplication, recovering: Bool = false) {
+        if recovering { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        else {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        let row = app.buttons["project-open-776dd5c5-1926-4da1-96ff-5d5096971050"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        row.tap(); boardTap(app, "project-details-toggle")
+        projectManagerTap(app, "project-area-open")
+        projectManagerTap(app, "project-area-manage")
+        boardEnabled(app.textFields["area-create-name"])
+    }
+
+    private func projectManagerTap(_ app: XCUIApplication, _ id: String) {
+        let button = app.buttons[id]
+        if id == "area-manager-close" {
+            // The fixed header is outside the manager's scrollable content.
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+        } else if app.scrollViews["area-manager-scroll"].exists {
+            revealAreaRenameControl(app, button)
+        } else {
+            let sheet = app.scrollViews["project-area-sheet"]
+            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch, outerEdge: true)
+        }
+        boardEnabled(button)
+        // AX converts frame coordinates through CGFloat; allow rounding noise only.
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+        button.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+    }
+
+    func testProjectManageAreasAndDrafts() {
+        projectManageAreas(library: "a0bd15a2-6f9f-49fa-b7c2-22a6fec99944")
+    }
+
+    func testProjectManageAreasLargestText() {
+        projectManageAreas(library: "b1b59904-c83b-4f85-9c72-9992deec83fb")
+    }
+
+    private func projectManageAreas(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        let source = "170c1eab-65ec-4a38-931d-3f03399b7d17"
+        let destination = "af884128-31d5-41eb-978c-2fd1a44b62e8"
+        let managerName = app.textFields["area-create-name"]
+        let projectName = app.textFields["project-area-create-name"]
+        func tap(_ id: String) { projectManagerTap(app, id) }
+        func closeWait(_ id: String) {
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons[id])
+            waitForExpectations(timeout: 15)
+        }
+        func manager() { tap("project-area-open"); tap("project-area-manage") }
+        openProjectAreaManager(app)
+        revealAreaRenameControl(app, managerName)
+        replaceTextView(managerName, with: "Retained manager draft")
+        tap("area-manager-close"); closeWait("area-manager-close")
+        XCTAssertTrue(app.buttons["project-area-open"].exists)
+        tap("project-area-open"); tap("project-area-add")
+        boardEnabled(projectName)
+        replaceTextView(projectName, with: "Retained Project Area draft")
+        tap("project-area-create-cancel"); tap("project-area-close")
+        let notesToggle = app.buttons["project-notes-toggle"]
+        revealPagedElement(app, notesToggle, in: app.scrollViews.firstMatch, outerEdge: true)
+        boardTap(app, "project-notes-toggle")
+        let notes = app.textViews["project-notes-input"]
+        revealPagedElement(app, notes, in: app.scrollViews.firstMatch, outerEdge: true)
+        replaceProjectNotesText(notes, with: "# Project manager Notes\n\n**Bold** and café.\n")
+        manager()
+        XCTAssertEqual(managerName.value as? String, "Retained manager draft")
+        XCTAssertFalse(app.buttons["area-delete-" + source].isEnabled)
+        for (value, cancel) in [("Cancelled Area", true), ("  Renamed Source  ", false),
+                                ("  Renamed Source  ", false), ("  HOME  ", false)] {
+            tap("area-rename-open-" + source)
+            let input = app.textFields["area-rename-name"]
+            boardEnabled(input); revealAreaRenameControl(app, input)
+            replaceTextView(input, with: value)
+            tap(cancel ? "area-rename-cancel" : "area-rename-save")
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+            waitForExpectations(timeout: 15)
+            XCTAssertEqual(managerName.value as? String, "Retained manager draft")
+        }
+        XCTAssertFalse(app.buttons["area-rename-open-" + source].exists)
+        let survivor = app.buttons["area-rename-open-" + destination]
+        revealAreaRenameControl(app, survivor); boardEnabled(survivor)
+        XCTAssertTrue(survivor.label.contains("HOME"))
+        tap("area-manager-close"); closeWait("area-manager-close")
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, "HOME")
+        XCTAssertEqual(notes.value as? String, "# Project manager Notes\n\n**Bold** and café.\n")
+        manager(); revealAreaRenameControl(app, managerName)
+        replaceTextView(managerName, with: "  Project Managed Area  ")
+        tap("area-create-color-#10b981"); tap("area-create-save")
+        closeWait("area-manager-close")
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, "Project Managed Area")
+        tap("project-area-open")
+        let created = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "project-area-choice-", "Project Managed Area"))
+        XCTAssertEqual(created.count, 1); XCTAssertTrue(created.firstMatch.isSelected)
+        tap("project-area-add"); boardEnabled(projectName)
+        XCTAssertEqual(projectName.value as? String, projectName.placeholderValue)
+        tap("project-area-create-cancel"); tap("project-area-close")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Project Manage Areas preserves Notes and returns to Details"
+        capture.lifetime = .keepAlways; add(capture)
+        app.terminate(); app.launch(); openProjectAreaManager(app)
+        tap("area-manager-close"); closeWait("area-manager-close")
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, "Project Managed Area")
+        app.terminate()
+    }
+
+    func testProjectManageAreaControls() {
+        projectManageAreaControls(library: "0517b22c-ec66-49ce-aee7-ab512ff708eb")
+    }
+
+    func testProjectManageAreaControlsLargestText() {
+        projectManageAreaControls(library: "044fc514-5bc6-45ee-a04a-db142539a8fe")
+    }
+
+    private func projectManageAreaControls(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        let source = "170c1eab-65ec-4a38-931d-3f03399b7d17"
+        let home = "af884128-31d5-41eb-978c-2fd1a44b62e8"
+        let metadata = "3abf38fa-7ec4-45f4-ad79-4e30f08b78ad"
+        let eligible = "446f1b63-d93c-4372-8b06-49f5db93d8d0"
+        let target = "776dd5c5-1926-4da1-96ff-5d5096971050"
+        let archivedID = "98432619-81dd-480e-9c35-d4dfa1705ff1"
+        let projectDraft = app.textFields["projects-create-title"]
+        func tap(_ id: String) { projectManagerTap(app, id) }
+        func assertOrder(_ ids: [String]) {
+            let expected = ids.map { "area-order-up-" + $0 }
+            let query = app.buttons.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@", "area-order-up-"))
+            expectation(for: NSPredicate { _, _ in
+                query.allElementsBoundByIndex.map(\.identifier) == expected
+            }, evaluatedWith: app)
+            waitForExpectations(timeout: 15)
+            XCTAssertFalse(app.buttons[expected[0]].isEnabled)
+        }
+        func chooseSourceColor(_ color: String, initiallySelected: Bool) {
+            tap("area-color-open-" + source)
+            let swatch = app.buttons["area-color-" + source + "-" + color]
+            revealAreaRenameControl(app, swatch); boardEnabled(swatch)
+            XCTAssertEqual(swatch.isSelected, initiallySelected)
+            tap(swatch.identifier)
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: swatch)
+            waitForExpectations(timeout: 15)
+            boardEnabled(app.buttons["area-manager-close"], timeout: 15)
+            XCTAssertFalse(app.staticTexts["area-color-error"].exists)
+        }
+        func openProject(_ id: String) {
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            boardEnabled(row); row.tap(); boardTap(app, "project-details-toggle")
+        }
+
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardEnabled(projectDraft)
+        boardTap(app, "area-open"); boardTap(app, "area-option-" + source)
+        boardEnabled(app.buttons["area-option-" + source])
+        XCTAssertTrue(app.buttons["area-option-" + source].isSelected)
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["area-title"])
+        waitForExpectations(timeout: 10)
+
+        projectDraft.tap(); projectDraft.typeText("Retained controls Project draft")
+        let sourceChip = app.buttons["projects-create-area-" + source]
+        boardEnabled(sourceChip); XCTAssertTrue(sourceChip.isSelected)
+        openProject(target)
+        tap("project-area-open"); tap("project-area-manage")
+        boardEnabled(app.textFields["area-create-name"])
+
+        let protectedDelete = app.buttons["area-delete-" + source]
+        revealAreaRenameControl(app, protectedDelete)
+        XCTAssertTrue(protectedDelete.exists); XCTAssertFalse(protectedDelete.isEnabled)
+        assertOrder([metadata, source, home, eligible])
+
+        chooseSourceColor("#10b981", initiallySelected: false)
+        chooseSourceColor("#10b981", initiallySelected: true)
+        tap("area-order-sort-name")
+        boardEnabled(app.buttons["area-manager-close"], timeout: 15)
+        assertOrder([eligible, home, metadata, source])
+        tap("area-order-sort-color")
+        boardEnabled(app.buttons["area-manager-close"], timeout: 15)
+        assertOrder([source, home, metadata, eligible])
+        tap("area-order-up-" + eligible)
+        boardEnabled(app.buttons["area-manager-close"], timeout: 15)
+        assertOrder([source, home, eligible, metadata])
+
+        tap("area-delete-" + eligible)
+        expectation(for: NSPredicate(format: "exists == false"),
+                    evaluatedWith: app.buttons["area-delete-" + eligible])
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.staticTexts["area-delete-error"].exists)
+        revealAreaRenameControl(app, protectedDelete)
+        XCTAssertTrue(protectedDelete.exists); XCTAssertFalse(protectedDelete.isEnabled)
+        assertOrder([source, home, metadata])
+
+        tap("area-manager-close")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["area-manager-close"])
+        waitForExpectations(timeout: 15)
+        XCTAssertEqual(app.staticTexts["project-detail-title"].label, "Metadata parallel Project")
+        XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label, "Rename Source")
+        boardTap(app, "project-back")
+        boardEnabled(projectDraft)
+        XCTAssertEqual(projectDraft.value as? String, "Retained controls Project draft")
+        XCTAssertTrue(app.buttons["projects-create-area-" + source].isSelected)
+
+        boardTap(app, "area-open")
+        boardEnabled(app.buttons["area-option-" + source])
+        XCTAssertTrue(app.buttons["area-option-" + source].isSelected)
+        boardTap(app, "area-option-__all__")
+        boardEnabled(app.buttons["area-option-__all__"])
+        XCTAssertTrue(app.buttons["area-option-__all__"].isSelected)
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["area-title"])
+        waitForExpectations(timeout: 10)
+
+        let archived = app.buttons["projects-section-archived"]
+        revealPagedElement(app, archived, in: app.scrollViews["projects-scroll"])
+        if archived.value as? String == "Expand" { archived.tap() }
+        openProject(archivedID)
+        XCTAssertFalse(app.buttons["project-area-open"].exists)
+        XCTAssertFalse(app.buttons["project-area-manage"].exists)
+        XCTAssertTrue(app.staticTexts["project-detail-meta-area"].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Project-origin Area controls preserve drafts and archived read-only state"
+        capture.lifetime = .keepAlways; add(capture)
+        app.terminate()
+    }
+
+    func testProjectManageAreaRenameFailure() { projectManagerRecovery(phase: "rename", failed: true) }
+    func testProjectManageAreaRenameColdRecovery() { projectManagerRecovery(phase: "rename", failed: false) }
+    func testProjectManageAreaCreateFailure() { projectManagerRecovery(phase: "create", failed: true) }
+    func testProjectManageAreaCreateColdRecovery() { projectManagerRecovery(phase: "create", failed: false) }
+    func testProjectManageAreaAssignmentFailure() { projectManagerRecovery(phase: "assignment", failed: true) }
+    func testProjectManageAreaAssignmentColdRecovery() { projectManagerRecovery(phase: "assignment", failed: false) }
+
+    func testProjectManageCreatedAreaCanCloseAfterReadFailure() {
+        projectManagerCreatedAreaCorrection(blocked: false)
+    }
+
+    func testProjectManageBlockedAssignmentRetainsCreatedAreaForExplicitChoice() {
+        projectManagerCreatedAreaCorrection(blocked: true)
+    }
+
+    private func projectManagerCreatedAreaCorrection(blocked: Bool) {
+        let library = blocked ? "6960ec5e-6fd7-4585-a0bf-545cf572e71f" : "18fd02e5-6f4c-45dd-8730-e464416028ca"
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library,
+            blocked ? "--native-project-area-blocked-write" : "--native-project-area-read-failure"]
+        app.launch()
+        openProjectAreaManager(app)
+        let name = app.textFields["area-create-name"]
+        revealAreaRenameControl(app, name); boardEnabled(name)
+        replaceTextView(name, with: "  Unassigned Managed Area  ")
+        projectManagerTap(app, "area-create-save")
+        XCTAssertTrue(app.staticTexts["project-area-created-status"].waitForExistence(timeout: 15))
+        boardEnabled(app.buttons["area-manager-close"])
+        XCTAssertFalse(name.isEnabled)
+        XCTAssertFalse(app.buttons["area-create-save"].isEnabled)
+        if blocked {
+            projectManagerTap(app, "project-area-read-retry")
+            boardEnabled(app.buttons["project-area-close"])
+            XCTAssertFalse(app.buttons["area-manager-close"].exists)
+            XCTAssertTrue(app.staticTexts["project-area-created-status"].exists)
+            let createdChoice = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                "project-area-choice-", "Unassigned Managed Area"))
+            XCTAssertEqual(createdChoice.count, 1)
+            XCTAssertFalse(createdChoice.firstMatch.isSelected)
+            XCTAssertTrue(app.buttons["project-area-choice-170c1eab-65ec-4a38-931d-3f03399b7d17"].isSelected)
+            // Refresh offers the durable Area without silently changing the Project.
+            boardTap(app, "project-area-close")
+        } else {
+            XCTAssertTrue(app.staticTexts["project-area-read-error"].exists)
+            projectManagerTap(app, "area-manager-close")
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["area-manager-close"])
+        waitForExpectations(timeout: 15)
+        boardTap(app, "project-back")
+        boardEnabled(app.buttons["projects-manage-areas"])
+        app.terminate()
+        app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardTap(app, "projects-manage-areas")
+        let created = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+            "area-rename-open-", "Unassigned Managed Area"))
+        XCTAssertEqual(created.count, 1)
+        boardTap(app, "area-manager-close"); app.terminate()
+    }
+
+    private func projectManagerRecovery(phase: String, failed: Bool) {
+        let libraries = ["rename": "1ea636a9-a4db-4fbe-bc53-792602d89d25",
+                         "create": "ae81cf6a-fb14-48b7-8966-77a7ebbfff6e",
+                         "assignment": "e88e8d77-780c-4151-a148-ec4c68e82305"]
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", libraries[phase]!]; app.launch()
+        let source = "170c1eab-65ec-4a38-931d-3f03399b7d17"
+        let rawName = phase == "rename" ? "  HOME  " : "  Recover Managed Area  "
+        func tap(_ id: String) { projectManagerTap(app, id) }
+        openProjectAreaManager(app, recovering: !failed)
+        if failed {
+            if phase == "rename" { tap("area-rename-open-" + source) }
+            let name = app.textFields[phase == "rename" ? "area-rename-name" : "area-create-name"]
+            revealAreaRenameControl(app, name); boardEnabled(name)
+            replaceTextView(name, with: rawName)
+            tap(phase == "rename" ? "area-rename-save" : "area-create-save")
+            let prefix = phase == "assignment" ? "project-area" : "area-" + phase
+            let error = app.staticTexts[prefix + "-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(app.buttons["area-manager-close"].isEnabled)
+                XCTAssertFalse(app.buttons["area-create-save"].isEnabled)
+                XCTAssertFalse(app.textFields["area-create-name"].isEnabled)
+                if phase != "assignment" { XCTAssertEqual(name.value as? String, rawName) }
+                tap(prefix + "-retry"); boardEnabled(app.buttons[prefix + "-retry"])
+                XCTAssertTrue(error.exists)
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Project manager exact " + phase + " retry"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            tap("area-manager-close")
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["area-manager-close"])
+            waitForExpectations(timeout: 15)
+            XCTAssertEqual(app.staticTexts["project-detail-meta-area"].label,
+                phase == "rename" ? "HOME" : phase == "assignment" ? "Recover Managed Area" : "Rename Source")
+            tap("project-area-open")
+            if phase != "rename" {
+                let created = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                    "project-area-choice-", "Recover Managed Area"))
+                XCTAssertEqual(created.count, 1)
+                XCTAssertEqual(created.firstMatch.isSelected, phase == "assignment")
+            }
+            tap("project-area-close")
+        }
+        app.terminate()
+    }
+
     func testAreaRenameMergeAndDrafts() {
         areaRenameFlow(library: "a5fce02c-72ca-4ff9-8380-efbcb868d496")
     }

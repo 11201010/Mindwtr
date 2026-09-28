@@ -131,6 +131,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectSectionError: String?
     @Published private(set) var projectSectionReadError: String?
     @Published private(set) var areaManagerPresented = false
+    @Published private(set) var areaManagerProjectID: String?
     @Published private(set) var areaCreateOptions: CoreObject = [:]
     @Published private(set) var areaCreateName = ""
     @Published private(set) var areaCreateColor = ""
@@ -368,6 +369,9 @@ final class CoreModel: ObservableObject {
     private var focusEditSequence = 0
     @Published private var focusRefusedLocationID: Int?
     #if DEBUG && targetEnvironment(simulator)
+    // Response faults are enabled only for an explicitly isolated UI-test library.
+    private var projectAreaTestReadFailure = false
+    private var projectAreaTestBlockedWrite = false
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -728,7 +732,10 @@ final class CoreModel: ObservableObject {
             && projectAreaRequest == nil
     }
     var projectAreaCloseEnabled: Bool {
-        !projectAreaCreatePresented && !busy && !retryNeeded && projectAreaRequest == nil
+        if areaManagerPresented {
+            return areaManagerProjectID != nil && areaManagerCloseEnabled
+        }
+        return !projectAreaCreatePresented && !busy && !retryNeeded && projectAreaRequest == nil
             && areaCreateRequest == nil
     }
     var projectAreaChoiceEnabled: Bool {
@@ -748,6 +755,11 @@ final class CoreModel: ObservableObject {
     var projectAreaAddEnabled: Bool {
         projectAreaChoiceEnabled && !projectAreaCreatePresented && projectAreaCreatedID == nil
             && areaCreateRequest == nil
+    }
+    var projectAreaManagerOpenEnabled: Bool {
+        projectAreaChoiceEnabled && !projectAreaCreatePresented && projectAreaCreatedID == nil
+            && !areaManagerPresented && areaCreateRequest == nil && areaColorRequest == nil
+            && areaOrderRequest == nil && areaRenameRequest == nil && areaDeleteRequest == nil
     }
     var projectAreaCreateInputEnabled: Bool {
         ready && selectedSurface == .project && projectAreaPresented && projectAreaCreatePresented
@@ -863,11 +875,34 @@ final class CoreModel: ObservableObject {
     private var areaManagerOptionsCurrent: Bool {
         areaCreateOptionsCurrent && areaColorOptionsCurrent && areaOrderOptionsCurrent && areaDeleteOptionsCurrent
     }
+    private var areaManagerProjectOriginCurrent: Bool {
+        guard let id = areaManagerProjectID else { return false }
+        return selectedSurface == .project && projectAreaPresented && projectCurrent
+            && !projectDetail.flag("readOnly") && projectHeader.text("id") == id
+            && projectDetail.text("projectId") == id
+    }
+    private var areaManagerContextCurrent: Bool {
+        if let id = areaManagerProjectID {
+            return areaManagerProjectOriginCurrent && projectAreaOptionsCurrent
+                && projectAreaOptions.flag("canEdit")
+                && projectAreaOptions.object("project").text("id") == id
+                && projectAreaOptions.text("revision") == projectDetail.text("mutationRevision")
+        }
+        return selectedSurface == .projects
+    }
+    private var areaManagerProjectCompositionIdle: Bool {
+        areaManagerProjectID == nil || (projectAreaRequest == nil && projectAreaCreatedID == nil)
+    }
+    var areaManagerCloseEnabled: Bool {
+        areaManagerPresented && !busy && !retryNeeded && areaCreateRequest == nil
+            && areaColorRequest == nil && areaOrderRequest == nil && areaRenameRequest == nil
+            && areaDeleteRequest == nil && projectAreaRequest == nil && !areaRenameEditing
+    }
     var areaCreateInputEnabled: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+        ready && areaManagerPresented && areaManagerContextCurrent && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
             && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
-            && areaManagerOptionsCurrent
+            && areaManagerOptionsCurrent && areaManagerProjectCompositionIdle
     }
     var areaCreateCanSubmit: Bool {
         areaCreateInputEnabled && areaCreateOptionsCurrent && areaCreateReadError == nil
@@ -881,37 +916,37 @@ final class CoreModel: ObservableObject {
             : areaColorOptionsCurrent ? areaColorOptions.objects("areas") : areaCreateOptions.objects("areas")
     }
     var areaColorInputEnabled: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+        ready && areaManagerPresented && areaManagerContextCurrent && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
             && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
-            && areaManagerOptionsCurrent && areaColorReadError == nil
+            && areaManagerOptionsCurrent && areaColorReadError == nil && areaManagerProjectCompositionIdle
     }
     var areaOrderInputEnabled: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+        ready && areaManagerPresented && areaManagerContextCurrent && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
             && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
-            && areaManagerOptionsCurrent && areaOrderReadError == nil
+            && areaManagerOptionsCurrent && areaOrderReadError == nil && areaManagerProjectCompositionIdle
     }
     var areaRenameOpenEnabled: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+        ready && areaManagerPresented && areaManagerContextCurrent && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
             && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
-            && areaManagerOptionsCurrent && areaOrderReadError == nil
+            && areaManagerOptionsCurrent && areaOrderReadError == nil && areaManagerProjectCompositionIdle
     }
     var areaRenameInputEnabled: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+        ready && areaManagerPresented && areaManagerContextCurrent && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
             && areaRenameRequest == nil && areaDeleteRequest == nil && areaRenameEditing
-            && areaManagerOptionsCurrent && areaRenameReadError == nil
+            && areaManagerOptionsCurrent && areaRenameReadError == nil && areaManagerProjectCompositionIdle
     }
     var areaRenameCanSubmit: Bool {
         areaRenameInputEnabled && areaRenameOpeningExpected != nil
     }
     var areaDeleteInputEnabled: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+        ready && areaManagerPresented && areaManagerContextCurrent && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
             && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
-            && areaManagerOptionsCurrent && areaDeleteReadError == nil
+            && areaManagerOptionsCurrent && areaDeleteReadError == nil && areaManagerProjectCompositionIdle
     }
     var contextsControlsEnabled: Bool {
         ready && selectedSurface == .contexts && !contexts.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented
@@ -999,6 +1034,8 @@ final class CoreModel: ObservableObject {
             return
         }
         #endif
+        areaManagerPresented = false
+        areaManagerProjectID = nil
         busy = true
         error = nil
         var boardTaskOpened = false
@@ -1037,6 +1074,8 @@ final class CoreModel: ObservableObject {
                         throw CocoaError(.fileReadCorruptFile)
                     }
                     preferenceDefaults = isolatedDefaults
+                    projectAreaTestReadFailure = arguments.contains("--native-project-area-read-failure")
+                    projectAreaTestBlockedWrite = arguments.contains("--native-project-area-blocked-write")
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1104,7 +1143,7 @@ final class CoreModel: ObservableObject {
                         "projects.sectionsLabel", "projects.addSection", "projects.sectionPlaceholder", "projects.deleteSectionConfirm", "settings.manage", "taskEdit.tagsLabel", "taskEdit.startDateLabel", "taskEdit.dueDateLabel",
                         "projects.reviewAt", "common.none",
                         "project.notes",
-                        "areas.manage", "areas.nameExists", "projects.changeColor", "projects.colorNone",
+                        "areas.manage", "areas.nameExists", "projects.manageAreas", "projects.changeColor", "projects.colorNone",
                         "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.moveDown", "projects.areaInUse",
                         "common.delete",
                         "projects.addToFocus", "projects.removeFromFocus", "projects.actionsLabel", "waiting.title",
@@ -2799,8 +2838,18 @@ final class CoreModel: ObservableObject {
     }
 
     func closeProjectArea() {
+        if areaManagerPresented {
+            guard areaManagerProjectID != nil else { return }
+            closeAreaManager()
+            return
+        }
         guard projectAreaCloseEnabled else { return }
+        dismissProjectAreaPresentation()
+    }
+
+    private func dismissProjectAreaPresentation() {
         projectAreaPresented = false
+        projectAreaCreatePresented = false
         projectAreaOptions = [:]
         projectAreaOptionsCurrent = false
         projectAreaOpeningAssociation = nil
@@ -2934,17 +2983,7 @@ final class CoreModel: ObservableObject {
         let result: CoreObject
         do { result = try await query("projectAreaWrite", [projectAreaRequest!]) }
         catch { await handleProjectAreaWriteError(error); return }
-        if projectAreaCreatedID != nil, result.count == 1, result["blocked"] as? String == "" {
-            projectAreaRequest = nil
-            projectAreaHasRequestedChoice = false
-            projectAreaRequestedID = nil
-            projectAreaExpectedID = nil
-            projectAreaExpectedAreaID = nil
-            projectAreaOptionsCurrent = false
-            do { try await refreshProjectAreaAfterWrite() }
-            catch { projectAreaReadError = error.localizedDescription }
-            return
-        }
+        if await retainCreatedProjectAreaAfterBlockedWrite(result) { return }
         do { try acknowledgeProjectArea(result) }
         catch { await handleProjectAreaWriteError(error); return }
         do { try await refreshProjectAreaAfterWrite() }
@@ -2975,25 +3014,36 @@ final class CoreModel: ObservableObject {
             && projectAreaCreatedID == projectAreaExpectedAreaID
             && (projectAreaOpeningAssociation?.id != projectAreaExpectedAreaID
                 || projectAreaOpeningAssociation?.title != (result["areaTitle"] as? String))
+        let fromAreaManager = areaManagerProjectID != nil
         projectAreaRequest = nil
         projectAreaHasRequestedChoice = false
         projectAreaRequestedID = nil
         projectAreaExpectedID = nil
         projectAreaExpectedAreaID = nil
-        projectAreaPresented = false
-        projectAreaOptions = [:]
-        projectAreaOptionsCurrent = false
-        projectAreaOpeningAssociation = nil
-        projectAreaCreateProjectID = nil
-        projectAreaCreatedID = nil
-        projectAreaCreateDurableChange = false
+        dismissProjectAreaPresentation()
+        if fromAreaManager { dismissAreaManagerPresentation() }
         retryNeeded = false
-        projectAreaError = nil
-        projectAreaReadError = nil
         error = nil
         if createdAndAssigned {
             NSLog("Native iOS Project Area creation and assignment saved releaseCheck=v1.3.3/native-ios-project-area-create-assignment outcome=assigned")
         }
+    }
+
+    private func retainCreatedProjectAreaAfterBlockedWrite(_ result: CoreObject) async -> Bool {
+        guard projectAreaCreatedID != nil, result.count == 1,
+              result["blocked"] as? String == "" else { return false }
+        projectAreaRequest = nil
+        projectAreaHasRequestedChoice = false
+        projectAreaRequestedID = nil
+        projectAreaExpectedID = nil
+        projectAreaExpectedAreaID = nil
+        projectAreaOptionsCurrent = false
+        retryNeeded = false
+        projectAreaError = nil
+        error = nil
+        do { try await refreshProjectAreaAfterWrite() }
+        catch { projectAreaReadError = error.localizedDescription }
+        return true
     }
 
     private func handleProjectAreaWriteError(_ failure: Error) async {
@@ -3028,6 +3078,7 @@ final class CoreModel: ObservableObject {
         guard ready, selectedSurface == .project, projectAreaPresented,
               !busy, !retryNeeded, projectAreaRequest == nil else { return }
         let id = projectHeader.text("id")
+        let returnFromAreaManager = areaManagerProjectID == id
         busy = true
         defer { finishOperation() }
         do {
@@ -3039,6 +3090,7 @@ final class CoreModel: ObservableObject {
             projectAreaReadError = nil
             projectAreaError = nil
             error = nil
+            if returnFromAreaManager { dismissAreaManagerPresentation() }
         } catch { projectAreaReadError = error.localizedDescription }
     }
 
@@ -3390,13 +3442,26 @@ final class CoreModel: ObservableObject {
     }
 
     private func refreshAreaManagerAfterWrite() async throws {
+        let projectID = areaManagerProjectID
         invalidateAreaManagerOptions()
         try await readSelectedSurface()
+        if let projectID {
+            guard areaManagerProjectID == projectID, areaManagerProjectOriginCurrent else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            projectAreaOpeningAssociation = nil
+            try await readProjectAreaOptions(projectID: projectID)
+            guard areaManagerContextCurrent else { throw CocoaError(.coderReadCorrupt) }
+        } else {
+            guard areaManagerPresented, selectedSurface == .projects else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+        }
         try await readAreaManagerOptions()
     }
 
-    func openAreaManager() async {
-        guard projectCreateInputEnabled else { return }
+    private func prepareAreaManagerPresentation(projectID: String?) {
+        areaManagerProjectID = projectID
         areaManagerPresented = true
         expandedAreaColorID = nil
         areaColorIntentID = nil
@@ -3411,17 +3476,11 @@ final class CoreModel: ObservableObject {
         areaDeleteError = nil
         areaDeleteReadError = nil
         invalidateAreaManagerOptions()
-        busy = true
-        defer { finishOperation() }
-        do { try await readAreaManagerOptions() }
-        catch { /* The failing options read publishes its own reachable retry. */ }
     }
 
-    func closeAreaManager() {
-        guard !busy, areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-              areaRenameRequest == nil, areaDeleteRequest == nil, !areaRenameEditing,
-              !retryNeeded else { return }
+    private func dismissAreaManagerPresentation() {
         areaManagerPresented = false
+        areaManagerProjectID = nil
         areaCreateNameGeneration += 1
         areaCreateNameChecking = false
         expandedAreaColorID = nil
@@ -3434,8 +3493,38 @@ final class CoreModel: ObservableObject {
         areaDeleteError = nil
     }
 
+    func openAreaManager() async {
+        guard projectCreateInputEnabled else { return }
+        prepareAreaManagerPresentation(projectID: nil)
+        busy = true
+        defer { finishOperation() }
+        do { try await readAreaManagerOptions() }
+        catch { /* The failing options read publishes its own reachable retry. */ }
+    }
+
+    func openProjectAreaManager() async {
+        let id = projectHeader.text("id")
+        guard projectAreaManagerOpenEnabled, !id.isEmpty,
+              projectAreaOptions.object("project").text("id") == id else { return }
+        projectAreaCreateProjectID = id
+        projectAreaCreatedID = nil
+        projectAreaCreateDurableChange = false
+        prepareAreaManagerPresentation(projectID: id)
+        busy = true
+        defer { finishOperation() }
+        do { try await readAreaManagerOptions() }
+        catch { /* The failing options read publishes its own reachable retry. */ }
+    }
+
+    func closeAreaManager() {
+        guard areaManagerCloseEnabled else { return }
+        let fromProject = areaManagerProjectID != nil
+        dismissAreaManagerPresentation()
+        if fromProject { dismissProjectAreaPresentation() }
+    }
+
     func setAreaCreateName(_ name: String) {
-        guard areaCreateInputEnabled, name != areaCreateName else { return }
+        guard areaCreateInputEnabled, Data(name.utf8) != Data(areaCreateName.utf8) else { return }
         areaCreateName = name
         areaCreateError = nil
         if areaCreateOptionsCurrent { areaCreateReadError = nil }
@@ -3526,17 +3615,20 @@ final class CoreModel: ObservableObject {
     }
 
     func addArea() async {
-        let fromProject = projectAreaCreatePresented
-        guard (fromProject ? projectAreaCreateCanSubmit : areaCreateCanSubmit) else { return }
+        let fromProjectForm = projectAreaCreatePresented
+        let fromProjectManager = areaManagerProjectID != nil
+        let assignsProject = fromProjectForm || fromProjectManager
+        guard (fromProjectForm ? projectAreaCreateCanSubmit : areaCreateCanSubmit) else { return }
         let projectID = projectAreaCreateProjectID
         busy = true
         areaCreateNameGeneration += 1
-        if fromProject { projectAreaCreateNameChecking = false }
+        if fromProjectForm { projectAreaCreateNameChecking = false }
         else { areaCreateNameChecking = false }
         defer { finishOperation() }
-        if fromProject {
+        if assignsProject {
             do {
-                guard let projectID, projectHeader.text("id") == projectID else {
+                guard let projectID, projectHeader.text("id") == projectID,
+                      !fromProjectManager || areaManagerProjectID == projectID else {
                     throw CocoaError(.coderReadCorrupt)
                 }
                 try await refreshProjectAreaAfterWrite()
@@ -3544,15 +3636,16 @@ final class CoreModel: ObservableObject {
                 guard projectAreaOptions.flag("canEdit") else { throw CocoaError(.coderReadCorrupt) }
             } catch { areaCreateReadError = error.localizedDescription; return }
         }
-        let name = fromProject ? projectAreaCreateName
+        let name = fromProjectForm ? projectAreaCreateName
+            : fromProjectManager ? areaCreateName
             : areaCreateName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let color = fromProject ? projectAreaCreateColor : areaCreateColor
+        let color = fromProjectForm ? projectAreaCreateColor : areaCreateColor
         let id = UUID().uuidString.lowercased()
         let request: String
         do {
             let resolved = try await query("areaCreateResolve", [try json(["requestId": id, "name": name])])
             if resolved.flag("taken") {
-                if fromProject { projectAreaCreateNameTaken = true }
+                if fromProjectForm { projectAreaCreateNameTaken = true }
                 else { areaCreateNameTaken = true }
                 areaCreateError = nil
                 return
@@ -3571,7 +3664,7 @@ final class CoreModel: ObservableObject {
         catch { await handleAreaCreateWriteError(error); return }
         do { try acknowledgeAreaCreate(result) }
         catch { await handleAreaCreateWriteError(error); return }
-        if fromProject {
+        if assignsProject {
             await completeProjectAreaCreation(projectID: projectID)
             return
         }
@@ -3592,13 +3685,18 @@ final class CoreModel: ObservableObject {
         areaCreateRequest = nil
         areaCreateExpectedID = nil
         retryNeeded = false
-        if projectAreaCreatePresented {
+        if projectAreaCreatePresented || areaManagerProjectID != nil {
             projectAreaCreatedID = expected
             projectAreaCreateDurableChange = result["created"] as? Bool == true
-            projectAreaCreatePresented = false
-            projectAreaCreateName = ""
-            projectAreaCreateNameTaken = false
-            projectAreaCreateNameValid = false
+            if projectAreaCreatePresented {
+                projectAreaCreatePresented = false
+                projectAreaCreateName = ""
+                projectAreaCreateNameTaken = false
+                projectAreaCreateNameValid = false
+            } else {
+                areaCreateName = ""
+                areaCreateNameTaken = false
+            }
         } else {
             areaCreateName = ""
             areaCreateNameTaken = false
@@ -3634,7 +3732,8 @@ final class CoreModel: ObservableObject {
         guard let id = projectAreaCreatedID, let projectID,
               projectAreaCreateProjectID == projectID,
               selectedSurface == .project, projectAreaPresented,
-              projectHeader.text("id") == projectID else {
+              projectHeader.text("id") == projectID,
+              areaManagerProjectID == nil || areaManagerProjectID == projectID else {
             projectAreaReadError = CocoaError(.coderReadCorrupt).localizedDescription
             return
         }
@@ -3917,9 +4016,10 @@ final class CoreModel: ObservableObject {
     }
 
     var areaRenameCanCancel: Bool {
-        ready && selectedSurface == .projects && areaManagerPresented && areaRenameEditing
+        ready && areaManagerPresented && areaManagerContextCurrent && areaRenameEditing
             && !busy && !retryNeeded && areaCreateRequest == nil && areaColorRequest == nil
             && areaOrderRequest == nil && areaRenameRequest == nil && areaDeleteRequest == nil
+            && areaManagerProjectCompositionIdle
     }
 
     func cancelAreaRename() {
@@ -6640,6 +6740,8 @@ final class CoreModel: ObservableObject {
         projectDateExpectedID = nil
         projectDateExpectedField = nil
         projectDateExpectedValue = nil
+        areaManagerPresented = false
+        areaManagerProjectID = nil
         projectAreaPresented = false
         projectAreaOptions = [:]
         projectAreaOptionsCurrent = false
@@ -9320,6 +9422,7 @@ final class CoreModel: ObservableObject {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query("projectAreaRetryOutcome", [request]) }
+                if await retainCreatedProjectAreaAfterBlockedWrite(result) { return }
                 try acknowledgeProjectArea(result)
                 do { try await refreshProjectAreaAfterWrite() }
                 catch {
@@ -9475,7 +9578,7 @@ final class CoreModel: ObservableObject {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
                 else { result = try await query("areaCreateRetryOutcome", [request]) }
-                let fromProject = projectAreaCreatePresented
+                let fromProject = projectAreaCreatePresented || areaManagerProjectID != nil
                 let projectID = projectAreaCreateProjectID
                 try acknowledgeAreaCreate(result)
                 if fromProject {
@@ -10017,6 +10120,18 @@ final class CoreModel: ObservableObject {
 
     private func query(_ method: String, _ args: [Any] = []) async throws -> CoreObject {
         guard let host else { throw CocoaError(.coderInvalidValue) }
+        #if DEBUG && targetEnvironment(simulator)
+        if projectAreaCreatedID != nil {
+            if method == "projectAreaOptions", projectAreaTestReadFailure {
+                projectAreaTestReadFailure = false
+                throw CocoaError(.fileReadUnknown)
+            }
+            if method == "projectAreaWrite", projectAreaTestBlockedWrite {
+                projectAreaTestBlockedWrite = false
+                return ["blocked": ""]
+            }
+        }
+        #endif
         let result = try await host.call(method, argumentsJSON: json(args))
         return try decode(result)
     }

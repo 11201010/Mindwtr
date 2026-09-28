@@ -24,12 +24,13 @@ struct ProjectsScreen: View {
         }
         .accessibilityIdentifier("projects-scroll")
         .refreshable { await model.refresh() }
-        .sheet(isPresented: Binding(get: { model.areaManagerPresented }, set: { if !$0 { model.closeAreaManager() } })) {
+        .sheet(isPresented: Binding(
+            get: { model.areaManagerPresented && model.areaManagerProjectID == nil },
+            set: { if !$0 { model.closeAreaManager() } }
+        )) {
             AreaManagerSheet(model: model, palette: palette)
                 .presentationDetents([.medium, .large])
-                .interactiveDismissDisabled(model.busy || model.areaCreatePending || model.areaColorPending
-                    || model.areaOrderPending || model.areaRenamePending || model.areaDeletePending
-                    || model.areaRenameEditing || model.retryNeeded)
+                .interactiveDismissDisabled(!model.areaManagerCloseEnabled)
         }
     }
 
@@ -293,9 +294,7 @@ private struct AreaManagerSheet: View {
                     Image(systemName: "xmark").font(.system(size: 17, weight: .semibold))
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).disabled(model.busy || model.areaCreatePending || model.areaColorPending
-                    || model.areaOrderPending || model.areaRenamePending || model.areaDeletePending
-                    || model.areaRenameEditing || model.retryNeeded)
+                .buttonStyle(.plain).disabled(!model.areaManagerCloseEnabled)
                 .accessibilityLabel(model.label("common.close"))
                 .accessibilityIdentifier("area-manager-close")
             }
@@ -476,6 +475,45 @@ private struct AreaManagerSheet: View {
                         .disabled(model.busy || model.retryNeeded)
                         .accessibilityIdentifier("area-delete-read-retry")
                     }
+                    if model.areaManagerProjectID != nil {
+                        if model.projectAreaCreatedStatusVisible {
+                            Text(model.label("projects.areaAvailableSelectToAssign"))
+                                .rnFont(14).foregroundStyle(palette.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("project-area-created-status")
+                        }
+                        if let message = model.projectAreaError {
+                            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("project-area-error")
+                            Button {
+                                Task {
+                                    if model.projectAreaPending { await model.retry() }
+                                    else { await model.retryProjectAreaRead() }
+                                }
+                            } label: {
+                                Text(model.label("common.retry"))
+                                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(model.busy)
+                            .accessibilityIdentifier("project-area-retry")
+                        }
+                        if model.projectAreaReadError != nil || model.projectAreaNeedsRead {
+                            if let message = model.projectAreaReadError {
+                                Text(message).rnFont(13).foregroundStyle(palette.danger)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("project-area-read-error")
+                            }
+                            Button { Task { await model.retryProjectAreaRead() } } label: {
+                                Text(model.label("common.retry"))
+                                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectAreaPending)
+                            .accessibilityIdentifier("project-area-read-retry")
+                        }
+                    }
                     TextField(model.label("projects.areaLabel"), text: Binding(
                         get: { model.areaCreateName }, set: { model.setAreaCreateName($0) }))
                         .focused($nameFocused).submitLabel(.done)
@@ -484,6 +522,9 @@ private struct AreaManagerSheet: View {
                         .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
                         .disabled(!model.areaCreateInputEnabled)
+                        .contentShape(Rectangle()).onTapGesture {
+                            if model.areaCreateInputEnabled { nameFocused = true }
+                        }
                         .accessibilityLabel(model.label("projects.areaLabel"))
                         .accessibilityIdentifier("area-create-name")
                     if model.areaCreateNameTaken {
@@ -532,9 +573,7 @@ private struct AreaManagerSheet: View {
                             Text(model.label("common.cancel"))
                                 .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                         }
-                            .disabled(model.busy || model.areaCreatePending || model.areaColorPending
-                                || model.areaOrderPending || model.areaRenamePending || model.areaDeletePending
-                                || model.areaRenameEditing || model.retryNeeded)
+                            .disabled(!model.areaManagerCloseEnabled)
                             .accessibilityIdentifier("area-create-cancel")
                         Button { submitArea() } label: {
                             Text(model.label("common.save"))
@@ -857,7 +896,8 @@ struct ProjectDetailScreen: View {
             if model.projectDateField != nil && !model.projectDatePending && model.projectCurrent {
                 await model.retryProjectDateRead()
             }
-            if model.projectAreaPresented && !model.projectAreaPending && model.projectCurrent {
+            if model.projectAreaPresented && !model.areaManagerPresented
+                && !model.projectAreaPending && model.projectCurrent {
                 await model.retryProjectAreaRead()
             }
             if model.projectTagsPresented && !model.projectTagsPending && model.projectCurrent {
@@ -1919,8 +1959,11 @@ private struct ProjectAreaSelectionSheet: View {
     let palette: AppPalette
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        if model.areaManagerPresented {
+            AreaManagerSheet(model: model, palette: palette)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     Text(model.label("projects.areaLabel"))
                         .rnFont(20, .bold).foregroundStyle(palette.text)
@@ -1989,6 +2032,13 @@ private struct ProjectAreaSelectionSheet: View {
                     }
                     .buttonStyle(.plain).disabled(!model.projectAreaAddEnabled)
                     .accessibilityIdentifier("project-area-add")
+                    Button { Task { await model.openProjectAreaManager() } } label: {
+                        Label(model.label("projects.manageAreas"), systemImage: "slider.horizontal.3")
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 12).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectAreaManagerOpenEnabled)
+                    .accessibilityIdentifier("project-area-manage")
                     let areas = model.projectAreaOptions.objects("areas")
                     ForEach(areas.indices, id: \.self) { index in
                         let area = areas[index]
@@ -2004,11 +2054,12 @@ private struct ProjectAreaSelectionSheet: View {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 48)
                 }
                 }
+                }
+                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(palette.card)
+            .accessibilityIdentifier("project-area-sheet")
         }
-        .background(palette.card)
-        .accessibilityIdentifier("project-area-sheet")
     }
 
     private func areaChoice(_ label: String, color: String?, selected: Bool,
@@ -2059,6 +2110,9 @@ private struct ProjectAreaCreateForm: View {
                 .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
                 .disabled(!model.projectAreaCreateInputEnabled)
+                .contentShape(Rectangle()).onTapGesture {
+                    if model.projectAreaCreateInputEnabled { nameFocused = true }
+                }
                 .accessibilityLabel(model.label("projects.areaLabel"))
                 .accessibilityIdentifier("project-area-create-name")
             if model.projectAreaCreateNameTaken {
