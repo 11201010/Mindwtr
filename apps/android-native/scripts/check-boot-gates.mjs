@@ -16,6 +16,13 @@ for (const text of ['mailto:alex@example.com', 'tel:+1-555-0100', 'MAILTO:bea@ex
     const parts = (url) => [url.protocol, url.pathname, url.search, url.hash, url.host, String(url)];
     assert.deepEqual(parts(new consoleState.URL(text)), parts(new URL(text)), text);
 }
+// Query values read as WHATWG (and RN's URL shim) read them: everything after the first "=", "+" as a space; a "+" in a
+// query survives the polyfill's own String(url).
+const queryPairs = (params) => { const pairs = []; params.forEach((value, key) => pairs.push([key, value])); return pairs; };
+for (const text of ['mindwtr:///capture?title=a=b&note=Buy+milk+%2B+eggs&empty=&flag&x%20y=1+2', 'https://host/dav/?dir=a+b']) {
+    assert.deepEqual(queryPairs(new consoleState.URL(text).searchParams), queryPairs(new URL(text).searchParams), text);
+}
+assert.equal(String(new consoleState.URL('https://host/dav/?dir=a+b')), 'https://host/dav/?dir=a+b');
 // QuickJS has no Intl: the polyfill's Collator and localeCompare sort by the host's ICU collation keys (one bridge call per
 // text and options), so titles order as in RN; without the bridge they fall back to a plain comparison.
 {
@@ -35,6 +42,9 @@ for (const text of ['mailto:alex@example.com', 'tel:+1-555-0100', 'MAILTO:bea@ex
     vm.runInContext(polyfills, noKeys);
     assert.deepEqual([...vm.runInContext("['b', 'a', 'C'].sort(new Intl.Collator().compare)", noKeys)], ['C', 'a', 'b'], 'the fallback without the bridge');
 }
+// A context automation link names a context with a space as "+" (core's parseContextAutomationUrl reads the query).
+assert.equal(new consoleState.URL('mindwtr://contexts?token=home+office&contextAction=activate').searchParams.get('token'), 'home office');
+assert.equal(new consoleState.URL('mindwtr://activate-context?name=%40home+office%2Bgym').searchParams.get('name'), '@home office+gym');
 // fetch and the secret calls (HostIo.kt): the polyfill hands each call to the bridge and settles it only when the pump
 // takes the host's answer (ioNext), as timers fire. A stand-in bridge answers here.
 {

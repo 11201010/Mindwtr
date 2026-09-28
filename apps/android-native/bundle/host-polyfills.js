@@ -400,6 +400,8 @@
     }
 
     if (typeof global.URLSearchParams !== 'function') {
+        // A query name or value as WHATWG's form-urlencoded parser reads it (and RN's URL shim): "+" is a space.
+        var decodeQuery = function (text) { return decodeURIComponent(text.replace(/\+/g, ' ')); };
         global.URLSearchParams = function URLSearchParams(init) {
             var pairs = [];
             if (typeof init === 'string') {
@@ -407,8 +409,8 @@
                     if (!pair) return;
                     var at = pair.indexOf('=');
                     pairs.push(at < 0
-                        ? [decodeURIComponent(pair), '']
-                        : [decodeURIComponent(pair.slice(0, at)), decodeURIComponent(pair.slice(at + 1))]);
+                        ? [decodeQuery(pair), '']
+                        : [decodeQuery(pair.slice(0, at)), decodeQuery(pair.slice(at + 1))]);
                 });
             } else if (init && typeof init === 'object') {
                 Object.keys(init).forEach(function (key) { pairs.push([key, String(init[key])]); });
@@ -435,8 +437,10 @@
         };
         global.URLSearchParams.prototype.toString = function () {
             if (this._pairs.length === 0) return '';
+            // A space goes out as "+", as WHATWG writes it, so a "+" the query came with survives String(url).
+            var encodeQuery = function (text) { return encodeURIComponent(text).replace(/%20/g, '+'); };
             return '?' + this._pairs.map(function (pair) {
-                return encodeURIComponent(pair[0]) + '=' + encodeURIComponent(pair[1]);
+                return encodeQuery(pair[0]) + '=' + encodeQuery(pair[1]);
             }).join('&');
         };
     }

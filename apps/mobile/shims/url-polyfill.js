@@ -10,6 +10,9 @@ try {
     // No-op in test environments where TS modules aren't resolved.
 }
 
+// A query name or value as WHATWG's application/x-www-form-urlencoded parser reads it: "+" is a space.
+const decodeQueryComponent = (text) => decodeURIComponent(text.replace(/\+/g, ' '));
+
 class FallbackURLSearchParams {
     constructor(init = '') {
         this._map = new Map();
@@ -17,8 +20,11 @@ class FallbackURLSearchParams {
             const stripped = init.startsWith('?') ? init.slice(1) : init;
             stripped.split('&').forEach(pair => {
                 if (!pair) return;
-                const [k, v = ''] = pair.split('=');
-                this.append(decodeURIComponent(k), decodeURIComponent(v));
+                // The value is everything after the first "=", as WHATWG reads it (a value may hold "=").
+                const at = pair.indexOf('=');
+                const k = at < 0 ? pair : pair.slice(0, at);
+                const v = at < 0 ? '' : pair.slice(at + 1);
+                this.append(decodeQueryComponent(k), decodeQueryComponent(v));
             });
         } else if (init && typeof init === 'object' && Symbol.iterator in init) {
             for (const [k, v] of init) this.append(k, v);

@@ -63,6 +63,31 @@ describe('URL Polyfill Shim', () => {
         }
     });
 
+    test('fallback search params read a value as WHATWG does: all after the first "=", and "+" as a space', () => {
+        // The app's URL is FallbackURL (Metro aliases every URL polyfill here), so a capture link such as
+        // mindwtr:///capture?title=a=b lost everything after its second "=", and "Buy+milk" kept its "+".
+        const { URLSearchParams: WhatwgSearchParams } = nodeRequire('node:url') as typeof import('node:url');
+        const OriginalURL = globalThis.URL;
+        const OriginalSearchParams = globalThis.URLSearchParams;
+        // @ts-expect-error simulate a runtime without a native URL or URLSearchParams
+        globalThis.URL = undefined;
+        // @ts-expect-error same
+        globalThis.URLSearchParams = undefined;
+        try {
+            const shimModule = loadFreshUrlPolyfill();
+            const FallbackURL = shimModule.URL as unknown as typeof URL;
+            const FallbackSearchParams = shimModule.URLSearchParams as unknown as typeof URLSearchParams;
+            const query = 'title=a=b&note=Buy+milk+%2B+eggs&empty=&flag&x%20y=1+2&x+y=3';
+            const whatwg = new WhatwgSearchParams(query);
+            const fromUrl = new FallbackURL(`mindwtr:///capture?${query}`).searchParams;
+            for (const key of ['title', 'note', 'empty', 'flag', 'x y']) expect([key, fromUrl.get(key)]).toEqual([key, whatwg.get(key)]);
+            expect([...new FallbackSearchParams(query).entries()]).toEqual([...whatwg.entries()]);
+        } finally {
+            globalThis.URL = OriginalURL;
+            globalThis.URLSearchParams = OriginalSearchParams;
+        }
+    });
+
     test('does not mutate existing timer globals', async () => {
         vi.resetModules();
         const originalSetImmediate = (globalThis as any).setImmediate;
