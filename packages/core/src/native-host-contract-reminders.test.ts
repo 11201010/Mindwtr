@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { loadTranslations } from './i18n/i18n-loader';
 import { buildReminderAlarmDetails, planReminderAlarms, readReminderAlarmMap } from './mobile-reminder-alarms';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import { openSqliteHost, requestId as newRequestId } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppSettings, Task } from './types';
 import { generateUUID } from './uuid';
@@ -147,6 +148,25 @@ describe('native host contract: reminders', () => {
         expect(readReminderAlarmMap(afterDone.alarms).has('task:t-rent')).toBe(false);
     });
 
+    it('replays an interrupted plan without forgetting that a moved reminder withdraws what it delivered', async () => {
+        freezeClock();
+        await seed();
+        const host = await openHost();
+        const first = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true }));
+        // The 11:00 rent reminder fired and is in the tray; then its due time moves.
+        vi.setSystemTime(new Date('2026-09-28T11:00:05.000Z'));
+        await useTaskStore.getState().updateTask('t-rent', { dueDate: '2026-09-28T12:30:00.000Z' });
+        await flushPendingSave();
+        const moved = value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true }));
+        const rent = (plan: typeof moved) => plan.schedule.find((alarm) => alarm.key === 'task:t-rent');
+        expect(rent(moved)).toMatchObject({ replacing: 'withdrawn' });
+        // Stopped after storing writeAhead, before cancelling or making anything.
+        const replay = value(await (await openHost()).planReminderAlarms({ storedAlarms: moved.writeAhead, permissionGranted: true }));
+        expect(rent(replay)).toEqual(rent(moved));
+        expect(replay.cancel).toEqual(moved.cancel);
+        expect(readReminderAlarmMap(replay.alarms)).toEqual(readReminderAlarmMap(moved.alarms));
+    });
+
     it('lets an alarm whose time passed expire, keeping what it delivered', async () => {
         freezeClock();
         await seed();
@@ -194,6 +214,8 @@ describe('native host contract: reminders', () => {
         const host = createNativeHostContract();
         expect(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.completeReminderTask({ requestId: generateUUID(), taskId: 't-rent' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.snoozeReminder({ requestId: generateUUID(), requestedAt: Date.parse(NOW), details: { title: 'Pay rent', snooze_interval: 10 } }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
     });
 
     it('completes a recurring task once from Done: an exact retry and a replay after a restart make no second next instance', async () => {
@@ -248,7 +270,7 @@ describe('native host contract: reminders', () => {
         const host = await openHost();
         const fired = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true })).schedule.find((alarm) => alarm.key === 'task:t-rent')!;
         const input = { requestId: generateUUID(), requestedAt: Date.parse('2026-09-28T11:00:42.500Z'), details: fired.details };
-        const snoozed = value(host.snoozeReminder(input));
+        const snoozed = value(await host.snoozeReminder(input));
         expect(snoozed).toEqual({
             key: `snooze:${input.requestId.toLowerCase()}`,
             id: snoozed.id,
@@ -258,10 +280,10 @@ describe('native host contract: reminders', () => {
             replacing: null,
         });
         expect(snoozed.id).toBeGreaterThanOrEqual(2 ** 30);
-        expect(value((await openHost()).snoozeReminder(input))).toEqual(snoozed);
+        expect(value(await (await openHost()).snoozeReminder(input))).toEqual(snoozed);
         const digest = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true })).schedule.find((alarm) => alarm.key === 'digest:morning')!;
-        expect(host.snoozeReminder({ ...input, details: digest.details })).toMatchObject(invalid);
-        expect(host.snoozeReminder({ ...input, requestId: 'x' })).toMatchObject(invalid);
+        expect(await host.snoozeReminder({ ...input, requestId: generateUUID(), details: digest.details })).toMatchObject(invalid);
+        expect(await host.snoozeReminder({ ...input, requestId: 'x' })).toMatchObject(invalid);
     });
 
     it('routes a notification tap, the same way after a restart', async () => {
@@ -287,5 +309,59 @@ describe('native host contract: reminders', () => {
         expect(payloads.map((payload) => value(restarted.routeNotificationOpen(payload)))).toEqual(routes);
         expect(value(host.routeNotificationOpen({ taskId: 't-rent' }))).toEqual({ type: 'task', taskId: 't-rent', openToken: `notification:${Date.parse(NOW)}:1` });
         expect(host.routeNotificationOpen(null as never)).toMatchObject(invalid);
+    });
+});
+
+describe('native host contract: reminders over SQLite, after process death', () => {
+    const originalTz = process.env.TZ;
+    let env: Awaited<ReturnType<typeof openSqliteHost>> | null = null;
+    beforeAll(() => {
+        process.env.TZ = 'UTC';
+    });
+    afterAll(() => {
+        if (originalTz === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTz;
+    });
+    afterEach(async () => {
+        vi.useRealTimers();
+        await env?.close();
+        env = null;
+    });
+    const later = async (change: () => Promise<unknown>) => {
+        await change();
+        await flushPendingSave();
+    };
+    const standups = () => useTaskStore.getState()._allTasks.filter((entry) => entry.title === 'Standup' && !entry.deletedAt);
+
+    it('answers a Done replayed after a restart from its first reply, even after the task was reopened: one next instance', async () => {
+        env = await openSqliteHost({ tasks: TASKS });
+        const input = { requestId: newRequestId(), taskId: 't-standup' };
+        const first = await env.host.completeReminderTask(input);
+        expect(first).toEqual({ ok: true, value: { changed: true, outcome: 'completed' } });
+        const [next] = standups().filter((entry) => entry.id !== 't-standup');
+        expect(next).toBeDefined();
+        // The next instance changes, then the original is reopened.
+        await later(() => useTaskStore.getState().updateTask(next.id, { title: 'Standup', description: 'Moved to the big room' }));
+        await later(() => useTaskStore.getState().updateTask('t-standup', { status: 'next' }));
+        expect(standups()).toHaveLength(2);
+
+        const replay = await env.replay((host) => host.completeReminderTask(input));
+        expect(replay.result).toEqual(first);
+        expect(replay.wrote).toBe(false);
+        expect(standups()).toHaveLength(2);
+        expect(useTaskStore.getState()._tasksById.get('t-standup')?.status).toBe('next');
+        expect(await env.receiptIds()).toEqual([input.requestId]);
+    });
+
+    it('keeps a Snooze\'s first reply on disk: a replay after a restart gets it, and its request ID stays its own', async () => {
+        env = await openSqliteHost({ tasks: TASKS });
+        const details = { title: 'Pay rent', message: 'Due date reminders', snooze_interval: 10, schedule_type: 'once', data: { taskId: 't-rent', alarmKey: 'task:t-rent' } };
+        const input = { requestId: newRequestId(), requestedAt: Date.parse('2026-09-28T11:00:42.500Z'), details };
+        const first = value(await env.host.snoozeReminder(input));
+        expect(await env.receiptIds()).toEqual([input.requestId]);
+        const replay = await env.replay((host) => host.snoozeReminder(input));
+        expect(replay.result).toEqual({ ok: true, value: first });
+        const reused = await env.host.snoozeReminder({ ...input, details: { ...details, title: 'Another reminder' } });
+        expect(reused).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 });

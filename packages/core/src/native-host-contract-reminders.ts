@@ -12,17 +12,21 @@
  *   first removes the notification that alarm delivered; an `expired` one keeps it.
  *   A stop anywhere in between is safe: the next plan, from whichever string was stored,
  *   makes each pending alarm again under the same id and cancels the ones no longer
- *   requested, so no alarm is made twice or left behind. Plan again after `topUpDelayMs`,
+ *   requested, so no alarm is made twice or left behind. A pending alarm that replaces a
+ *   held one keeps the held one's signature in `writeAhead`, so the replay still knows
+ *   what that alarm delivered and whether it was withdrawn. Plan again after `topUpDelayMs`,
  *   and REMINDER_STORE_RESCHEDULE_DELAY_MS after the last store change that
  *   shouldRescheduleReminderAlarms accepts. Without notification permission, every alarm
  *   is cancelled and `clearDelivered` asks the host to remove delivered reminders too.
  * - completeReminderTask: Done. Completes the task through the store once per request
- *   UUID (native-request-receipts.ts). A replay after a restart finds the task done and
- *   writes nothing, so a recurring task never gets a second next instance.
+ *   UUID (native-request-receipts.ts). On the native host the receipt commits with the
+ *   task's change, so a replay after a restart answers from the first reply and writes
+ *   nothing, even if the task was reopened since: a recurring task gets one next instance.
  * - snoozeReminder: Snooze. The fired alarm's details again, `snooze_interval` minutes
  *   after the tap, as an alarm of its own that no plan cancels (it can still fire after
- *   the task is done: a kept trade-off). The request UUID and the tap time name it, so a
- *   replay returns the same alarm and the host replaces it instead of adding one.
+ *   the task is done: a kept trade-off). The request UUID names it, and its first reply is
+ *   a receipt, so a replay after a restart returns the same alarm and the host replaces it
+ *   instead of adding one.
  * - routeNotificationOpen: what a tap opens (Review, a task, a project, a context, Daily
  *   or Weekly Review), or `complete` for Done, or nothing for Dismiss and Snooze.
  *
@@ -175,7 +179,7 @@ export function createReminderMethods(deps: ReminderDeps) {
                     replacing: heldEntry ? getReminderAlarmCancelReason(plan, key) : null,
                 });
                 next.set(key, { id, signature: request.signature });
-                writeAhead.set(key, { id, signature: request.signature, pending: true });
+                writeAhead.set(key, { id, signature: heldEntry ? heldEntry.signature : request.signature, pending: true });
             }
             const cancel = plan.cancel.flatMap((key) => {
                 const entry = held.get(key);
@@ -213,7 +217,9 @@ export function createReminderMethods(deps: ReminderDeps) {
         },
 
         /** Snooze on a fired reminder: its details as the plan gave them, and when the tap happened. */
-        snoozeReminder(input: { requestId: string; requestedAt: number; details: Record<string, unknown> }): NativeHostResult<NativeReminderAlarm> {
+        async snoozeReminder(input: { requestId: string; requestedAt: number; details: Record<string, unknown> }): Promise<NativeHostResult<NativeReminderAlarm>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
             if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
                 || typeof input.requestedAt !== 'number' || !isObjectRecord(input.details) || !isText(input.details.title, 10_000)) {
                 return fail('INVALID_INPUT', 'A request UUID, the tap time and the fired alarm\'s details are required');
@@ -221,7 +227,10 @@ export function createReminderMethods(deps: ReminderDeps) {
             const key = `snooze:${input.requestId.toLowerCase()}`;
             const snooze = buildReminderSnooze(input.details, input.requestedAt, key);
             if (!snooze) return fail('INVALID_INPUT', 'This reminder has no Snooze');
-            return { ok: true, value: { ...snooze, id: allocateAlarmId(key, new Set(), SNOOZE_ID_BASE), repeat: 'once', replacing: null } };
+            const alarm: NativeReminderAlarm = { ...snooze, id: allocateAlarmId(key, new Set(), SNOOZE_ID_BASE), repeat: 'once', replacing: null };
+            return receipts.run<NativeReminderAlarm>(input.requestId, JSON.stringify(['reminderSnooze', input.requestedAt, input.details]), async () => (
+                { ok: true, value: alarm }
+            ));
         },
 
         /** What a notification tap, or one of its buttons, opens or does. */

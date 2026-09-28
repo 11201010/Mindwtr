@@ -17,6 +17,7 @@ import {
   cancelReminderAlarm,
   cancelUnrequestedReminderAlarms,
   countReminderAlarmCancelReasons,
+  getReminderAlarmCancelReason,
   getMaxPendingOneShotReminderAlarms,
   isExplicitPomodoroAlarmCancellation,
   isPomodoroAlarmDue,
@@ -253,32 +254,30 @@ async function clearScheduledAlarms(
   const scheduledAlarmCount = alarmMap.size;
 
   if (api) {
-    for (const entry of alarmMap.values()) {
+    // Every held alarm is withdrawn. Core cancels each on its own: what it
+    // delivered goes first, and a failed removal never stops its deletes.
+    const port = toReminderAlarmPort(api);
+    for (const key of Array.from(alarmMap.keys())) {
+      await cancelReminderAlarm(alarmMap, key, port, 'withdrawn');
+    }
+
+    // Only with the Pomodoro alert cancelled too (notifications denied): turning
+    // reminders off must not clear a delivered Pomodoro alert.
+    if (options.cancelPomodoro) {
       try {
-        // Withdrawn: remove the delivered notification first, while Android's
-        // library can still find it through the alarm's row.
-        api.removeFiredNotification(entry.id);
-        api.deleteAlarm(entry.id);
-        api.deleteRepeatingAlarm(entry.id);
-      } catch (error) {
-        logNotificationError('Failed to cancel local alarm', error);
+        api.removeAllFiredNotifications();
+      } catch {
+        // no-op
       }
-    }
 
-    try {
-      api.removeAllFiredNotifications();
-    } catch {
-      // no-op
-    }
-
-    // removeAllFiredNotifications() is NotificationManager.cancelAll(): it also
-    // wipes the pinned quick-capture notification, which is why the handle
-    // vanished whenever reminders were off (#819). Re-assert it from its
-    // native mirror; a no-op when the capture toggle is off.
-    try {
-      restorePersistentCaptureNotification();
-    } catch {
-      // no-op
+      // removeAllFiredNotifications() is NotificationManager.cancelAll(): it also
+      // wipes the pinned quick-capture notification (#819). Re-assert it from its
+      // native mirror; a no-op when the capture toggle is off.
+      try {
+        restorePersistentCaptureNotification();
+      } catch {
+        // no-op
+      }
     }
   }
 
@@ -476,6 +475,12 @@ function scheduleOneShotTopUp(api: AlarmNotificationsApi, delayMs: number | null
   }, delayMs);
 }
 
+async function loadReminderTranslations(activeFeature: boolean): Promise<Record<string, string>> {
+  if (!activeFeature) return {};
+  const language: Language = await loadStoredLanguage(AsyncStorage, getSystemDefaultLanguage()).catch(() => getSystemDefaultLanguage());
+  return getTranslations(language);
+}
+
 async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
   const cycleStartedAtMs = Date.now();
   await loadAlarmMapIfNeeded();
@@ -500,11 +505,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
   });
 
   const port = toReminderAlarmPort(api);
-  let translations: Record<string, string> = {};
-  if (activeFeature) {
-    const language: Language = await loadStoredLanguage(AsyncStorage, getSystemDefaultLanguage()).catch(() => getSystemDefaultLanguage());
-    translations = await getTranslations(language);
-  }
+  const translations = await loadReminderTranslations(activeFeature);
   const now = new Date();
 
   // Derivation and the diff live in core (`planReminderAlarms` over `buildReminderSchedule`):
@@ -1020,10 +1021,21 @@ export async function rescheduleLocalAlarmsAsExact(): Promise<void> {
     .catch(() => undefined)
     .then(async () => {
       await loadAlarmMapIfNeeded();
+      // Remade at once, so what an alarm delivered stays, unless its reminder was
+      // withdrawn since the last cycle: judged now, before the map forgets it.
+      const { settings, tasks, projects } = useTaskStore.getState();
+      const plan = planReminderAlarms({
+        settings,
+        tasks,
+        projects,
+        now: new Date(),
+        translations: await loadReminderTranslations(hasActiveMobileNotificationFeature(settings)),
+        maxOneShotReminders: getMaxPendingOneShotReminderAlarms(Platform.OS),
+        alarms: alarmMap,
+      });
       const port = toReminderAlarmPort(api);
       for (const key of Array.from(alarmMap.keys())) {
-        // Remade at once: what the alarm delivered stays.
-        await cancelReminderAlarm(alarmMap, key, port, 'expired');
+        await cancelReminderAlarm(alarmMap, key, port, getReminderAlarmCancelReason(plan, key));
       }
       await runRescheduleCycle(api);
     })

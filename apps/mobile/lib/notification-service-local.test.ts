@@ -255,7 +255,11 @@ describe('notification-service-local', () => {
   });
 
   it('re-asserts the persistent capture notification after wiping fired notifications', async () => {
-    await stopLocalMobileNotifications();
+    // Only a denied notification permission wipes the tray; turning reminders off
+    // (stop) keeps a delivered Pomodoro alert.
+    mockPermissionsAndroidCheck.mockResolvedValue(false);
+    mockPermissionsAndroidRequest.mockResolvedValue('never_ask_again');
+    await startLocalMobileNotifications();
 
     // removeAllFiredNotifications() is NotificationManager.cancelAll(), which
     // also removes the pinned quick-capture notification (#819).

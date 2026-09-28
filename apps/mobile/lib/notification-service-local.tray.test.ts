@@ -17,6 +17,7 @@ const harness = vi.hoisted(() => ({
   rows: new Set<number>(),
   tray: new Set<number>(),
   nextId: 1,
+  failRemovals: false,
   logs: [] as [string, Record<string, unknown> | undefined][],
 }));
 
@@ -55,6 +56,7 @@ vi.mock('react-native-alarm-notification', () => ({
     deleteAlarm: (id: number) => { harness.rows.delete(id); },
     deleteRepeatingAlarm: () => undefined,
     removeFiredNotification: (id: number) => {
+      if (harness.failRemovals) throw new Error('notification service unavailable');
       // Android resolves the notification through the alarm's row; iOS removes by id.
       if (harness.platform.OS === 'android' && !harness.rows.has(id)) return;
       harness.tray.delete(id);
@@ -94,6 +96,7 @@ import {
   __localNotificationTestUtils,
   rescheduleLocalAlarmsAsExact,
   startLocalMobileNotifications,
+  stopLocalMobileNotifications,
 } from './notification-service-local';
 
 const CREATED = '2026-09-01T00:00:00.000Z';
@@ -126,6 +129,7 @@ describe.each(['android', 'ios'])('delivered reminders on %s', (platform) => {
     harness.tray.clear();
     harness.logs.length = 0;
     harness.nextId = 1;
+    harness.failRemovals = false;
     harness.state = { settings: {}, tasks: [], projects: [] };
     __localNotificationTestUtils.resetForTests();
   });
@@ -219,6 +223,40 @@ describe.each(['android', 'ios'])('delivered reminders on %s', (platform) => {
     await cycle();
     expect(alarmId('digest:morning')).not.toBe(delivered);
     expect(harness.tray.has(delivered)).toBe(true);
+  });
+
+  it('removes a delivered reminder whose task was completed when alarms are rebuilt as exact before the next cycle', async () => {
+    harness.state.tasks = [task({ dueDate: '2026-09-28T10:05:00.000Z' })];
+    await cycle();
+    at('2026-09-28T10:05:05.000Z');
+    const delivered = fire('task:t');
+    harness.state.tasks = [task({ dueDate: '2026-09-28T10:05:00.000Z', status: 'done' })];
+    await rescheduleLocalAlarmsAsExact();
+    expect(harness.tray.has(delivered)).toBe(false);
+  });
+
+  it('keeps a delivered Pomodoro alert when every reminder is turned off', async () => {
+    harness.state.tasks = [task({ dueDate: '2026-09-28T10:05:00.000Z' })];
+    await cycle();
+    at('2026-09-28T10:05:05.000Z');
+    const reminder = fire('task:t');
+    const pomodoroAlert = 999;
+    harness.tray.add(pomodoroAlert);
+    // Turning every reminder feature off stops the service (use-root-layout-sync-effects.ts).
+    await stopLocalMobileNotifications();
+    expect(harness.tray.has(reminder)).toBe(false);
+    expect(harness.tray.has(pomodoroAlert)).toBe(true);
+  });
+
+  it('deletes every alarm on stop even when removing a delivered notification fails', async () => {
+    harness.state.settings = { dailyDigestMorningEnabled: true };
+    harness.state.tasks = [task({ dueDate: '2026-09-28T10:05:00.000Z' })];
+    await cycle();
+    expect(harness.rows.size).toBe(2);
+    harness.failRemovals = true;
+    await stopLocalMobileNotifications();
+    expect(harness.rows.size).toBe(0);
+    expect(__localNotificationTestUtils.getAlarmMapSnapshot().size).toBe(0);
   });
 
   it('keeps delivered reminders when alarms are rebuilt as exact', async () => {
