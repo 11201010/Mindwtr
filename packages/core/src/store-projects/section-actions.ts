@@ -1,8 +1,9 @@
 import { ensureDeviceId, getNextDataChangeAt, nextRevision, persist, replaceEntitiesInArray } from '../store-helpers';
+import { taskEditValuesEqual } from '../json-value-equality';
 import { logWarn } from '../logger';
 import { generateUUID as uuidv4 } from '../uuid';
 import { sectionToSqliteRow } from '../section-sync-schema';
-import { taskToSqliteRow } from '../task-sync-schema';
+import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from '../task-sync-schema';
 import { toStableSyncJson } from '../sync-helpers';
 import { sameProjectSqliteRow } from './project-actions';
 import type { PreparedProjectSectionCreate, PreparedProjectSectionDelete, PreparedProjectSectionRename, PreparedTaskEditResult } from '../store-types';
@@ -31,8 +32,18 @@ export const buildNewSection = (input: { id: string; projectId: string; title: s
 export const sameSectionSqliteRow = (left: Section, right: Section): boolean =>
     JSON.stringify(sectionToSqliteRow(left)) === JSON.stringify(sectionToSqliteRow(right));
 
-export const sameTaskSqliteRow = (left: Task, right: Task): boolean =>
-    JSON.stringify(taskToSqliteRow(left)) === JSON.stringify(taskToSqliteRow(right));
+const taskJsonColumns = new Set(['relativeStartOffset', 'recurrence', 'tags', 'contexts',
+    'checklist', 'attachments', 'viewSectionIds']);
+export const sameTaskSqliteRow = (left: Task, right: Task): boolean => {
+    const before = taskToSqliteRow(left);
+    const after = taskToSqliteRow(right);
+    return before.length === after.length && before.every((value, index) => {
+        const other = after[index];
+        return taskJsonColumns.has(TASK_SQLITE_COLUMNS[index]) && typeof value === 'string'
+            && typeof other === 'string' ? taskEditValuesEqual(JSON.parse(value), JSON.parse(other))
+                : Object.is(value, other);
+    });
+};
 
 /** Compare raw JSON without reordering arrays or equating null with an absent field. */
 export const sameSectionDeleteJson = (left: unknown, right: unknown): boolean => {

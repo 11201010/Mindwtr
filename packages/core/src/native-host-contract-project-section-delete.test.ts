@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createProjectSectionDeleteMethods, type NativePreparedProjectSectionDelete,
     type NativeProjectSectionDeleteRequest } from './native-host-contract-project-section-delete';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { sameTaskSqliteRow } from './store-projects/section-actions';
 import type { AppData, Project, Section, Task } from './types';
 
 const NOW = '2026-09-28T16:00:00.000Z';
@@ -18,6 +19,10 @@ const task = (id: string, overrides: Partial<Task> = {}): Task => ({
     id, projectId: 'parent', sectionId: 'target', title: id, status: 'next', tags: [], contexts: [],
     rev: 2, revBy: 'old-device', createdAt: NOW, updatedAt: NOW, ...overrides,
 });
+const swiftJsonRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value, (_key, part) =>
+    part && typeof part === 'object' && !Array.isArray(part)
+        ? Object.fromEntries(Object.entries(part).sort(([left], [right]) => left.localeCompare(right)))
+        : part)) as T;
 
 async function open(initial: Partial<AppData> = {}, failing?: () => boolean) {
     await flushPendingSave(); resetForTests();
@@ -55,6 +60,38 @@ async function open(initial: Partial<AppData> = {}, failing?: () => boolean) {
 afterEach(async () => { vi.useRealTimers(); await flushPendingSave(); resetForTests(); });
 
 describe('prepared native Project Section delete', () => {
+    it('accepts Swift-sorted JSON keys without accepting changed JSON values or array order', async () => {
+        const attachments = [
+            { id: 'first', kind: 'file' as const, title: 'First', uri: 'file:///first',
+                createdAt: NOW, updatedAt: NOW },
+            { id: 'second', kind: 'link' as const, title: 'Second', uri: 'https://example.test/',
+                createdAt: NOW, updatedAt: NOW },
+        ];
+        const original = task('rich', { attachments });
+        const nullable = structuredClone(original);
+        (nullable.attachments![0] as typeof nullable.attachments![number] & { mimeType: null }).mimeType = null;
+        expect(sameTaskSqliteRow(original, swiftJsonRoundTrip(original))).toBe(true);
+        expect(sameTaskSqliteRow(original, nullable)).toBe(false);
+        expect(sameTaskSqliteRow(original, { ...original, attachments: [...attachments].reverse() })).toBe(false);
+
+        const applied = await open({ tasks: [original] });
+        const request = applied.request();
+        const prepared = swiftJsonRoundTrip(applied.prepare(request));
+        expect(await applied.methods.commitPreparedProjectSectionDelete({ request, prepared }))
+            .toEqual({ ok: true, value: prepared.result });
+        expect(await applied.methods.commitPreparedProjectSectionDelete({ request, prepared }))
+            .toEqual({ ok: true, value: prepared.result });
+
+        const changed = await open({ tasks: [original] });
+        const changedRequest = changed.request();
+        const changedPrepared = swiftJsonRoundTrip(changed.prepare(changedRequest));
+        useTaskStore.setState((state) => ({ _allTasks: state._allTasks.map((row) => row.id === original.id
+            ? { ...row, attachments: [...attachments].reverse() } : row) }));
+        expect(await changed.methods.commitPreparedProjectSectionDelete({
+            request: changedRequest, prepared: changedPrepared,
+        })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+    });
+
     it('matches RN tombstone and detaches every linked Task, including deleted and wrong-project rows', async () => {
         vi.useFakeTimers(); vi.setSystemTime(new Date(NOW));
         const { request, prepare } = await open();

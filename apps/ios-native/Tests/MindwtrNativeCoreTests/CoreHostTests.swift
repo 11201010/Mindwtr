@@ -3025,9 +3025,19 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual((items.first?["addTask"] as? [String: Any])?["sectionId"] as? String, "someday-section-000")
         XCTAssertNotNil((items[1]["row"] as? [String: Any])?["meta"])
 
-        // The returned effective state, rather than stale picker selections, continues paging.
+        // Unknown token selections stay active until explicitly cleared; unavailable Projects are pruned.
+        let stale = try await read("someday", ["sortBy": "title", "groupBy": "none", "showDetails": true,
+                                               "filters": ["tokens": ["#gone"], "projects": ["gone"]], "offset": 0, "limit": 2])
+        let staleFilters = try XCTUnwrap(stale["filters"] as? [String: Any])
+        let staleState = try XCTUnwrap(staleFilters["state"] as? [String: Any])
+        XCTAssertEqual(staleState["tokens"] as? [String], ["#gone"])
+        XCTAssertEqual(staleState["projects"] as? [String], [])
+        XCTAssertEqual(stale["total"] as? Int, 0)
+        XCTAssertEqual((stale["items"] as? [[String: Any]])?.count, 0)
         let sorted = try await read("someday", ["sortBy": "title", "groupBy": "none", "showDetails": true,
-                                                "filters": ["tokens": ["#gone"], "projects": ["gone"]], "offset": 0, "limit": 2])
+                                                "filters": staleState,
+                                                "filterEdit": try XCTUnwrap(staleFilters["clearEdit"]),
+                                                "offset": 0, "limit": 2])
         let revision = try XCTUnwrap(sorted["revision"] as? String)
         let filters = try XCTUnwrap(sorted["filters"] as? [String: Any])
         let state = try XCTUnwrap(filters["state"] as? [String: Any])
@@ -3844,7 +3854,8 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try json(XCTUnwrap(searched["rows"])), try json(XCTUnwrap(all["rows"])))
         anyInput["searchQuery"] = "no matching chip or task title"
         let searchedSelection = try await read(anyInput)
-        XCTAssertEqual((searchedSelection["chips"] as? [[String: Any]])?.compactMap { $0["id"] as? String }, ["all", "none"])
+        XCTAssertEqual((searchedSelection["chips"] as? [[String: Any]])?.compactMap { $0["id"] as? String },
+                       ["all", "none", "@office", "#blue"])
         XCTAssertEqual(try ids(searchedSelection), try ids(either))
         let empty = try await read(["tokens": ["@absent"], "offset": 0, "limit": 50])
         XCTAssertEqual(empty["total"] as? Int, 0)
