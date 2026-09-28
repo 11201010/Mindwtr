@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildCaptureModalRequest, planCaptureModalRequest, saveCaptureModalLines } from './capture-modal-model';
+import { buildCaptureModalRequest, formatCaptureModalCopilotApplied, planCaptureModalRequest, saveCaptureModalLines } from './capture-modal-model';
 import { parseQuickAdd } from './quick-add';
 import type { Project, Task } from './types';
 
@@ -50,5 +50,17 @@ describe('capture confirmation screen model', () => {
         expect(outcome).toEqual({ kind: 'refused', invalidDateCommands: ['/due:whenever'] });
         expect(addProject).not.toHaveBeenCalled();
         expect(addTasks).not.toHaveBeenCalled();
+    });
+
+    // RN bug (apps/mobile/app/capture-modal.tsx:903-906 before the move): the estimate and the
+    // tags ran together ("Applied @phone 15min#finance").
+    it('spaces every applied copilot part', () => {
+        const t = (key: string) => (key === 'copilot.applied' ? 'Applied' : key);
+        expect(formatCaptureModalCopilotApplied(t, { context: '@phone', timeEstimate: '15min', tags: ['#finance', '#urgent'] }, true))
+            .toBe('Applied @phone 15min #finance #urgent');
+        expect(formatCaptureModalCopilotApplied(t, { timeEstimate: '15min', tags: ['#urgent'] }, true)).toBe('Applied 15min #urgent');
+        expect(formatCaptureModalCopilotApplied(t, { context: '@computer', tags: [] }, true)).toBe('Applied @computer');
+        expect(formatCaptureModalCopilotApplied(t, { timeEstimate: '15min', tags: ['#urgent'] }, false)).toBe('Applied #urgent');
+        expect(formatCaptureModalCopilotApplied(t, { tags: [] }, true)).toBeNull();
     });
 });

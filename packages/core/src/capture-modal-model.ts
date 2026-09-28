@@ -266,9 +266,8 @@ export function formatCaptureModalCopilotApplied(
     timeEstimatesEnabled: boolean,
 ): string | null {
     if (!applied.context && !applied.timeEstimate && applied.tags.length === 0) return null;
-    return `${t('copilot.applied')} ${applied.context ? `${applied.context} ` : ''}`
-        + `${timeEstimatesEnabled && applied.timeEstimate ? applied.timeEstimate : ''}`
-        + `${applied.tags.length ? applied.tags.join(' ') : ''}`;
+    const estimate = timeEstimatesEnabled ? applied.timeEstimate : undefined;
+    return [t('copilot.applied'), applied.context, estimate, ...applied.tags].filter(Boolean).join(' ');
 }
 
 // ---------------------------------------------------------------------------
