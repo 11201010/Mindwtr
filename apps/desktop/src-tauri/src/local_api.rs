@@ -851,9 +851,19 @@ fn route_api_request(
             ensure_array_mut(data, "tasks")?.push(task.clone());
             Ok((task_id, vec![task]))
         })?;
-        return Ok(ApiResponse::created(
-            json!({ "task": persisted_task(&persisted, &task_id)? }),
-        ));
+        let task = persisted_task(&persisted, &task_id)?;
+        let now = OffsetDateTime::now_utc();
+        if task.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
+            && task
+                .as_object()
+                .is_some_and(|task| local_api_task_is_future_start(task, now))
+        {
+            let count = local_api_focused_task_count(&persisted, now);
+            log::info!(
+                "Desktop Local API scheduled Focus queued extra.releaseCheck=v1.3.3/local-api-scheduled-focus operation=create outcome=queued count={count}"
+            );
+        }
+        return Ok(ApiResponse::created(json!({ "task": task })));
     }
 
     if segments.len() == 2 && segments[0] == "tasks" && request.method == "PATCH" {
@@ -3150,7 +3160,7 @@ fn local_api_focus_task_limit(data: &Value) -> usize {
         .unwrap_or(3)
 }
 
-fn local_api_focused_task_count(data: &Value) -> usize {
+fn local_api_focused_task_count(data: &Value, now: OffsetDateTime) -> usize {
     if let Some(count) = data
         .get(TASK_MUTATION_FOCUSED_COUNT_KEY)
         .and_then(Value::as_u64)
@@ -3164,8 +3174,11 @@ fn local_api_focused_task_count(data: &Value) -> usize {
                 && task.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
                 && !matches!(
                     task.get("status").and_then(Value::as_str),
-                    Some("done" | "reference")
+                    Some("done" | "reference" | "archived")
                 )
+                && task
+                    .as_object()
+                    .is_some_and(|task| !local_api_task_is_future_start(task, now))
         })
         .count()
 }
@@ -3313,13 +3326,17 @@ fn normalize_created_task_focus(task: &mut Map<String, Value>, data: &Value, now
         Value::String(promoted_status.to_string()),
     );
     candidate.insert("isFocusedToday".to_string(), Value::Bool(false));
+    let future_start = local_api_task_is_future_start(&candidate, now);
+    let queued =
+        promoted_status == "next" && has_non_empty_string(&candidate, "startTime") && future_start;
     let status_is_eligible = promoted_status == "next"
         || (promoted_status != "inbox" && local_api_review_is_due(&candidate, now));
     let eligible = status_is_eligible
         && local_api_project_allows_focus(&candidate, data)
-        && !local_api_task_is_future_start(&candidate, now)
+        && (!future_start || queued)
         && local_api_focus_candidate_is_sequential_first(&candidate, data, now);
-    let cap_is_available = local_api_focused_task_count(data) < local_api_focus_task_limit(data);
+    let cap_is_available =
+        queued || local_api_focused_task_count(data, now) < local_api_focus_task_limit(data);
     if eligible && cap_is_available {
         task.insert(
             "status".to_string(),
@@ -5808,7 +5825,21 @@ mod tests {
     }
 
     #[test]
-    fn local_api_create_rejects_ineligible_focus_without_reclassifying() {
+    fn local_api_create_queues_future_focus_without_consuming_limit() {
+        let cap_full = json!({
+            "tasks": [{
+                "id": "focused",
+                "status": "next",
+                "isFocusedToday": true
+            }],
+            "projects": [],
+            "sections": [],
+            "areas": [],
+            "settings": {
+                "deviceId": "device-a",
+                "gtd": { "focusTaskLimit": 1 }
+            }
+        });
         let future = create_task_from_body(
             json!({
                 "input": "Future",
@@ -5821,11 +5852,68 @@ mod tests {
             .as_object()
             .expect("body"),
             "device-a",
-            &empty_local_api_data(),
+            &cap_full,
         )
         .expect("future task");
-        assert_eq!(future["status"], "inbox");
-        assert_eq!(future["isFocusedToday"], false);
+        assert_eq!(future["status"], "next");
+        assert_eq!(future["isFocusedToday"], true);
+
+        let queued_only = json!({
+            "tasks": (0..3).map(|index| json!({
+                "id": format!("queued-{index}"),
+                "status": "next",
+                "startTime": "9999-12-31",
+                "isFocusedToday": true
+            })).collect::<Vec<_>>(),
+            "projects": [],
+            "sections": [],
+            "areas": [],
+            "settings": {
+                "deviceId": "device-a",
+                "gtd": { "focusTaskLimit": 1 }
+            }
+        });
+        let today = create_task_from_body(
+            json!({ "input": "Today", "props": { "isFocusedToday": true } })
+                .as_object()
+                .expect("body"),
+            "device-a",
+            &queued_only,
+        )
+        .expect("today task");
+        assert_eq!(today["status"], "next");
+        assert_eq!(today["isFocusedToday"], true);
+    }
+
+    #[test]
+    fn local_api_create_rejects_ineligible_focus_without_reclassifying() {
+        let inactive_project = json!({
+            "tasks": [],
+            "projects": [{
+                "id": "project-inactive",
+                "status": "someday"
+            }],
+            "sections": [],
+            "areas": [],
+            "settings": { "deviceId": "device-a" }
+        });
+        let unavailable = create_task_from_body(
+            json!({
+                "input": "Unavailable project",
+                "props": {
+                    "status": "next",
+                    "projectId": "project-inactive",
+                    "isFocusedToday": true
+                }
+            })
+            .as_object()
+            .expect("body"),
+            "device-a",
+            &inactive_project,
+        )
+        .expect("project task");
+        assert_eq!(unavailable["status"], "next");
+        assert_eq!(unavailable["isFocusedToday"], false);
 
         let sequential = json!({
             "tasks": [{

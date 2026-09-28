@@ -88,6 +88,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // someday-sections-keep-others reuses releaseCheck and count: stored entries this build cannot show, kept.
     'hiddenCount',
     // saved-filters-kept-as-stored reuses releaseCheck, count and hiddenCount: whose list order the merge kept.
+    // local-api-scheduled-focus reuses releaseCheck, operation, outcome, and count below.
     'order',
     // android-http-connect-timeout (apps/mobile/hooks/root-layout/use-root-layout-startup.ts)
     'connectTimeoutMs',

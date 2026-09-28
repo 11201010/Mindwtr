@@ -4566,16 +4566,68 @@ fn read_task_mutation_data(
     let mut focused_count = None;
     if scope.include_focus_context {
         stats.statements += 1;
+        let today = OffsetDateTime::now_utc().date().to_string();
+        // Match local_api_task_is_future_start: choose recurring fallback fields by instant,
+        // then compare the chosen value's own calendar date against today.
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM (
-                   SELECT 1 FROM tasks
+                "WITH focus_values AS (
+                   SELECT startTime, dueDate, reviewAt, recurrence,
+                     CASE WHEN julianday(startTime) IS NOT NULL
+                       AND date(substr(startTime, 1, 10), '+0 days') = substr(startTime, 1, 10)
+                       AND (length(startTime) = 10 OR (
+                         substr(startTime, 11, 1) IN ('T', 't')
+                         AND (upper(substr(startTime, -1, 1)) = 'Z'
+                           OR (substr(startTime, -6, 1) IN ('+', '-')
+                             AND substr(startTime, -3, 1) = ':'))
+                       ))
+                       THEN substr(startTime, 1, 10)
+                     END AS startDay,
+                     CASE WHEN julianday(dueDate) IS NOT NULL
+                       AND date(substr(dueDate, 1, 10), '+0 days') = substr(dueDate, 1, 10)
+                       AND (length(dueDate) = 10 OR (
+                         substr(dueDate, 11, 1) IN ('T', 't')
+                         AND (upper(substr(dueDate, -1, 1)) = 'Z'
+                           OR (substr(dueDate, -6, 1) IN ('+', '-')
+                             AND substr(dueDate, -3, 1) = ':'))
+                       ))
+                       THEN substr(dueDate, 1, 10)
+                     END AS dueDay,
+                     CASE WHEN julianday(reviewAt) IS NOT NULL
+                       AND date(substr(reviewAt, 1, 10), '+0 days') = substr(reviewAt, 1, 10)
+                       AND (length(reviewAt) = 10 OR (
+                         substr(reviewAt, 11, 1) IN ('T', 't')
+                         AND (upper(substr(reviewAt, -1, 1)) = 'Z'
+                           OR (substr(reviewAt, -6, 1) IN ('+', '-')
+                             AND substr(reviewAt, -3, 1) = ':'))
+                       ))
+                       THEN substr(reviewAt, 1, 10)
+                     END AS reviewDay
+                   FROM tasks
                    WHERE isFocusedToday = 1
                      AND (deletedAt IS NULL OR trim(deletedAt) = '')
-                     AND status NOT IN ('done', 'reference')
+                     AND status NOT IN ('done', 'reference', 'archived')
+                 ), focused AS (
+                   SELECT CASE
+                     WHEN startDay IS NOT NULL THEN startDay
+                     WHEN json_valid(recurrence)
+                       AND COALESCE(json_extract(recurrence, '$.rule'), json_extract(recurrence, '$'))
+                         IN ('daily', 'weekly', 'monthly', 'yearly')
+                     THEN CASE
+                       WHEN dueDay IS NULL THEN reviewDay
+                       WHEN reviewDay IS NULL THEN dueDay
+                       WHEN julianday(dueDate) <= julianday(reviewAt) THEN dueDay
+                       ELSE reviewDay
+                     END
+                   END AS deferDate
+                   FROM focus_values
+                 )
+                 SELECT COUNT(*) FROM (
+                   SELECT 1 FROM focused
+                   WHERE deferDate IS NULL OR deferDate <= ?1
                    LIMIT 10
                  )",
-                [],
+                [today],
                 |row| row.get(0),
             )
             .map_err(|e| e.to_string())?;
@@ -10086,6 +10138,8 @@ mod tests {
     fn focused_create_scope_reads_only_referenced_context_and_sequential_candidates() {
         let conn = Connection::open_in_memory().expect("database");
         conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        let today = OffsetDateTime::now_utc().date();
+        let tomorrow = today.next_day().expect("tomorrow");
         let mut tasks = (0..1_000)
             .map(|index| {
                 serde_json::json!({
@@ -10113,6 +10167,20 @@ mod tests {
             serde_json::json!({
                 "id": "focused-elsewhere", "title": "Focused", "status": "next",
                 "isFocusedToday": true, "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
+            }),
+            serde_json::json!({
+                "id": "queued-focus", "title": "Queued", "status": "next",
+                "startTime": "9999-12-31", "isFocusedToday": true,
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
+            }),
+            serde_json::json!({
+                "id": "recurring-queued-focus", "title": "Recurring queued", "status": "next",
+                "dueDate": format!("{tomorrow}T00:30:00+14:00"),
+                "reviewAt": format!("{today}T23:45:00-10:00"),
+                "recurrence": { "rule": "daily" }, "isFocusedToday": true,
+                "tags": [], "contexts": [], "rev": 1,
                 "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
             }),
         ]);
@@ -10163,6 +10231,31 @@ mod tests {
         );
         assert_eq!(stats.task_rows, 1);
         assert!(stats.statements <= 6);
+
+        conn.execute("DELETE FROM tasks WHERE id = 'recurring-queued-focus'", [])
+            .expect("remove recurring queued focus");
+        replace_task_row(
+            &conn,
+            &serde_json::json!({
+                "id": "invalid-start-focus", "title": "Invalid start", "status": "next",
+                "startTime": "2099-02-30", "isFocusedToday": true,
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
+            }),
+        )
+        .expect("insert invalid start");
+        replace_task_row(
+            &conn,
+            &serde_json::json!({
+                "id": "local-datetime-focus", "title": "Local datetime", "status": "next",
+                "startTime": format!("{tomorrow}T00:00:00"), "isFocusedToday": true,
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
+            }),
+        )
+        .expect("insert unsupported local datetime");
+        let (data, _) = read_task_mutation_data(&conn, &scope).expect("invalid date context");
+        assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 3);
     }
 
     #[test]
