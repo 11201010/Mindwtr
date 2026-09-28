@@ -356,13 +356,20 @@ describe('native host contract: More sheet and list views', () => {
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
-    it('computes the revision from the pruned filters, so the returned state continues paging', async () => {
+    it('retains empty explicit filters with a stable paging revision until cleared', async () => {
         freezeClock();
         const { host } = await openHost(scenario('someday', 'sections'));
         const first = value(host.getSomedayView({ groupBy: 'none', filters: { tokens: ['#gone'] }, offset: 0, limit: 1 }));
-        expect(first.filters.state.tokens).toEqual([]);
+        expect(first.filters.state.tokens).toEqual(['#gone']);
+        expect(first.total).toBe(0);
         const next = host.getSomedayView({ groupBy: 'none', filters: first.filters.state, offset: 1, limit: 1, revision: first.revision });
         expect(next).toMatchObject({ ok: true, value: { revision: first.revision } });
+        const cleared = value(host.getSomedayView({
+            groupBy: 'none', filters: first.filters.state,
+            filterEdit: { type: 'removeToken', value: '#gone' }, offset: 0, limit: 1,
+        }));
+        expect(cleared.filters.state.tokens).toEqual([]);
+        expect(cleared.total).toBeGreaterThan(0);
     });
 
     it('refuses a reused captureId for another task', async () => {
