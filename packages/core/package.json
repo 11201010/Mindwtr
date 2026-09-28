@@ -44,7 +44,8 @@
     "./mobile-attachment-installer": "./src/mobile-attachment-installer.ts",
     "./mobile-attachment-common": "./src/mobile-attachment-common.ts",
     "./mobile-attachment-availability": "./src/mobile-attachment-availability.ts",
-    "./mobile-attachment-cleanup": "./src/mobile-attachment-cleanup.ts"
+    "./mobile-attachment-cleanup": "./src/mobile-attachment-cleanup.ts",
+    "./mobile-attachment-backends": "./src/mobile-attachment-backends.ts"
   },
   "sideEffects": false,
   "type": "module",

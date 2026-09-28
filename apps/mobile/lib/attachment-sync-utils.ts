@@ -132,6 +132,12 @@ export const mobileAttachmentFileSystem: MobileAttachmentFileSystemPort = {
     return {
       readDirectory: (uri) => saf.readDirectoryAsync(uri),
       makeDirectory: (parentUri, name) => saf.makeDirectoryAsync(parentUri, name),
+      createFile: (parentUri, name, mimeType) => saf.createFileAsync(parentUri, name, mimeType),
+      writeBytes: (uri, bytes) => saf.writeAsStringAsync(
+        uri,
+        bytesToBase64(bytes),
+        { encoding: FileSystem.EncodingType.Base64 },
+      ),
     };
   },
 };

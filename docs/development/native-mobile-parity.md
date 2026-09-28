@@ -37,9 +37,9 @@ Source pointers locate baseline behavior and reusable checks; they do not claim 
 | W14 | Calendar views, scheduling and recurrence presentation | `apps/mobile/components/views/calendar-view.tsx` | N | N | — | — | Pending |
 | W15 | Board view and status movement | `apps/mobile/components/views/board-view.tsx` | N | N | — | — | Pending |
 | W16 | Pomodoro lifecycle, interruption and restoration | `apps/mobile/lib/pomodoro-controller.ts`; `apps/mobile/lib/pomodoro-session.ts` | N | N | — | — | Pending |
-| S01 | WebDAV: authorization, push/pull, conflict/retry, offline/reconnect | `apps/mobile/lib/sync-service.ts`; `apps/mobile/lib/attachment-sync-backends/webdav.ts` | N | N | — | — | Pending |
-| S02 | Dropbox: authorization refresh/reconnect and sync | `apps/mobile/lib/dropbox-auth.storage.test.ts`; `apps/mobile/lib/attachment-sync-backends/dropbox.ts` | N | N | — | — | Pending |
-| S03 | Self-hosted/cloud sync: configuration, authorization, conflict/retry | `apps/mobile/lib/sync-service.ts`; `apps/mobile/lib/attachment-sync-backends/cloud.ts` | N | N | — | — | Pending |
+| S01 | WebDAV: authorization, push/pull, conflict/retry, offline/reconnect | `apps/mobile/lib/sync-service.ts`; `packages/core/src/mobile-attachment-backends.ts` | N | N | — | — | Pending |
+| S02 | Dropbox: authorization refresh/reconnect and sync | `apps/mobile/lib/dropbox-auth.storage.test.ts`; `packages/core/src/mobile-attachment-backends.ts` | N | N | — | — | Pending |
+| S03 | Self-hosted/cloud sync: configuration, authorization, conflict/retry | `apps/mobile/lib/sync-service.ts`; `packages/core/src/mobile-attachment-backends.ts` | N | N | — | — | Pending |
 | S04 | File sync: access grants/bookmarks, locking and interrupted writes | `apps/mobile/lib/storage-file.ts`; `apps/mobile/modules/sync-path-bookmarks/`; `apps/mobile/modules/sync-file-lock/` | N | N | — | — | Pending |
 | S05 | CloudKit account/container compatibility, sync and attachment delivery | `apps/mobile/modules/cloudkit-sync/`; `apps/mobile/lib/attachment-sync-backends/cloudkit.ts` | N/A | N | — | — | Pending |
 | S06 | Encryption enable/disable, credentials, locked/incorrect-secret behavior | `apps/mobile/lib/storage-file-encryption.ts` | N | N | — | — | Pending |

@@ -83,6 +83,7 @@ export * from './mobile-attachment-installer';
 export * from './mobile-attachment-common';
 export * from './mobile-attachment-availability';
 export * from './mobile-attachment-cleanup';
+export * from './mobile-attachment-backends';
 export * from './diceware';
 export * from './task-utils';
 export * from './task-similarity';

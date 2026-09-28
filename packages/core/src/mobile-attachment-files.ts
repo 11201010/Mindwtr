@@ -60,6 +60,11 @@ export type MobileAttachmentSafPort = {
   readDirectory(uri: string): Promise<string[]>;
   /** Creates a subfolder and returns its URI. */
   makeDirectory(parentUri: string, name: string): Promise<string>;
+  /** Creates a document and returns its URI; a provider may rename it on a name clash.
+   *  Absent where the host cannot write SAF folders: File Sync then refuses the upload. */
+  createFile?(parentUri: string, name: string, mimeType: string): Promise<string>;
+  /** Replaces a document's bytes. */
+  writeBytes?(uri: string, bytes: Uint8Array): Promise<void>;
 };
 
 /** The device's file IO for attachments (React Native: expo-file-system). URIs pass through

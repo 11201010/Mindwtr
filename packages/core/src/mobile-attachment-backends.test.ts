@@ -1,0 +1,417 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AppData, Attachment } from './types';
+import { computeSha256Hex } from './attachment-hash';
+import { buildFileSyncGenerationCloudKey } from './attachment-paths';
+import { DropboxConflictError, DropboxFileNotFoundError } from './dropbox';
+import { createMobileAttachmentFiles, type MobileAttachmentSafPort } from './mobile-attachment-files';
+import { createMobileAttachmentCommon } from './mobile-attachment-common';
+import { createMobileAttachmentBackends, type MobileAttachmentBackendsCoreFunctions } from './mobile-attachment-backends';
+import { createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
+
+const now = '2026-09-28T00:00:00.000Z';
+const LOCAL = new Uint8Array([1, 2, 3, 4]);
+const REMOTE = new Uint8Array([9, 8, 7, 6]);
+const LOCAL_URI = `${MANAGED}att-1.txt`;
+const BASE_URL = 'https://dav.example.com/Mindwtr';
+const toArrayBuffer = (bytes: Uint8Array) => bytes.slice().buffer as ArrayBuffer;
+const httpError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
+
+const fileAttachment = (overrides: Partial<Attachment> = {}): Attachment => ({
+  id: 'att-1',
+  kind: 'file',
+  title: 'att-1.txt',
+  uri: LOCAL_URI,
+  localStatus: 'available',
+  createdAt: now,
+  updatedAt: now,
+  ...overrides,
+});
+
+const withAttachment = (attachment: Attachment): AppData => ({
+  tasks: [{
+    id: 'task-1',
+    title: 'Task',
+    status: 'inbox',
+    tags: [],
+    contexts: [],
+    attachments: [attachment],
+    createdAt: now,
+    updatedAt: now,
+  }],
+  projects: [],
+  sections: [],
+  areas: [],
+  settings: {},
+});
+
+const attachmentOf = (result: AppData | false) => (result === false ? undefined : result.tasks[0].attachments?.[0]);
+
+const setup = (options: {
+  saf?: MobileAttachmentSafPort;
+  core?: Partial<MobileAttachmentBackendsCoreFunctions>;
+} = {}) => {
+  const memory = createMemoryFileSystem({ saf: options.saf });
+  const { storage } = createMemoryStorage();
+  const { log, lines } = createRecordingLog();
+  const files = createMobileAttachmentFiles({
+    fs: memory.fs,
+    storage,
+    getSecureConfigValue: async () => null,
+    log,
+    fetch: vi.fn() as unknown as typeof fetch,
+    dropboxAuth: { getValidAccessToken: async () => 'token', forceRefreshAccessToken: async () => 'token' },
+    core: { isSandboxMode: () => false },
+  });
+  const order: string[] = [];
+  const installer = {
+    installAttachmentFileGeneration: vi.fn(async (stagedPath: string, targetPath: string) => {
+      await memory.fs.move(stagedPath, targetPath);
+      return { status: 'installed' as const };
+    }),
+    recoverFileSyncAttachmentPublications: vi.fn(async () => undefined),
+    reserveFileSyncAttachmentPublication: vi.fn(async (targetPath: string) => {
+      order.push('reserve');
+      return { operationId: 'op-1', stagedPath: `${targetPath}.stage`, targetPath };
+    }),
+    claimFileSyncAttachmentPublication: vi.fn(async () => { order.push('claim'); }),
+    publishImmutableAttachmentFileGeneration: vi.fn(async (stagedPath: string, targetPath: string) => {
+      order.push('publish');
+      await memory.fs.move(stagedPath, targetPath);
+      return { status: 'published' as const };
+    }),
+    completeFileSyncAttachmentPublication: vi.fn(async () => { order.push('complete'); }),
+    abandonFileSyncAttachmentPublication: vi.fn(async () => undefined),
+    retainFileSyncAttachmentPublicationForInvalidTarget: vi.fn(async () => undefined),
+    clearFileSyncAttachmentPublicationRecovery: vi.fn(async () => undefined),
+    hashAttachmentFileGeneration: vi.fn(async () => {
+      throw new Error('native hash not configured');
+    }),
+  };
+  const common = createMobileAttachmentCommon({
+    fs: memory.fs,
+    files,
+    crypto: {} as never,
+    encryption: { logSyncEncryptionEvent: async () => undefined },
+    installer,
+    installerMayBeMissing: () => false,
+    // Skips the WebDAV request spacing; no test here waits on a timer.
+    timersPaused: () => true,
+    uploads: { createUploadTask: () => null },
+  });
+  const backends = createMobileAttachmentBackends({
+    fs: memory.fs,
+    files,
+    common,
+    installer,
+    log,
+    core: { withRetry: (operation) => operation(), ...options.core },
+  });
+  return { backends, memory, lines, installer, order };
+};
+
+const webdavConfig = { url: `${BASE_URL}/data.json`, username: 'user', password: 'pw' };
+
+describe('WebDAV attachment pass', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const stubWebdavServer = (putResponse: () => Response) => {
+    const requests: { method: string; url: string; headers: Record<string, string> }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method ?? 'GET').toUpperCase();
+      requests.push({ method, url, headers: { ...(init.headers as Record<string, string>) } });
+      if (method === 'HEAD') return new Response(null, { status: 404 });
+      if (method === 'MKCOL') return new Response(null, { status: 201 });
+      if (method === 'PUT') return putResponse();
+      return new Response(null, { status: 500 });
+    }));
+    return requests;
+  };
+
+  it('sends a new upload with If-None-Match: * and records the cloud key only after the PUT', async () => {
+    const requests = stubWebdavServer(() => new Response(null, { status: 201 }));
+    const { backends, memory } = setup();
+    memory.put(LOCAL_URI, LOCAL);
+
+    const result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+
+    const put = requests.find((request) => request.method === 'PUT');
+    expect(put?.url).toBe(`${BASE_URL}/attachments/att-1.txt`);
+    expect(put?.headers['If-None-Match']).toBe('*');
+    expect(put?.headers['If-Match']).toBeUndefined();
+    expect(attachmentOf(result)?.cloudKey).toBe('attachments/att-1.txt');
+  });
+
+  it('refuses a redirected PUT and records no cloud key', async () => {
+    stubWebdavServer(() => new Response(null, { status: 302, headers: { Location: 'https://elsewhere.example/' } }));
+    const { backends, memory, lines } = setup();
+    memory.put(LOCAL_URI, LOCAL);
+
+    const result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+
+    expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+    expect(lines).toContainEqual(expect.objectContaining({
+      level: 'warn',
+      message: 'Failed to upload attachment att-1',
+      extra: { error: 'fetch failed: unexpected redirect' },
+    }));
+  });
+
+  it('refuses to overwrite a remote copy that has no strong ETag', async () => {
+    const webdavPutFileVersioned = vi.fn(async () => undefined);
+    const { backends, memory } = setup({
+      core: {
+        webdavMakeDirectory: vi.fn(async () => undefined),
+        webdavHeadFile: vi.fn(async () => ({
+          exists: true,
+          fingerprint: null,
+          etag: 'W/"weak"',
+          lastModified: null,
+          contentLength: null,
+        })),
+        webdavPutFileVersioned,
+      },
+    });
+    memory.put(LOCAL_URI, LOCAL);
+
+    const result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+
+    expect(webdavPutFileVersioned).not.toHaveBeenCalled();
+    expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+  });
+
+  it('marks the attachment unrecoverable when the remote answers 404', async () => {
+    const { backends } = setup({
+      core: { webdavGetFile: vi.fn(async () => { throw httpError(404); }) },
+    });
+
+    const result = await backends.syncWebdavAttachments(
+      withAttachment(fileAttachment({ cloudKey: 'attachments/att-1.txt', localStatus: 'missing' })),
+      webdavConfig,
+      BASE_URL,
+    );
+
+    const attachment = attachmentOf(result);
+    expect(attachment?.cloudKey).toBeUndefined();
+    expect(attachment?.localStatus).toBe('missing');
+    expect(attachment?.deletedAt).toBeTruthy();
+  });
+
+  it('keeps the local bytes when a remote-winner download fails', async () => {
+    const webdavGetFile = vi.fn(async (): Promise<ArrayBuffer> => { throw httpError(500); });
+    const { backends, memory } = setup({
+      core: { webdavFileExists: vi.fn(async () => true), webdavGetFile },
+    });
+    memory.put(LOCAL_URI, LOCAL);
+    const attachment = fileAttachment({
+      cloudKey: 'attachments/att-1.txt',
+      fileHash: (await computeSha256Hex(REMOTE))!,
+      contentMtimeMs: 1,
+      contentSize: 1,
+    });
+
+    await backends.syncWebdavAttachments(withAttachment(attachment), webdavConfig, BASE_URL, undefined, {
+      phase: 'post-merge',
+    });
+
+    expect(webdavGetFile).toHaveBeenCalledTimes(1);
+    expect(memory.read(LOCAL_URI)).toEqual(LOCAL);
+    expect(memory.calls.filter((call) => call.startsWith('delete') && call.includes('att-1.txt'))).toEqual([]);
+  });
+});
+
+describe('self-hosted cloud attachment pass', () => {
+  const cloudConfig = { url: 'https://cloud.example.com/v1/data', token: 'secret' };
+
+  it('clears pendingContentUpload only after the edited bytes are on the server', async () => {
+    const cloudPutFile = vi.fn(async () => { throw httpError(500); });
+    const { backends, memory } = setup({ core: { cloudPutFile, cloudAttachmentExists: vi.fn(async () => true) } });
+    memory.put(LOCAL_URI, LOCAL);
+    const data = withAttachment(fileAttachment({
+      cloudKey: 'attachments/att-1.txt',
+      fileHash: (await computeSha256Hex(LOCAL))!,
+      pendingContentUpload: true,
+    }));
+
+    const failed = await backends.syncCloudAttachments(data, cloudConfig, BASE_URL, { phase: 'post-merge' });
+    expect(cloudPutFile).toHaveBeenCalledTimes(1);
+    expect(attachmentOf(failed === false ? data : failed)?.pendingContentUpload).toBe(true);
+
+    cloudPutFile.mockImplementation(async () => undefined);
+    const uploaded = await backends.syncCloudAttachments(data, cloudConfig, BASE_URL, { phase: 'post-merge' });
+
+    expect(cloudPutFile).toHaveBeenLastCalledWith(
+      `${BASE_URL}/attachments/att-1.txt`,
+      expect.any(ArrayBuffer),
+      'application/octet-stream',
+      expect.objectContaining({ token: 'secret' }),
+    );
+    expect(attachmentOf(uploaded)).toMatchObject({ cloudKey: 'attachments/att-1.txt', pendingContentUpload: undefined });
+  });
+
+  it('keeps a pending replacement untouched while its local bytes are missing', async () => {
+    const cloudGetFile = vi.fn(async () => toArrayBuffer(REMOTE));
+    const cloudPutFile = vi.fn(async () => undefined);
+    const { backends } = setup({ core: { cloudGetFile, cloudPutFile } });
+    const data = withAttachment(fileAttachment({ cloudKey: 'attachments/att-1.txt', pendingContentUpload: true }));
+
+    const result = await backends.syncCloudAttachments(data, cloudConfig, BASE_URL, { phase: 'post-merge' });
+
+    expect(result).toBe(false);
+    expect(cloudGetFile).not.toHaveBeenCalled();
+    expect(cloudPutFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('Dropbox attachment pass', () => {
+  const resolveAccessToken = async () => 'token';
+
+  it('uploads against the current revision before recording the cloud key', async () => {
+    const uploadDropboxFileVersioned = vi.fn(async () => ({ rev: 'rev-2' }));
+    const { backends, memory } = setup({
+      core: {
+        getDropboxFileMetadata: vi.fn(async () => ({ rev: 'rev-1' })),
+        uploadDropboxFileVersioned,
+      },
+    });
+    memory.put(LOCAL_URI, LOCAL);
+
+    const result = await backends.syncDropboxAttachments(
+      withAttachment(fileAttachment()),
+      'app-key',
+      vi.fn() as unknown as typeof fetch,
+      { resolveAccessToken },
+    );
+
+    expect(uploadDropboxFileVersioned).toHaveBeenCalledWith(
+      'token',
+      'attachments/att-1.txt',
+      expect.any(ArrayBuffer),
+      'rev-1',
+      expect.any(Function),
+      expect.anything(),
+    );
+    expect(attachmentOf(result)?.cloudKey).toBe('attachments/att-1.txt');
+  });
+
+  it('rethrows a revision conflict and records nothing', async () => {
+    const { backends, memory } = setup({
+      core: {
+        getDropboxFileMetadata: vi.fn(async () => ({ rev: 'rev-1' })),
+        uploadDropboxFileVersioned: vi.fn(async () => { throw new DropboxConflictError(); }),
+      },
+    });
+    memory.put(LOCAL_URI, LOCAL);
+
+    await expect(backends.syncDropboxAttachments(
+      withAttachment(fileAttachment()),
+      'app-key',
+      vi.fn() as unknown as typeof fetch,
+      { resolveAccessToken },
+    )).rejects.toBeInstanceOf(DropboxConflictError);
+  });
+
+  it('marks a missing remote file unrecoverable but only flags other download failures', async () => {
+    const downloadDropboxFile = vi.fn(async (): Promise<ArrayBuffer> => { throw new DropboxFileNotFoundError(); });
+    const { backends } = setup({ core: { downloadDropboxFile } });
+    const data = withAttachment(fileAttachment({ cloudKey: 'attachments/att-1.txt', localStatus: 'available' }));
+    const fetcher = vi.fn() as unknown as typeof fetch;
+
+    const missing = attachmentOf(await backends.syncDropboxAttachments(data, 'app-key', fetcher, { resolveAccessToken }));
+    expect(missing).toMatchObject({ cloudKey: undefined, localStatus: 'missing' });
+    expect(missing?.deletedAt).toBeTruthy();
+
+    downloadDropboxFile.mockImplementation(async () => { throw httpError(500); });
+    const failed = attachmentOf(await backends.syncDropboxAttachments(data, 'app-key', fetcher, { resolveAccessToken }));
+    expect(failed).toMatchObject({ cloudKey: 'attachments/att-1.txt', localStatus: 'missing' });
+    expect(failed?.deletedAt).toBeUndefined();
+  });
+});
+
+describe('File Sync attachment pass', () => {
+  const SYNC_DIR = 'file:///sdcard/Mindwtr/attachments/';
+
+  it('publishes an immutable generation through the journaled installer, then records its key', async () => {
+    const { backends, memory, installer, order } = setup();
+    memory.put(LOCAL_URI, LOCAL);
+    const cloudKey = buildFileSyncGenerationCloudKey(fileAttachment(), (await computeSha256Hex(LOCAL))!);
+    const target = `${SYNC_DIR}${cloudKey.split('/').pop()}`;
+
+    const result = await backends.syncFileAttachments(withAttachment(fileAttachment()), 'file:///sdcard/Mindwtr/data.json');
+
+    expect(installer.recoverFileSyncAttachmentPublications).toHaveBeenCalledWith(SYNC_DIR);
+    expect(order).toEqual(['reserve', 'claim', 'publish', 'complete']);
+    expect(memory.read(target)).toEqual(LOCAL);
+    expect(memory.read(`${target}.stage`)).toBeUndefined();
+    expect(attachmentOf(result)?.cloudKey).toBe(cloudKey);
+  });
+
+  it('keeps a key the folder does not hold yet during activation and logs the proof line', async () => {
+    const { backends, lines } = setup();
+    const data = withAttachment(fileAttachment({ cloudKey: 'attachments/att-1.txt', localStatus: 'missing' }));
+
+    const result = await backends.syncFileAttachments(data, 'file:///sdcard/Mindwtr/data.json', undefined, {
+      activationProbe: true,
+    });
+
+    expect(attachmentOf(result === false ? data : result)?.cloudKey).toBe('attachments/att-1.txt');
+    expect(lines).toContainEqual({
+      level: 'warn',
+      message: 'File Sync activation left an attachment the folder does not hold yet',
+      extra: { releaseCheck: 'v1.3.0/mobile-file-activation-absent-blob' },
+    });
+  });
+
+  describe('in a Storage Access Framework folder', () => {
+    const TREE = 'content://com.example.docs/tree/primary%3AMindwtr';
+    const FOLDER = `${TREE}/document/primary%3AMindwtr`;
+    const ATTACHMENTS = `${FOLDER}%2Fattachments`;
+
+    const createSaf = (put: (uri: string, bytes: Uint8Array) => void, writable: boolean) => {
+      const entries: string[] = [];
+      const saf: MobileAttachmentSafPort = {
+        readDirectory: async (uri) => (uri === FOLDER ? [ATTACHMENTS] : uri === ATTACHMENTS ? [...entries] : []),
+        makeDirectory: async () => ATTACHMENTS,
+      };
+      if (writable) {
+        saf.createFile = vi.fn(async (parentUri: string, name: string) => {
+          const uri = `${parentUri}%2F${name}`;
+          entries.push(uri);
+          return uri;
+        });
+        saf.writeBytes = vi.fn(async (uri: string, bytes: Uint8Array) => put(uri, bytes));
+      }
+      return saf;
+    };
+
+    it('creates and writes the generation through the SAF port', async () => {
+      let put: (uri: string, bytes: Uint8Array) => void = () => undefined;
+      const saf = createSaf((uri, bytes) => put(uri, bytes), true);
+      const { backends, memory } = setup({ saf });
+      put = memory.put;
+      memory.put(LOCAL_URI, LOCAL);
+      const cloudKey = buildFileSyncGenerationCloudKey(fileAttachment(), (await computeSha256Hex(LOCAL))!);
+      const filename = cloudKey.split('/').pop()!;
+
+      const result = await backends.syncFileAttachments(withAttachment(fileAttachment()), TREE);
+
+      expect(saf.createFile).toHaveBeenCalledWith(ATTACHMENTS, filename, 'application/octet-stream');
+      expect(memory.read(`${ATTACHMENTS}%2F${filename}`)).toEqual(LOCAL);
+      expect(attachmentOf(result)?.cloudKey).toBe(cloudKey);
+    });
+
+    it('refuses the upload and records no key when the host cannot write SAF folders', async () => {
+      const { backends, memory, lines } = setup({ saf: createSaf(() => undefined, false) });
+      memory.put(LOCAL_URI, LOCAL);
+
+      const result = await backends.syncFileAttachments(withAttachment(fileAttachment()), TREE);
+
+      expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+      expect(lines).toContainEqual(expect.objectContaining({
+        message: 'Failed to copy attachment att-1 to sync folder',
+        extra: { error: 'SAF attachment writes are unavailable' },
+      }));
+    });
+  });
+});
