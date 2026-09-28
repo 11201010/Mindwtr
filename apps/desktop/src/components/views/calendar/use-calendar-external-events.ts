@@ -9,15 +9,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     isSandboxMode,
+    filterCalendarEventsForAreas,
     resolveExternalCalendarColor,
     safeParseDate,
     themeExternalCalendarDisplayColor,
     useTaskStore,
     type ExternalCalendarEvent,
     type ExternalCalendarSubscription,
+    type Area,
+    type AreaFilterSelection,
 } from '@mindwtr/core';
 
-import { logError } from '../../../lib/app-log';
+import { logError, logInfo } from '../../../lib/app-log';
 import { fetchExternalCalendarEvents, summarizeExternalCalendarWarnings } from '../../../lib/external-calendar-events';
 import { dayKey } from './calendar-primitives';
 import { getWorkspaceCache } from '../../../lib/workspace-cache';
@@ -76,9 +79,11 @@ export type CalendarExternalEventsOptions = {
     /** Already normalized (trimmed, lower-cased); empty means "no filter". */
     filterQuery: string;
     visibleRange: { end: Date; start: Date };
+    areas?: Area[];
+    areaSelection?: AreaFilterSelection;
 };
 
-export function useCalendarExternalEvents({ filterQuery, visibleRange }: CalendarExternalEventsOptions) {
+export function useCalendarExternalEvents({ filterQuery, visibleRange, areas = [], areaSelection }: CalendarExternalEventsOptions) {
     const sandboxMode = isSandboxMode();
     const theme = useTaskStore((state) => state.settings?.theme);
     const [externalCalendars, setExternalCalendars] = useState<ExternalCalendarSubscription[]>([]);
@@ -155,20 +160,31 @@ export function useCalendarExternalEvents({ filterQuery, visibleRange }: Calenda
         [calendarColorById, theme]
     );
 
+    const enabledExternalEvents = useMemo(
+        () => externalEvents.filter((event) => externalCalendars.find((calendar) => calendar.id === event.sourceId)?.enabled !== false),
+        [externalCalendars, externalEvents]
+    );
     const visibleExternalEvents = useMemo(
-        () => externalEvents.filter((event) => {
+        () => filterCalendarEventsForAreas(enabledExternalEvents, externalCalendars, areaSelection ?? { included: [], excluded: [] }, areas).filter((event) => {
             if (hiddenExternalCalendarIds.has(event.sourceId)) return false;
             if (!filterQuery) return true;
             const sourceName = calendarNameById.get(event.sourceId) ?? '';
             return event.title.toLowerCase().includes(filterQuery)
                 || sourceName.toLowerCase().includes(filterQuery);
         }),
-        [calendarNameById, externalEvents, hiddenExternalCalendarIds, filterQuery]
+        [areas, areaSelection, calendarNameById, enabledExternalEvents, externalCalendars, hiddenExternalCalendarIds, filterQuery]
     );
+    useEffect(() => {
+        if (!areaSelection || (areaSelection.included.length === 0 && areaSelection.excluded.length === 0)) return;
+        if (!externalCalendars.some((calendar) => calendar.areaIds?.length)) return;
+        void logInfo('Calendar Area associations applied to display', {
+            scope: 'calendar', extra: { releaseCheck: 'v1.3.3/calendar-areas' },
+        });
+    }, [areaSelection, externalCalendars, visibleExternalEvents]);
 
-    const externalEventsByDay = useMemo(() => {
+    const indexEvents = (events: ExternalCalendarEvent[]) => {
         const nextMap = new Map<string, ExternalCalendarEvent[]>();
-        for (const event of visibleExternalEvents) {
+        for (const event of events) {
             const dayRange = eventDayRangeForVisibleRange(event, visibleRange);
             if (!dayRange) continue;
 
@@ -182,11 +198,17 @@ export function useCalendarExternalEvents({ filterQuery, visibleRange }: Calenda
             }
         }
         return nextMap;
-    }, [visibleExternalEvents, visibleRange]);
+    };
+    const externalEventsByDay = useMemo(() => indexEvents(visibleExternalEvents), [visibleExternalEvents, visibleRange]);
+    const availabilityEventsByDay = useMemo(() => indexEvents(enabledExternalEvents), [enabledExternalEvents, visibleRange]);
 
     const getExternalEventsForDay = useCallback(
         (date: Date) => externalEventsByDay.get(dayKey(date)) ?? [],
         [externalEventsByDay]
+    );
+    const getAvailabilityEventsForDay = useCallback(
+        (date: Date) => availabilityEventsByDay.get(dayKey(date)) ?? [],
+        [availabilityEventsByDay]
     );
 
     const toggleExternalCalendar = (calendarId: string) => {
@@ -204,6 +226,7 @@ export function useCalendarExternalEvents({ filterQuery, visibleRange }: Calenda
         externalError,
         getExternalCalendarColor,
         getExternalEventsForDay,
+        getAvailabilityEventsForDay,
         hiddenExternalCalendarIds,
         isExternalLoading,
         toggleExternalCalendar,

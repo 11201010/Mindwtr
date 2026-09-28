@@ -759,6 +759,7 @@ mod imp {
                 url: format!("system://{}", percent_encode(&uid)),
                 enabled: true,
                 color,
+                area_ids: None,
             });
             let Ok(ics) = read_calendar_components(session.api, calendar.client.ptr, &query) else {
                 continue;

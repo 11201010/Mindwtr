@@ -1143,6 +1143,8 @@ export const esOverrides: Record<string, string> = {
 'settings.noDeviceCalendars': "No se encontraron calendarios en el dispositivo.",
 'settings.deviceCalendar': "Calendario del dispositivo",
 'settings.externalCalendars': "Calendarios externos",
+'settings.calendarShowInAreas': "Mostrar en áreas",
+'settings.calendarAllAreas': "Todas las áreas",
 'settings.externalCalendarName': "Nombre",
 'settings.externalCalendarUrl': "URL ICS",
 'settings.externalCalendarUrlPlaceholder': "https://example.com/calendar.ics",

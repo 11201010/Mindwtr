@@ -1193,6 +1193,8 @@ export const jaOverrides: Record<string, string> = {
         'settings.noDeviceCalendars': '端末のカレンダーが見つかりませんでした。',
         'settings.deviceCalendar': '端末のカレンダー',
         'settings.externalCalendars': '外部カレンダー',
+        'settings.calendarShowInAreas': 'エリアに表示',
+        'settings.calendarAllAreas': 'すべてのエリア',
         'settings.externalCalendarName': '名前',
         'settings.externalCalendarUrl': 'ICS の URL',
         'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',

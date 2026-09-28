@@ -220,6 +220,8 @@ export function useDesktopCalendarController() {
     const external = useCalendarExternalEvents({
         filterQuery: normalizedViewFilterQuery,
         visibleRange,
+        areas,
+        areaSelection: resolvedAreaFilter,
     });
     const { getExternalEventsForDay } = external;
 
@@ -445,7 +447,7 @@ export function useDesktopCalendarController() {
         findCalendarFreeSlotForDay({
             day,
             durationMinutes,
-            events: getExternalEventsForDay(day),
+            events: external.getAvailabilityEventsForDay(day),
             excludeTaskId,
             tasks: schedulableTasks,
             timeEstimatesEnabled,
@@ -456,7 +458,7 @@ export function useDesktopCalendarController() {
         isCalendarSlotFreeForDay({
             day,
             durationMinutes,
-            events: getExternalEventsForDay(day),
+            events: external.getAvailabilityEventsForDay(day),
             excludeTaskId,
             startTime,
             tasks: schedulableTasks,

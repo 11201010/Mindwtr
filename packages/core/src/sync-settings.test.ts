@@ -504,6 +504,26 @@ describe('Sync Logic', () => {
             expect(merged.settings.externalCalendars?.[0]?.name).toBe('Team');
         });
 
+        it('keeps calendar Area associations when an older payload lacks the field and a second merge converges', () => {
+            const local: AppData = {
+                ...mockAppData(),
+                settings: {
+                    externalCalendars: [{ id: 'cal-1', name: 'Team', url: 'https://calendar.example.com/team.ics', enabled: true, areaIds: ['work', 'deleted'] }],
+                    syncPreferencesUpdatedAt: { externalCalendars: '2024-01-02T00:00:00.000Z' },
+                },
+            };
+            const oldPeer: AppData = {
+                ...mockAppData(),
+                settings: {
+                    externalCalendars: [{ id: 'cal-1', name: 'Team', url: 'https://calendar.example.com/team.ics', enabled: true }],
+                    syncPreferencesUpdatedAt: { externalCalendars: '2024-01-01T00:00:00.000Z' },
+                },
+            };
+            const merged = mergeAppData(local, oldPeer);
+            expect(merged.settings.externalCalendars?.[0]?.areaIds).toEqual(['work', 'deleted']);
+            expect(mergeAppData(merged, oldPeer).settings.externalCalendars).toEqual(merged.settings.externalCalendars);
+        });
+
         it('keeps local file calendar sources out of synced settings merges', () => {
             const localCalendars = [
                 { id: 'cal-local', name: 'Local', url: 'file:///home/user/agenda.ics', enabled: true, color: '#DB2777' },

@@ -100,8 +100,9 @@ export function CalendarSettingsScreen() {
     const filledButton = useFilledButtonColors();
     const { showToast } = useToast();
     const { isChineseLanguage, language, tr, t } = useSettingsLocalization();
-    const { settings, updateSettings } = useTaskStore((state) => ({
+    const { settings, areas, updateSettings } = useTaskStore((state) => ({
         settings: state.settings,
+        areas: state.areas,
         updateSettings: state.updateSettings,
     }), shallow);
     const scrollContentStyle = useSettingsScrollContent();
@@ -111,6 +112,8 @@ export function CalendarSettingsScreen() {
     const [systemCalendarEnabled, setSystemCalendarEnabled] = useState(false);
     const [systemCalendarSelectAll, setSystemCalendarSelectAll] = useState(true);
     const [systemCalendarSelectedIds, setSystemCalendarSelectedIds] = useState<string[]>([]);
+    const [systemCalendarAreaIds, setSystemCalendarAreaIds] = useState<Record<string, string[]>>({});
+    const [expandedAreaSourceId, setExpandedAreaSourceId] = useState<string | null>(null);
     const [systemCalendarPermission, setSystemCalendarPermission] = useState<SystemCalendarPermissionStatus>('undetermined');
     const [systemCalendars, setSystemCalendars] = useState<SystemCalendarInfo[]>([]);
     const [isSystemCalendarLoading, setIsSystemCalendarLoading] = useState(false);
@@ -286,6 +289,7 @@ export function CalendarSettingsScreen() {
             setSystemCalendarEnabled(stored.enabled);
             setSystemCalendarSelectAll(stored.selectAll);
             setSystemCalendarSelectedIds(stored.selectedCalendarIds);
+            setSystemCalendarAreaIds(stored.areaIdsByCalendar ?? {});
 
             const permission = requestAccess
                 ? await requestSystemCalendarPermission()
@@ -315,6 +319,7 @@ export function CalendarSettingsScreen() {
                 enabled: stored.enabled,
                 selectAll: false,
                 selectedCalendarIds: filteredSelection,
+                areaIdsByCalendar: stored.areaIdsByCalendar,
             });
         } catch (error) {
             console.error(error);
@@ -367,15 +372,18 @@ export function CalendarSettingsScreen() {
         enabled?: boolean;
         selectAll?: boolean;
         selectedCalendarIds?: string[];
+        areaIdsByCalendar?: Record<string, string[]>;
     }) => {
         const payload = {
             enabled: next.enabled ?? systemCalendarEnabled,
             selectAll: next.selectAll ?? systemCalendarSelectAll,
             selectedCalendarIds: next.selectedCalendarIds ?? systemCalendarSelectedIds,
+            areaIdsByCalendar: next.areaIdsByCalendar ?? systemCalendarAreaIds,
         };
         setSystemCalendarEnabled(payload.enabled);
         setSystemCalendarSelectAll(payload.selectAll);
         setSystemCalendarSelectedIds(payload.selectedCalendarIds);
+        setSystemCalendarAreaIds(payload.areaIdsByCalendar);
         await saveSystemCalendarSettings(payload);
     };
 
@@ -404,6 +412,37 @@ export function CalendarSettingsScreen() {
             selectedCalendarIds: selectAll ? [] : nextSelection,
         });
     };
+
+    const toggleSystemCalendarArea = async (calendarId: string, areaId: string) => {
+        const current = systemCalendarAreaIds[calendarId] ?? [];
+        const next = current.includes(areaId) ? current.filter((id) => id !== areaId) : [...current, areaId];
+        await persistSystemCalendarState({ areaIdsByCalendar: { ...systemCalendarAreaIds, [calendarId]: next } });
+    };
+
+    const toggleCalendarArea = async (calendarId: string, areaId: string) => {
+        const next = externalCalendars.map((calendar) => {
+            if (calendar.id !== calendarId) return calendar;
+            const current = calendar.areaIds ?? [];
+            return { ...calendar, areaIds: current.includes(areaId) ? current.filter((id) => id !== areaId) : [...current, areaId] };
+        });
+        setExternalCalendars(next);
+        await saveExternalCalendars(next);
+        await updateSettings({ externalCalendars: next });
+    };
+
+    const areaOptions = areas.filter((area) => !area.deletedAt);
+    const renderAreaSelector = (sourceId: string, selectedIds: string[], onToggle: (areaId: string) => void) => (
+        areaOptions.length > 0 && <View style={{ marginTop: 8 }}>
+            <TouchableOpacity accessibilityRole="button" onPress={() => setExpandedAreaSourceId(expandedAreaSourceId === sourceId ? null : sourceId)}>
+                <Text style={[styles.settingDescription, { color: tc.tint }]}>{t('settings.calendarShowInAreas')}: {selectedIds.length === 0 ? t('settings.calendarAllAreas') : areaOptions.filter((area) => selectedIds.includes(area.id)).map((area) => area.name).join(', ') || t('settings.calendarAllAreas')}</Text>
+            </TouchableOpacity>
+            {expandedAreaSourceId === sourceId && areaOptions.map((area) => (
+                <TouchableOpacity key={area.id} accessibilityRole="checkbox" accessibilityState={{ checked: selectedIds.includes(area.id) }} onPress={() => onToggle(area.id)} style={{ paddingVertical: 7 }}>
+                    <Text style={[styles.settingDescription, { color: tc.text }]}>{selectedIds.includes(area.id) ? '☑' : '☐'} {area.name}</Text>
+                </TouchableOpacity>
+            ))}
+        </View>
+    );
 
     const handleAddCalendar = async () => {
         const url = newCalendarUrl.trim();
@@ -819,6 +858,7 @@ export function CalendarSettingsScreen() {
                                                     <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={2}>
                                                         {t('settings.deviceCalendar')}
                                                     </Text>
+                                                    {renderAreaSelector(`system:${calendar.id}`, systemCalendarAreaIds[calendar.id] ?? [], (areaId) => void toggleSystemCalendarArea(calendar.id, areaId))}
                                                 </View>
                                                 <Switch
                                                     value={selected}
@@ -931,6 +971,7 @@ export function CalendarSettingsScreen() {
                                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={2}>
                                             {maskCalendarUrl(calendar.url)}
                                         </Text>
+                                        {renderAreaSelector(calendar.id, calendar.areaIds ?? [], (areaId) => void toggleCalendarArea(calendar.id, areaId))}
                                         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
                                             <TouchableOpacity
                                                 accessibilityRole="button"

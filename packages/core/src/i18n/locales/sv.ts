@@ -1162,6 +1162,8 @@ export const svOverrides: Record<string, string> = {
         'settings.noDeviceCalendars': 'Inga enhetskalendrar hittades.',
         'settings.deviceCalendar': 'Enhetskalender',
         'settings.externalCalendars': 'Externa kalendrar',
+        'settings.calendarShowInAreas': 'Visa i områden',
+        'settings.calendarAllAreas': 'Alla områden',
         'settings.externalCalendarName': 'Namn',
         'settings.externalCalendarUrl': 'ICS-URL',
         'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',

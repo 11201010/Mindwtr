@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { getExternalCalendarColorForId, type ExternalCalendarEvent } from '@mindwtr/core';
+import { getExternalCalendarColorForId, isCalendarSlotFree, type Area, type ExternalCalendarEvent } from '@mindwtr/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchExternalCalendarEvents } from '../../../lib/external-calendar-events';
@@ -46,6 +46,24 @@ describe('useCalendarExternalEvents', () => {
 
     afterEach(() => {
         window.localStorage.clear();
+    });
+
+    it('keeps an Area-hidden appointment busy for the schedule caller', async () => {
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({
+            calendars: [{ id: 'work', name: 'Work', url: 'https://calendar.example/work', enabled: true, areaIds: ['work-area'] }],
+            events: [makeEvent()], warnings: [],
+        });
+        const { result } = renderHook(() => useCalendarExternalEvents({
+            filterQuery: '', visibleRange: APRIL,
+            areas: [{ id: 'work-area' }, { id: 'home-area' }] as Area[],
+            areaSelection: { included: ['home-area'], excluded: [] },
+        }));
+        await waitFor(() => expect(result.current.externalCalendars).toHaveLength(1));
+        const day = new Date(2026, 3, 3);
+        expect(result.current.getExternalEventsForDay(day)).toEqual([]);
+        expect(isCalendarSlotFree(day, new Date(2026, 3, 3, 9, 30), 30, {
+            events: result.current.getAvailabilityEventsForDay(day), tasks: [], timeEstimatesEnabled: true,
+        })).toBe(false);
     });
 
     it('spreads a multi-day event over every day it covers, clamped to the visible range', async () => {

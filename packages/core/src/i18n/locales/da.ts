@@ -1181,6 +1181,8 @@ export const daOverrides: Record<string, string> = {
     'settings.noDeviceCalendars': 'Ingen enhedskalendere fundet.',
     'settings.deviceCalendar': 'Enhedens kalender',
     'settings.externalCalendars': 'Eksterne kalendere',
+    'settings.calendarShowInAreas': 'Vis i områder',
+    'settings.calendarAllAreas': 'Alle områder',
     'settings.externalCalendarName': 'Navn',
     'settings.externalCalendarUrl': 'ICS URL',
     'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',

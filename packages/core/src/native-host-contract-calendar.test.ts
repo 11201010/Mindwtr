@@ -186,6 +186,27 @@ describe('native host contract: Calendar', () => {
         expect(items(view, 'scheduled').some((item) => item.taskId === 't-form')).toBe(true);
     });
 
+    it('rejects malformed and oversized calendar Area associations at the native boundary', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        for (const areaIds of ['work', [42], ['x'.repeat(201)], Array(201).fill('a-work')]) {
+            const calendar = { ...ready, calendars: ready.calendars?.map((entry) => ({ ...entry, areaIds })) };
+            expect(host.getCalendarView({ state: { viewMode: 'month', selectedDate: '2026-10-28', visibleMonth: '2026-10-28' }, calendar, ...page } as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+    });
+
+    it('applies the shared Area association to native event rows', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const settings = useTaskStore.getState().settings;
+        useTaskStore.setState({ settings: { ...settings, filters: { ...settings.filters, areaId: 'a-home', areaIds: ['a-home'], excludedAreaIds: [] } } });
+        const calendar = { ...ready, calendars: ready.calendars?.map((entry) => entry.id === 'ics-work' ? { ...entry, areaIds: ['a-work'] } : entry) } as NativeCalendarFeed;
+        const view = value(host.getCalendarView({ state: { viewMode: 'month', selectedDate: '2026-10-28', visibleMonth: '2026-10-28' }, calendar, ...page }));
+        expect(items(view, 'events').some((item) => item.eventId === 'e-sync')).toBe(false);
+        expect(items(view, 'events').some((item) => item.eventId === 'e-lunch')).toBe(true);
+    });
+
     it('uses Jalali month and year in contract headings', async () => {
         freezeClock();
         const { host } = await openHost();

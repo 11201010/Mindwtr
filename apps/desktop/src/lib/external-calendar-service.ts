@@ -27,6 +27,7 @@ function sanitizeCalendars(calendars: ExternalCalendarSubscription[]): ExternalC
             url: (c.url || '').trim(),
             enabled: c.enabled !== false,
             color: normalizeExternalCalendarColor(c.color),
+            ...(Array.isArray(c.areaIds) ? { areaIds: c.areaIds } : {}),
         }))
         .filter((c) => c.url.length > 0);
 }

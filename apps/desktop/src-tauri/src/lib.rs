@@ -561,6 +561,8 @@ struct ExternalCalendarSubscription {
     url: String,
     enabled: bool,
     color: Option<String>,
+    #[serde(rename = "areaIds", skip_serializing_if = "Option::is_none")]
+    area_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

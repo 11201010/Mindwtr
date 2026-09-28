@@ -1162,6 +1162,8 @@ export const faOverrides: Record<string, string> = {
         'settings.noDeviceCalendars': 'تقویم دستگاهی یافت نشد.',
         'settings.deviceCalendar': 'تقویم دستگاه',
         'settings.externalCalendars': 'تقویم‌های خارجی',
+        'settings.calendarShowInAreas': 'نمایش در حوزه‌ها',
+        'settings.calendarAllAreas': 'همهٔ حوزه‌ها',
         'settings.externalCalendarName': 'نام',
         'settings.externalCalendarUrl': 'آدرس ICS',
         'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',

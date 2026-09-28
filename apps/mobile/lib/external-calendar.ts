@@ -29,6 +29,7 @@ export interface SystemCalendarSettings {
     enabled: boolean;
     selectAll: boolean;
     selectedCalendarIds: string[];
+    areaIdsByCalendar?: Record<string, string[]>;
 }
 
 export interface SystemCalendarInfo {
@@ -118,6 +119,9 @@ function normalizeSystemCalendarSettings(raw: Partial<SystemCalendarSettings> | 
         enabled,
         selectAll,
         selectedCalendarIds: selectAll ? [] : selectedCalendarIds,
+        areaIdsByCalendar: Object.fromEntries(Object.entries(raw?.areaIdsByCalendar ?? {})
+            .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]))
+            .map(([id, ids]) => [id, [...new Set(ids.filter((areaId) => typeof areaId === 'string' && areaId.length > 0))]])),
     };
 }
 
@@ -207,6 +211,7 @@ export async function getExternalCalendars(): Promise<ExternalCalendarSubscripti
             url: c.url.trim(),
             enabled: c.enabled !== false,
             color: normalizeExternalCalendarColor(c.color),
+            ...(Array.isArray(c.areaIds) ? { areaIds: c.areaIds } : {}),
         }))
         .filter((c) => c.url.length > 0);
 }
@@ -220,6 +225,7 @@ export async function saveExternalCalendars(calendars: ExternalCalendarSubscript
             url: (c.url || '').trim(),
             enabled: c.enabled !== false,
             color: normalizeExternalCalendarColor(c.color),
+            ...(Array.isArray(c.areaIds) ? { areaIds: c.areaIds } : {}),
         }))
         .filter((c) => c.url.length > 0);
     await AsyncStorage.setItem(EXTERNAL_CALENDARS_KEY, JSON.stringify(sanitized));
@@ -523,6 +529,7 @@ async function fetchSystemCalendarEvents(rangeStart: Date, rangeEnd: Date, signa
         name: getCalendarDisplayName(calendar),
         url: `system://${encodeURIComponent(calendar.id)}`,
         enabled: true,
+        areaIds: settings.areaIdsByCalendar?.[calendar.id],
         // The OS calendar's own color, resolved as a feed hint (#974) — never
         // an explicit pick, so it never gets written into synced settings.
         feedColor: typeof calendar.color === 'string' && calendar.color.trim().length > 0 ? calendar.color : undefined,

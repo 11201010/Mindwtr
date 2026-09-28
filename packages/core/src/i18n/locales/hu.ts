@@ -1143,6 +1143,8 @@ export const huOverrides: Record<string, string> = {
     'settings.noDeviceCalendars': 'Nem található eszköznaptár.',
     'settings.deviceCalendar': 'Eszköznaptár',
     'settings.externalCalendars': 'Külső naptárak',
+    'settings.calendarShowInAreas': 'Megjelenítés területeken',
+    'settings.calendarAllAreas': 'Minden terület',
     'settings.externalCalendarName': 'Név',
     'settings.externalCalendarUrl': 'ICS URL',
     'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',

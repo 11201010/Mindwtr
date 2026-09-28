@@ -28,6 +28,7 @@
  * the import cycle between the two files is safe.
  */
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
+import { filterCalendarEventsForAreas } from './external-calendar-ingestion';
 import { formatCalendarTimeInputValue } from './calendar-scheduling';
 import {
     applyComposerCreatedProject,
@@ -418,6 +419,7 @@ const isEvent = (value: unknown): value is ExternalCalendarEvent => (
 const isCalendarSource = (value: unknown): value is ExternalCalendarSubscription => (
     isObjectRecord(value) && isText(value.id) && isText(value.name, 2000)
     && (value.color === undefined || isText(value.color, 64)) && (value.feedColor === undefined || isText(value.feedColor, 64))
+    && (value.areaIds === undefined || isList(value.areaIds, 200, (id): id is string => isText(id, 200)))
 );
 const isList = <T,>(value: unknown, limit: number, check: (entry: unknown) => entry is T): value is T[] => (
     Array.isArray(value) && value.length <= limit && value.every(check)
@@ -591,9 +593,10 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             completed: indexCalendarCompletedTasks(ctx.store._allTasks, {
                 showCompleted: ctx.showCompleted, projectById: ctx.projectById, areaById: ctx.areaById, resolvedAreaFilter: ctx.resolvedAreaFilter,
             }),
-            events: indexCalendarEvents(feed.events),
+            events: indexCalendarEvents(filterCalendarEventsForAreas(feed.events, feed.calendars, ctx.resolvedAreaFilter, ctx.store.areas)),
         };
-        return { rangeTasks, index, lists: (date: Date) => getCalendarDayLists(index, date) };
+        const availabilityEvents = indexCalendarEvents(filterCalendarEventsForAreas(feed.events, feed.calendars, { included: [], excluded: [] }, ctx.store.areas));
+        return { rangeTasks, index, lists: (date: Date) => getCalendarDayLists(index, date), availabilityEvents: (date: Date) => availabilityEvents.get(calendarDateKey(date)) ?? [] };
     };
     const periodIndex = (ctx: Context, period: CalendarPeriodState, feed: Feed) => {
         const currentMonthDate = startOfCalendarMonth(period.visibleMonthDate, ctx.calendarSystem);
@@ -601,7 +604,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         const range = getCalendarVisibleRange({
             calendarSystem: ctx.calendarSystem, currentMonthDate, selectedDate: period.selectedDate, viewMode: period.viewMode, weekStartTime,
         });
-        const key = [ctx.dataRevision, range.rangeStart.getTime(), range.rangeEnd.getTime(), paramsKey(feed.events), projectedAt.iso].join('|');
+        const key = [ctx.dataRevision, range.rangeStart.getTime(), range.rangeEnd.getTime(), paramsKey(feed.events), paramsKey(feed.calendars), projectedAt.iso].join('|');
         let hit = indexCache.find((entry) => entry.key === key);
         if (!hit) {
             hit = { key, value: buildIndex(ctx, range, feed) };
@@ -649,7 +652,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
     const build = (ctx: Context, period: CalendarPeriodState, feed: Feed, query: string): BuiltView => {
         const { t, formatDate, dates, now, projectedLabel } = ctx;
         const periodData = periodIndex(ctx, period, feed);
-        const { lists, currentMonthDate, weekStartTime } = periodData;
+        const { lists, availabilityEvents, currentMonthDate, weekStartTime } = periodData;
         // Calendar colors in the theme's variant, as mobile paints them (its theme preset).
         const sourceColor = createCalendarSourceColorResolver(feed.calendars, themeDescriptor(ctx.settings.theme)?.statusPreset ?? 'default');
         const sourceNames = getCalendarSourceNames(feed.calendars);
@@ -662,7 +665,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         const selected = period.selectedDate;
         const dateLabels = formatCalendarSelectedDateLabels(selected, { dates, t, now });
         const entries: PendingEntry[] = [];
-        const eventsFor = (date: Date) => lists(date).events;
+        const eventsFor = availabilityEvents;
 
         const scheduleRow = (task: Task, list: 'search' | 'planning'): PendingEntry => {
             const durationMinutes = ctx.estimateMinutes(task.timeEstimate);
@@ -977,7 +980,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         scrollToMinutes: start.getHours() * 60 + start.getMinutes(),
     });
     const eventsByDay = (feed: Feed) => {
-        const byDay = indexCalendarEvents(feed.events);
+        const byDay = indexCalendarEvents(filterCalendarEventsForAreas(feed.events, feed.calendars, { included: [], excluded: [] }, []));
         return (date: Date): readonly ExternalCalendarEvent[] => byDay.get(calendarDateKey(date)) ?? [];
     };
 

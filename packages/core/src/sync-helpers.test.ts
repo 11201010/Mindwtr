@@ -351,8 +351,8 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
                 dateFormat: 'yyyy-MM-dd',
                 timeFormat: '24h',
                 externalCalendars: [
-                    { id: 'cal-1', name: 'Work', url: 'https://example.com/work.ics', enabled: true },
-                    { id: 'cal-local', name: 'Local', url: 'file:///home/user/agenda.ics', enabled: true },
+                    { id: 'cal-1', name: 'Work', url: 'https://example.com/work.ics', enabled: true, areaIds: ['work'] },
+                    { id: 'cal-local', name: 'Local', url: 'file:///home/user/agenda.ics', enabled: true, areaIds: ['home'] },
                     { id: 'cal-android-local', name: 'Android Local', url: 'content://com.android.providers.media.documents/document/calendar.ics', enabled: true },
                 ],
                 savedFilters: [{
@@ -394,7 +394,7 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
         expect(sanitized.settings.appearance).toEqual({ density: 'compact', textSize: 'small', mobileQuickAccessView: 'contexts' });
         expect(sanitized.settings.keybindingStyle).toBe('emacs');
         expect(sanitized.settings.externalCalendars).toEqual([
-            { id: 'cal-1', name: 'Work', url: 'https://example.com/work.ics', enabled: true },
+            { id: 'cal-1', name: 'Work', url: 'https://example.com/work.ics', enabled: true, areaIds: ['work'] },
         ]);
         expect(sanitized.settings.savedFilters).toEqual(data.settings.savedFilters);
 

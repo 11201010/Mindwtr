@@ -88,9 +88,11 @@ import {
     SYSTEM_CALENDAR_SETTINGS_KEY,
     canOpenExternalCalendarEvent,
     fetchExternalCalendarEvents,
+    getSystemCalendarSettings,
     getSystemCalendars,
     openExternalCalendarEvent,
     saveExternalCalendars,
+    saveSystemCalendarSettings,
 } from '@/lib/external-calendar';
 
 beforeEach(() => {
@@ -120,6 +122,20 @@ describe('getSystemCalendars', () => {
         const calendars = await getSystemCalendars();
 
         expect(calendars.map((calendar) => calendar.name)).toEqual(['Google', 'local account']);
+    });
+});
+
+describe('device-only calendar Area mapping', () => {
+    it('reads old settings and round-trips OS IDs only in device storage', async () => {
+        expect((await getSystemCalendarSettings()).areaIdsByCalendar).toEqual({});
+        await saveSystemCalendarSettings({ enabled: true, selectAll: true, selectedCalendarIds: [], areaIdsByCalendar: { 'account-a': ['work'] } });
+        expect(mockSetItem).toHaveBeenCalledWith(SYSTEM_CALENDAR_SETTINGS_KEY, expect.stringContaining('"account-a":["work"]'));
+        mockGetItem.mockImplementation(async (key: string) => key === SYSTEM_CALENDAR_SETTINGS_KEY
+            ? JSON.stringify({ enabled: true, selectAll: true, selectedCalendarIds: [], areaIdsByCalendar: { 'account-a': ['work'] } })
+            : '[]');
+        mockGetCalendarsAsync.mockResolvedValue([{ id: 'account-a', title: 'Account A' }]);
+        const feed = await fetchExternalCalendarEvents(new Date('2026-04-20'), new Date('2026-04-21'));
+        expect(feed.calendars.find((calendar) => calendar.id === 'system:account-a')?.areaIds).toEqual(['work']);
     });
 });
 

@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/calendar-areas`** — desktop and mobile Calendar views, after applying saved calendar Area associations under an active Area filter. Message: `Calendar Area associations applied to display`. Confirms the association-aware display path ran; it contains no calendar names, URLs, or event text. Availability still reads all enabled source events.
+
 - **`v1.3.3/flatpak-secret-service`** — desktop `apps/desktop/src-tauri/src/sync.rs`, after a Dropbox credential write is read back from the system keyring and its plaintext fallback is cleared. Message: `Dropbox credentials verified in system keyring`. Connect Dropbox in the next Flathub release with a working Secret Service: expect this line and no plaintext-storage warning, without a Flatseal override. The permission-only rebuild of v1.3.2 does not contain this marker. No credential values or identifiers are logged. (#1297)
 
 - **`v1.3.3/saved-list-shortcut`** — mobile `app/(drawer)/widget-list/[id].tsx`: `Saved list shortcut destination resolved`, with `available`. Run Open Mindwtr Saved List from Shortcuts; expect `available: true` and the selected filter's current tasks. A removed filter reports false without opening a different list. No list names, IDs, or task content are logged.

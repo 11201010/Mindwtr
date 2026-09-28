@@ -1187,6 +1187,8 @@ export const en: Record<string, string> = {
         'settings.noDeviceCalendars': 'No device calendars found.',
         'settings.deviceCalendar': 'Device calendar',
         'settings.externalCalendars': 'External calendars',
+        'settings.calendarShowInAreas': 'Show in Areas',
+        'settings.calendarAllAreas': 'All Areas',
         'settings.externalCalendarName': 'Name',
         'settings.externalCalendarUrl': 'ICS URL',
         'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',

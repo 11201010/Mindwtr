@@ -327,7 +327,7 @@ const sanitizeExternalCalendars = (
 ): AppData['settings']['externalCalendars'] | undefined => {
     if (value === undefined) return fallback ? cloneSettingValue(fallback) : undefined;
     if (!Array.isArray(value)) return fallback ? cloneSettingValue(fallback) : undefined;
-    const isValidCalendar = (item: unknown): item is { color?: unknown; id: string; name: string; url: string; enabled: boolean } =>
+    const isValidCalendar = (item: unknown): item is { color?: unknown; areaIds?: unknown; id: string; name: string; url: string; enabled: boolean } =>
         isObjectRecord(item)
         && isNonEmptyString(item.id)
         && isNonEmptyString(item.name)
@@ -337,7 +337,7 @@ const sanitizeExternalCalendars = (
         const url = item.url.trim().toLowerCase();
         return url.startsWith('file://') || url.startsWith('content://');
     };
-    const sanitizeCalendar = (item: { color?: unknown; id: string; name: string; url: string; enabled: boolean }) => {
+    const sanitizeCalendar = (item: { color?: unknown; areaIds?: unknown; id: string; name: string; url: string; enabled: boolean }) => {
         const color = normalizeExternalCalendarColor(item.color);
         return {
             id: item.id.trim(),
@@ -345,6 +345,7 @@ const sanitizeExternalCalendars = (
             url: item.url.trim(),
             enabled: item.enabled,
             ...(color ? { color } : {}),
+            ...(Array.isArray(item.areaIds) ? { areaIds: [...new Set(item.areaIds.slice(0, 200).filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 200))] } : {}),
         };
     };
     const next = value

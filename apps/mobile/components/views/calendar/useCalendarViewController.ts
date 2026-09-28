@@ -24,6 +24,7 @@ import {
   createCalendarLocaleDates,
   createCalendarSourceColorResolver,
   findCalendarFreeSlot,
+  filterCalendarEventsForAreas,
   formatCalendarHourLabel,
   formatCalendarMonthTitle,
   formatCalendarSelectedDateLabels,
@@ -362,7 +363,22 @@ export function useCalendarViewController() {
 
   const deadlineTasksByDate = useMemo(() => indexCalendarDeadlineTasks(visibleTasks), [visibleTasks]);
 
-  const externalEventsByDate = useMemo(() => indexCalendarEvents(externalEventsRange === externalRangeKey ? externalEvents : []), [externalEvents, externalEventsRange, externalRangeKey]);
+  const currentExternalEvents = useMemo(
+    () => externalEventsRange === externalRangeKey ? externalEvents : [],
+    [externalEvents, externalEventsRange, externalRangeKey],
+  );
+  const externalEventsByDate = useMemo(() => indexCalendarEvents(
+    filterCalendarEventsForAreas(currentExternalEvents, externalCalendars, resolvedAreaFilter, areas),
+  ), [currentExternalEvents, externalCalendars, resolvedAreaFilter, areas]);
+  useEffect(() => {
+    if (resolvedAreaFilter.included.length === 0 && resolvedAreaFilter.excluded.length === 0) return;
+    if (!externalCalendars.some((calendar) => calendar.areaIds?.length)) return;
+    void logInfo('Calendar Area associations applied to display', {
+      scope: 'calendar', extra: { releaseCheck: 'v1.3.3/calendar-areas' },
+    });
+  }, [resolvedAreaFilter, externalCalendars, externalEventsByDate]);
+  const availabilityEventsByDate = useMemo(() => indexCalendarEvents(currentExternalEvents), [currentExternalEvents]);
+  const getAvailabilityEventsForDate = (date: Date) => availabilityEventsByDate.get(calendarDateKey(date)) ?? [];
 
   const getDayLists = useCallback((date: Date) => getCalendarDayLists({
     completed: completedTasksByDate,
@@ -385,7 +401,7 @@ export function useCalendarViewController() {
 
   const findFreeSlotForDay = (day: Date, durationMinutes: number, excludeTaskId?: string): Date | null => (
     findCalendarFreeSlot(day, durationMinutes, {
-      events: getExternalEventsForDate(day),
+      events: getAvailabilityEventsForDate(day),
       excludeTaskId,
       tasks: schedulableTasks,
       timeEstimatesEnabled,
@@ -394,7 +410,7 @@ export function useCalendarViewController() {
 
   const isSlotFreeForDay = (day: Date, startTime: Date, durationMinutes: number, excludeTaskId?: string): boolean => (
     isCalendarSlotFree(day, startTime, durationMinutes, {
-      events: getExternalEventsForDate(day),
+      events: getAvailabilityEventsForDate(day),
       excludeTaskId,
       tasks: schedulableTasks,
       timeEstimatesEnabled,

@@ -7,6 +7,8 @@ export interface ExternalCalendarSubscription {
     url: string;
     enabled: boolean;
     color?: string;
+    /** Empty or absent shows this calendar in every Area. */
+    areaIds?: string[];
     /** Derived from the feed (ICS COLOR/X-APPLE-CALENDAR-COLOR or an OS calendar's own color). Never persisted to synced settings — resolve through `resolveExternalCalendarColor`. */
     feedColor?: string;
 }
@@ -1032,6 +1034,7 @@ export function expandCategoryCalendars(
         name: category,
         url: subscription.url,
         enabled: subscription.enabled,
+        areaIds: subscription.areaIds,
         feedColor: categoryInfo?.colors?.[category] ?? calendarColor,
     }));
     return hasUncategorized ? [withFeedColor, ...calendars] : calendars;

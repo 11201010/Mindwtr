@@ -1139,6 +1139,8 @@ export const ukOverrides: Record<string, string> = {
     "settings.noDeviceCalendars": "Календарі пристрою не знайдено.",
     "settings.deviceCalendar": "Календар пристрою",
     "settings.externalCalendars": "Зовнішні календарі",
+    "settings.calendarShowInAreas": "Показувати у сферах",
+    "settings.calendarAllAreas": "Усі сфери",
     "settings.externalCalendarName": "Ім'я",
     "settings.externalCalendarUrl": "URL ICS",
     "settings.externalCalendarUrlPlaceholder": "https://example.com/calendar.ics",

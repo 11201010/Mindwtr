@@ -3,6 +3,8 @@ import type {
     ExternalCalendarSubscription,
 } from './ics';
 import { hasCalendarPushTaskMarker } from './calendar-scheduling';
+import type { Area } from './types';
+import type { AreaFilterSelection } from './area-filter';
 
 const MINDWTR_PUSHED_EVENT_PREFIX = 'mindwtr: ';
 const MINDWTR_MIRROR_CALENDAR_NAMES = new Set([
@@ -15,6 +17,39 @@ export type ExternalCalendarSourceResult = {
     calendars: ExternalCalendarSubscription[];
     events: ExternalCalendarEvent[];
 };
+
+/** Read-time visibility; stale Area IDs stay stored so sync does not rewrite settings. */
+export function calendarMatchesAreaSelection(
+    calendar: Pick<ExternalCalendarSubscription, 'areaIds'>,
+    selection: AreaFilterSelection,
+    areas: readonly Area[],
+): boolean {
+    const active = new Set(areas.filter((area) => !area.deletedAt).map((area) => area.id));
+    const associated = Array.isArray(calendar.areaIds)
+        ? calendar.areaIds.filter((id) => active.has(id))
+        : [];
+    if (associated.length === 0) return true;
+    const surviving = associated.filter((id) => !selection.excluded.includes(id));
+    if (surviving.length === 0) return false;
+    if (selection.included.length === 0) return true;
+    return surviving.some((id) => selection.included.includes(id));
+}
+
+export function filterCalendarEventsForAreas(
+    events: readonly ExternalCalendarEvent[],
+    calendars: readonly ExternalCalendarSubscription[],
+    selection: AreaFilterSelection,
+    areas: readonly Area[],
+): ExternalCalendarEvent[] {
+    const byId = new Map(calendars.map((calendar) => [calendar.id, calendar]));
+    const visibleIds = new Set(calendars
+        .filter((calendar) => calendar.enabled && calendarMatchesAreaSelection(calendar, selection, areas))
+        .map((calendar) => calendar.id));
+    return events.filter((event) => {
+        const calendar = byId.get(event.sourceId) ?? byId.get(event.sourceId.split('#')[0]);
+        return !calendar || visibleIds.has(calendar.id);
+    });
+}
 
 export function isMindwtrMirrorCalendar(
     calendar: Pick<ExternalCalendarSubscription, 'name'>,

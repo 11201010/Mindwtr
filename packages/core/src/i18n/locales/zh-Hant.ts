@@ -1135,6 +1135,8 @@ export const zhHant: Record<string, string> = {
         'settings.noDeviceCalendars': '找不到裝置日曆。',
         'settings.deviceCalendar': '裝置日曆',
         'settings.externalCalendars': '外部日曆',
+        'settings.calendarShowInAreas': '在領域中顯示',
+        'settings.calendarAllAreas': '所有領域',
         'settings.externalCalendarName': '名稱',
         'settings.externalCalendarUrl': 'ICS 地址',
         'settings.externalCalendarUrlPlaceholder': 'https://example.com/calendar.ics',
