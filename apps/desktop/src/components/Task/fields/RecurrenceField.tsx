@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Repeat } from 'lucide-react';
+import { ChevronDown, Repeat } from 'lucide-react';
 import {
     parseRRuleString,
     RECURRENCE_INTERVAL_MAX,
@@ -109,6 +109,7 @@ export function RecurrenceField({
                 </button>
             )}
             {showEditor && (<>
+            <div className="relative w-full">
             <select
                 value={editRecurrence}
                 aria-label={t('task.aria.recurrence')}
@@ -157,7 +158,7 @@ export function RecurrenceField({
                         onRecurrenceRRuleChange('');
                     }
                 }}
-                className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground"
+                className="appearance-none text-xs bg-muted/50 border border-border rounded pl-2 pr-7 py-1 w-full text-foreground"
             >
                 <option value="">{t('recurrence.none')}</option>
                 <option value="daily">{t('recurrence.daily')}</option>
@@ -165,6 +166,8 @@ export function RecurrenceField({
                 <option value="monthly">{t('recurrence.monthly')}</option>
                 <option value="yearly">{t('recurrence.yearly')}</option>
             </select>
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            </div>
             {editRecurrence === 'daily' && (
                 <div className="flex items-center gap-2 pt-1">
                     <span className="text-[10px] text-muted-foreground">{t('recurrence.repeatEvery')}</span>
@@ -248,7 +251,9 @@ export function RecurrenceField({
             {editRecurrence && (
                 <div className="flex items-center gap-2 pt-1 flex-wrap">
                     <span className="text-[10px] text-muted-foreground">{t('recurrence.endsLabel')}</span>
+                    <div className="relative">
                     <select
+                        aria-label={t('recurrence.endsLabel')}
                         value={recurrenceEndMode}
                         onChange={(event) => {
                             const value = event.target.value as 'never' | 'until' | 'count';
@@ -271,12 +276,14 @@ export function RecurrenceField({
                                 until: undefined,
                             }));
                         }}
-                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                        className="appearance-none text-xs bg-muted/50 border border-border rounded pl-2 pr-7 py-1 text-foreground"
                     >
                         <option value="never">{t('recurrence.endsNever')}</option>
                         <option value="until">{t('recurrence.endsOnDate')}</option>
                         <option value="count">{t('recurrence.endsAfterCount')}</option>
                     </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                    </div>
                     {recurrenceEndMode === 'until' && (
                         <DateField
                             t={t}
