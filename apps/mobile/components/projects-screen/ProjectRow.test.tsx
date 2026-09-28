@@ -72,6 +72,23 @@ describe('ProjectRow', () => {
     vi.clearAllMocks();
   });
 
+  it.each([
+    { summary: undefined, warning: true },
+    { summary: { activeTaskCount: 1, hasWaitingAction: true }, warning: false },
+  ])('uses tracked waiting work for its focused warning (#1307): $warning', ({ summary, warning }) => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow project={{ ...project, isFocused: true }} taskSummary={summary} tc={tc} focusedCount={1}
+          statusPalette={statusPalette as any} t={(key) => key}
+          onDeleteProject={vi.fn()} onDuplicateProject={vi.fn()}
+          onOpenProject={vi.fn()} onToggleProjectFocus={vi.fn()} />,
+      );
+    });
+    expect(tree.root.findAllByType(Text).some((node) => node.props.children === 'projects.noNextAction')).toBe(warning);
+    renderer.act(() => tree.unmount());
+  });
+
   it('shows a clean project title without tag dots while retaining its tags', () => {
     const taggedProject = Object.freeze({ ...project, tagIds: Object.freeze(['admin', 'family']) });
     let tree!: renderer.ReactTestRenderer;

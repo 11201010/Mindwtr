@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { Alert, Pressable, Text, TouchableOpacity, View } from 'react-native';
-import { getProjectRowStatus, tFallback, type Project } from '@mindwtr/core';
+import { getProjectRowStatus, isFocusedProjectMissingNextAction, tFallback, type Project } from '@mindwtr/core';
 import * as Haptics from 'expo-haptics';
 import { Copy, Trash2, AlertTriangle } from 'lucide-react-native';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -51,7 +51,7 @@ export function ProjectRow({
     const nextAction = taskSummary?.nextAction;
     const taskCount = taskSummary?.activeTaskCount ?? 0;
     const taskCountLabel = `${taskCount} ${t('common.tasks')}`;
-    const showFocusedWarning = project.isFocused && !nextAction && taskCount > 0;
+    const showFocusedWarning = isFocusedProjectMissingNextAction(project, taskSummary);
     const swipeableRef = useRef<Swipeable>(null);
 
     const handleDuplicate = () => {

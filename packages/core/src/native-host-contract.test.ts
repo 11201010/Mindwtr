@@ -411,7 +411,7 @@ describe('native host contract', () => {
             project('alpha-focused', 'active', 9, { areaId: 'alpha', isFocused: true }),
             project('zeta-active', 'active', 0, { areaId: 'zeta' }),
             project('later-active', 'active', 0, { areaId: 'later' }),
-            project('orphan', 'active', 0, { areaId: 'deleted-area' }),
+            project('orphan', 'active', 0, { areaId: 'deleted-area', isFocused: true }),
             project('waiting', 'waiting', 0, { areaId: 'zeta' }),
             project('someday', 'someday', 0, { areaId: 'later' }),
             project('archived', 'archived', 0, { areaId: 'alpha' }),
@@ -463,13 +463,13 @@ describe('native host contract', () => {
                 activeTaskCount: summary?.activeTaskCount ?? 0,
                 nextActionId: summary?.nextAction?.id ?? null,
                 nextActionTitle: summary?.nextAction?.title ?? null,
-                focusedWithoutNextAction: row.isFocused && !summary?.nextAction && (summary?.activeTaskCount ?? 0) > 0,
+                focusedWithoutNextAction: row.id === 'orphan',
                 color: '#123456',
             });
         }
         expect(first.value.active[0].projects[0]).toMatchObject({
             id: 'alpha-focused', isFocused: true, activeTaskCount: 1,
-            nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: true,
+            nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: false,
         });
         expect(first.value.active[0].projects[1]).toMatchObject({
             id: 'alpha-regular', nextActionId: 'regular-next', nextActionTitle: 'Next step',

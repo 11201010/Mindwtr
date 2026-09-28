@@ -1,4 +1,4 @@
-import type { Area, Project, ProjectAreaGroup, Task } from '@mindwtr/core';
+import type { Area, Project, ProjectAreaGroup } from '@mindwtr/core';
 
 export type ProjectListRow =
   | { type: 'section-label'; key: string; title: string }
@@ -15,12 +15,7 @@ export type ProjectListRow =
     }
   | { type: 'project'; key: string; project: Project; sectionKind: 'active' | 'deferred' | 'archived' };
 
-// Matches core's projectTaskSummaryById value shape (store-types.ts DerivedState);
-// core owns the computation (store-helpers.ts computeTaskDerivedState). See #927.
-export type ProjectTaskSummary = {
-  activeTaskCount: number;
-  nextAction?: Task;
-};
+export type { ProjectTaskSummary } from '@mindwtr/core';
 
 type BuildProjectListRowsParams = {
   areaById: Map<string, Area>;

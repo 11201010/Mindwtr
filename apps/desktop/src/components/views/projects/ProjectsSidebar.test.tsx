@@ -65,7 +65,7 @@ function buildTask(id: string, title: string, status: TaskStatus, projectId: str
     };
 }
 
-type ProjectTaskSummary = { activeTaskCount: number; nextAction?: Task };
+type ProjectTaskSummary = { activeTaskCount: number; nextAction?: Task; hasWaitingAction?: boolean };
 
 // Mirrors core's projectTaskSummaryById shape (store-helpers.ts computeTaskDerivedState):
 // one open-task count and lowest-order 'next' task per project.
@@ -75,6 +75,7 @@ function buildProjectTaskSummaryById(tasksByProject: Record<string, Task[]>): Ma
         summaries.set(projectId, {
             activeTaskCount: tasks.length,
             nextAction: tasks.find((task) => task.status === 'next'),
+            hasWaitingAction: tasks.some((task) => task.status === 'waiting'),
         });
     }
     return summaries;
@@ -484,6 +485,16 @@ describe('ProjectsSidebar', () => {
         expect(screen.queryByText('Focused inbox task')).not.toBeInTheDocument();
         expect(screen.queryByText('Unfocused inbox task')).not.toBeInTheDocument();
         expect(screen.queryByText('Focused next task')).not.toBeInTheDocument();
+    });
+
+    it('warns for an empty focused project but not a waiting-only one (#1307)', () => {
+        const empty = { ...buildProject('empty', 'Empty', 0), isFocused: true };
+        const waiting = { ...buildProject('waiting', 'Waiting project', 1), isFocused: true };
+        renderSidebarWithSpy(vi.fn(), [empty, waiting], buildProjectTaskSummaryById({
+            waiting: [buildTask('waiting-task', 'Waiting task', 'waiting', 'waiting')],
+        }));
+        expect(screen.getAllByText('No next action')).toHaveLength(1);
+        expect(screen.getByText('No next action').closest('[data-project-id]')).toHaveAttribute('data-project-id', 'empty');
     });
 
     it('reveals idle row controls on hover or focus while keeping focused stars visible', () => {

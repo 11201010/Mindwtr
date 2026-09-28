@@ -1,3 +1,4 @@
+import type { ProjectTaskSummary } from './project-row-meta';
 import { createNextRecurringTask, normalizeRecurrenceForLoad } from './recurrence';
 import { getTaskDateCoherenceIssues } from './task-date-coherence';
 import {
@@ -1135,7 +1136,7 @@ export const computeTaskDerivedState = (
     const tasksByContext = new Map<string, Task[]>();
     const tasksByTag = new Map<string, Task[]>();
     const focusedTasks: Task[] = [];
-    const projectTaskSummaryById = new Map<string, { activeTaskCount: number; nextAction?: Task }>();
+    const projectTaskSummaryById = new Map<string, ProjectTaskSummary>();
     const dateCoherenceIssuesByTaskId = new Map<string, ReturnType<typeof getTaskDateCoherenceIssues>>();
     // Accumulated in the main loop below rather than in two extra full passes over `tasks`
     // (A-04). The accumulator carries collectTaskTokenUsage's own inclusion rule, so the
@@ -1160,6 +1161,7 @@ export const computeTaskDerivedState = (
             if (isTaskActionable(task)) {
                 const summary = projectTaskSummaryById.get(task.projectId) ?? { activeTaskCount: 0 };
                 summary.activeTaskCount += 1;
+                if (task.status === 'waiting') summary.hasWaitingAction = true;
                 if (task.status === 'next' && (!summary.nextAction || compareTasksByProjectOrder(task, summary.nextAction) < 0)) {
                     summary.nextAction = task;
                 }

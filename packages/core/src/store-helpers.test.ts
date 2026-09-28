@@ -849,6 +849,7 @@ describe('derived store state helpers', () => {
         });
         expect(derived.projectTaskSummaryById.get('project-2')).toEqual({
             activeTaskCount: 1,
+            hasWaitingAction: true,
         });
     });
 

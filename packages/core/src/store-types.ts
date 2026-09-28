@@ -1,3 +1,4 @@
+import type { ProjectTaskSummary } from './project-row-meta';
 import type { FocusStarAction } from './focus-star';
 import type { AppData, Area, Person, Project, Section, Task, TaskStatus } from './types';
 import type { TaskQueryOptions } from './storage';
@@ -225,7 +226,7 @@ export type DerivedState = {
     tasksByContext: Map<string, Task[]>;
     tasksByTag: Map<string, Task[]>;
     focusedTasks: Task[];
-    projectTaskSummaryById: Map<string, { activeTaskCount: number; nextAction?: Task }>;
+    projectTaskSummaryById: Map<string, ProjectTaskSummary>;
     allContexts: string[];
     allTags: string[];
     contextTokenUsage: TaskTokenUsage[];

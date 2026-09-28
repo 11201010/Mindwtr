@@ -53,7 +53,7 @@ import {
     type TaskEditorMonthlyCustom,
 } from './task-editor-schedule';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
-import { getProjectRowStatus } from './project-row-meta';
+import { getProjectRowStatus, isFocusedProjectMissingNextAction } from './project-row-meta';
 import { collectFocusEligibilityTasks, getFocusStarBlockedText, resolveTaskEditorFocusStar, type FocusStarAction } from './focus-star';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import {
@@ -459,7 +459,7 @@ const toNativeProjectRow = (
         activeTaskCount,
         nextActionId: nextAction?.id ?? null,
         nextActionTitle: nextAction?.title ?? null,
-        focusedWithoutNextAction: isFocused && !nextAction && activeTaskCount > 0,
+        focusedWithoutNextAction: isFocusedProjectMissingNextAction(project, summary),
     };
 };
 

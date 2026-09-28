@@ -5,7 +5,7 @@ import { cn } from '../../../lib/utils';
 import { FocusStarIcon } from '../../FocusStarIcon';
 import { SortableProjectRow } from './SortableRows';
 import { LIST_END_GAP } from '../list/list-toolbar';
-import { tFallback, type Area, type Project, type Task } from '@mindwtr/core';
+import { isFocusedProjectMissingNextAction, tFallback, type Area, type Project, type ProjectTaskSummary } from '@mindwtr/core';
 import { ProjectAreaDropZone } from './project-area-dnd';
 import {
     isProjectAreaCollapsed,
@@ -68,10 +68,6 @@ export function getVisibleProjectIds({
         ...collectVisible('archived', groupedArchivedProjects, showArchivedProjects),
     ];
 }
-
-// Matches core's projectTaskSummaryById value shape (store-types.ts DerivedState),
-// computed once in store-helpers.ts computeTaskDerivedState. See #927.
-type ProjectTaskSummary = { activeTaskCount: number; nextAction?: Task };
 
 interface ProjectsSidebarProps {
     t: (key: string) => string;
@@ -668,7 +664,7 @@ export function ProjectsSidebar({
                                                 {areaProjects.map((project) => {
                                             const summary = projectTaskSummaryById.get(project.id);
                                             const activeTaskCount = summary?.activeTaskCount ?? 0;
-                                            const hasNextAction = Boolean(summary?.nextAction);
+                                            const showFocusedWarning = isFocusedProjectMissingNextAction(project, summary);
 
                                             return (
                                                 <SortableProjectRow key={project.id} projectId={project.id} section="active">
@@ -737,7 +733,7 @@ export function ProjectsSidebar({
                                                                     {activeTaskCount}
                                                                 </span>
                                                             </div>
-                                                            {project.isFocused && activeTaskCount > 0 && !hasNextAction && (
+                                                            {showFocusedWarning && (
                                                             <div className="px-2 pb-2 pl-12">
                                                                     <span className="text-xs text-warning flex items-center gap-1">
                                                                         <AlertTriangle className="w-3 h-3" />
