@@ -23,6 +23,16 @@ const appLogMocks = vi.hoisted(() => ({
     logWarn: vi.fn(async () => undefined),
 }));
 vi.mock('./app-log', () => appLogMocks);
+// The device store that keeps the last queued command applied to each task.
+const deviceStorage = vi.hoisted(() => {
+    const items = new Map<string, string>();
+    return {
+        items,
+        getItem: vi.fn(async (key: string) => items.get(key) ?? null),
+        setItem: vi.fn(async (key: string, value: string) => { items.set(key, value); }),
+    };
+});
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: deviceStorage }));
 
 // eslint-disable-next-line import/first
 import {
@@ -321,6 +331,7 @@ describe('ingestPendingCaptures', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        deviceStorage.items.clear();
         fileSystemMocks.getInfoAsync.mockResolvedValue({ exists: true });
         fileSystemMocks.deleteAsync.mockResolvedValue(undefined);
         addProject = vi.fn<AddProject>(async (title: string) => project({ id: 'created-project', title }));
@@ -925,13 +936,85 @@ describe('ingestPendingCaptures', () => {
         expect(tasks[1].status).toBe('next');
         expect(files.size).toBe(0);
         expect(appLogMocks.logInfo.mock.calls).toEqual([
-            ['Queued command skipped: the task changed since', {
+            ['Queued command skipped', {
                 scope: 'capture', extra: { releaseCheck: 'v1.3.3/stale-queued-command-skipped', kind: 'defer', outcome: 'stale' },
             }],
-            ['Queued command skipped: the task changed since', {
-                scope: 'capture', extra: { releaseCheck: 'v1.3.3/stale-queued-command-skipped', kind: 'complete', outcome: 'stale' },
+            ['Queued command skipped', {
+                scope: 'capture', extra: { releaseCheck: 'v1.3.3/stale-queued-command-skipped', kind: 'complete', outcome: 'replayed' },
             }],
         ]);
+    });
+
+    // A load, a sync or an in-app edit after the tap never makes a queued command stale:
+    // the store's updatedAt says nothing about which command came last.
+    it('applies a widget check-off to a task a load promoted after the tap', async () => {
+        oneFile('c.json', { kind: 'complete', id: 'c1', taskId: 'promoted', completedAt: '2026-09-10T09:00:03.000Z', source: 'android-widget' });
+        const tasks = [{ id: 'promoted', title: 'Promoted', status: 'next', updatedAt: '2026-09-10T10:00:00.000Z' } as Task];
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(), updateTask, addProject, projects: [], areas: [], tasks, getTasks: () => tasks, people: [], settings: emptySettings,
+        })).toBe(1);
+
+        expect(updateTask).toHaveBeenCalledWith('promoted', { status: 'done', completedAt: '2026-09-10T09:00:03.000Z' });
+    });
+
+    it('applies a newer Watch command that arrives in a later drain, and skips an older straggler', async () => {
+        const tasks = [{ id: 'deferred', title: 'Deferred', status: 'next', updatedAt: '2026-09-01T00:00:00.000Z' } as Task];
+        let clock = Date.parse('2026-09-11T08:00:00.000Z');
+        const storeUpdate = vi.fn(async (id: string, updates: Partial<Task>) => {
+            Object.assign(tasks.find((task) => task.id === id)!, updates, { updatedAt: new Date(clock += 1_000).toISOString() });
+            return { success: true };
+        });
+        const deps = {
+            addTask: addTaskMock(), updateTask: storeUpdate, addProject, projects: [], areas: [], tasks, getTasks: () => tasks,
+            people: [], settings: emptySettings, flushPendingSave: vi.fn(async () => undefined),
+        };
+        const defer = (id: string, startDate: string, createdAt: string) => oneFile(`${id}.json`, {
+            kind: 'defer', id, taskId: 'deferred', startDate, createdAt, source: 'apple-watch',
+        });
+
+        defer('d1', '2026-09-20', '2026-09-10T10:00:00.000Z');
+        expect(await ingestPendingCaptures(deps)).toBe(1);
+        defer('d2', '2026-09-21', '2026-09-10T10:01:00.000Z');
+        expect(await ingestPendingCaptures(deps)).toBe(1);
+        expect(tasks[0].startTime).toBe('2026-09-21');
+
+        defer('d0', '2026-09-19', '2026-09-10T09:59:00.000Z');
+        expect(await ingestPendingCaptures(deps)).toBe(1);
+        expect(tasks[0].startTime).toBe('2026-09-21');
+        expect(storeUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the queue file until the record of the applied command is stored, and a replay after that writes nothing', async () => {
+        oneFile('c.json', { kind: 'complete', id: 'c1', taskId: 'open', completedAt: '2026-09-10T09:00:03.000Z', source: 'android-widget' });
+        const tasks = [{ id: 'open', title: 'Open', status: 'next' } as Task];
+        const storeUpdate = vi.fn(async (id: string, updates: Partial<Task>) => {
+            Object.assign(tasks.find((task) => task.id === id)!, updates);
+            return { success: true };
+        });
+        const deps = {
+            addTask: addTaskMock(), updateTask: storeUpdate, addProject, projects: [], areas: [], tasks, getTasks: () => tasks,
+            people: [], settings: emptySettings, flushPendingSave: vi.fn(async () => undefined),
+        };
+
+        // Killed between the durable save and the record.
+        deviceStorage.setItem.mockRejectedValueOnce(new Error('killed before the record'));
+        expect(await ingestPendingCaptures(deps)).toBe(0);
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+        expect(storeUpdate).toHaveBeenCalledOnce();
+
+        // Killed between the record and the delete.
+        fileSystemMocks.deleteAsync.mockRejectedValueOnce(new Error('killed before the delete'));
+        expect(await ingestPendingCaptures(deps)).toBe(0);
+        expect(deviceStorage.setItem).toHaveBeenCalledTimes(2);
+        expect(storeUpdate).toHaveBeenCalledOnce();
+
+        // The user reopens the task; the replay of the recorded command leaves it open.
+        tasks[0].status = 'next';
+        expect(await ingestPendingCaptures(deps)).toBe(1);
+        expect(storeUpdate).toHaveBeenCalledOnce();
+        expect(tasks[0].status).toBe('next');
+        expect(fileSystemMocks.deleteAsync).toHaveBeenLastCalledWith('file:///data/Documents/pending-captures/c.json', { idempotent: true });
     });
 
     it('orders Watch commands by createdAt even when UUID filenames sort differently', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import type { PendingCaptureQueuePort } from './pending-captures';
+import type { PendingCaptureQueuePort, PendingCaptureRecordPort } from './pending-captures';
 import { acquireWorkspaceTransitionLock } from './sandbox';
 import { openScreenHost, requestId, restartScreenHost, value } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
@@ -36,6 +36,10 @@ function fakeQueue(files: Record<string, unknown>) {
     return { port, stored, failDelete };
 }
 
+// The device's record of applied commands (RN's RKStorage value); it survives a restart.
+let deviceRecord: string | null = null;
+const record = (): PendingCaptureRecordPort => ({ read: async () => deviceRecord, write: async (value) => { deviceRecord = value; } });
+
 const queueItems = {
     [`${CAPTURE_ID}.json`]: { id: CAPTURE_ID, title: 'From the dialog', source: 'android-quick-capture' },
     [`${INTENT_ID}.json`]: { kind: 'text', id: INTENT_ID, title: 'Dictated', source: 'android-capture-intent' },
@@ -69,6 +73,7 @@ async function reloadStore() {
 }
 
 afterEach(async () => {
+    deviceRecord = null;
     vi.useRealTimers();
     await flushPendingSave();
     resetForTests();
@@ -78,12 +83,14 @@ describe('ingestPendingCaptures', () => {
     it('answers NOT_READY before the validated load and refuses a call without a request UUID or a queue', async () => {
         const queue = fakeQueue(queueItems);
         const cold = createNativeHostContract();
-        expect(await cold.ingestPendingCaptures({ requestId: requestId(), queue: queue.port })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await cold.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(queue.port.list).not.toHaveBeenCalled();
 
         const host = await openScreenHost({ data: {}, record: {}, log: [] });
-        expect(await host.ingestPendingCaptures({ requestId: 'nope', queue: queue.port })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: { list: queue.port.list } as never }))
+        expect(await host.ingestPendingCaptures({ requestId: 'nope', queue: queue.port, lastApplied: record() })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: { list: queue.port.list } as never, lastApplied: record() }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port } as never))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(queue.port.list).not.toHaveBeenCalled();
     });
@@ -92,7 +99,7 @@ describe('ingestPendingCaptures', () => {
         const host = await openScreenHost({ data: { tasks: [task('open'), task('later')] }, record: {}, log: [] });
         const queue = fakeQueue(queueItems);
 
-        expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port }))).toEqual({ ingested: 4 });
+        expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() }))).toEqual({ ingested: 4 });
 
         const tasks = useTaskStore.getState()._allTasks;
         expect(tasks.map((entry) => [entry.id, entry.status])).toEqual([
@@ -110,11 +117,11 @@ describe('ingestPendingCaptures', () => {
         for (const name of Object.keys(queueItems)) queue.failDelete.add(name);
         const request = requestId();
 
-        expect(value(await host.ingestPendingCaptures({ requestId: request, queue: queue.port }))).toEqual({ ingested: 0 });
+        expect(value(await host.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: record() }))).toEqual({ ingested: 0 });
         expect(queue.stored.size).toBe(6);
 
         await reloadStore();
-        const { result, wrote } = await replayAfterRestart((restarted) => restarted.ingestPendingCaptures({ requestId: request, queue: queue.port }));
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.ingestPendingCaptures({ requestId: request, queue: queue.port, lastApplied: record() }));
 
         expect(value(result)).toEqual({ ingested: 4 });
         expect(wrote).toBe(false);
@@ -134,14 +141,14 @@ describe('ingestPendingCaptures', () => {
         failSaves = true;
         const queue = fakeQueue({ [`${CAPTURE_ID}.json`]: queueItems[`${CAPTURE_ID}.json`], 'c.json': queueItems['c.json'] });
 
-        const first = host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port });
+        const first = host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() });
         await vi.advanceTimersByTimeAsync(30_000);
         expect(value(await first)).toEqual({ ingested: 0 });
         expect(queue.port.delete).not.toHaveBeenCalled();
         expect(useTaskStore.getState().persistenceFailure).not.toBeNull();
 
         failSaves = false;
-        const second = host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port });
+        const second = host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() });
         await vi.advanceTimersByTimeAsync(30_000);
         expect(value(await second)).toEqual({ ingested: 2 });
         expect(queue.stored.size).toBe(0);
@@ -154,7 +161,7 @@ describe('ingestPendingCaptures', () => {
         const queue = fakeQueue(queueItems);
         const release = acquireWorkspaceTransitionLock()!;
         try {
-            expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port }))).toEqual({ ingested: 0 });
+            expect(value(await host.ingestPendingCaptures({ requestId: requestId(), queue: queue.port, lastApplied: record() }))).toEqual({ ingested: 0 });
         } finally {
             release();
         }

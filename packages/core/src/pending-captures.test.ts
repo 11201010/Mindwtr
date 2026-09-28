@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { drainPendingCaptureQueue, type PendingCaptureDrainDeps, type PendingCaptureQueuePort } from './pending-captures';
+import {
+    drainPendingCaptureQueue,
+    type PendingCaptureDrainDeps,
+    type PendingCaptureQueuePort,
+    type PendingCaptureRecordPort,
+} from './pending-captures';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Task } from './types';
 
@@ -43,12 +48,16 @@ function fakeQueue(files: Record<string, unknown>) {
 
 // Each test's own storage, so a late save from an earlier test cannot land in it.
 let saved: () => AppData;
+// The device's record of applied commands, kept across a test's drains and restarts.
+let lastApplied: PendingCaptureRecordPort;
 
 async function openStore(tasks: Task[]) {
     await flushPendingSave();
     resetForTests();
     let persisted: AppData = { tasks, projects: [], sections: [], areas: [], people: [], settings: { deviceId: 'queue-test' } };
     saved = () => persisted;
+    let record: string | null = null;
+    lastApplied = { read: async () => record, write: async (value) => { record = value; } };
     setStorageAdapter({
         getData: async () => structuredClone(persisted),
         saveData: async (data) => { persisted = structuredClone(data); },
@@ -74,6 +83,7 @@ function storeDeps(queue: PendingCaptureQueuePort, extra: Partial<PendingCapture
         getTasks: () => useTaskStore.getState()._allTasks,
         flushPendingSave,
         queue,
+        lastApplied,
         log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         ...extra,
     };

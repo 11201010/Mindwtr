@@ -19,7 +19,12 @@ import { tFallback, type TranslateFn } from './i18n';
 import { logError, logInfo, logWarn } from './logger';
 import type { NativeHostResult } from './native-host-contract';
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
-import { drainPendingCaptureQueue, type PendingCaptureLog, type PendingCaptureQueuePort } from './pending-captures';
+import {
+    drainPendingCaptureQueue,
+    type PendingCaptureLog,
+    type PendingCaptureQueuePort,
+    type PendingCaptureRecordPort,
+} from './pending-captures';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { useTaskStore } from './store';
 
@@ -48,6 +53,10 @@ const isQueuePort = (value: unknown): value is PendingCaptureQueuePort => (
     && typeof value.delete === 'function'
 );
 
+const isRecordPort = (value: unknown): value is PendingCaptureRecordPort => (
+    isObjectRecord(value) && typeof value.read === 'function' && typeof value.write === 'function'
+);
+
 const isOptionalText = (value: unknown) => value === undefined || value === null || isText(value, 2000);
 
 export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
@@ -71,25 +80,33 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
     return {
         /**
          * Drains the pending-captures queue into the store. `queue` lists, reads and
-         * deletes the files under the app's `files/pending-captures/`. Captures,
+         * deletes the files under the app's `files/pending-captures/`. `lastApplied`
+         * reads and writes the device's record of the last queued command applied to
+         * each task, React Native's RKStorage value under
+         * PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY; a write resolves once durable. Captures,
          * check-offs and defers are stored; `audio` and `pomodoro` items stay in the
          * queue untouched. A file is deleted only after its write is durable.
          * `ingested` counts the items stored and removed.
          *
          * Every call drains again, so a replay after a restart is safe: a capture is
          * created under its own UUID and a replay finds that task; a check-off or
-         * defer checks the task first and finds it done or deferred. The request ID
+         * defer is found in the lastApplied record, and one older than the last
+         * command applied to its task writes nothing. The request ID
          * names the journal entry. In sandbox mode, or during a workspace switch,
          * nothing is read.
          */
-        async ingestPendingCaptures(input: { requestId: string; queue: PendingCaptureQueuePort }): Promise<NativeHostResult<{ ingested: number }>> {
+        async ingestPendingCaptures(input: {
+            requestId: string;
+            queue: PendingCaptureQueuePort;
+            lastApplied: PendingCaptureRecordPort;
+        }): Promise<NativeHostResult<{ ingested: number }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
-                || !isQueuePort(input.queue)) {
-                return fail('INVALID_INPUT', 'A request UUID and a queue with list, read and delete are required');
+                || !isQueuePort(input.queue) || !isRecordPort(input.lastApplied)) {
+                return fail('INVALID_INPUT', 'A request UUID, a queue with list, read and delete, and a lastApplied record with read and write are required');
             }
-            const queue = input.queue;
+            const { queue, lastApplied } = input;
             const run = drainChain.then(async () => {
                 if (isSandboxMode() || isWorkspaceTransitionActive()) return 0;
                 const { addTask, updateTask, addProject, projects, areas, tasks, people, settings } = useTaskStore.getState();
@@ -106,6 +123,7 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
                     getProjects: () => useTaskStore.getState()._allProjects,
                     flushPendingSave: flushDurably,
                     queue,
+                    lastApplied,
                     log,
                 });
             });

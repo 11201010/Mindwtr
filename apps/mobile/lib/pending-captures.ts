@@ -1,5 +1,7 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
     ANDROID_QUICK_CAPTURE_SOURCE,
+    PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
     PENDING_CAPTURES_DIRECTORY,
     drainPendingCaptureQueue,
     type AppData,
@@ -133,6 +135,10 @@ export async function ingestPendingCaptures({ transcribeAudio, ...deps }: Ingest
             list: async () => ((await getInfoAsync(dir)).exists ? readDirectoryAsync(dir) : null),
             read: (name) => readAsStringAsync(`${dir}/${name}`),
             delete: (name) => deleteAsync(`${dir}/${name}`, { idempotent: true }),
+        },
+        lastApplied: {
+            read: () => AsyncStorage.getItem(PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY),
+            write: (value) => AsyncStorage.setItem(PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY, value),
         },
         log: {
             info: (message, context) => logInfo(message, context),

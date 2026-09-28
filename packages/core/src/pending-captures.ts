@@ -9,10 +9,11 @@
 // port) and supplies its log.
 //
 // Each item is stored once. A capture with a UUID id is created under that id,
-// so a replay finds the task it made; a check-off or defer checks the task's
-// state first, so a replay finds it done or deferred. A queue file is deleted
-// only after the store saved its write: a kill between the two replays the item,
-// and the replay writes nothing.
+// so a replay finds the task it made. A check-off or defer is checked against the
+// device's record of the last queued command applied to its task: a replay of
+// that command, or an older one, writes nothing. A queue file is deleted only
+// after the store saved its write (and a command's record): a kill between them
+// replays the item, and the replay writes nothing.
 //
 // `audio` items need the host's audio port and `pomodoro` items its Pomodoro
 // controller; without them they stay in the queue untouched.
@@ -301,6 +302,20 @@ export type PendingCaptureAudioPort = {
     delete(audioPath: string): Promise<void>;
 };
 
+/**
+ * The device's record of the last queued command applied to each task, as one
+ * text value. It stays on the device and is never synced.
+ */
+export type PendingCaptureRecordPort = {
+    read(): Promise<string | null>;
+    write(value: string): Promise<void>;
+};
+
+/** The key React Native (AsyncStorage) and the native app (RKStorage) keep that record under. */
+export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-captures:last-applied:v1';
+const LAST_APPLIED_KEEP_MS = 14 * 24 * 60 * 60 * 1000;
+type LastApplied = { tapMs: number; id: string; at: number };
+
 type PendingCaptureLogContext = { scope: string; extra?: Record<string, unknown> };
 
 /** React Native's app log shape. No task content, path or identifier goes into it. */
@@ -312,6 +327,7 @@ export type PendingCaptureLog = {
 
 export type PendingCaptureDrainDeps = PendingCaptureStoreDeps & {
     queue: PendingCaptureQueuePort;
+    lastApplied: PendingCaptureRecordPort;
     log: PendingCaptureLog;
     /** Without it every `audio` item stays in the queue untouched. */
     audio?: PendingCaptureAudioPort;
@@ -422,13 +438,10 @@ function resolveQueuedCompletedAt(completion: PendingCompletion): string | undef
 
 // At-least-once: a task already done, archived, deleted or unknown is a no-op and the
 // file still goes away. The success line is the phase-2 release check.
-// `isStale` says the task changed after the command was made: a check-off that
-// would write is then dropped ('stale') and the task keeps its newer state.
 export async function applyPendingCompletion(
     completion: PendingCompletion,
     { updateTask, tasks, getTasks }: Pick<PendingCaptureStoreDeps, 'updateTask' | 'tasks' | 'getTasks'>,
-    isStale?: (task: Task) => boolean,
-): Promise<'completed' | 'already-done' | 'terminal' | 'missing' | 'stale' | null> {
+): Promise<'completed' | 'already-done' | 'terminal' | 'missing' | null> {
     const task = (getTasks?.() ?? tasks).find((candidate) => candidate.id === completion.taskId);
     const outcome = !task || task.deletedAt || task.purgedAt
         ? 'missing'
@@ -436,9 +449,7 @@ export async function applyPendingCompletion(
             ? 'already-done'
             : task.status === 'archived'
                 ? 'terminal'
-                : isStale?.(task)
-                    ? 'stale'
-                    : 'completed';
+                : 'completed';
     if (outcome === 'completed') {
         const completedAt = resolveQueuedCompletedAt(completion);
         const result = await updateTask(completion.taskId, { status: 'done', ...(completedAt ? { completedAt } : {}) });
@@ -450,8 +461,7 @@ export async function applyPendingCompletion(
 async function applyPendingDefer(
     pending: PendingDefer,
     { updateTask, tasks, getTasks }: Pick<PendingCaptureStoreDeps, 'updateTask' | 'tasks' | 'getTasks'>,
-    isStale: (task: Task) => boolean,
-): Promise<'deferred' | 'already-deferred' | 'terminal' | 'missing' | 'stale' | null> {
+): Promise<'deferred' | 'already-deferred' | 'terminal' | 'missing' | null> {
     const task = (getTasks?.() ?? tasks).find((candidate) => candidate.id === pending.taskId);
     const outcome = !task || task.deletedAt
         ? 'missing'
@@ -459,9 +469,7 @@ async function applyPendingDefer(
             ? 'terminal'
             : task.startTime === pending.startDate
                 ? 'already-deferred'
-                : isStale(task)
-                    ? 'stale'
-                    : 'deferred';
+                : 'deferred';
     if (outcome === 'deferred') {
         const result = await updateTask(pending.taskId, { startTime: pending.startDate });
         if (isFailedResult(result)) return null;
@@ -485,6 +493,7 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         flushPendingSave,
         applyPomodoroCommand,
         queue,
+        lastApplied,
         log,
         audio,
     } = deps;
@@ -539,35 +548,58 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         isWatchCommand(entry.capture) ? watchCommands[nextWatchCommand++] : entry
     ));
 
-    // A queued command stands for the task as it was when the command was made
-    // (its createdAt, or a check-off's tap time). A task changed since, here or
-    // synced, keeps its newer state: the command is removed with no write. A
-    // command replayed after its own queue delete failed is one: its write
-    // landed. What this drain wrote for an older command does not count. A
-    // command or task without a time applies as before.
-    const drainWrites = new Map<string, { updatedAt: string | undefined; madeAt: number }>();
-    const madeAtOf = (command: PendingCompletion | PendingDefer): number => (
+    // A check-off or defer is judged against the last queued command applied to
+    // its task (the record port: its tap time and id, pruned after 14 days). One
+    // tapped before that command is older than a state the user already has, and
+    // one with that id is a replay of a command whose queue delete failed after
+    // it landed: either is removed with no write. In-app edits, sync and load
+    // migrations never make a command stale. A command without a time applies as
+    // before. Per item: store write, durable save, record, file delete. An
+    // unreadable record keeps the commands queued for a later drain.
+    const tapTimeOf = (command: PendingCompletion | PendingDefer): number => (
         safeParseDate(command.createdAt ?? (command.kind === 'complete' ? command.completedAt : undefined))?.getTime() ?? Number.NaN
     );
-    const staleFor = (command: PendingCompletion | PendingDefer) => (task: Task): boolean => {
-        const madeAt = madeAtOf(command);
-        const changedAt = safeParseDate(task.updatedAt)?.getTime() ?? Number.NaN;
-        if (Number.isNaN(madeAt) || Number.isNaN(changedAt)) return false;
-        const ours = drainWrites.get(task.id);
-        if (ours && ours.updatedAt === task.updatedAt) return madeAt < ours.madeAt;
-        return changedAt > madeAt;
+    const readLastApplied = async (): Promise<Map<string, LastApplied> | null> => {
+        let raw: string | null;
+        try {
+            raw = await lastApplied.read();
+        } catch (error) {
+            void log.error(error, { scope: 'capture', extra: { message: 'Failed to read the applied-command record' } });
+            return null;
+        }
+        const record = new Map<string, LastApplied>();
+        try {
+            const parsed: unknown = raw ? JSON.parse(raw) : {};
+            for (const [taskId, entry] of Object.entries(parsed && typeof parsed === 'object' ? parsed : {})) {
+                const { tapMs, id, at } = (entry ?? {}) as Partial<LastApplied>;
+                if (Number.isFinite(tapMs) && typeof id === 'string' && Number.isFinite(at)) record.set(taskId, { tapMs: tapMs!, id, at: at! });
+            }
+        } catch {
+            // A record this app wrote but cannot parse starts over: commands apply as before it existed.
+        }
+        return record;
     };
-    const noteWrite = (command: PendingCompletion | PendingDefer) => {
-        const madeAt = madeAtOf(command);
-        drainWrites.set(command.taskId, {
-            updatedAt: (getTasks?.() ?? tasks).find((task) => task.id === command.taskId)?.updatedAt,
-            madeAt: Number.isNaN(madeAt) ? Number.NEGATIVE_INFINITY : madeAt,
-        });
+    let appliedRecord: Promise<Map<string, LastApplied> | null> | null = null;
+    const skipOf = (command: PendingCompletion | PendingDefer, record: Map<string, LastApplied>): 'stale' | 'replayed' | null => {
+        const last = record.get(command.taskId);
+        if (!last) return null;
+        if (last.id === command.id) return 'replayed';
+        const tapMs = tapTimeOf(command);
+        return !Number.isNaN(tapMs) && tapMs < last.tapMs ? 'stale' : null;
     };
-    const logStale = (kind: 'complete' | 'defer') => {
-        void log.info('Queued command skipped: the task changed since', {
+    const remember = async (command: PendingCompletion | PendingDefer, record: Map<string, LastApplied>): Promise<void> => {
+        const tapMs = tapTimeOf(command);
+        const last = record.get(command.taskId);
+        if (Number.isNaN(tapMs) || (last && tapMs < last.tapMs)) return;
+        const now = Date.now();
+        record.set(command.taskId, { tapMs, id: command.id, at: now });
+        for (const [taskId, entry] of record) if (now - entry.at > LAST_APPLIED_KEEP_MS) record.delete(taskId);
+        await lastApplied.write(JSON.stringify(Object.fromEntries(record)));
+    };
+    const logSkip = (kind: 'complete' | 'defer', outcome: 'stale' | 'replayed') => {
+        void log.info('Queued command skipped', {
             scope: 'capture',
-            extra: { releaseCheck: STALE_QUEUED_COMMAND_RELEASE_CHECK, kind, outcome: 'stale' },
+            extra: { releaseCheck: STALE_QUEUED_COMMAND_RELEASE_CHECK, kind, outcome },
         });
     };
 
@@ -583,18 +615,21 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         }
 
         if (capture.kind === 'complete') {
-            const outcome = await applyPendingCompletion(capture, { updateTask, tasks, getTasks }, staleFor(capture));
+            const record = await (appliedRecord ??= readLastApplied());
+            if (!record) continue;
+            const skip = skipOf(capture, record);
+            const outcome = skip ?? await applyPendingCompletion(capture, { updateTask, tasks, getTasks });
             if (!outcome) continue;
-            if (outcome === 'completed') noteWrite(capture);
             try {
                 await flushPendingSave?.();
+                if (outcome === 'completed' || outcome === 'already-done') await remember(capture, record);
                 await queue.delete(name);
             } catch {
                 continue;
             }
             ingested += 1;
-            if (outcome === 'stale') {
-                logStale('complete');
+            if (skip) {
+                logSkip('complete', skip);
             } else if (capture.source === 'apple-watch') {
                 void log.info('Watch command ingested', {
                     scope: 'capture',
@@ -615,18 +650,21 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         }
 
         if (capture.kind === 'defer') {
-            const outcome = await applyPendingDefer(capture, { updateTask, tasks, getTasks }, staleFor(capture));
+            const record = await (appliedRecord ??= readLastApplied());
+            if (!record) continue;
+            const skip = skipOf(capture, record);
+            const outcome = skip ?? await applyPendingDefer(capture, { updateTask, tasks, getTasks });
             if (!outcome) continue;
-            if (outcome === 'deferred') noteWrite(capture);
             try {
                 await flushPendingSave?.();
+                if (outcome === 'deferred' || outcome === 'already-deferred') await remember(capture, record);
                 await queue.delete(name);
             } catch {
                 continue;
             }
             ingested += 1;
-            if (outcome === 'stale') {
-                logStale('defer');
+            if (skip) {
+                logSkip('defer', skip);
                 continue;
             }
             void log.info('Watch command ingested', {
