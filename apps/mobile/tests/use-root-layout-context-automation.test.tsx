@@ -6,6 +6,8 @@ import {
   __resetContextAutomationDedupeForTests,
   useRootLayoutContextAutomation,
 } from '@/hooks/root-layout/use-root-layout-context-automation';
+import { handleContextAutomationPayload } from '@/lib/context-automation-handler';
+import { parseContextAutomationHeadlessTaskData } from '@/lib/context-automation-headless-task';
 
 const {
   mockStoreState,
@@ -107,6 +109,30 @@ describe('useRootLayoutContextAutomation', () => {
       }
     );
     expect(returnToBackground).toHaveBeenCalledTimes(1);
+  });
+
+  // The Android broadcast hands on its `context` extra as sent (for example
+  // `home`); the Contexts screen matches '@home' only, so the notification must
+  // open the token, as a link's does.
+  it('opens the @ token from the receiver\'s bare context name', async () => {
+    mockStoreState.tasks = [{
+      id: 'task-1',
+      title: 'Call mom',
+      status: 'next',
+      tags: [],
+      contexts: ['@parents'],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    const payload = parseContextAutomationHeadlessTaskData({ action: 'activate', context: 'parents' });
+
+    await handleContextAutomationPayload(payload!);
+
+    expect(sendMobileImmediateNotification).toHaveBeenCalledWith(
+      '@parents next action',
+      'Call mom',
+      { kind: 'context-automation', context: '@parents' },
+    );
   });
 
   // The notification lists next actions from the store; the startup snapshot

@@ -274,7 +274,9 @@ export function buildContextAutomationNotification(
     manyTasksTitle: resolveText('contextAutomation.manyNextActionsTitle', '{{count}} {{context}} next actions'),
     moreTasksLine: resolveText('contextAutomation.moreTasksLine', '+{{count}} more'),
   });
-  return { ...copy, data: { kind: CONTEXT_AUTOMATION_NOTIFICATION_KIND, context: payload.context } };
+  // The receiver's extras keep the context as sent ('home'); the Contexts screen
+  // the notification opens matches the token ('@home') only.
+  return { ...copy, data: { kind: CONTEXT_AUTOMATION_NOTIFICATION_KIND, context: normalizeContextToken(payload.context) } };
 }
 
 const RECENT_CONTEXT_AUTOMATION_TTL_MS = 10_000;

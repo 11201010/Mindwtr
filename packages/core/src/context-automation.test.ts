@@ -40,6 +40,18 @@ describe('buildContextAutomationNotification', () => {
         });
     });
 
+    it('opens the context as a token when the receiver sent the bare name', () => {
+        // Android's ACTIVATE_CONTEXT broadcast hands on `context=home` as sent; the
+        // Contexts screen matches '@home' only, so a bare 'home' opened an empty list.
+        const notification = buildContextAutomationNotification({ action: 'activate', context: 'home' }, {
+            tasks: [task('a', { title: 'Water plants' })],
+            projects: [],
+            now,
+            resolveText: defaultContextAutomationText,
+        });
+        expect(notification).toMatchObject({ title: '@home next action', data: { kind: 'context-automation', context: '@home' } });
+    });
+
     it('posts nothing for a deactivation or a context without next actions', () => {
         const input = { tasks: [task('a')], projects: [], now, resolveText: defaultContextAutomationText };
         expect(buildContextAutomationNotification({ action: 'deactivate', context: '@home' }, input)).toBeNull();
