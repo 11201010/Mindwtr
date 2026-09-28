@@ -405,6 +405,14 @@ globalThis.MindwtrHost = {
             };
         });
     },
+    /**
+     * RN's app lock gate: core's General row for it, whose `value` is `settings.security.mobileAppLockEnabled` (per device).
+     * The gate guards the screens and shows no stored data, so no failed save blocks it: a lock turned on whose save is owed
+     * still locks.
+     */
+    appLock(): string {
+        return submit(async () => unwrap(contract.getGeneralSettings({})).privacy.appLock);
+    },
     projects(): string {
         return submit(async () => {
             requireSaved();

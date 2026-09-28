@@ -211,6 +211,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var processingMode by mutableStateOf(readProcessingMode(prefs)); private set
     /** RN's Menu tab: the More sheet and the list screens it opens (MenuModel.kt), on this screen's command path. */
     val menu = MenuModel(this, saved, prefs, File(app.noBackupFilesDir, "menu"))
+    /** RN's app lock (AppLock.kt): core's stored value and the gate's state. */
+    val lock = AppLock(this)
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
@@ -233,6 +235,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 val runtime = ProcessCoreHost.get(getApplication())
                 // The language and theme chosen in this app's Settings (RN's device keys) win over the ones found at boot.
                 applyDeviceChoices(runtime, prefs)
+                // RN's app lock, before any screen shows data (an owed save does not block it).
+                lock.boot(runtime)
                 ProcessCoreHost.failure?.let { pending -> ui { host = runtime; restore(pending, storedProcessing, storedCapture) }; return@Thread }
                 val lists = try {
                     read(runtime, at)

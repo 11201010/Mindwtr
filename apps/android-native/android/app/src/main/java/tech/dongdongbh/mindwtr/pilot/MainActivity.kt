@@ -2,9 +2,9 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.content.res.Configuration
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -87,14 +87,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
+import androidx.fragment.app.FragmentActivity
 
 /**
  * Isolated development UI, drawn as the React Native app draws it: its header, its bottom
  * tab bar with the center capture button, its theme tokens, and its task row. Task rules
- * and writes stay in the shared core; every label comes from core's getStrings.
+ * and writes stay in the shared core; every label comes from core's getStrings. A
+ * FragmentActivity, because AndroidX BiometricPrompt (the app lock's) needs one.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val model: InboxViewModel by viewModels()
+    /** RN's app lock's credential fallback before Android 11: the device's credential screen answers here, on this Activity or the one after a rotation. */
+    internal val credential = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        model.lock.answered(if (it.resultCode == RESULT_OK) null else "cancelled")
+    }
 
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,7 +108,8 @@ class MainActivity : ComponentActivity() {
         model.attach()
         setContent {
             // Core resolves RN's theme during the boot; until it ends, RN's default follows the system.
-            MindwtrTheme(if (model.loading) null else ThemeChoice.current) { with(model) {
+            // RN's app lock gate (AppLock.kt) replaces the screens while locked.
+            MindwtrTheme(if (model.loading) null else ThemeChoice.current) { AppLockGate(model) { with(model) {
                 val theme = LocalTheme.current
                 val c = theme.colors
                 SideEffect {
@@ -168,7 +175,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-            } }
+            } } }
         }
     }
 }

@@ -1303,6 +1303,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 shell.ui { landless(action) }
                 return@perform
             }
+            // A General write core applied but could not save (SAVE_FAILED): App lock's gate follows core's value; the retry stays owed.
+            if (!refused && action.kind == "generalSetting") settings.unsettled(runtime, action)
             throw failure
         }
         // A setting's device-local part (core's deviceWrites) is stored before the command counts as done; a language or theme reloads.

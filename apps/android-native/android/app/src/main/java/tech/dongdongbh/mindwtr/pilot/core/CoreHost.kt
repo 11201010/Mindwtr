@@ -262,6 +262,9 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** RN's theme as core resolves it: [stored] is RN's device-local `@mindwtr_theme` ("" for none). */
     fun theme(stored: String): JSONObject = callAsync("theme", stored)
 
+    /** Core's General row for RN's app lock (its `value` is the stored setting); an owed save does not block it. */
+    fun appLock(): JSONObject = callAsync("appLock")
+
     /** Core's getProjects: its Active, Deferred, and Archived groups in its order. */
     fun projects(): JSONObject = callAsync("projects")
 

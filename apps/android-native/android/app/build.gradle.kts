@@ -55,6 +55,10 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.08.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    // RN's app lock prompt, as expo-local-authentication asks it (its version).
+    implementation("androidx.biometric:biometric:1.2.0-alpha04")
+    // biometric asks for fragment 1.2.5, which predates activity 1.10's result registry; MainActivity is a FragmentActivity.
+    implementation("androidx.fragment:fragment:1.8.9")
 }
 
 val buildCoreBundle by tasks.registering(Exec::class) {

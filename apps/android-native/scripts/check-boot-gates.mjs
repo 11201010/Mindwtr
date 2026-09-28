@@ -1404,6 +1404,93 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert(code(taskViewUi).match(/\.clearAndSetSemantics \{/g).length >= 6);
 }
 
+// App lock: RN's MobileAppLockGate and General's switch on core's General row for it (`settings.security.mobileAppLockEnabled`,
+// per device), with RN's device lock prompt and lock screen.
+{
+    const lockKt = source('AppLock.kt');
+    const settingsUi = source('SettingsScreen.kt');
+    const settingsModel = source('SettingsModel.kt');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    // The gate reads core's row through its own host call, which no failed save blocks: a lock turned on whose save is owed still locks.
+    assert.match(hostEntry, /appLock\(\): string \{\s*return submit\(async \(\) => unwrap\(contract\.getGeneralSettings\(\{\}\)\)\.privacy\.appLock\);/);
+    assert.doesNotMatch(hostEntry.slice(hostEntry.indexOf('appLock(): string {'), hostEntry.indexOf('    projects(): string {')), /requireSaved/);
+    assert.match(coreHost, /fun appLock\(\): JSONObject = callAsync\("appLock"\)/);
+    // At boot, before any screen reads data (the owed-retry restore included), the app opens locked while core says on.
+    assert.match(model, /applyDeviceChoices\(runtime, prefs\)\s+\/\/[^\n]*\n\s+lock\.boot\(runtime\)\s+ProcessCoreHost\.failure\?\.let/);
+    assert.match(lockKt, /val on = runtime\.appLock\(\)\.getBoolean\("value"\)\s+shell\.ui \{ enabled = on; locked = on \}/);
+    // The gate wraps every screen inside the one theme; while locked the lock screen replaces them (RN's gate renders it instead of
+    // its children), and the screens' saved state waits for the unlock.
+    assert.match(activity, /MindwtrTheme\(if \(model\.loading\) null else ThemeChoice\.current\) \{ AppLockGate\(model\) \{ with\(model\) \{/);
+    assert.match(lockKt, /if \(model\.lock\.locked && !model\.loading\) AppLockScreen\(model\) else screens\.SaveableStateProvider\("app", content\)/);
+    // RN locks when AppState leaves active (Android's onPause), not for a rotation, not while its own prompt is up; each lock
+    // prompts by itself once, 250 ms after the app is active.
+    assert.match(lockKt, /if \(event == Lifecycle\.Event\.ON_PAUSE\) model\.lock\.paused\(activity\?\.isChangingConfigurations == true\)/);
+    assert.match(lockKt, /if \(!enabled \|\| authenticating \|\| rotating\) return\s+locked = true\s+failure = null\s+locks \+= 1/);
+    assert.match(lockKt, /fun shouldPrompt\(resumed: Boolean\) = enabled && locked && !authenticating && resumed && prompted != locks/);
+    assert.match(lockKt, /private const val PROMPT_DELAY_MS = 250L/);
+    // The device lock as expo-local-authentication asks it (correction pass, finding 4): AndroidX BiometricPrompt at Expo's version on
+    // a FragmentActivity, weak biometrics or the device credential, confirmation required, no cancel button (Android refuses one
+    // beside the credential); no secure screen lock, or no Activity, is "unavailable".
+    const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
+    assert.match(gradle, /implementation\("androidx\.biometric:biometric:1\.2\.0-alpha04"\)/, 'expo-local-authentication\'s androidx.biometric');
+    assert.match(gradle, /implementation\("androidx\.fragment:fragment:1\.8\.\d+"\)/, 'a fragment that knows activity 1.10\'s result registry');
+    assert.match(activity, /class MainActivity : FragmentActivity\(\) \{/);
+    assert.match(lockKt, /^import androidx\.biometric\.BiometricPrompt$/m);
+    assert.doesNotMatch(lockKt, /android\.hardware\.biometrics/, 'no platform prompt beside AndroidX\'s');
+    assert.match(lockKt, /prompt\(title, Authenticators\.BIOMETRIC_WEAK or Authenticators\.DEVICE_CREDENTIAL\)/);
+    assert.match(lockKt, /val activity = host\?\.get\(\) \?: return answered\("unavailable"\)\s+try \{\s+if \(!activity\.getSystemService\(KeyguardManager::class\.java\)\.isDeviceSecure\) return answered\("unavailable"\)\s+if \(activity\.supportFragmentManager\.isStateSaved\) return answered\("cancelled"\)/);
+    assert.match(lockKt, /BiometricPrompt\.PromptInfo\.Builder\(\)\.setTitle\(title\)\.setAllowedAuthenticators\(authenticators\)\.setConfirmationRequired\(true\)\.build\(\)/);
+    assert.match(lockKt, /BiometricPrompt\(activity, ContextCompat\.getMainExecutor\(activity\), object : BiometricPrompt\.AuthenticationCallback\(\) \{\s+override fun onAuthenticationSucceeded\(result: BiometricPrompt\.AuthenticationResult\) = answered\(null\)\s+override fun onAuthenticationError\(code: Int, message: CharSequence\) = failed\(title, code\)/);
+    // The Activity on screen is the gate's, weakly held and let go with its composition.
+    assert.match(lockKt, /main\?\.let\(model\.lock::attach\)[\s\S]{0,400}?onDispose \{\s+owner\.lifecycle\.removeObserver\(observer\)\s+main\?\.let\(model\.lock::detach\)/);
+    assert.match(lockKt, /private var host: WeakReference<MainActivity>\? = null/);
+    // Expo's bounded fallback (finding 3): a biometric that cannot be used, on a secure device, asks once for the credential alone:
+    // Android's credential screen before Android 11 (MainActivity.credential answers), a credential-only prompt from 11.
+    assert.match(lockKt, /private val BIOMETRIC_UNUSABLE = setOf\(BiometricPrompt\.ERROR_HW_NOT_PRESENT, BiometricPrompt\.ERROR_HW_UNAVAILABLE, BiometricPrompt\.ERROR_NO_BIOMETRICS,\s+BiometricPrompt\.ERROR_UNABLE_TO_PROCESS, BiometricPrompt\.ERROR_NO_SPACE\)/);
+    assert.match(lockKt, /if \(code !in BIOMETRIC_UNUSABLE \|\| fallback\) return answered\(reason\(code\)\)[\s\S]{0,300}?if \(!keyguard\.isDeviceSecure\) return answered\(reason\(code\)\)\s+fallback = true\s+if \(Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.R\) activity\.credential\.launch\(keyguard\.createConfirmDeviceCredentialIntent\(title, null\)\)\s+else prompt\(title, Authenticators\.DEVICE_CREDENTIAL\)/);
+    assert.match(lockKt, /internal fun answered\(reason: String\?\) \{\s+authenticating = false\s+fallback = false/);
+    assert.match(activity, /internal val credential = registerForActivityResult\(ActivityResultContracts\.StartActivityForResult\(\)\) \{\s+model\.lock\.answered\(if \(it\.resultCode == RESULT_OK\) null else "cancelled"\)/);
+    assert.match(lockKt, /BiometricPrompt\.ERROR_CANCELED, BiometricPrompt\.ERROR_NEGATIVE_BUTTON, BiometricPrompt\.ERROR_USER_CANCELED -> "cancelled"/);
+    assert.doesNotMatch(code(lockKt), /setNegativeButton|mobileAppLockEnabled|menuCommand\(/, 'no cancel button, and Kotlin never writes the setting itself');
+    assert.match(manifest, /<uses-permission android:name="android\.permission\.USE_BIOMETRIC" \/>/);
+    // Recents keep no picture while App lock is on (finding 2, stronger than RN by ruling): recents screenshots off from Android 13,
+    // FLAG_SECURE before, following core's value on every Activity.
+    assert.match(lockKt, /if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.TIRAMISU\) activity\.setRecentsScreenshotEnabled\(!on\)\s+else if \(on\) activity\.window\.addFlags\(WindowManager\.LayoutParams\.FLAG_SECURE\)\s+else activity\.window\.clearFlags\(WindowManager\.LayoutParams\.FLAG_SECURE\)/);
+    assert.match(lockKt, /val on = model\.lock\.enabled\s+LaunchedEffect\(activity, on\) \{ activity\?\.let \{ protectRecents\(it, on\) \} \}/);
+    // A lock turned on whose save failed (finding 1): core applied it in memory, so the gate follows core's value at once while the
+    // exact retry stays owed (the failure is rethrown to perform, which keeps it).
+    assert.match(menuModel, /if \(!refused && action\.kind == "generalSetting"\) settings\.unsettled\(runtime, action\)\s+throw failure/);
+    assert.match(settingsModel, /internal fun unsettled\(runtime: CoreHost, action: FailedAction\) \{\s+if \(JSONObject\(action\.title\)\.getJSONObject\("edit"\)\.getString\("type"\) != "appLock"\) return\s+runCatching \{ runtime\.appLock\(\)\.getBoolean\("value"\) \}\.onSuccess \{ on -> shell\.ui \{ shell\.lock\.stored\(on\) \} \}/);
+    // The lock screen stays centered and scrolls when large text does not fit a short landscape window (finding 5).
+    assert.match(lockKt, /BoxWithConstraints\(Modifier\.fillMaxSize\(\)[^\n]*\.testTag\("app-lock"\)\) \{\s+Column\(Modifier\.fillMaxWidth\(\)\.verticalScroll\(rememberScrollState\(\)\)\.heightIn\(min = maxHeight\)/);
+    // A failed prompt's line is RN's (getMobileAppLockErrorKey) in core's words.
+    for (const reason of ['unavailable', 'cancelled', 'failed']) assert.match(lockKt, new RegExp(`"${reason}" -> t\\("appLock\\.${reason}"\\)`));
+    // General's switch: off sends core's edit at once; on only after the device lock's yes; a no shows core's errors[reason] under the row.
+    assert.match(lockKt, /if \(!edit\.getBoolean\("value"\)\) return settings\.general\(edit\)\s+ask\(row\.getJSONObject\("enablePrompt"\)\.getString\("promptMessage"\)\) \{ reason ->\s+if \(reason == null\) shell\.menu\.whenIdle \{ settings\.general\(edit\) \} else settings\.editLocal \{ put\(SWITCH_FAILURE, reason\) \}/);
+    assert.match(lockKt, /row\.getJSONObject\("errors"\)\.getString\(it\)/);
+    assert.match(settingsUi, /RnSwitch\(lock\.getBoolean\("value"\), model\.failedAction == null && !model\.lock\.authenticating, lock\.getString\("label"\)\) \{ model\.lock\.toggle\(lock\) \}/);
+    assert.match(settingsModel, /"appLock" -> shell\.lock\.stored\(input\.getJSONObject\("edit"\)\.getBoolean\("value"\)\)/);
+    // The phone check (findings 6 and 7): each database change happens with the app's process gone, from an untouched pulled copy,
+    // staged and size-checked beside the database, the old WAL and SHM removed, then renamed over it; the restore proves core's value,
+    // goes back to the tabs, and a failed restore exits 1.
+    const lockCheck = readFileSync(resolve(app, 'scripts/check-app-lock-device.mjs'), 'utf8');
+    assert.match(lockCheck, /sh\(`am force-stop \$\{PKG\}`\);\s+await waitFor\('the app process to end', \(\) => pid\(\) === '', 10_000\);\s+changes \+= 1;\s+const original = pullDatabase\(`original-\$\{changes\}`\);/);
+    assert.match(lockCheck, /const staged = Number\(runAs\(`stat -c %s \$\{next\}`\)\);\s+if \(staged !== statSync\(db\)\.size\) fail\([^\n]*\n\s+if \(pid\(\) !== ''\) fail\([^\n]*\n\s+runAs\(`rm -f files\/\$\{DB\}-wal files\/\$\{DB\}-shm`\);\s+runAs\(`mv -f \$\{next\} files\/\$\{DB\}`\);/);
+    assert.doesNotMatch(lockCheck, /runAs\(`cp \$\{STAGED\} files\/\$\{DB\}`\)/, 'never copy over the live database in place');
+    assert.match(lockCheck, /const now = core\('read'\)\.stored === true;\s+if \(now !== original\) fail\(/);
+    assert.match(lockCheck, /await toInbox\(\);[\s\S]{0,200}?RESTORE FAILED[^\n]*\n\s+process\.exitCode = 1;/);
+    // No Kotlin policy, dates, colors or literal text; every key a label key; one semantics block per control.
+    assert.doesNotMatch(code(lockKt), /\.(sort\w*|sorted\w*|filter(?!Bg\b)\w*|groupBy)\b|SimpleDateFormat|java\.time|\bColor\(|"#[0-9A-Fa-f]{3,8}"/);
+    for (const [, key] of code(lockKt).matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `AppLock.kt: ${key} is not in LABEL_KEYS`);
+    for (const [, rest] of code(lockKt).matchAll(/(?:\bText\(|contentDescription = |onClickLabel = )([^\n]*)/g)) {
+        for (const [, literal] of rest.replace(/\b(t|testTag|getString|optString|text|getJSONObject|optJSONObject|getBoolean|optBoolean|getInt|menuText|menuObjects)\("[^"]*"\)/g, '').replace(/\btestTag = "[^"]*"/g, '').matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+            if (labelKeys.includes(literal)) continue;
+            assert.doesNotMatch(literal.replace(/\$\{[^}]*\}|\$\w+/g, ''), /\p{L}/u, `AppLock.kt: hard-coded UI text "${literal}"`);
+        }
+    }
+    assert.match(lockKt, /\.testTag\("app-lock-unlock"\)\s+\.clearAndSetSemantics \{ contentDescription = label; role = Role\.Button; if \(enabled\) onClick \{ lock\.unlock\(\); true \} else disabled\(\) \}/);
+}
+
 // Pass 11: Mind Sweep and a saved search's screen on core's new contracts; the Focus filter pickers' search;
 // Bulk organize's project and area pickers that create one.
 {
@@ -2069,4 +2156,5 @@ console.log('Toolbars and bulk: the Inbox on core\'s view, core\'s bulk bar and 
 console.log('Review organize and picker search: row and batch Mark reviewed and Organize\'s Apply carry core\'s task revisions, a stale refusal rereads core\'s view, the Organize sheet is the lists\' dialog on Review\'s bar, the token and Board pickers search through core, and a search hit is highlighted on the list it opened on');
 console.log('Settings and the editor\'s View tab: core\'s settings and task views through CoreHost, writes through perform with exact requests, device writes under RN\'s keys, checklist edits as core\'s edits in the one save');
 console.log('Mind Sweep and saved searches: core\'s views through CoreHost, captures and Bulk organize creates on disk first, stale windows read again whole, Focus picker search, no Kotlin policy');
+console.log('App lock: core\'s General row read at boot and after a failed save, locked on each leave but a rotation, no recents picture while on, AndroidX BiometricPrompt with Expo\'s credential fallback, General\'s switch on only after a yes, a scrolling lock screen in core\'s words, and a phone check that swaps the database atomically and restores loudly');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

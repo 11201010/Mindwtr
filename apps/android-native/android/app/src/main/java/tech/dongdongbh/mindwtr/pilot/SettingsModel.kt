@@ -328,13 +328,26 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         if (THEME_KEY in keys) runCatching { ThemeChoice.load(runtime.theme(prefs.getString(THEME_KEY, null).orEmpty())) }
     }
 
+    /**
+     * A General write that failed without a refusal (SAVE_FAILED: core applied it in memory and the save is owed): App lock's gate
+     * follows core's value at once, as RN's gate follows its store; the exact retry stays owed. On the command's thread.
+     */
+    internal fun unsettled(runtime: CoreHost, action: FailedAction) {
+        if (JSONObject(action.title).getJSONObject("edit").getString("type") != "appLock") return
+        runCatching { runtime.appLock().getBoolean("value") }.onSuccess { on -> shell.ui { shell.lock.stored(on) } }
+    }
+
     /** Core's answer on screen: the editor closes; an auto-start turned on shows RN's notice once per visit; the tab bar follows. */
     fun done(action: FailedAction, reply: JSONObject) {
         val input = JSONObject(action.title)
         when (action.kind) {
             "manageEditor" -> menu.closeDialog("manageEditor")
             "somedayRename" -> editLocal { remove("renaming") }
-            "generalSetting" -> if (input.getJSONObject("edit").getString("type") == "quickAccessView") menu.readMore()
+            "generalSetting" -> when (input.getJSONObject("edit").getString("type")) {
+                "quickAccessView" -> menu.readMore()
+                // RN's gate follows the stored value (AppLock.kt).
+                "appLock" -> shell.lock.stored(input.getJSONObject("edit").getBoolean("value"))
+            }
             "gtdSetting" -> {
                 val edit = input.getJSONObject("edit")
                 val type = edit.getString("type")

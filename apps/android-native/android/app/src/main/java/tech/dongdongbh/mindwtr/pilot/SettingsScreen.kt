@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -54,6 +55,7 @@ import androidx.compose.ui.semantics.collapse
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.expand
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.testTag
@@ -165,15 +167,20 @@ private fun Description(text: String, top: Int = 0) =
 private fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.padding(top = top.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(LocalTheme.current.colors.cardBg), content = content)
 
-/** RN's SettingRow: the label and description at the left, a trailing control; a hairline above when [divider]. */
+/**
+ * RN's SettingRow: the label and description at the left, a trailing control; a hairline above when [divider]. [failure] is App
+ * lock's line in RN's danger color under the description (TalkBack hears it when it shows).
+ */
 @Composable
-private fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, trailing: @Composable RowScope.() -> Unit = {}) {
+private fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, failure: String? = null,
+                       trailing: @Composable RowScope.() -> Unit = {}) {
     val c = LocalTheme.current.colors
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).then(modifier).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(label, style = rnText(16, 500, 21), color = c.text)
             description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
+            failure?.let { Text(it, style = rnText(13, 400, 18), color = c.danger, modifier = Modifier.padding(top = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }) }
         }
         trailing()
     }
@@ -282,10 +289,11 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
     }
     SectionTitle(privacy.getString("title"), top = 16)
     Card {
-        // RN's app lock asks the device lock before it turns on; this app has neither that prompt nor the lock screen yet, so the
-        // switch shows core's value, drawn disabled.
+        // RN's app lock (AppLock.kt): turning it on asks the device lock first; a no shows core's line for why under the row.
         val lock = privacy.getJSONObject("appLock")
-        SettingRow(lock.getString("label"), lock.getString("description")) { RnSwitch(lock.getBoolean("value"), false, lock.getString("label")) {} }
+        SettingRow(lock.getString("label"), lock.getString("description"), failure = model.lock.switchFailure(lock)) {
+            RnSwitch(lock.getBoolean("value"), model.failedAction == null && !model.lock.authenticating, lock.getString("label")) { model.lock.toggle(lock) }
+        }
         privacy.optJSONObject("appSearch")?.let { ToggleRow(model, it, true) { edit -> settings.general(edit) } }
     }
     SectionTitle(language.getString("title"), top = 16)
