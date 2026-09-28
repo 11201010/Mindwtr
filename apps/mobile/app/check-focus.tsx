@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,6 +29,10 @@ export default function FocusChecklistPage() {
     ));
     const updateTask = useTaskStore((state) => state.updateTask);
     const [task, setTask] = useState(storeTask);
+    // The store's task as of the latest render: a failed write shows it (not the list from before that edit, which a
+    // later saved edit may have moved past).
+    const latestStoreTask = useRef(storeTask);
+    latestStoreTask.current = storeTask;
     const { showToast } = useToast();
 
     // Local state for immediate feedback
@@ -55,15 +59,14 @@ export default function FocusChecklistPage() {
     // The list renders local state for immediate feedback, and the store→local
     // effect only fires when the store actually changes. So a rejected write
     // (which resolves `{ success: false }` rather than throwing) would otherwise
-    // leave the edit on screen forever as if it had saved: roll it back instead.
+    // leave the edit on screen forever as if it had saved: show the store's list instead.
     const commitChecklist = (newList: NonNullable<Task['checklist']>) => {
         if (!task) return;
-        const previous = checklist;
         setChecklist(newList);
         void settleStoreAction(() => updateTask(task.id, { checklist: newList }))
             .then((outcome) => {
                 if (outcome.ok) return;
-                setChecklist(previous);
+                setChecklist(latestStoreTask.current?.checklist || []);
                 showChecklistError(outcome.message);
             });
     };

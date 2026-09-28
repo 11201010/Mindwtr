@@ -187,4 +187,35 @@ describe('FocusChecklistPage', () => {
             tone: 'error',
         }));
     });
+
+    it('after a failed write shows what the store holds, not the list from before that edit', async () => {
+        // Tick A (its write is slow, then fails); rename B meanwhile (saved, built on the ticked list, so the store holds both).
+        let failTick!: (value: { success: false; error: string }) => void;
+        updateTaskMock
+            .mockReturnValueOnce(new Promise((resolve) => { failTick = resolve; }))
+            .mockResolvedValueOnce({ success: true });
+        const a = { id: 'a', title: 'Pack cables', isCompleted: false };
+        const b = { id: 'b', title: 'Charge laptop', isCompleted: false };
+        storeState.tasks = [makeTask({ checklist: [a, b] })];
+        const tree = renderScreen();
+        const checkbox = (title: string) => tree.root.findByProps({ accessibilityLabel: title, accessibilityRole: 'checkbox' });
+
+        act(() => { checkbox('Pack cables').props.onPress(); });
+        await act(async () => {
+            tree.root.findAllByType(TextInput)[1].props.onChangeText('Charge phone');
+            await Promise.resolve();
+        });
+        await act(async () => {
+            storeState.tasks = [makeTask({ checklist: [{ ...a, isCompleted: true }, { ...b, title: 'Charge phone' }], updatedAt: '2026-08-26T12:00:01.000Z' })];
+            tree.update(<FocusChecklistPage />);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            failTick({ success: false, error: 'Disk full' });
+            await Promise.resolve();
+        });
+
+        expect(checkbox('Pack cables').props.accessibilityState).toEqual({ checked: true });
+        expect(tree.root.findAllByType(TextInput).map((input) => input.props.value)).toEqual(['Pack cables', 'Charge phone']);
+    });
 });
