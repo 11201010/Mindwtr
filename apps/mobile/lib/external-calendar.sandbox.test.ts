@@ -93,6 +93,7 @@ describe('external-calendar in sandbox mode', () => {
       enabled: false,
       selectAll: true,
       selectedCalendarIds: [],
+      areaIdsByCalendar: {},
     });
     await saveSystemCalendarSettings({ enabled: true, selectAll: true, selectedCalendarIds: ['calendar-1'] });
     await expect(getSystemCalendars()).resolves.toEqual([]);
