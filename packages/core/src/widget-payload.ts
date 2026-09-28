@@ -1,4 +1,12 @@
-import { hasTimeComponent, isLocaleDateDayFirst, normalizeDateFormatSetting, safeParseDate, safeParseDueDate } from './date';
+import {
+    createDateFormatter,
+    hasTimeComponent,
+    isLocaleDateDayFirst,
+    normalizeDateFormatSetting,
+    normalizeTimeFormatSetting,
+    safeParseDate,
+    safeParseDueDate,
+} from './date';
 import { resolveAreaFilterSelection, isTaskVisibleInArea } from './area-filter';
 import { TASK_PRIORITY_COLORS } from './color-constants';
 import { buildFocusPools, buildFocusTaskSections, deriveFocusTaskLists } from './focus-sections';
@@ -349,6 +357,25 @@ const formatDueTime = (date: Date, language: string): string => {
     }
 };
 
+// An explicit 12- or 24-hour setting reads as the app's own times do (core's
+// 'p' under the same date settings); System keeps the language's own form.
+const createWidgetTimeFormatter = (
+    settings: AppData['settings'] | undefined,
+    language: Language,
+    systemLocale?: string,
+): ((date: Date) => string) => {
+    const timeFormat = normalizeTimeFormatSetting(settings?.timeFormat);
+    if (timeFormat === 'system') return (date) => formatDueTime(date, language);
+    const format = createDateFormatter({
+        language,
+        dateFormat: settings?.dateFormat,
+        calendarSystem: settings?.calendarSystem,
+        timeFormat,
+        systemLocale: systemLocale || getDeviceLocaleTag(),
+    });
+    return (date) => format(date, 'p');
+};
+
 const FALLBACK_LONG_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const FALLBACK_SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -461,6 +488,7 @@ export function createWidgetPayloadProjection(
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     const dayFirst = resolveWidgetDayFirst(data.settings?.dateFormat, options?.systemLocale);
+    const formatTime = createWidgetTimeFormatter(data.settings, language, options?.systemLocale);
     const palette = resolveWidgetPalette(
         typeof data.settings?.theme === 'string' ? data.settings.theme : undefined,
         options?.systemColorScheme,
@@ -499,7 +527,7 @@ export function createWidgetPayloadProjection(
         const start = safeParseDate(task.startTime);
         if (!start) return undefined;
         const day = formatRelativeDayLabel(start, tr, language, dayFirst, startOfToday, endOfToday);
-        return hasTimeComponent(task.startTime) ? `${day} ${formatDueTime(start, language)}` : day;
+        return hasTimeComponent(task.startTime) ? `${day} ${formatTime(start)}` : day;
     };
     const itemById = new Map<string, WidgetTaskItem>();
     const toItem = (task: Task): WidgetTaskItem => {
@@ -594,7 +622,7 @@ export function createWidgetPayloadProjection(
         if (item.dueTone === 'overdue' || !item.dueLabel) return item;
         const due = safeParseDueDate(task.dueDate);
         if (!due || due < startOfToday || due > endOfToday) return item;
-        return { ...item, dueLabel: hasTimeComponent(task.dueDate) ? formatDueTime(due, language) : null };
+        return { ...item, dueLabel: hasTimeComponent(task.dueDate) ? formatTime(due) : null };
     };
 
     return {
