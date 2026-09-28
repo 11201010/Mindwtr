@@ -9115,7 +9115,8 @@ mod tests {
         listed.sort();
         assert_eq!(listed, schema);
 
-        let core = include_str!("../../../../packages/core/src/sync-tombstones.ts");
+        let core =
+            include_str!("../../../../packages/core/src/sync-tombstones.ts").replace("\r\n", "\n");
         let entries = ENTITY_FOREIGN_KEY_CHILDREN
             .iter()
             .map(|(parent, children)| {
