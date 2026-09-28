@@ -759,6 +759,7 @@ export const daOverrides: Record<string, string> = {
     'projects.sectionNotesPlaceholder': 'Tilføj noter til dette afsnit...',
     'projects.reviewAt': 'Gennemgangsdato',
     'projects.areaLabel': 'Område',
+    'projects.areaAvailableSelectToAssign': 'Området er tilgængeligt. Vælg det for at knytte det til dette projekt.',
     'projects.areaPlaceholder': 'f.eks. Arbejde',
     'projects.sectionsLabel': 'Afsnit',
     'projects.addSection': 'Tilføj sektion',

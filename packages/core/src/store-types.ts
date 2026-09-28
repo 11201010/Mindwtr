@@ -75,6 +75,15 @@ export type PreparedProjectNotesWrite = {
     updateAt: string;
 };
 
+/** One frozen native Project Tags edit and its complete Project receipt. */
+export type PreparedProjectTagsWrite = {
+    scope: { project: Project };
+    effect: { project: { before: Project; after: Project } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** One frozen nonarchived Project status change and its complete Project receipt. */
 export type PreparedProjectStatus = {
     scope: { project: Project };
@@ -422,6 +431,7 @@ export interface TaskStore {
     commitPreparedProjectRename: (input: PreparedProjectRename & { request: { projectId: string; title: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectFlow: (input: PreparedProjectFlow & { request: { projectId: string; action: ProjectFlowAction } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectNotesWrite: (input: PreparedProjectNotesWrite & { request: { projectId: string; text: string } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectTagsWrite: (input: PreparedProjectTagsWrite & { request: { projectId: string; intent: import('./project-tags').ProjectTagsIntent } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectStatus: (input: PreparedProjectStatus & { request: { projectId: string; status: 'active' | 'waiting' | 'someday' } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;

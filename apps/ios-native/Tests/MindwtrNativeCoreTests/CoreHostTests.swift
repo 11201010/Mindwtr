@@ -7185,6 +7185,14 @@ final class CoreHostTests: XCTestCase {
                 "expected": project.filter { $0.key != "id" }]
     }
 
+    private func projectTagsRequest(_ core: CoreHost, intent: [String: Any],
+                                    projectID: String = "focus-target") async throws -> [String: Any] {
+        let options = try object(await core.call("projectTagsEditOptions", argumentsJSON: json([projectID])))
+        let project = try XCTUnwrap(options["project"] as? [String: Any])
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": projectID, "intent": intent,
+                "expected": project.filter { $0.key != "id" }]
+    }
+
     private func projectStatusRequest(_ core: CoreHost, status: String,
                                       projectID: String = "focus-target") async throws -> [String: Any] {
         let options = try object(await core.call("projectStatusOptions", argumentsJSON: json([json(["projectId": projectID])])))
@@ -13235,5 +13243,223 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try areaRows(areaID).count, 1)
         XCTAssertEqual(try projectRows("focus-target").first?["areaId"] as? String, "rename-area")
         await core.close()
+    }
+
+    func testProjectTagsAddToggleClearAndWhitespaceNoopKeepRawLegacySpelling() async throws {
+        try await seedProjectRenameRows()
+        let raw = ["raw", "#keep", "#keep", "é", "e\u{301}", "\u{FEFF}odd", "nul\u{0000}"]
+        let seed = try SQLiteBridge(url: database)
+        _ = try seed.execute("UPDATE projects SET tagIds = ? WHERE id = 'focus-target'", parametersJSON: json([json(raw)]))
+        seed.close()
+        let faults = HostIOFaults()
+        var writes = 0, journals = 0
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("projectTagsEditOptions", argumentsJSON: json(["focus-target"])))
+        XCTAssertEqual(Set(options.keys), Set(["revision", "project", "canEdit", "suggestions"]))
+        XCTAssertEqual(options["canEdit"] as? Bool, true)
+        let openedTags = try XCTUnwrap((options["project"] as? [String: Any])?["tagIds"] as? [String])
+        XCTAssertEqual(openedTags.map { Array($0.utf8) }, raw.map { Array($0.utf8) })
+        let suggestions = try XCTUnwrap(options["suggestions"] as? [String])
+        XCTAssertTrue(suggestions.contains { Array($0.utf8) == Array("#keep".utf8) })
+
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+
+        let blank = try await projectTagsRequest(core, intent: ["kind": "add", "input": " \u{FEFF}\t "])
+        let blankResult = try object(await core.call("projectTagsWrite", argumentsJSON: json([json(blank)])))
+        XCTAssertEqual((blankResult["tagIds"] as? [String])?.map { Array($0.utf8) }, raw.map { Array($0.utf8) })
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        let add = try await projectTagsRequest(core, intent: ["kind": "add", "input": " new "])
+        let added = try object(await core.call("projectTagsWrite", argumentsJSON: json([json(add)])))
+        let afterAdd = ["raw", "#keep", "é", "e\u{301}", "\u{FEFF}odd", "nul\u{0000}", "#new"]
+        XCTAssertEqual((added["tagIds"] as? [String])?.map { Array($0.utf8) }, afterAdd.map { Array($0.utf8) })
+        let storedAdd = try XCTUnwrap(projectRows("focus-target").first?["tagIds"] as? String)
+        let storedAddTags = try XCTUnwrap(NativeJSON.jsonObject(with: Data(storedAdd.utf8)) as? [String])
+        XCTAssertEqual(storedAddTags.map { Array($0.utf8) }, afterAdd.map { Array($0.utf8) })
+
+        let toggleRaw = try await projectTagsRequest(core, intent: ["kind": "toggle", "input": "raw"])
+        let toggledRaw = try object(await core.call("projectTagsWrite", argumentsJSON: json([json(toggleRaw)])))
+        XCTAssertEqual((toggledRaw["tagIds"] as? [String])?.map { Array($0.utf8) },
+                       (afterAdd + ["#raw"]).map { Array($0.utf8) })
+        let toggleKeep = try await projectTagsRequest(core, intent: ["kind": "toggle", "input": "#keep"])
+        let toggledKeep = try object(await core.call("projectTagsWrite", argumentsJSON: json([json(toggleKeep)])))
+        XCTAssertFalse((toggledKeep["tagIds"] as? [String] ?? []).contains { Array($0.utf8) == Array("#keep".utf8) })
+        let clear = try await projectTagsRequest(core, intent: ["kind": "clear"])
+        let cleared = try object(await core.call("projectTagsWrite", argumentsJSON: json([json(clear)])))
+        XCTAssertEqual(cleared["tagIds"] as? [String], [])
+        XCTAssertGreaterThanOrEqual(writes, 4)
+        XCTAssertGreaterThan(journals, 0)
+        await core.close()
+    }
+
+    func testProjectTagsFailedCommitExactRetryAndStaleRequestPreserveRichRows() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        let request = try await projectTagsRequest(core, intent: ["kind": "add", "input": "#new"])
+        let targetBefore = try XCTUnwrap(projectRows("focus-target").first)
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Project Tags COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("projectTagsWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "projectTagsWriteCommit")
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), before)
+        rolledBack.close()
+        XCTAssertTrue(diagnostics.isEmpty)
+        faults.beforeSQL = nil
+        let retry = try await core.retryPending()
+        let result = try object(XCTUnwrap(retry))
+        XCTAssertEqual((result["tagIds"] as? [String])?.map { Array($0.utf8) }, ["#keep", "#new"].map { Array($0.utf8) })
+        let targetAfter = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(targetAfter["rev"] as? Int, (targetBefore["rev"] as? Int ?? 0) + 1)
+        for (field, value) in targetBefore where !["tagIds", "rev", "revBy", "updatedAt"].contains(field) {
+            XCTAssertEqual(Data(try json([targetAfter[field] ?? NSNull()]).utf8), Data(try json([value]).utf8), field)
+        }
+        let saved = try SQLiteBridge(url: database)
+        let after = try nineTableSnapshot(saved)
+        saved.close()
+        for index in before.indices where index != 1 { XCTAssertEqual(after[index], before[index]) }
+        XCTAssertEqual(diagnostics, ["projectTagsWriteApplied"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        var writes = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("projectTagsWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        await core.close()
+    }
+
+    func testProjectTagsLostReplyColdReceiptDoesNotToggleTwiceAndNilProbeIsReadOnly() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectTagsRequest(writer, intent: ["kind": "toggle", "input": "#keep"])
+        let before = try XCTUnwrap(projectRows("focus-target").first)
+        var journalWrites = 0
+        faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Project Tags lost reply") } }
+        await expectFailure("lost reply") {
+            _ = try await writer.call("projectTagsWrite", argumentsJSON: json([json(request)]))
+        }
+        let committed = try XCTUnwrap(projectRows("focus-target").first)
+        XCTAssertEqual(committed["tagIds"] as? String, "[]")
+        await writer.close()
+        let baseline = try SQLiteBridge(url: database)
+        let persisted = try nineTableSnapshot(baseline)
+        baseline.close()
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:projects|tasks|sections|areas|people|settings|saved_filters|calendar_sync)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let reopened = host(replayFaults)
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "projectTagsWriteCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["tagIds"] as? [String], [])
+        XCTAssertEqual(writes, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try projectRows("focus-target").first?["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), persisted)
+        check.close()
+        let noPending = try await reopened.retryPending()
+        XCTAssertNil(noPending)
+        await expectFailure("STALE_REVISION") {
+            _ = try await reopened.call("projectTagsWriteRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(writes, 0)
+        await reopened.close()
+    }
+
+    func testProjectTagsForgedJournalAndRawTagConflictRefuseWithoutWrite() async throws {
+        try await seedProjectRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectTagsRequest(writer, intent: ["kind": "toggle", "input": "#keep"])
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Project Tags") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("projectTagsWrite", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        let args = try XCTUnwrap(NativeJSON.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        let original = try object(XCTUnwrap(args.first))
+        await writer.close()
+        for corruption in ["effect", "scope", "result", "terminal", "malformed"] {
+            var envelope = original
+            var argumentsJSON = try XCTUnwrap(pending["argumentsJSON"] as? String)
+            var terminal: [String: Any]? = nil
+            switch corruption {
+            case "effect":
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                var pair = try XCTUnwrap(effect["project"] as? [String: Any])
+                var after = try XCTUnwrap(pair["after"] as? [String: Any])
+                after["tagIds"] = ["#forged"]
+                pair["after"] = after; effect["project"] = pair; prepared["effect"] = effect
+                envelope["prepared"] = prepared; argumentsJSON = try json([json(envelope)])
+            case "scope":
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+                var project = try XCTUnwrap(scope["project"] as? [String: Any])
+                project.removeValue(forKey: "tagIds")
+                scope["project"] = project; prepared["scope"] = scope
+                envelope["prepared"] = prepared; argumentsJSON = try json([json(envelope)])
+            case "result":
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["result"] = ["id": "focus-target", "tagIds": ["#forged"]]
+                envelope["prepared"] = prepared; argumentsJSON = try json([json(envelope)])
+            case "terminal": terminal = ["success": ["_0": try json(["id": "focus-target", "tagIds": ["#forged"]])]]
+            default: argumentsJSON = try json([["malformed": true]])
+            }
+            var forged: [String: Any] = ["version": 2, "method": "projectTagsWriteCommit", "argumentsJSON": argumentsJSON]
+            if let terminal { forged["terminal"] = terminal }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let baseline = try SQLiteBridge(url: database)
+            let before = try nineTableSnapshot(baseline)
+            baseline.close()
+            let blockedFaults = HostIOFaults()
+            var statements = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0); XCTAssertEqual(cleanup, 0)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before)
+            check.close()
+            await blocked.close()
+        }
+        try FileManager.default.removeItem(at: journal)
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET tagIds = ? WHERE id = 'focus-target'", parametersJSON: json([json(["#changed"])]))
+        edit.close()
+        let reopened = host()
+        _ = try await reopened.start()
+        await expectFailure("STALE_REVISION") {
+            _ = try await reopened.call("projectTagsWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try projectRows("focus-target").first?["tagIds"] as? String, "[\"#changed\"]")
+        await reopened.close()
     }
 }

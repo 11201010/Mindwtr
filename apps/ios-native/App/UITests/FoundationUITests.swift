@@ -3735,6 +3735,188 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testProjectTagsAndNotes() {
+        projectTagsFlow(library: "6ae40cb9-dffd-4ac2-b975-c8fb9541b8d3")
+    }
+
+    func testProjectTagsLargestText() {
+        projectTagsFlow(library: "fc910ca9-85a8-4c65-8060-1f5ee079b4ce")
+    }
+
+    private func revealProjectTagControl(_ app: XCUIApplication, _ element: XCUIElement, towardTop: Bool = false) {
+        let sheet = app.scrollViews["project-tags-sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        for _ in 0..<40 {
+            let frame = sheet.frame.intersection(app.frame)
+            if element.exists && element.isHittable && element.frame.minY >= frame.minY
+                && element.frame.maxY <= frame.maxY { return }
+            let above = element.exists ? element.frame.minY < frame.minY : towardTop
+            if above { sheet.swipeDown() } else { sheet.swipeUp() }
+        }
+        XCTFail("Tags control could not be scrolled into view")
+    }
+
+    private func projectTagsFlow(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        let target = "776dd5c5-1926-4da1-96ff-5d5096971050"
+        func scroll() -> XCUIElement {
+            let sheet = app.scrollViews["project-tags-sheet"]
+            return sheet.exists ? sheet : app.scrollViews.firstMatch
+        }
+        func tapButton(_ button: XCUIElement, towardTop: Bool = false) {
+            if app.scrollViews["project-tags-sheet"].exists { revealProjectTagControl(app, button, towardTop: towardTop) }
+            else { revealPagedElement(app, button, in: scroll(), outerEdge: true) }
+            boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, 48)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        func tap(_ id: String) {
+            tapButton(app.buttons[id], towardTop: ["project-tags-add", "project-tags-close"].contains(id))
+        }
+        func tag(_ value: String) -> XCUIElement {
+            // Lazy rows enter the accessibility tree when scrolled into view.
+            let candidate = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                "project-tags-choice-", value)).firstMatch
+            revealProjectTagControl(app, candidate)
+            let matches = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "project-tags-choice-"))
+                .allElementsBoundByIndex.filter { $0.label.utf8.elementsEqual(value.utf8) }
+            XCTAssertEqual(matches.count, 1, value)
+            return matches.first ?? app.buttons["missing-tag-choice"]
+        }
+        func fill(_ id: String, _ text: String) {
+            let field = app.textFields[id]
+            if app.scrollViews["project-tags-sheet"].exists { revealProjectTagControl(app, field) }
+            else { revealPagedElement(app, field, in: scroll(), outerEdge: true) }
+            boardEnabled(field); field.tap()
+            field.typeKey("a", modifierFlags: .command); field.typeText(text)
+            XCTAssertTrue((field.value as? String ?? "").utf8.elementsEqual(text.utf8))
+        }
+        func closed() {
+            let condition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                object: app.buttons["project-tags-close"])
+            XCTAssertEqual(XCTWaiter.wait(for: [condition], timeout: 15), .completed)
+        }
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        func open(_ id: String = "776dd5c5-1926-4da1-96ff-5d5096971050") {
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); boardTap(app, "project-details-toggle")
+        }
+        func addTag(_ value: String) {
+            tap("project-tags-add"); fill("project-tags-create-name", value)
+            tap("project-tags-create-save"); closed()
+        }
+        projects(); fill("projects-create-title", "Retained Tags project draft")
+        boardTap(app, "area-open"); boardTap(app, "area-option-__none__")
+        boardEnabled(app.buttons["area-option-__none__"])
+        XCTAssertTrue(app.buttons["area-option-__none__"].isSelected)
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        open()
+        revealPagedElement(app, app.buttons["project-notes-toggle"], in: scroll(), outerEdge: true)
+        boardTap(app, "project-notes-toggle")
+        let notes = app.textViews["project-notes-input"]
+        revealPagedElement(app, notes, in: scroll(), outerEdge: true)
+        replaceProjectNotesText(notes, with: "Notes before Tags opens\n")
+        tap("project-tags-open")
+        XCTAssertTrue(tag("#caf\u{00E9}").isSelected)
+        XCTAssertTrue(tag("#cafe\u{0301}").isSelected)
+        XCTAssertTrue(tag("bare").isSelected)
+        tap("project-tags-add"); XCTAssertFalse(app.buttons["project-tags-create-save"].isEnabled)
+        tap("project-tags-create-cancel")
+        addTag("   ") // RN blank input is a no-op; do not rewrite duplicate legacy tags.
+        tap("project-tags-open"); XCTAssertTrue(tag("#Keep").isSelected)
+        addTag("  Added Tag  ")
+        tap("project-tags-open"); XCTAssertTrue(tag("#Added Tag").isSelected)
+        tapButton(tag("#Added Tag")); closed()
+        tap("project-tags-open"); tapButton(tag("#Option-29")); closed()
+        tap("project-tags-open"); XCTAssertTrue(tag("#Option-29").isSelected)
+        tap("project-tags-clear"); closed()
+        tap("project-tags-open"); XCTAssertFalse(tag("#Option-29").isSelected)
+        tap("project-tags-clear"); closed() // Already empty must not add a revision.
+        tap("project-tags-open"); addTag("Final Tag")
+        XCTAssertEqual(app.staticTexts["project-detail-meta-tags"].label, "#Final Tag")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Project Tags and Notes preserved"
+        capture.lifetime = .keepAlways; add(capture)
+        boardTap(app, "project-back")
+        XCTAssertEqual(app.textFields["projects-create-title"].value as? String, "Retained Tags project draft")
+        XCTAssertTrue(app.buttons["projects-create-area-none"].isSelected)
+        XCTAssertTrue(app.buttons["project-open-" + target].exists)
+        boardTap(app, "area-open"); XCTAssertTrue(app.buttons["area-option-__none__"].isSelected)
+        boardTap(app, "area-option-__all__"); boardEnabled(app.buttons["area-option-__all__"])
+        app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        let archived = "98432619-81dd-480e-9c35-d4dfa1705ff1"
+        let archivedSection = app.buttons["projects-section-archived"]
+        revealPagedElement(app, archivedSection, in: app.scrollViews["projects-scroll"])
+        if archivedSection.value as? String == "Expand" { archivedSection.tap() }
+        open(archived); XCTAssertFalse(app.buttons["project-tags-open"].exists)
+        app.terminate(); app.launch(); projects(); open()
+        XCTAssertEqual(app.staticTexts["project-detail-meta-tags"].label, "#Final Tag")
+        tap("project-tags-open"); XCTAssertTrue(tag("#Final Tag").isSelected)
+        tap("project-tags-close")
+        revealPagedElement(app, app.buttons["project-notes-toggle"], in: scroll(), outerEdge: true)
+        boardTap(app, "project-notes-toggle")
+        XCTAssertEqual(notes.value as? String, "Notes before Tags opens\n")
+        app.terminate()
+    }
+
+    func testProjectTagsFailureKeepsDraft() { projectTagsRecovery(expectFailure: true) }
+    func testProjectTagsColdRecovery() { projectTagsRecovery(expectFailure: false) }
+
+    private func projectTagsRecovery(expectFailure: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "003e2d6e-741f-4f42-ab3b-8cc0b19bc823"]
+        app.launch()
+        if expectFailure {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        } else { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        let row = app.buttons["project-open-776dd5c5-1926-4da1-96ff-5d5096971050"]
+        revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+        row.tap(); boardTap(app, "project-details-toggle")
+        func tap(_ id: String) {
+            let button = app.buttons[id]; let sheet = app.scrollViews["project-tags-sheet"]
+            if sheet.exists { revealProjectTagControl(app, button, towardTop: id == "project-tags-close") }
+            else { revealPagedElement(app, button, in: app.scrollViews.firstMatch, outerEdge: true) }
+            boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, 48)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        tap("project-tags-open")
+        if expectFailure {
+            tap("project-tags-add")
+            let name = app.textFields["project-tags-create-name"]
+            boardEnabled(name); name.tap(); name.typeText("  Recover Tags  ")
+            tap("project-tags-create-save")
+            XCTAssertTrue(app.staticTexts["project-tags-error"].waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(app.buttons["project-tags-close"].isEnabled)
+                XCTAssertFalse(name.isEnabled)
+                XCTAssertEqual(name.value as? String, "  Recover Tags  ")
+                XCTAssertFalse(app.buttons["project-tags-create-save"].isEnabled)
+                XCTAssertFalse(app.buttons["project-tags-create-cancel"].isEnabled)
+                tap("project-tags-retry"); boardEnabled(app.buttons["project-tags-retry"])
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Failed Tags save retains exact input"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            let choice = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+                "project-tags-choice-", "#Recover Tags"))
+            revealProjectTagControl(app, choice.firstMatch)
+            XCTAssertEqual(choice.count, 1); XCTAssertTrue(choice.firstMatch.isSelected)
+            XCTAssertFalse(app.staticTexts["project-tags-error"].exists)
+            tap("project-tags-close")
+        }
+        app.terminate()
+    }
+
     func testProjectAddAreaAndNotes() {
         projectAddAreaFlow(library: "e97d0d0a-14b4-46d8-82b7-c24cd0a8756b")
     }

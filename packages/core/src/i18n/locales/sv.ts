@@ -756,6 +756,7 @@ export const svOverrides: Record<string, string> = {
         'projects.sectionNotesPlaceholder': 'Lägg till anteckningar för den här sektionen...',
         'projects.reviewAt': 'Granskningsdatum',
         'projects.areaLabel': 'Område',
+        'projects.areaAvailableSelectToAssign': 'Området är tillgängligt. Välj det för att koppla det till det här projektet.',
         'projects.areaPlaceholder': 't.ex. Jobb',
         'projects.sectionsLabel': 'Sektioner',
         'projects.addSection': 'Lägg till sektion',

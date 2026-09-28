@@ -4,7 +4,7 @@ import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session
 import { View, Text, TextInput, TouchableOpacity, FlatList, Platform, useWindowDimensions } from 'react-native';
 import type { GettingStartedAction } from '@/components/GettingStartedActions';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { AREA_PRESET_COLORS, areaOrderIdsForIntent, Attachment, collectProjectTaskLinks, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, Project, shallow, Task, type Section, type TaskSortBy, undoProjectDelete, useTaskStore } from '@mindwtr/core';
+import { AREA_PRESET_COLORS, areaOrderIdsForIntent, Attachment, collectProjectTaskLinks, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, Project, projectTagsForIntent, shallow, Task, type Section, type TaskSortBy, undoProjectDelete, useTaskStore } from '@mindwtr/core';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react-native';
 
@@ -435,8 +435,7 @@ export default function ProjectsScreen() {
       projectId: selectedProject.id,
       updates: (project) => {
         const current = project.tagIds || [];
-        const exists = current.includes(normalized);
-        return { tagIds: exists ? current.filter((value) => value !== normalized) : [...current, normalized] };
+        return { tagIds: projectTagsForIntent(current, { kind: 'toggle', input: tag }) };
       },
       updateProject,
       setSelectedProject,

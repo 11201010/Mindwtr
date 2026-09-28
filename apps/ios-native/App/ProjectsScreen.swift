@@ -761,6 +761,9 @@ struct ProjectDetailScreen: View {
             if model.projectAreaPresented && !model.projectAreaPending && model.projectCurrent {
                 await model.retryProjectAreaRead()
             }
+            if model.projectTagsPresented && !model.projectTagsPending && model.projectCurrent {
+                await model.retryProjectTagsRead()
+            }
         }
         .onAppear { detailsProjectID = model.projectHeader.text("id") }
         .onChange(of: model.projectHeader.text("id")) { id in
@@ -792,6 +795,12 @@ struct ProjectDetailScreen: View {
             ProjectAreaSelectionSheet(model: model, palette: palette)
                 .presentationDetents([.large])
                 .interactiveDismissDisabled(!model.projectAreaCloseEnabled)
+        }
+        .sheet(isPresented: Binding(get: { model.projectTagsPresented },
+                                    set: { if !$0 { model.closeProjectTags() } })) {
+            ProjectTagsSelectionSheet(model: model, palette: palette)
+                .presentationDetents([.large])
+                .interactiveDismissDisabled(!model.projectTagsCloseEnabled)
         }
         .sheet(isPresented: Binding(get: { model.projectSectionsPresented },
                                     set: { if !$0 { model.closeProjectSections() } })) {
@@ -1082,7 +1091,10 @@ struct ProjectDetailScreen: View {
                         resignProjectNotesInput()
                         Task { await model.openProjectArea() }
                     }
-                    metadataRow("taskEdit.tagsLabel", value: metadata.text("tagsLabel"), id: "tags")
+                    ProjectTagsMetadata(model: model, palette: palette, metadata: metadata) {
+                        resignProjectNotesInput()
+                        Task { await model.openProjectTags() }
+                    }
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
@@ -1579,6 +1591,194 @@ private struct ProjectDateMetadataRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// Concrete metadata and sheet boundaries keep Details' iOS 17 View type bounded.
+private struct ProjectTagsMetadata: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let metadata: CoreObject
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(model.label("taskEdit.tagsLabel"))
+                    .rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                Spacer(minLength: 8)
+                if !model.projectDetail.flag("readOnly") {
+                    Button(action: onOpen) {
+                        Text(model.label("common.edit"))
+                            .rnFont(14, .semibold).foregroundStyle(palette.tint)
+                            .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectTagsOpenEnabled)
+                    .accessibilityLabel(model.label("taskEdit.tagsLabel") + ": " + metadata.text("tagsLabel"))
+                    .accessibilityIdentifier("project-tags-open")
+                }
+            }
+            Text(metadata.text("tagsLabel"))
+                .rnFont(14).foregroundStyle(palette.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-detail-meta-tags")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ProjectTagsSelectionSheet: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Text(model.label("taskEdit.tagsLabel"))
+                        .rnFont(20, .bold).foregroundStyle(palette.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 8)
+                    Button { model.closeProjectTags() } label: {
+                        Image(systemName: "xmark").font(.system(size: 20))
+                            .foregroundStyle(palette.secondary)
+                            .frame(width: 48, height: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectTagsCloseEnabled)
+                    .accessibilityLabel(model.label("common.close"))
+                    .accessibilityIdentifier("project-tags-close")
+                }
+                if let message = model.projectTagsError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-tags-error")
+                    if model.projectTagsPending && model.retryNeeded {
+                        Button { Task { await model.retry() } } label: {
+                            Text(model.label("common.retry"))
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy)
+                        .accessibilityIdentifier("project-tags-retry")
+                    }
+                }
+                if model.projectTagsReadError != nil || model.projectTagsNeedsRead {
+                    if let message = model.projectTagsReadError {
+                        Text(message).rnFont(13).foregroundStyle(palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button { Task { await model.retryProjectTagsRead() } } label: {
+                        Text(model.label("common.retry"))
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.projectTagsPending)
+                    .accessibilityIdentifier("project-tags-read-retry")
+                }
+                if model.projectTagsAddPresented {
+                    ProjectTagsAddForm(model: model, palette: palette)
+                } else if !model.projectTagsOptions.isEmpty {
+                    Button { model.openProjectTagsAdd() } label: {
+                        Text(model.label("common.add"))
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 12).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectTagsChoiceEnabled)
+                    .accessibilityIdentifier("project-tags-add")
+                    let suggestions = model.projectTagsOptions["suggestions"] as? [String] ?? []
+                    ForEach(suggestions.indices, id: \.self) { index in
+                        Button { Task { await model.toggleProjectTag(index) } } label: {
+                            HStack(spacing: 10) {
+                                Text(suggestions[index]).rnFont(16).foregroundStyle(palette.text)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                if model.projectTagsChoiceSelected(index) {
+                                    Image(systemName: "checkmark").foregroundStyle(palette.tint)
+                                        .accessibilityHidden(true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectTagsChoiceEnabled)
+                        .accessibilityLabel(suggestions[index])
+                        .accessibilityAddTraits(model.projectTagsChoiceSelected(index) ? .isSelected : [])
+                        .accessibilityIdentifier("project-tags-choice-" + String(index))
+                    }
+                    Button { Task { await model.clearProjectTags() } } label: {
+                        Text(model.label("common.clear"))
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 12).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.projectTagsChoiceEnabled)
+                    .accessibilityIdentifier("project-tags-clear")
+                } else if model.projectTagsReadError == nil {
+                    ProgressView().frame(maxWidth: .infinity, minHeight: 48)
+                }
+            }
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(palette.card)
+        .accessibilityIdentifier("project-tags-sheet")
+    }
+}
+
+private struct ProjectTagsAddForm: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var nameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField(model.label("taskEdit.tagsLabel"), text: Binding(
+                get: { model.projectTagsDraft }, set: { model.setProjectTagsDraft($0) }))
+                .focused($nameFocused).submitLabel(.done)
+                .onSubmit { submit() }
+                .onChange(of: model.projectTagsAddInputEnabled) {
+                    if !$0 {
+                        nameFocused = false
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                        to: nil, from: nil, for: nil)
+                    }
+                }
+                .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(!model.projectTagsAddInputEnabled)
+                .accessibilityLabel(model.label("taskEdit.tagsLabel"))
+                .accessibilityIdentifier("project-tags-create-name")
+            HStack(spacing: 12) {
+                Button {
+                    nameFocused = false
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    model.cancelProjectTagsAdd()
+                } label: {
+                    Text(model.label("common.cancel"))
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .disabled(model.busy || model.retryNeeded || model.projectTagsPending)
+                .accessibilityIdentifier("project-tags-create-cancel")
+                Button { submit() } label: {
+                    Text(model.label("common.add"))
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .disabled(!model.projectTagsAddCanSubmit)
+                .accessibilityIdentifier("project-tags-create-save")
+            }
+            .buttonStyle(.plain).rnFont(15, .semibold).foregroundStyle(palette.tint)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("project-tags-create-form")
+    }
+
+    private func submit() {
+        guard model.projectTagsAddCanSubmit else { return }
+        nameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.addProjectTag() }
     }
 }
 

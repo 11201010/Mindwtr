@@ -116,6 +116,12 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectAreaCreateNameChecking = false
     @Published private(set) var projectAreaCreateNameValid = false
     @Published private(set) var projectAreaCreatedID: String?
+    @Published private(set) var projectTagsPresented = false
+    @Published private(set) var projectTagsAddPresented = false
+    @Published private(set) var projectTagsOptions: CoreObject = [:]
+    @Published private(set) var projectTagsDraft = ""
+    @Published private(set) var projectTagsError: String?
+    @Published private(set) var projectTagsReadError: String?
     @Published private(set) var projectSectionsPresented = false
     @Published private(set) var projectSectionEditing = false
     @Published private(set) var projectSectionEditID: String?
@@ -420,6 +426,10 @@ final class CoreModel: ObservableObject {
     private var projectAreaExpectedAreaID: String?
     private var projectAreaCreateProjectID: String?
     private var projectAreaCreateDurableChange = false
+    private var projectTagsOptionsCurrent = false
+    private var projectTagsOpeningRaw: [String]?
+    private var projectTagsRequest: String?
+    private var projectTagsExpectedID: String?
     private var projectSectionOptionsCurrent = false
     private var projectSectionRequest: String?
     private var projectSectionExpectedID: String?
@@ -747,6 +757,42 @@ final class CoreModel: ObservableObject {
         projectAreaPresented && projectAreaCreatedID != nil && projectAreaRequest == nil && !busy
             && !projectAreaCreatePresented
     }
+    var projectTagsPending: Bool { projectTagsRequest != nil }
+    var projectTagsOpenEnabled: Bool {
+        projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
+            && !areaPickerPresented && !areaManagerPresented && !morePresented
+            && !projectTagsPresented && !projectAreaPresented && !projectSectionsPresented
+            && projectDateField == nil && projectTagsRequest == nil
+    }
+    var projectTagsCloseEnabled: Bool {
+        projectTagsPresented && !projectTagsAddPresented && !busy && !retryNeeded
+            && projectTagsRequest == nil
+    }
+    var projectTagsChoiceEnabled: Bool {
+        projectTagsPresented && !projectTagsAddPresented && projectTagsOptionsCurrent
+            && projectTagsOptions.flag("canEdit") && projectTagsReadError == nil
+            && !busy && !retryNeeded && projectTagsRequest == nil && projectCurrent
+            && projectTagsOptions.text("revision") == projectDetail.text("mutationRevision")
+    }
+    var projectTagsAddInputEnabled: Bool {
+        projectTagsPresented && projectTagsAddPresented && projectTagsOptionsCurrent
+            && projectTagsOptions.flag("canEdit") && projectTagsReadError == nil
+            && !busy && !retryNeeded && projectTagsRequest == nil && projectCurrent
+            && projectTagsOptions.text("revision") == projectDetail.text("mutationRevision")
+    }
+    var projectTagsAddCanSubmit: Bool { projectTagsAddInputEnabled && !projectTagsDraft.isEmpty }
+    var projectTagsNeedsRead: Bool {
+        projectTagsPresented && projectTagsRequest == nil && !projectTagsOptions.isEmpty
+            && (!projectTagsOptionsCurrent
+                || projectTagsOptions.text("revision") != projectDetail.text("mutationRevision"))
+    }
+    func projectTagsChoiceSelected(_ index: Int) -> Bool {
+        let suggestions = projectTagsOptions["suggestions"] as? [String] ?? []
+        guard suggestions.indices.contains(index),
+              let selected = projectTagsOptions.object("project")["tagIds"] as? [String] else { return false }
+        let raw = Data(suggestions[index].utf8)
+        return selected.contains { Data($0.utf8) == raw }
+    }
     var projectStatusSelectedStatus: String { projectStatusOptions.object("project").text("status") }
     var projectStatusOpenTapEnabled: Bool {
         ready && selectedSurface == .project && !retryNeeded && !taskPresented
@@ -998,7 +1044,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -2967,6 +3013,265 @@ final class CoreModel: ObservableObject {
             projectAreaError = nil
             error = nil
         } catch { projectAreaReadError = error.localizedDescription }
+    }
+
+    private func sameRawProjectTags(_ lhs: [String], _ rhs: [String]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { pair in
+            Data(pair.0.utf8) == Data(pair.1.utf8)
+        }
+    }
+
+    func openProjectTags() async {
+        let id = projectHeader.text("id")
+        guard projectTagsOpenEnabled, !id.isEmpty else { return }
+        guard await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectTagsOpenEnabled else { return }
+        projectTagsPresented = true
+        projectTagsAddPresented = false
+        projectTagsOptions = [:]
+        projectTagsOptionsCurrent = false
+        projectTagsOpeningRaw = nil
+        projectTagsDraft = ""
+        projectTagsError = nil
+        projectTagsReadError = nil
+        busy = true
+        defer { finishOperation() }
+        do { try await readProjectTagsOptions(projectID: id) }
+        catch { projectTagsReadError = error.localizedDescription }
+    }
+
+    func closeProjectTags() {
+        guard projectTagsCloseEnabled else { return }
+        projectTagsPresented = false
+        projectTagsOptions = [:]
+        projectTagsOptionsCurrent = false
+        projectTagsOpeningRaw = nil
+        projectTagsDraft = ""
+        projectTagsError = nil
+        projectTagsReadError = nil
+    }
+
+    private func readProjectTagsOptions(projectID id: String) async throws {
+        projectTagsOptionsCurrent = false
+        guard selectedSurface == .project, projectCurrent, projectTagsPresented,
+              projectDetail.text("projectId") == id, projectHeader.text("id") == id,
+              !id.isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        for attempt in 0..<2 {
+            let options = try await query("projectTagsEditOptions", [id])
+            let project = options.object("project")
+            guard options.count == 4, !options.text("revision").isEmpty,
+                  let canEdit = options["canEdit"] as? NSNumber,
+                  CFGetTypeID(canEdit) == CFBooleanGetTypeID(),
+                  let suggestions = options["suggestions"] as? [String],
+                  suggestions.allSatisfy({ $0.utf16.count <= 100_000 }),
+                  project.count == 7, project.text("id") == id,
+                  (project["title"] as? String).map({ $0.utf16.count <= 100_000 }) == true,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  let tags = project["tagIds"] as? [String], tags.count <= 100_000,
+                  tags.allSatisfy({ $0.utf16.count <= 100_000 }),
+                  project["rev"] is NSNull || (project["rev"] as? Int).map({ $0 >= 0 }) == true,
+                  project["revBy"] is NSNull || (project["revBy"] as? String)
+                    .map({ $0.utf16.count <= 500 }) == true,
+                  TaskDatePickerComponents.instant(project.text("updatedAt")) != nil,
+                  canEdit.boolValue == (project.text("status") != "archived") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if options.text("revision") == projectDetail.text("mutationRevision"), projectCurrent,
+               projectDetail.text("projectId") == id, projectHeader.text("id") == id {
+                if let opening = projectTagsOpeningRaw {
+                    guard sameRawProjectTags(opening, tags) else { throw CocoaError(.coderReadCorrupt) }
+                } else { projectTagsOpeningRaw = tags }
+                projectTagsOptions = options
+                projectTagsOptionsCurrent = true
+                projectTagsReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    func retryProjectTagsRead() async {
+        guard ready, selectedSurface == .project, projectTagsPresented,
+              !busy, !retryNeeded, projectTagsRequest == nil else { return }
+        let id = projectHeader.text("id")
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshProjectTagsAfterWrite()
+            try await readProjectTagsOptions(projectID: id)
+            projectTagsError = nil
+            projectTagsReadError = nil
+            error = nil
+        } catch { projectTagsReadError = error.localizedDescription }
+    }
+
+    func openProjectTagsAdd() {
+        guard projectTagsChoiceEnabled else { return }
+        projectTagsAddPresented = true
+        projectTagsDraft = ""
+        projectTagsError = nil
+    }
+
+    func cancelProjectTagsAdd() {
+        guard projectTagsAddPresented, !busy, !retryNeeded, projectTagsRequest == nil else { return }
+        projectTagsAddPresented = false
+        projectTagsDraft = ""
+        projectTagsError = nil
+    }
+
+    func setProjectTagsDraft(_ value: String) {
+        guard projectTagsAddInputEnabled else { return }
+        projectTagsDraft = value
+        projectTagsError = nil
+    }
+
+    func addProjectTag() async {
+        guard projectTagsAddCanSubmit else { return }
+        let id = projectHeader.text("id")
+        let input = projectTagsDraft
+        guard await flushProjectNotesEdit(), projectTagsPresented, projectTagsAddPresented,
+              projectHeader.text("id") == id, !busy, !retryNeeded,
+              projectTagsRequest == nil, Data(projectTagsDraft.utf8) == Data(input.utf8) else { return }
+        busy = true
+        projectTagsError = nil
+        defer { finishOperation() }
+        await performProjectTagsWrite(["kind": "add", "input": input], projectID: id)
+    }
+
+    func toggleProjectTag(_ index: Int) async {
+        let suggestions = projectTagsOptions["suggestions"] as? [String] ?? []
+        guard projectTagsChoiceEnabled, suggestions.indices.contains(index) else { return }
+        let input = suggestions[index]
+        let id = projectHeader.text("id")
+        guard await flushProjectNotesEdit(), projectTagsPresented, !projectTagsAddPresented,
+              projectHeader.text("id") == id, !busy, !retryNeeded,
+              projectTagsRequest == nil else { return }
+        busy = true
+        projectTagsError = nil
+        defer { finishOperation() }
+        await performProjectTagsWrite(["kind": "toggle", "input": input],
+                                      projectID: id, tappedSuggestion: input)
+    }
+
+    func clearProjectTags() async {
+        guard projectTagsChoiceEnabled else { return }
+        let id = projectHeader.text("id")
+        guard await flushProjectNotesEdit(), projectTagsPresented, !projectTagsAddPresented,
+              projectHeader.text("id") == id, !busy, !retryNeeded,
+              projectTagsRequest == nil else { return }
+        busy = true
+        projectTagsError = nil
+        defer { finishOperation() }
+        await performProjectTagsWrite(["kind": "clear"], projectID: id)
+    }
+
+    private func performProjectTagsWrite(_ intent: CoreObject, projectID id: String,
+                                         tappedSuggestion: String? = nil) async {
+        do {
+            try await readProjectTagsOptions(projectID: id)
+            let project = projectTagsOptions.object("project")
+            guard projectTagsOptionsCurrent, projectTagsOptions.flag("canEdit"),
+                  project.text("id") == id,
+                  projectTagsOptions.text("revision") == projectDetail.text("mutationRevision") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            if let tappedSuggestion {
+                let raw = Data(tappedSuggestion.utf8)
+                guard (projectTagsOptions["suggestions"] as? [String])?.contains(where: {
+                    Data($0.utf8) == raw
+                }) == true else { throw CocoaError(.coderReadCorrupt) }
+            }
+            let expected: CoreObject = [
+                "title": project.text("title"), "status": project.text("status"),
+                "tagIds": project["tagIds"]!, "rev": project["rev"]!,
+                "revBy": project["revBy"]!, "updatedAt": project.text("updatedAt")
+            ]
+            projectTagsRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                                           "projectId": id, "intent": intent, "expected": expected])
+            projectTagsExpectedID = id
+        } catch {
+            projectTagsReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectTagsWrite", [projectTagsRequest!]) }
+        catch { await handleProjectTagsWriteError(error); return }
+        do {
+            let accepted = try acknowledgeProjectTags(result)
+            try await refreshProjectTagsAfterWrite()
+            if !accepted, projectTagsPresented {
+                try await readProjectTagsOptions(projectID: id)
+            }
+        } catch {
+            if projectTagsRequest != nil { await handleProjectTagsWriteError(error) }
+            else { projectTagsReadError = error.localizedDescription; self.error = error.localizedDescription }
+        }
+    }
+
+    @discardableResult private func acknowledgeProjectTags(_ result: CoreObject) throws -> Bool {
+        guard projectTagsRequest != nil, let id = projectTagsExpectedID else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if result.count == 1 && result["blocked"] as? String == "" {
+            projectTagsRequest = nil
+            projectTagsExpectedID = nil
+            projectTagsOptionsCurrent = false
+            retryNeeded = false
+            projectTagsError = nil
+            error = nil
+            return false
+        }
+        guard result.count == 2, result.text("id") == id,
+              let tags = result["tagIds"] as? [String], tags.count <= 100_000,
+              tags.allSatisfy({ $0.utf16.count <= 100_000 }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectTagsRequest = nil
+        projectTagsExpectedID = nil
+        projectTagsPresented = false
+        projectTagsAddPresented = false
+        projectTagsOptions = [:]
+        projectTagsOptionsCurrent = false
+        projectTagsOpeningRaw = nil
+        projectTagsDraft = ""
+        retryNeeded = false
+        projectTagsError = nil
+        projectTagsReadError = nil
+        error = nil
+        return true
+    }
+
+    private func handleProjectTagsWriteError(_ failure: Error) async {
+        if projectTagsRequest != nil && isDefiniteRejection(failure) {
+            projectTagsRequest = nil
+            projectTagsExpectedID = nil
+            projectTagsOptionsCurrent = false
+            retryNeeded = false
+            projectTagsError = failure.localizedDescription
+            error = nil
+            do {
+                try await refreshProjectTagsAfterWrite()
+                try await readProjectTagsOptions(projectID: projectHeader.text("id"))
+            } catch { projectTagsReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectTagsRequest != nil
+            projectTagsError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    private func refreshProjectTagsAfterWrite() async throws {
+        try await readSelectedSurface()
+        guard selectedSurface == .project, projectCurrent,
+              projectDetail.text("projectId") == projectHeader.text("id") else {
+            throw CocoaError(.coderReadCorrupt)
+        }
     }
 
     func openProjectAreaCreate() async {
@@ -6176,6 +6481,16 @@ final class CoreModel: ObservableObject {
         projectAreaExpectedAreaID = nil
         projectAreaError = nil
         projectAreaReadError = nil
+        projectTagsPresented = false
+        projectTagsAddPresented = false
+        projectTagsOptions = [:]
+        projectTagsOptionsCurrent = false
+        projectTagsOpeningRaw = nil
+        projectTagsRequest = nil
+        projectTagsExpectedID = nil
+        projectTagsDraft = ""
+        projectTagsError = nil
+        projectTagsReadError = nil
         projectSectionsPresented = false
         projectSectionEditing = false
         projectSectionEditID = nil
@@ -6213,7 +6528,8 @@ final class CoreModel: ObservableObject {
     func closeProject() async {
         guard await flushProjectNotesEdit() else { return }
         guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented,
-              !projectRenameEditing && !projectSectionsPresented && !projectAreaPresented else { return }
+              !projectRenameEditing && !projectSectionsPresented && !projectAreaPresented
+              && !projectTagsPresented else { return }
         projectDateField = nil
         projectDatePicker = [:]
         projectDateOpeningTimeZone = nil
@@ -6226,6 +6542,12 @@ final class CoreModel: ObservableObject {
         projectAreaCreateDurableChange = false
         projectAreaError = nil
         projectAreaReadError = nil
+        projectTagsOptions = [:]
+        projectTagsOptionsCurrent = false
+        projectTagsOpeningRaw = nil
+        projectTagsDraft = ""
+        projectTagsError = nil
+        projectTagsReadError = nil
         selectedSurface = projectCaller
         projectCurrent = false
         projectError = nil
@@ -6298,6 +6620,9 @@ final class CoreModel: ObservableObject {
                 }
                 if projectAreaOptions.text("revision") != next.text("mutationRevision") {
                     projectAreaOptionsCurrent = false
+                }
+                if projectTagsOptions.text("revision") != next.text("mutationRevision") {
+                    projectTagsOptionsCurrent = false
                 }
                 if projectSectionOptions.text("revision") != next.text("mutationRevision") {
                     projectSectionOptionsCurrent = false
@@ -8827,6 +9152,22 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = projectTagsRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectTagsWriteRetryOutcome", [request]) }
+                let accepted = try acknowledgeProjectTags(result)
+                do {
+                    try await refreshProjectTagsAfterWrite()
+                    if !accepted, projectTagsPresented {
+                        try await readProjectTagsOptions(projectID: projectHeader.text("id"))
+                    }
+                } catch {
+                    projectTagsReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
             if let request = projectSectionRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -9030,6 +9371,10 @@ final class CoreModel: ObservableObject {
             }
             if projectAreaRequest != nil {
                 await handleProjectAreaWriteError(error)
+                return
+            }
+            if projectTagsRequest != nil {
+                await handleProjectTagsWriteError(error)
                 return
             }
             if projectSectionRequest != nil {

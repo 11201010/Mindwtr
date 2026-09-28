@@ -4,7 +4,7 @@ import {
     countLiveProjectsByArea,
     type Area,
     type AreaFilterSelection,
-    getUsedTaskTokens,
+    projectTagSuggestions,
     type Project,
     type ProjectTagFilter,
     type Task,
@@ -35,13 +35,7 @@ export function useProjectFiltering({
 
     const areaUsage = useMemo(() => countLiveProjectsByArea(projects), [projects]);
 
-    const projectTagOptions = useMemo<string[]>(() => {
-        const projectTags = projects.flatMap((project) => project.tagIds || []);
-        return Array.from(new Set([
-            ...getUsedTaskTokens(tasks, (task) => task.tags, { prefix: '#' }),
-            ...projectTags,
-        ])).filter(Boolean);
-    }, [tasks, projects]);
+    const projectTagOptions = useMemo<string[]>(() => projectTagSuggestions(tasks, projects), [tasks, projects]);
 
     const groupedProjects = useMemo(() => {
         const tagFilter: ProjectTagFilter = selectedTagFilter === allTagsValue

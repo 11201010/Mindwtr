@@ -21,7 +21,8 @@ import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from '../project-sync-sche
 import { taskEditValuesEqual } from '../json-value-equality';
 import type { Area } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
-import type { PreparedProjectArea, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
+import type { PreparedProjectArea, PreparedProjectCreate, PreparedProjectDate, PreparedProjectFlow, PreparedProjectFocus, PreparedProjectNotesWrite, PreparedProjectTagsWrite, PreparedProjectRename, PreparedProjectStatus, PreparedTaskEditResult, ProjectFlowAction, TaskStore } from '../store-types';
+import { projectTagsForIntent, type ProjectTagsIntent } from '../project-tags';
 import type { PendingRemoteAttachmentDelete } from '../types';
 import {
     compactPurgedProjectForLocalStorage,
@@ -192,6 +193,18 @@ export const isProjectNotesWriteNoop = (project: Project, text: string): boolean
 export const projectNotesWriteEffect = (project: Project, text: string, deviceId: string,
     now: string): PreparedProjectNotesWrite['effect'] => {
     const transition = applyProjectLifecycleTransition(project, { supportNotes: text }, [], [], now, deviceId);
+    return { project: { before: project, after: normalizeProjectLifecycleFields({
+        ...project, ...transition.projectUpdates,
+        updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
+    }) } };
+};
+
+/** RN updateProject's tagIds-only lifecycle result, preserving unrelated raw columns. */
+export const projectTagsWriteEffect = (project: Project, intent: ProjectTagsIntent, deviceId: string,
+    now: string): PreparedProjectTagsWrite['effect'] | null => {
+    const tagIds = projectTagsForIntent(project.tagIds ?? [], intent);
+    if (taskEditValuesEqual(project.tagIds ?? [], tagIds)) return null;
+    const transition = applyProjectLifecycleTransition(project, { tagIds }, [], [], now, deviceId);
     return { project: { before: project, after: normalizeProjectLifecycleFields({
         ...project, ...transition.projectUpdates,
         updatedAt: now, rev: nextRevision(project.rev), revBy: deviceId,
@@ -517,6 +530,36 @@ export const createProjectCoreActions = ({
             const planned = projectNotesWriteEffect(current, input.request.text,
                 input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
             if (!taskEditValuesEqual(planned, input.effect)) return state;
+            const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { projects,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allProjects: projects, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedProjectTagsWrite: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Project Tags edit conflicts with current data' };
+        set((state) => {
+            const current = state._projectsById.get(input.request.projectId);
+            // A complete after-row receipt precedes mutable status, token, and device guards.
+            if (current && (!input.deviceIdToInitialize || state.settings.deviceId === input.deviceIdToInitialize)
+                && sameProjectSqliteRow(current, input.effect.project.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current || current.deletedAt || current.purgedAt || current.status === 'archived'
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameProjectSqliteRow(current, input.scope.project)) return state;
+            const planned = projectTagsWriteEffect(current, input.request.intent,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!planned || !taskEditValuesEqual(planned, input.effect)) return state;
             const projects = replaceEntitiesInArray(state._allProjects, [planned.project.after]);
             const settings = input.deviceIdToInitialize
                 ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;

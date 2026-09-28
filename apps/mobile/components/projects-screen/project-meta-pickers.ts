@@ -1,4 +1,4 @@
-import { Area, Project, translateWithFallback, type TranslateFn, tFallback, useTaskStore } from '@mindwtr/core';
+import { Area, Project, projectTagsForIntent, translateWithFallback, type TranslateFn, tFallback, useTaskStore } from '@mindwtr/core';
 import { ActionSheetIOS, Alert, Keyboard, Platform } from 'react-native';
 
 import type { ToastOptions } from '@/contexts/toast-context';
@@ -423,7 +423,7 @@ export const openProjectTagPicker = ({
                                 applyLiveProjectUpdate({
                                     projectId: selectedProject.id,
                                     updates: (project) => ({
-                                        tagIds: Array.from(new Set([...(project.tagIds || []), normalized])),
+                                        tagIds: projectTagsForIntent(project.tagIds || [], { kind: 'add', input: value ?? '' }),
                                     }),
                                     updateProject,
                                     setSelectedProject,

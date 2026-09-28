@@ -1,4 +1,5 @@
 import { type Project } from '@mindwtr/core';
+export { normalizeProjectTag } from '@mindwtr/core';
 export { formatProjectDate } from '@mindwtr/core';
 
 export type ProjectStatusPalette = Record<Project['status'], { text: string; bg: string; border: string }>;
@@ -27,12 +28,6 @@ export function resolveAttachmentValidationMessage(
         return t('attachments.invalidFileType');
     }
     return t('attachments.fileNotSupported');
-}
-
-export function normalizeProjectTag(value: string) {
-    const trimmed = value.trim();
-    if (!trimmed) return '';
-    return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
 }
 
 export function buildProjectQuickCaptureReturnTo(projectId: string) {

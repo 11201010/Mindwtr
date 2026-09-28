@@ -784,6 +784,7 @@ export const jaOverrides: Record<string, string> = {
         'projects.sectionNotesPlaceholder': 'このセクションのメモを書いておけます…',
         'projects.reviewAt': 'レビュー日',
         'projects.areaLabel': 'エリア',
+        'projects.areaAvailableSelectToAssign': 'エリアを利用できます。選択すると、このプロジェクトに割り当てられます。',
         'projects.areaPlaceholder': '例：仕事',
         'projects.sectionsLabel': 'セクション',
         'projects.addSection': 'セクションを追加',

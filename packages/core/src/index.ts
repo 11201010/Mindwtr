@@ -42,6 +42,8 @@ export * from './native-host-contract-project-focus';
 export * from './native-host-contract-project-rename';
 export * from './native-host-contract-project-flow';
 export * from './native-host-contract-project-notes';
+export * from './native-host-contract-project-tags';
+export * from './project-tags';
 export * from './native-host-contract-project-status';
 export * from './native-host-contract-project-date';
 export * from './native-host-contract-project-section';

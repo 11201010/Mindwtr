@@ -736,6 +736,7 @@ export const ukOverrides: Record<string, string> = {
     "projects.sectionNotesPlaceholder": "Додайте примітки до цього розділу...",
     "projects.reviewAt": "Дата огляду",
     "projects.areaLabel": "Сфера",
+    "projects.areaAvailableSelectToAssign": "Сфера доступна. Виберіть її, щоб призначити цьому проекту.",
     "projects.areaPlaceholder": "напр. Робота",
     "projects.sectionsLabel": "Розділи",
     "projects.addSection": "Додати розділ",

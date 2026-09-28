@@ -761,6 +761,7 @@ export const zhHant: Record<string, string> = {
         'projects.sectionNotesPlaceholder': '爲此分區添加備註...',
         'projects.reviewAt': '回顧日期',
         'projects.areaLabel': '領域',
+        'projects.areaAvailableSelectToAssign': '此領域已可用。選取它即可將其指派給此專案。',
         'projects.areaPlaceholder': '例如：工作',
         'projects.sectionsLabel': '分區',
         'projects.addSection': '新增分區',

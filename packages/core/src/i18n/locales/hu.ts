@@ -740,6 +740,7 @@ export const huOverrides: Record<string, string> = {
     'projects.sectionNotesPlaceholder': 'Adjon hozzá jegyzeteket ehhez a szakaszhoz…',
     'projects.reviewAt': 'Áttekintés dátuma',
     'projects.areaLabel': 'Terület',
+    'projects.areaAvailableSelectToAssign': 'A terület elérhető. Válassza ki, hogy ehhez a projekthez rendelje.',
     'projects.areaPlaceholder': 'például: Munka',
     'projects.sectionsLabel': 'Szakaszok',
     'projects.addSection': 'Szakasz hozzáadása',

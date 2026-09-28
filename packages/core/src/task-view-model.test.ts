@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { safeFormatDate } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
@@ -49,9 +49,16 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value));
 const lookup = createMarkdownLinkLookup(fixture.store.tasks, fixture.store.projects);
 
 let t: (key: string) => string = (key) => key;
+const originalTimezone = process.env.TZ;
 beforeAll(async () => {
+    // Match the frozen RN harness instead of the developer machine's timezone.
+    process.env.TZ = 'UTC';
     const english = await loadTranslations('en');
     t = (key) => english[key] || key;
+});
+afterAll(() => {
+    if (originalTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTimezone;
 });
 
 // ---------------------------------------------------------------------------

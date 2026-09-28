@@ -756,6 +756,7 @@ export const faOverrides: Record<string, string> = {
         'projects.sectionNotesPlaceholder': 'یادداشتی برای این بخش اضافه کنید...',
         'projects.reviewAt': 'تاریخ مرور',
         'projects.areaLabel': 'حوزه',
+        'projects.areaAvailableSelectToAssign': 'حوزه در دسترس است. برای اختصاص آن به این پروژه، آن را انتخاب کنید.',
         'projects.areaPlaceholder': 'مثلاً کار',
         'projects.sectionsLabel': 'بخش‌ها',
         'projects.addSection': 'افزودن بخش',

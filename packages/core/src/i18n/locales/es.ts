@@ -740,6 +740,7 @@ export const esOverrides: Record<string, string> = {
 'projects.sectionNotesPlaceholder': "Añade notas para esta sección...",
 'projects.reviewAt': "Fecha de revisión",
 'projects.areaLabel': "Área",
+'projects.areaAvailableSelectToAssign': "El área está disponible. Selecciónala para asignarla a este proyecto.",
 'projects.areaPlaceholder': "p. ej. Trabajo",
 'projects.sectionsLabel': "Secciones",
 'projects.addSection': "Añadir sección",

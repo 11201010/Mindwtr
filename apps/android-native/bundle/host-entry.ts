@@ -938,6 +938,31 @@ globalThis.MindwtrHost = {
     projectNotesWriteCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectNotesWrite(JSON.parse(json))));
     },
+    projectTagsEditOptions(id: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectTagsEditOptions({ projectId: id }));
+        });
+    },
+    projectTagsWriteRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeProjectTagsWriteOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    projectTagsWritePrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareProjectTagsWrite(JSON.parse(json)));
+        });
+    },
+    projectTagsWriteValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectTagsWrite(JSON.parse(json))));
+    },
+    projectTagsWriteCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectTagsWrite(JSON.parse(json))));
+    },
     projectStatusOptions(json: string): string {
         return submit(async () => {
             requireSaved();
