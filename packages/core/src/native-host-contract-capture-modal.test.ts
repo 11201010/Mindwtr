@@ -504,4 +504,22 @@ describe('native host contract: the capture confirmation screen over SQLite', ()
         expect(await env.replay((restarted) => restarted.submitCaptureModal({ ...input, draft: { ...draft, description: 'Book hotels' } })))
             .toMatchObject({ result: { ok: false, error: { code: 'INVALID_INPUT' } }, wrote: false, receipts: false });
     });
+
+    // Review blocker 2: a batch saved under [A, B], retried after a restart under a changed list, made a duplicate line.
+    it('a batch retried after process death under a changed UUID list is refused and writes nothing', async () => {
+        const env = await open();
+        const params = { initialValue: 'First%0ASecond' };
+        const { draft } = value(env.host.openCaptureModal({ params }));
+        const [a, b, c] = [requestId(), requestId(), requestId()];
+        const first = await env.host.submitCaptureModalLines({ params, draft, captureIds: [a, b] });
+        expect(first).toMatchObject({ ok: true, value: { kind: 'saved', taskIds: [a, b] } });
+        expect(await env.replay((restarted) => restarted.submitCaptureModalLines({ params, draft, captureIds: [a, b] })))
+            .toEqual({ result: first, wrote: false, receipts: false });
+        for (const captureIds of [[a, c], [c, b], [b, a]]) {
+            expect(await env.replay((restarted) => restarted.submitCaptureModalLines({ params, draft, captureIds })))
+                .toMatchObject({ result: { ok: false, error: { code: 'INVALID_INPUT' } }, wrote: false, receipts: false });
+        }
+        expect(useTaskStore.getState()._allTasks.filter((task) => task.title === 'First' || task.title === 'Second').map((task) => task.id).sort())
+            .toEqual([a, b].sort());
+    });
 });

@@ -378,8 +378,9 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
         /**
          * "Create tasks" after confirmLines: one task per line in one store write,
          * as React Native does; the screen then closes. Send one capture UUID per
-         * line and reuse them to retry. Every line is checked before anything is
-         * written: a date command it cannot read refuses the whole batch.
+         * line and reuse the same list to retry. Every line is checked before
+         * anything is written: a date command it cannot read refuses the whole
+         * batch. A list that names only some tasks of a saved batch is refused.
          */
         async submitCaptureModalLines(input: {
             params: CaptureModalParams;
@@ -410,28 +411,29 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                 JSON.stringify(['captureModalLines', params, draft.text, draft.description, draft.applied, ids]),
                 async () => {
                     const state = useTaskStore.getState();
-                    const missing: number[] = [];
-                    // Lines saved before a restart answer from their tasks, when they match.
-                    for (const [index, id] of taskIds.entries()) {
-                        const existing = state._allTasks.find((task) => task.id === id);
-                        if (!existing) {
-                            missing.push(index);
-                            continue;
-                        }
-                        const plan = planCaptureModalRequest(requestFor(params, draft, lines[index], state.projects));
-                        if (!plan.success || !isTaskOfDraft(existing, plan, ids[0])) return fail('INVALID_INPUT', 'Capture ID already belongs to another task');
+                    // One store write makes every line, so a batch that landed holds all its UUIDs. A batch
+                    // saved before a restart answers from its tasks when each matches its line; a list that
+                    // names only some saved tasks is not that batch.
+                    const existing = taskIds.map((id) => state._allTasks.find((task) => task.id === id));
+                    if (existing.some(Boolean)) {
+                        const matches = existing.every((task, index) => {
+                            const plan = task && planCaptureModalRequest(requestFor(params, draft, lines[index], state.projects));
+                            return Boolean(task && plan?.success && isTaskOfDraft(task, plan, ids[0]));
+                        });
+                        return matches
+                            ? { ok: true, value: { kind: 'saved', taskIds, close } }
+                            : fail('INVALID_INPUT', 'These capture IDs do not name the batch saved under them');
                     }
-                    if (missing.length === 0) return { ok: true, value: { kind: 'saved', taskIds, close } };
                     try {
                         const outcome = await saveCaptureModalLines({
-                            lines: missing.map((index) => lines[index]),
+                            lines,
                             projects: state.projects,
                             buildRequest,
                             actions: {
                                 addProject: (title, color, props) => useTaskStore.getState().addProject(title, color, props),
                                 addTasks: (items) => useTaskStore.getState().addTasks(items),
                             },
-                            captureIds: missing.map((index) => ids[index]),
+                            captureIds: ids,
                         });
                         if (outcome.kind !== 'saved') return notApplied(undefined);
                         return { ok: true, value: { kind: 'saved', taskIds, close } };
