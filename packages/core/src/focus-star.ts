@@ -8,7 +8,7 @@ import {
 import { formatFocusTaskLimitText } from './focus-utils';
 import { tFallback } from './i18n';
 import { isTaskActionable } from './task-status';
-import type { TaskDraft } from './task-draft';
+import { taskDraftToUpdatePatch, type TaskDraft } from './task-draft';
 
 /**
  * The Today's Focus star as one module: every surface that toggles a task's
@@ -103,12 +103,8 @@ export function resolveTaskEditorFocusStar(
 ): FocusStarAction & { queued: boolean } {
     const candidate: Task = {
         ...task,
+        ...(taskDraftToUpdatePatch(draft, task) ?? {}),
         status: draft.status === 'inbox' ? 'next' : draft.status,
-        startTime: draft.startTime || undefined,
-        dueDate: draft.dueDate || undefined,
-        reviewAt: draft.reviewAt || undefined,
-        projectId: draft.projectId || undefined,
-        sectionId: draft.sectionId || undefined,
         isFocusedToday: false,
     };
     const add = resolveFocusStarAction(candidate, {

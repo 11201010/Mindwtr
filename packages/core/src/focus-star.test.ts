@@ -106,6 +106,20 @@ describe('resolveTaskEditorFocusStar', () => {
             .toMatchObject({ queued: false, blockedReason: 'limit' });
     });
 
+    it('evaluates future due and review dates against the draft recurrence', () => {
+        for (const field of ['dueDate', 'reviewAt'] as const) {
+            const recurring = makeTask({ [field]: '2026-10-04', recurrence: { rule: 'daily' } });
+            const removed = setTaskDraftField(createTaskDraft(recurring), 'recurrence', '');
+            expect(resolveTaskEditorFocusStar(recurring, removed, baseContext({ now, tasks: [recurring] })))
+                .toMatchObject({ canToggle: true, blockedReason: null });
+
+            const oneOff = makeTask({ [field]: '2026-10-04' });
+            const added = setTaskDraftField(createTaskDraft(oneOff), 'recurrence', 'daily');
+            expect(resolveTaskEditorFocusStar(oneOff, added, baseContext({ now, tasks: [oneOff] })))
+                .toMatchObject({ canToggle: false, blockedReason: 'deferred' });
+        }
+    });
+
     it('blocks Done, Reference and deleted drafts while allowing Inbox clarification', () => {
         const inbox = makeTask({ status: 'inbox' });
         expect(resolveTaskEditorFocusStar(inbox, createTaskDraft(inbox), baseContext({ tasks: [inbox] })))

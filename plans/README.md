@@ -9,7 +9,7 @@ implements bounded code changes; root integrates one commit per finding.
 
 | Plan | Finding | Priority | Effort | Dependencies | Status |
 | --- | --- | --- | --- | --- | --- |
-| [132](132-editor-focus-draft-recurrence.md) | Editor Focus ignores draft recurrence | P2 | S | None | TODO |
+| [132](132-editor-focus-draft-recurrence.md) | Editor Focus ignores draft recurrence | P2 | S | None | DONE |
 | [133](133-shared-token-grouping.md) | Four duplicate context/tag grouping loops | P3 | S | None | TODO |
 | [134](134-image-size-exception-rationale.md) | Stale image-size exception rationale | P3 | S | None | DONE |
 

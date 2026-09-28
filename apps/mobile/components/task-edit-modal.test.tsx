@@ -1033,6 +1033,35 @@ describe('TaskEditModal', () => {
     expect(onSave).toHaveBeenCalledWith(task.id, expect.objectContaining({ isFocusedToday: true }));
   });
 
+  it('removes recurrence, stars, and saves in one editor session', async () => {
+    const task: Task = {
+      id: 'focus-recurrence', title: 'Focus after recurrence', status: 'next',
+      dueDate: '2099-01-01', reviewAt: '2099-01-02', recurrence: { rule: 'daily' },
+      tags: [], contexts: [], createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    taskEditStore.current!.tasks = [task];
+    taskEditStore.current!._allTasks = [task];
+    taskEditStore.current!._tasksById = new Map([[task.id, task]]);
+    const onSave = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<TaskEditModal visible task={task} onClose={vi.fn()} onSave={onSave} />);
+    });
+    const star = () => tree.root.findByProps({ testID: 'task-edit-focus-star' });
+    expect(star().props.accessibilityState.disabled).toBe(true);
+
+    const form = tree.root.findByType('TaskEditFormTab' as any);
+    act(() => form.props.renderField('recurrence').props.setDraftField('recurrence', ''));
+    expect(star().props.accessibilityState).toMatchObject({ selected: false, disabled: false });
+    act(() => star().props.onPress());
+    await act(async () => {
+      tree.root.find((node) => node.props.accessibilityLabel === 'common.save'
+        && typeof node.props.onPress === 'function').props.onPress();
+    });
+    expect(onSave).toHaveBeenCalledWith(task.id,
+      expect.objectContaining({ recurrence: undefined, isFocusedToday: true }));
+  });
+
   it('refuses a draft Focus star when the last slot fills before Save', async () => {
     const task: Task = {
       id: 'focus-late', title: 'Focus later', status: 'next', tags: [], contexts: [],
