@@ -314,7 +314,8 @@ export function createContextAutomationThrottle(): ContextAutomationThrottle {
         }
       }
 
-      const key = `${payload.action}:${payload.context}`;
+      // The receiver's extras keep the context as sent ('home'); a link carries the token ('@home').
+      const key = `${payload.action}:${normalizeContextToken(payload.context)}`;
       const previousHandledAtMs = recentlyHandled.get(key);
       if (previousHandledAtMs !== undefined && nowMs - previousHandledAtMs <= RECENT_CONTEXT_AUTOMATION_TTL_MS) {
         return true;
