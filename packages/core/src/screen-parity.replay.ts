@@ -5,7 +5,7 @@
  * that store; replayAfterRestart replays a request on a new host. openSqliteHost
  * runs the host over a real SQLite file with its request receipts, as the app does.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -172,10 +172,14 @@ export async function openSqliteHost(seed: Partial<AppData>, wrap: (client: Sqli
         client: () => clientOf(database),
         sql: <T,>(query: string, params?: unknown[]) => clientOf(database).all<T>(query, params),
         receiptIds,
-        async restart() {
+        /** A folder for this host's files (copies of the database). */
+        dir,
+        /** Process death; `from` is a copy of the file taken earlier (the disk as it was then). */
+        async restart(from?: string) {
             const status = getPersistenceStatus();
             if (status.queued || status.inFlight || status.immediate) throw new Error('Restart with a save still queued: flush the change first');
             database.close();
+            if (from) copyFileSync(from, file);
             database = openDatabase(file);
             host = await boot();
             return host;
@@ -184,8 +188,8 @@ export async function openSqliteHost(seed: Partial<AppData>, wrap: (client: Sqli
          * A replay after process death: restart, then `replay` the request. `wrote` says whether the
          * store's data changed; `receipts` whether the receipts table did.
          */
-        async replay<T>(replay: (restarted: ScreenHost) => Promise<NativeHostResult<T>>) {
-            const restarted = await this.restart();
+        async replay<T>(replay: (restarted: ScreenHost) => Promise<NativeHostResult<T>>, from?: string) {
+            const restarted = await this.restart(from);
             const data = () => {
                 const state = useTaskStore.getState();
                 return [state._allTasks, state._allProjects, state._allSections, state._allAreas, state._allPeople, state.settings];

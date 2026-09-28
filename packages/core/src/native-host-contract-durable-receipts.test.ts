@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { NativeHostResult } from './native-host-contract';
-import { pruneNativeRequestReceipts, requestRowId } from './native-request-receipts';
-import { openScratchSqlite, openSqliteHost, requestId as newRequestId, value } from './screen-parity.replay';
+import { loadNativeRequestReceipts, pruneNativeRequestReceipts, requestRowId, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
+import { openScratchSqlite, openSqliteHost, requestId as newRequestId, value, type ScreenHost } from './screen-parity.replay';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
-import { flushPendingSave, getStorageAdapter, useTaskStore } from './store';
+import { flushPendingSave, getSaveSnapshotGeneration, getStorageAdapter, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Area, Person, Project, Task } from './types';
 
 const AT = '2026-09-01T00:00:00.000Z';
@@ -25,7 +25,7 @@ const person = (id: string, name: string, extra: Partial<Person> = {}): Person =
 });
 
 /** Each transaction's statements, from BEGIN to COMMIT or ROLLBACK, and whether it committed. */
-const transactions = () => {
+const transactions = (afterCommit?: (client: SqliteClient) => Promise<void>) => {
     const log: { statements: string[]; committed: boolean }[] = [];
     let open: string[] | null = null;
     let failCommits = 0;
@@ -49,6 +49,7 @@ const transactions = () => {
                 open.push(sql.startsWith('INSERT INTO native_request_receipts') ? `receipt ${String(params?.[0])}` : sql.trim().split(/\s+/).slice(0, 3).join(' '));
             }
             await client.run(sql, params);
+            if (sql === 'COMMIT' && afterCommit) await afterCommit(client);
         },
     });
     return {
@@ -168,19 +169,38 @@ describe('durable request receipts: the native host over SQLite', () => {
         expect(await env.replay((restarted) => restarted.createProject(input))).toEqual({ result: { ok: true, value: { id: input.requestId } }, wrote: false, receipts: false });
     });
 
-    it('offers saveTask only while no receipt is pending, so no later change reaches the disk before a receipt', async () => {
+    it('offers saveTask only while a receipted write runs or its receipt is pending, so no later change reaches the disk before it', async () => {
         const trace = transactions();
-        const env = await open({ tasks: [task('a')], projects: [project('p-launch', 'Launch')] }, trace.wrap);
+        const env = await open({ tasks: [task('a')] }, trace.wrap);
         expect(getStorageAdapter().saveTask).toEqual(expect.any(Function));
-        // A write that changed nothing (Launch exists: it is reused) saves no snapshot: its receipt stays pending.
-        const reuse = { title: 'Launch', areaId: null, requestId: newRequestId() };
-        expect(value(await env.host.createProject(reuse))).toEqual({ id: 'p-launch' });
-        expect(await env.receiptIds()).toEqual([]);
+        const input = { title: 'Launch', areaId: null, requestId: newRequestId() };
+        const release = trace.holdNextTransaction();
+        const creating = env.host.createProject(input);
+        await tick();
+        // The create landed in memory; its save waits at BEGIN. A single-task edit now queues a whole snapshot.
         expect(getStorageAdapter().saveTask).toBeUndefined();
-        // The next single-task edit saves a whole snapshot, which commits that receipt with it.
-        await later(() => store().updateTask('a', { title: 'Edited' }));
-        expect(trace.log.at(-1)).toMatchObject({ committed: true, statements: expect.arrayContaining(['INSERT INTO tasks', `receipt ${reuse.requestId}`]) });
+        const from = trace.log.length;
+        const editing = store().updateTask('a', { title: 'Edited' });
+        release();
+        expect(await creating).toEqual({ ok: true, value: { id: input.requestId } });
+        await editing;
+        await flushPendingSave();
+        const committed = trace.log.slice(from).filter((entry) => entry.committed).map((entry) => entry.statements);
+        // The edit lands with the receipt or after it.
+        const receiptAt = committed.findIndex((statements) => statements.includes(`receipt ${input.requestId}`));
+        const editAt = committed.findIndex((statements) => statements.includes('INSERT INTO tasks'));
+        expect(receiptAt).toBeGreaterThanOrEqual(0);
+        expect(editAt).toBeGreaterThanOrEqual(receiptAt);
         expect(getStorageAdapter().saveTask).toEqual(expect.any(Function));
+    });
+
+    it('a write that changed nothing is acknowledged after a receipt-only commit', async () => {
+        const trace = transactions();
+        const env = await open({ projects: [project('p-launch', 'Launch')] }, trace.wrap);
+        const reuse = { title: 'Launch', areaId: null, requestId: newRequestId() };
+        expect(await env.host.createProject(reuse)).toEqual({ ok: true, value: { id: 'p-launch' } });
+        expect(trace.log.at(-1)).toEqual({ committed: true, statements: [`receipt ${reuse.requestId}`] });
+        expect(await env.receiptIds()).toEqual([reuse.requestId]);
     });
 
     it('killed between the data COMMIT and the journal drop: the replay answers the first reply and writes nothing', async () => {
@@ -303,6 +323,106 @@ describe('durable request receipts: the native host over SQLite', () => {
         expect(store().settings.timeFormat).toBe('24h');
     });
 
+    // An archived project's task set back to Next reactivates the project, and the store saves
+    // that inside the write (before its receipt exists).
+    const reactivation = {
+        projects: [project('p-arch', 'Old', { status: 'archived' })],
+        tasks: [task('t-done', { status: 'done', projectId: 'p-arch', contexts: ['@home'], completedAt: AT })],
+    };
+    const reactivate = (requestId: string) => ({
+        requestId, action: { type: 'setTaskStatus' as const, taskId: 't-done', status: 'next' as const, taskRevision: taskRevisionOf(store()._tasksById.get('t-done')!) },
+    });
+
+    it('a write whose data a save inside it committed is acknowledged only after a commit that carries its receipt', async () => {
+        const trace = transactions();
+        const env = await open(reactivation, trace.wrap);
+        const input = reactivate(newRequestId());
+        const first = await env.host.runContextsAction(input);
+        expect(first).toMatchObject({ ok: true, value: { changed: true } });
+        expect(store()._projectsById.get('p-arch')?.status).toBe('active');
+        expect(trace.log.filter((entry) => entry.committed).at(-1)!.statements).toContain(`receipt ${input.requestId}`);
+        expect(await env.receiptIds()).toEqual([input.requestId]);
+        expect(await env.replay((restarted) => restarted.runContextsAction(input))).toEqual({ result: first, wrote: false, receipts: false });
+    });
+
+    // Process death right after each COMMIT a write makes: the journal still holds the request, and
+    // the next boot replays it on the disk as that COMMIT left it.
+    it.each([
+        ['a write whose store action saves inside it', reactivation, (requestId: string) => {
+            const input = reactivate(requestId);
+            return (host: ScreenHost) => host.runContextsAction(input);
+        }],
+        ['a create', {}, (requestId: string) => (host: ScreenHost) => host.createProject({ title: 'Launch', areaId: null, requestId })],
+    ] as const)('killed right after any COMMIT of %s: the replay writes nothing more; after the last one, it answers the first reply', async (_name, seed, request) => {
+        let copies: string[] | null = null;
+        let env: Awaited<ReturnType<typeof open>>;
+        const trace = transactions(async (client) => {
+            if (!copies) return;
+            const copy = join(env.dir, `commit-${copies.length}.db`);
+            await client.exec(`VACUUM INTO '${copy}'`);
+            copies.push(copy);
+        });
+        env = await open(seed, trace.wrap);
+        const run = request(newRequestId());
+        copies = [];
+        const first = await run(env.host);
+        const commits = copies;
+        copies = null;
+        expect(first.ok).toBe(true);
+        expect(commits.length).toBeGreaterThan(0);
+        const state = () => JSON.stringify([store()._allTasks.map((entry) => [entry.id, entry.status]), store()._allProjects.map((entry) => [entry.id, entry.status, entry.title])]);
+        const landed = state();
+        for (const [index, copy] of commits.entries()) {
+            const replay = await env.replay(run, copy);
+            expect(replay.result.ok).toBe(true);
+            expect(replay.wrote).toBe(false);
+            expect(state()).toBe(landed);
+            // The reply came after the last COMMIT: that disk holds the receipt, so the replay answers it.
+            if (index === commits.length - 1) expect(replay).toEqual({ result: first, wrote: false, receipts: false });
+        }
+    });
+
+    it('a request UUID a pending receipt holds is refused to another command', async () => {
+        const trace = transactions();
+        const env = await open({}, trace.wrap);
+        const requestId = newRequestId();
+        const release = trace.holdNextTransaction();
+        // The create landed in memory; its save (with its receipt) waits at BEGIN.
+        const creating = env.host.createProject({ title: 'Launch', areaId: null, requestId });
+        await tick();
+        expect(await env.host.setGeneralSetting({ requestId, edit: { type: 'timeFormat', value: '12h' } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        release();
+        expect(await creating).toEqual({ ok: true, value: { id: requestId } });
+        expect(store().settings.timeFormat).toBeUndefined();
+    });
+
+    it('tags save snapshots with their generation only while durable receipts are on: React Native pays nothing', async () => {
+        const captured: AppData[] = [];
+        const capture = { getData: async () => ({ tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} }), saveData: async (data: AppData) => { captured.push(data); } };
+        resetNativeRequestReceipts();
+        setStorageAdapter(capture);
+        await store().persistSnapshot();
+        await flushPendingSave();
+        expect(captured).toHaveLength(1);
+        expect(getSaveSnapshotGeneration(captured[0])).toBeUndefined();
+
+        const dir = mkdtempSync(join(tmpdir(), 'mindwtr-generation-'));
+        const scratch = openScratchSqlite(join(dir, 'receipts.db'));
+        try {
+            await loadNativeRequestReceipts(scratch.client);
+            setStorageAdapter(capture);
+            await store().persistSnapshot();
+            await flushPendingSave();
+            expect(captured).toHaveLength(2);
+            expect(getSaveSnapshotGeneration(captured[1])).toEqual(expect.any(Number));
+        } finally {
+            resetNativeRequestReceipts();
+            scratch.close();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it('prunes receipts older than 30 days, on the call after the boot replay', async () => {
         const env = await open({});
         const input = { title: 'Launch', areaId: null, requestId: newRequestId() };
@@ -313,7 +433,8 @@ describe('durable request receipts: the native host over SQLite', () => {
         expect(await env.receiptIds()).toEqual([input.requestId]);
         expect(await pruneNativeRequestReceipts(client, new Date(Date.now() + 31 * 24 * 60 * 60 * 1000))).toBe(1);
         expect(await env.receiptIds()).toEqual([]);
-        // Without its receipt the replay runs again, under the write rules: the project its UUID named answers.
-        expect(await env.replay((restarted) => restarted.createProject(input))).toEqual({ result: first, wrote: false, receipts: false });
+        // Without its receipt the replay runs again, under the write rules: the project its UUID named
+        // answers, nothing is written, and the replay keeps a receipt of its own.
+        expect(await env.replay((restarted) => restarted.createProject(input))).toEqual({ result: first, wrote: false, receipts: true });
     });
 });

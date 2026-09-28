@@ -1,6 +1,6 @@
 import type { NativeHostResult } from './native-host-contract';
 import { SqliteAdapter, type SqliteAdapterOptions, type SqliteClient } from './sqlite-adapter';
-import { getPersistenceStatus, getSaveSnapshotGeneration, useTaskStore } from './store';
+import { getPersistenceStatus, getSaveSnapshotGeneration, trackSaveSnapshotGenerations, useTaskStore } from './store';
 import type { StoreActionResult } from './store-types';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import type { AppData, Project, Task } from './types';
@@ -31,8 +31,11 @@ import { deterministicHash128, generateDeterministicUUID } from './uuid';
  *
  * The native host keeps receipts on disk too (loadNativeRequestReceipts,
  * NativeReceiptSqliteAdapter): a write's receipt commits in the same SQLite
- * transaction as its data, so the journal's replay after process death answers a
- * landed request from its first reply and runs nothing. Without that table (other
+ * transaction as its data (or, when a save inside the write committed the data
+ * first, in a receipt-only commit right after it), and the reply waits for that
+ * commit. So the journal's replay after process death answers a landed request
+ * from its first reply and runs nothing. One request ID belongs to one action
+ * across all the contract's modules. Without that table (other
  * hosts, tests), or for a write whose data a save committed before its receipt
  * existed, a replay runs the write again, so every write must also be safe to run
  * again after a later change:
@@ -183,10 +186,26 @@ export const requestProjects = (idOf: (title: string) => string) => {
     return { addProject, made };
 };
 
+/**
+ * The projects a request's names are matched against: the project the request made (`id`), when
+ * it exists, under `title` (the name the request gives it), in place of every other project of
+ * that name. The request's own project wins over one made or renamed since. Null when that
+ * project is deleted or archived: the request answers STALE_REVISION.
+ */
+export const withRequestProject = (projects: readonly Project[], id: string, title: string): Project[] | null => {
+    const own = useTaskStore.getState()._allProjects.find((project) => project.id === id);
+    if (!own) return [...projects];
+    if (!isSelectableProjectForTaskAssignment(own)) return null;
+    const key = title.trim().toLowerCase();
+    return [{ ...own, title }, ...projects.filter((project) => project.id !== id && project.title.trim().toLowerCase() !== key)];
+};
+
 // Durable receipts: the native host only (loadNativeRequestReceipts turns them on).
 type StoredReceipt = { payload: string; reply: unknown; savedAt: string };
 type PendingReceipt = { payload: string; reply: unknown; generation: number };
 let durableReceipts: Map<string, StoredReceipt> | null = null;
+/** Every request ID a receipts instance holds, and its payload: one ID belongs to one action across the contract's modules. */
+const requestPayloads = new Map<string, string>();
 /** Landed, not committed yet; `generation` is the store's when it landed (every change it made is saved at or before it). */
 const pendingReceipts = new Map<string, PendingReceipt>();
 let receiptedWritesRunning = 0;
@@ -215,7 +234,9 @@ export async function loadNativeRequestReceipts(client: SqliteClient): Promise<n
     );
     durableReceipts = new Map(rows.map((row) => [row.request_id, { payload: row.method, reply: JSON.parse(row.reply), savedAt: row.saved_at }]));
     pendingReceipts.clear();
+    requestPayloads.clear();
     receiptedWritesRunning = 0;
+    trackSaveSnapshotGenerations(true);
     return durableReceipts.size;
 }
 
@@ -233,11 +254,16 @@ export async function pruneNativeRequestReceipts(client: SqliteClient, now = new
     return pruned;
 }
 
+/** A new native host (createNativeHostContract): the request IDs an earlier host held in memory are forgotten. */
+export const startNativeRequestSession = () => { requestPayloads.clear(); };
+
 /** Tests only: back to receipts in memory. */
 export const resetNativeRequestReceipts = () => {
     durableReceipts = null;
     pendingReceipts.clear();
+    requestPayloads.clear();
     receiptedWritesRunning = 0;
+    trackSaveSnapshotGenerations(false);
 };
 
 /**
@@ -312,12 +338,21 @@ export function createNativeRequestReceipts(options: {
     const limit = options.limit ?? 50;
     const receipts = new Map<string, Receipt>();
 
-    const save = async (receipt: Receipt): Promise<NativeHostResult<unknown>> => {
+    const save = async (requestId: string, receipt: Receipt): Promise<NativeHostResult<unknown>> => {
         // A successful save stores the whole snapshot, so every write that landed before it
         // began is durable too. A write that lands while it runs waits for its own save.
         const covered = Array.from(receipts.values()).filter((entry) => entry.written);
         const saved = await options.save();
         if (!saved.ok) return saved;
+        // With durable receipts, the reply waits for a commit that carries its receipt. A write
+        // whose data a save inside it already committed (a store action that flushes by itself),
+        // or that changed nothing, left no snapshot queued: a receipt-only commit follows.
+        if (pendingReceipts.has(requestId)) {
+            await useTaskStore.getState().persistSnapshot();
+            const again = await options.save();
+            if (!again.ok) return again;
+            if (pendingReceipts.has(requestId)) return { ok: false, error: { code: 'SAVE_FAILED', message: 'The request\'s receipt was not saved' } };
+        }
         for (const entry of covered) entry.saved = true;
         return { ok: true, value: receipt.value };
     };
@@ -327,6 +362,7 @@ export function createNativeRequestReceipts(options: {
         for (const [id, entry] of receipts) {
             if (entry.saved && !entry.running) {
                 receipts.delete(id);
+                requestPayloads.delete(id);
                 return true;
             }
         }
@@ -345,7 +381,7 @@ export function createNativeRequestReceipts(options: {
             if (known) {
                 if (known.running) return known.running as Promise<NativeHostResult<T>>;
                 if (known.saved) return Promise.resolve({ ok: true, value: known.value as T });
-                const finishing = save(known).finally(() => { known.running = null; });
+                const finishing = save(requestId, known).finally(() => { known.running = null; });
                 known.running = finishing;
                 return finishing as Promise<NativeHostResult<T>>;
             }
@@ -356,6 +392,11 @@ export function createNativeRequestReceipts(options: {
                     ? { ok: true, value: stored.reply as T }
                     : { ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
             }
+            // Held by another module's action (landed, pending or running): refused.
+            const owner = requestPayloads.get(requestId) ?? pendingReceipts.get(requestId)?.payload;
+            if (owner !== undefined && owner !== payload) {
+                return Promise.resolve({ ok: false, error: { code: 'INVALID_INPUT', message: 'Request ID already belongs to another action' } });
+            }
             if (!makeRoom()) {
                 return Promise.resolve({
                     ok: false,
@@ -364,6 +405,7 @@ export function createNativeRequestReceipts(options: {
             }
             const receipt: Receipt = { payload, running: null, written: false, value: undefined, saved: false };
             receipts.set(requestId, receipt);
+            requestPayloads.set(requestId, payload);
             receipt.running = (async (): Promise<NativeHostResult<unknown>> => {
                 let outcome: NativeHostResult<T> | NativeUnsavedWrite<T>;
                 const durable = durableReceipts !== null;
@@ -383,6 +425,7 @@ export function createNativeRequestReceipts(options: {
                     }
                     if (!outcome.ok) {
                         receipts.delete(requestId);
+                        requestPayloads.delete(requestId);
                         return outcome;
                     }
                     receipt.written = true;
@@ -392,7 +435,7 @@ export function createNativeRequestReceipts(options: {
                 } finally {
                     if (durable) receiptedWritesRunning -= 1;
                 }
-                return save(receipt);
+                return save(requestId, receipt);
             })().finally(() => { receipt.running = null; });
             return receipt.running as Promise<NativeHostResult<T>>;
         },

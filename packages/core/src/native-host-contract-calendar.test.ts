@@ -468,6 +468,25 @@ describe('native host contract: Calendar', () => {
         expect(useTaskStore.getState()._tasksById.has(other.requestId.toLowerCase())).toBe(false);
     });
 
+    it('a replay takes the composer\'s own project, renamed since, over a project given its old name since', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const opened = value(host.openCalendarComposer({ day: '2026-10-31', calendar: ready })).composer!;
+        const composer = value(host.editCalendarComposer({ composer: opened.composer, edit: { type: 'title', title: 'Pick paint +Kitchen' }, calendar: ready }));
+        const input = { requestId: generateUUID(), action: { type: 'saveComposer' as const, composer: composer.composer }, calendar: ready };
+        const projectId = requestRowId(input.requestId, 'project:kitchen');
+        const addTask = useTaskStore.getState().addTask;
+        useTaskStore.setState({ addTask: async () => ({ success: false, error: 'Task store refused' }) });
+        expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        useTaskStore.setState({ addTask });
+        await useTaskStore.getState().updateProject(projectId, { title: 'Paint' });
+        const newer = await useTaskStore.getState().addProject('Kitchen', '#94a3b8');
+        const replay = await replayAfterRestart((restarted) => restarted.runCalendarAction(input));
+        expect(replay.result).toMatchObject({ ok: true, value: { changed: true } });
+        expect(useTaskStore.getState()._tasksById.get(input.requestId.toLowerCase())?.projectId).toBe(projectId);
+        expect(useTaskStore.getState()._tasksById.get(input.requestId.toLowerCase())?.projectId).not.toBe(newer!.id);
+    });
+
     it('lets a move that owes its save finish even when its slot is taken since', async () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);

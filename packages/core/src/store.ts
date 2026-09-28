@@ -78,8 +78,11 @@ export const getPersistenceStatus = () => ({
 // Each queued snapshot's generation. Every saved change moves the generation on and takes
 // its snapshot in the same step, so a snapshot tagged g holds every change saved at
 // generation g or before: a save of it makes all of them durable.
+// Only the native host's durable receipts read them (React Native never turns this on).
 const snapshotGenerations = new WeakMap<AppData, number>();
-/** The generation (getPersistenceStatus's) a save-queue snapshot was taken at; undefined for data the queue did not build. */
+let tagSnapshotGenerations = false;
+export const trackSaveSnapshotGenerations = (on: boolean) => { tagSnapshotGenerations = on; };
+/** The generation (getPersistenceStatus's) a save-queue snapshot was taken at; undefined for data the queue did not build, or while not tracked. */
 export const getSaveSnapshotGeneration = (data: AppData): number | undefined => snapshotGenerations.get(data);
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
 const getSaveRetryDelayMs = (attempt: number): number => {
@@ -392,7 +395,7 @@ const enqueuePendingSave = (
     if (explicitVersion === undefined) pendingVersion += 1;
     const version = explicitVersion ?? pendingVersion;
     const snapshot = sanitizeAppDataForStorage(data);
-    snapshotGenerations.set(snapshot, version);
+    if (tagSnapshotGenerations) snapshotGenerations.set(snapshot, version);
     pendingSaves.push({
         version,
         data: snapshot,

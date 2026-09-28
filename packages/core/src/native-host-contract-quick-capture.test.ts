@@ -310,8 +310,8 @@ describe('native host contract: the capture popup', () => {
         expect(value(await restarted.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName: null }))).toEqual(saved);
         expect(await restarted.submitQuickCaptureLines({ text: 'Plan beds\nCall Bob', options, captureIds, snapshotFileName: null }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        // Archiving Garden plan completes its task: the stored task no longer proves this draft, so the
-        // retry is refused, and no second Garden plan is created.
+        // Archiving Garden plan, the project this batch made: the retry is refused (the batch's own
+        // project is gone, as after a delete), and no second Garden plan is created.
         const garden = useTaskStore.getState().projects.find((project) => project.title === 'Garden plan')!;
         await useTaskStore.getState().updateProject(garden.id, { status: 'archived' });
         await flushPendingSave();
@@ -319,7 +319,7 @@ describe('native host contract: the capture popup', () => {
         expect(await again.setLanguage({ storedLanguage: 'en', systemLocale: null })).toMatchObject({ ok: true });
         expect(await again.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         expect(await again.submitQuickCaptureLines({ text, options, captureIds, snapshotFileName: null }))
-            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         expect(recorder.log).toEqual([]);
         expect(useTaskStore.getState()._allProjects.filter((project) => project.title === 'Garden plan')).toHaveLength(1);
 
@@ -488,6 +488,42 @@ describe('native host contract: the capture popup', () => {
         }));
         expect(gone).toMatchObject({ result: { ok: false, error: { code: 'STALE_REVISION' } }, wrote: false });
         expect(madeProjects()).toEqual([[gardenId, 'Beds', false], [taxesId, 'Paperwork', false], [atticId, 'Attic', true]]);
+    });
+
+    it('a replay takes the capture\'s own project, renamed since, over a project given its old name since', async () => {
+        const { host } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const capture = { text: 'Plan beds +Garden plan', options, captureId: generateUUID() };
+        const taskId = capture.captureId.toLowerCase();
+        const projectId = requestRowId(capture.captureId, 'project:garden plan');
+        await failTaskWrites('addTask', () => host.submitQuickCapture(capture));
+        await renameProject('Garden plan', 'Beds');
+        const newer = (await useTaskStore.getState().addProject('Garden plan', '#94a3b8'))!;
+        const replay = await replayAfterRestart((restarted) => restarted.submitQuickCapture(capture));
+        expect(replay.result).toMatchObject({ ok: true, value: { kind: 'saved', taskId, projectId } });
+        expect(useTaskStore.getState()._tasksById.get(taskId)?.projectId).toBe(projectId);
+        expect(madeProjects()).toEqual([[projectId, 'Beds', false], [newer.id, 'Garden plan', false]]);
+        // Landed now: a later replay still answers from the task in the capture's own project.
+        expect(await replayAfterRestart((restarted) => restarted.submitQuickCapture(capture)))
+            .toMatchObject({ result: { ok: true, value: { kind: 'saved', taskId, projectId } }, wrote: false });
+    });
+
+    it('a batch replay takes its own projects, renamed since, over projects given their old names since', async () => {
+        const { host } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const snapshotFileName = value(await host.createQuickCaptureSnapshot())!.fileName;
+        const lines = { text: 'Plan beds +Garden plan\nFile receipts +Taxes', options, captureIds: [generateUUID(), generateUUID()], snapshotFileName };
+        const gardenId = requestRowId(lines.captureIds[0], 'project:garden plan');
+        await failTaskWrites('addTasks', () => host.submitQuickCaptureLines(lines));
+        await renameProject('Garden plan', 'Beds');
+        const newer = (await useTaskStore.getState().addProject('Garden plan', '#94a3b8'))!;
+        const replay = await replayAfterRestart(async (restarted) => restarted.submitQuickCaptureLines({
+            ...lines, snapshotFileName: value(await restarted.createQuickCaptureSnapshot())!.fileName,
+        }));
+        expect(replay.result).toMatchObject({ ok: true, value: { kind: 'saved' } });
+        expect(useTaskStore.getState()._tasksById.get(lines.captureIds[0].toLowerCase())?.projectId).toBe(gardenId);
+        expect(useTaskStore.getState()._allProjects.filter((project) => project.id === newer.id || project.id === gardenId).map((project) => project.title))
+            .toEqual(['Beds', 'Garden plan']);
     });
 
     it('windows a long picker list and counts every match', async () => {

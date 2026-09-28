@@ -3258,6 +3258,15 @@ describe('native host contract: replays after a restart', () => {
         expect(store()._projectsById.get('p')?.isFocused).toBe(false);
     });
 
+    it('a request UUID belongs to one action across the contract\'s modules: another command under it is refused', async () => {
+        const host = await open();
+        const requestId = newRequestId();
+        // Reuses the live project "p" by title: nothing written, and its request is still spent.
+        expect(unwrap(await host.createProject({ title: store()._projectsById.get('p')!.title, areaId: null, requestId }))).toEqual({ id: 'p' });
+        expect(await host.setGeneralSetting({ requestId, edit: { type: 'timeFormat', value: '12h' } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(store().settings.timeFormat).toBeUndefined();
+    });
+
     it('createProject: a replay finds the project its request UUID named, renamed or deleted since', async () => {
         const host = await open();
         const input = { title: 'Launch', areaId: 'area', requestId: newRequestId() };

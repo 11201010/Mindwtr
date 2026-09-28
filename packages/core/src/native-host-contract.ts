@@ -113,6 +113,7 @@ import {
     INITIAL_PROCESS_INBOX_ANSWERS,
     PROCESS_INBOX_ENERGY_LEVEL_OPTIONS,
     PROCESS_INBOX_PRIORITY_OPTIONS,
+    prepareProcessInboxProjectConversion,
     resolveProcessInboxProjectSearchSubmit,
     resolveProcessInboxStep,
     selectProcessInboxQueue,
@@ -176,6 +177,8 @@ import {
     requestProjects,
     requestRowId,
     revisionOf,
+    startNativeRequestSession,
+    withRequestProject,
     revisionsToken,
     runStoreWrite,
     settleWrite,
@@ -838,6 +841,8 @@ const applyNativeTaskDraftEdit = (
  * `syncSettings` binds the host's device for Settings › Sync (native-host-contract-settings-sync.ts).
  */
 export function createNativeHostContract(options: { syncSettings?: NativeSyncSettingsHost } = {}) {
+    // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
+    startNativeRequestSession();
     const processId = generateUUID();
     let language: Language = 'en';
     let systemLocale: string | null = null;
@@ -3028,13 +3033,26 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
         const { state, plan, queue, parseTitle } = context();
         const t = deps.t();
         const title = entry.draft.title.trim() || task.title;
-        const projects = requestProjects(() => requestRowId(requestId, 'project'));
+        const ownId = requestRowId(requestId, 'project');
+        const projects = requestProjects(() => ownId);
+        // Create project finds its project by name: the one this request made is matched first under
+        // that name, so a retry uses it, renamed since or not, never a project given that name since.
+        let named: readonly Project[] = state.projects;
+        if (kind === 'convert') {
+            const bare = prepareProcessInboxProjectConversion({
+                task, parsedTitle: parseTitle(entry.draft.title).title, title: entry.draft.title, nextActionDraft: entry.draft.nextAction,
+                extraActionDrafts: entry.draft.extraActions, projects: [], showAreaField: false, areaId: null,
+            });
+            const matched = bare.ok ? withRequestProject(named, ownId, bare.projectTitle) : named;
+            if (!matched) return fail('STALE_REVISION', 'The project this request created is gone');
+            named = matched;
+        }
         const outcome = await commitProcessInboxDecision(kind, {
             task,
             draft: entry.draft,
             plan,
             settings: state.settings,
-            projects: state.projects,
+            projects: named,
             parseTitle,
             session: entry.session,
             candidates: queue,

@@ -151,8 +151,7 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, isRevision, refuseStale, requestRowId, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
-import { isSelectableProjectForTaskAssignment } from './project-utils';
+import { createNativeRequestReceipts, isRevision, refuseStale, requestRowId, runStoreWrite, settleWrite, taskRevisionOf, withRequestProject, type NativeUnsavedWrite } from './native-request-receipts';
 import { buildQuickAddParseOptions } from './quick-add';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { resolveFeatureFlags } from './resolve-feature-flags';
@@ -1454,9 +1453,19 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             case 'saveComposer': {
                 const composer = readComposer(action.composer, ctx.formatDate)!;
                 const createdId = requestId.toLowerCase();
+                const base = saveContext(ctx, events, createdId);
+                // A `+Project` this request creates takes an id from the request and its name (as a
+                // quick capture's does), and that project is matched first under that name: a replay
+                // files the task there, renamed since or not, never in a project given that name since.
+                const ownId = (name: string) => requestRowId(requestId, `project:${name.trim().toLowerCase()}`);
+                const bare = prepareComposerSave(composer, { ...base, projects: [] });
+                const ownName = bare.kind === 'create' ? bare.projectToCreate?.name : undefined;
+                const projects = ownName ? withRequestProject(base.projects ?? [], ownId(ownName), ownName) : base.projects;
+                // Deleted or archived since: never made again, and the task is not written.
+                if (!projects) return fail('STALE_REVISION', 'The project this request created is gone');
                 // The whole save is validated here, before any write: the task plan, its
                 // dates and the slot. No refusal can follow a project write.
-                const intent = prepareComposerSave(composer, saveContext(ctx, events, createdId));
+                const intent = prepareComposerSave(composer, { ...base, projects });
                 if (intent.kind === 'error') return fail('ACTION_FAILED', getCalendarComposerErrorText(intent.error, ctx.t));
                 const answer = { ...dayView(composer.startAt!), taskId: intent.kind === 'update' ? intent.taskId : createdId };
                 if (intent.kind === 'update') {
@@ -1465,9 +1474,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                     if (task.startTime === intent.updates.startTime && task.timeEstimate === intent.updates.timeEstimate) return unchanged(answer);
                     return stale(task, composer.taskRevision) ?? written(() => store.updateTask(task.id, intent.updates), answer);
                 }
-                // A `+Project` this request creates takes an id from the request and the project's
-                // name (as a quick capture's does), found first: a replay uses it, renamed since or not.
-                const projectId = intent.projectToCreate ? requestRowId(requestId, `project:${intent.projectToCreate.name.trim().toLowerCase()}`) : null;
+                const projectId = intent.projectToCreate ? ownId(intent.projectToCreate.name) : null;
                 const planned = projectId ? applyComposerCreatedProject(intent.draft, projectId) : intent.draft;
                 const existing = taskById(createdId);
                 if (existing) {
@@ -1476,12 +1483,9 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                         ? unchanged(answer)
                         : fail('INVALID_INPUT', 'Request ID already belongs to another task');
                 }
-                const made = projectId ? store._allProjects.find((project) => project.id === projectId) : undefined;
-                // Deleted or archived since: never made again, and the task is not written.
-                if (made && !isSelectableProjectForTaskAssignment(made)) return fail('STALE_REVISION', 'The project this request created is gone');
                 const landed = await runStoreWrite(async () => {
                     let draft = planned;
-                    if (intent.projectToCreate && !made) {
+                    if (intent.projectToCreate) {
                         const { name, color, initialProps } = intent.projectToCreate;
                         const project = await useTaskStore.getState().addProject(name, color, { ...initialProps, id: projectId! });
                         if (!project) return { success: false, error: 'Project creation failed' };
