@@ -24,8 +24,9 @@ import {
     type GtdSyncSnapshot,
 } from './settings-options';
 import { isNonEmptyString, isObjectRecord, isValidTimestamp } from './sync-normalization';
+import { isDeepJsonEqual } from './sync-helpers';
 import { MAX_FOCUS_TASK_LIMIT, MIN_FOCUS_TASK_LIMIT, normalizeFocusTaskLimit } from './focus-utils';
-import { keepSavedFilters, normalizeSavedFilters } from './saved-filters';
+import { keepSavedFilters, normalizeSavedFilter, normalizeSavedFilters } from './saved-filters';
 import { chooseDeterministicWinner } from './sync-signatures';
 import { DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS } from './sync-types';
 import { normalizeExternalCalendarColor } from './external-calendar-colors';
@@ -74,7 +75,35 @@ const chooseDeletedSavedFilter = (localFilter: SavedFilter, incomingFilter: Save
     return chooseDeterministicWinner(localFilter, incomingFilter);
 };
 
-const chooseSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter, incomingWins: boolean): SavedFilter => {
+// v1.3.2's saved-filter reader, kept to recognize its copies (never to store
+// one): every v1.3.2 load, merge and upload rewrote each filter this way —
+// an unknown view became 'focus', unknown fields and values were dropped, a
+// missing createdAt became its load time (`inventedAt`) — and kept updatedAt.
+const legacySavedFilterProjection = (filter: SavedFilter, inventedAt: string | undefined): SavedFilter | null => {
+    const value = filter as unknown as Record<string, unknown>;
+    const legacy = {
+        ...value,
+        id: typeof value.id === 'string' ? value.id.trim() : value.id,
+        createdAt: typeof value.createdAt === 'string' && value.createdAt.trim() ? value.createdAt : inventedAt,
+    };
+    return normalizeSavedFilter(legacy) ?? normalizeSavedFilter({ ...legacy, view: 'focus' });
+};
+
+// Two copies tied on time: when one is only v1.3.2's rewrite of the other,
+// the other (the full copy) wins; otherwise one deterministic winner.
+const chooseTiedSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter): SavedFilter => {
+    const incomingIsLegacy = isDeepJsonEqual(legacySavedFilterProjection(localFilter, incomingFilter.createdAt), incomingFilter);
+    const localIsLegacy = isDeepJsonEqual(legacySavedFilterProjection(incomingFilter, localFilter.createdAt), localFilter);
+    if (incomingIsLegacy !== localIsLegacy) return incomingIsLegacy ? localFilter : incomingFilter;
+    return chooseDeterministicWinner(localFilter, incomingFilter);
+};
+
+const chooseSavedFilter = (
+    localFilter: SavedFilter,
+    incomingFilter: SavedFilter,
+    incomingWins: boolean,
+    localNewer: boolean,
+): SavedFilter => {
     const localDeleted = !!localFilter.deletedAt;
     const incomingDeleted = !!incomingFilter.deletedAt;
     if (localDeleted !== incomingDeleted) {
@@ -98,9 +127,13 @@ const chooseSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter
         const updatedAtDiff = incomingUpdatedAt - localUpdatedAt;
         if (updatedAtDiff > 0) return incomingFilter;
         if (updatedAtDiff < 0) return localFilter;
-        return chooseDeterministicWinner(localFilter, incomingFilter);
+        return chooseTiedSavedFilter(localFilter, incomingFilter);
     }
-    return incomingWins ? incomingFilter : localFilter;
+    // Neither copy has a time: a strictly newer group timestamp decides, then
+    // one deterministic winner, so both peers keep the same copy.
+    if (incomingWins) return incomingFilter;
+    if (localNewer) return localFilter;
+    return chooseTiedSavedFilter(localFilter, incomingFilter);
 };
 
 /**
@@ -128,7 +161,7 @@ const mergeSavedFiltersById = (
         const localFilter = localById.get(id);
         const incomingFilter = incomingById.get(id);
         mergedById.set(id, localFilter && incomingFilter
-            ? chooseSavedFilter(localFilter, incomingFilter, incomingWins)
+            ? chooseSavedFilter(localFilter, incomingFilter, incomingWins, localNewer)
             : (localFilter ?? incomingFilter) as SavedFilter);
     }
 

@@ -386,6 +386,40 @@ export type SqliteAdapterOptions = {
     rejectConcurrentWrites?: boolean;
 };
 
+/**
+ * Put live saved filters a stale list omitted back into it. One the stored
+ * settings list holds returns whole, right after the nearest filter that
+ * stood before it there (first when none did); one only the table holds
+ * returns as the table has it, at the end.
+ */
+const restoreOmittedSavedFilters = (
+    list: readonly SavedFilter[],
+    storedList: readonly SavedFilter[],
+    keptIds: readonly string[],
+    fromTable: (id: string) => SavedFilter | null,
+): SavedFilter[] => {
+    const result = [...list];
+    const pending = new Set(keptIds);
+    // ponytail: quadratic in the list length; saved filters number in the tens.
+    storedList.forEach((filter, index) => {
+        if (!pending.delete(filter.id)) return;
+        let at = 0;
+        for (let previous = index - 1; previous >= 0; previous -= 1) {
+            const found = result.findIndex((item) => item.id === storedList[previous].id);
+            if (found >= 0) {
+                at = found + 1;
+                break;
+            }
+        }
+        result.splice(at, 0, filter);
+    });
+    for (const id of pending) {
+        const filter = fromTable(id);
+        if (filter) result.push(filter);
+    }
+    return result;
+};
+
 export class SqliteAdapter {
     private client: SqliteClient;
     private rejectConcurrentWrites: boolean;
@@ -1513,7 +1547,20 @@ export class SqliteAdapter {
             await syncIds('people', people.map((person) => person.id));
 
             const rawSavedFilters = data.settings?.savedFilters;
-            const savedFilters = keepSavedFilters(rawSavedFilters);
+            // The stored settings list, read in this transaction: the complete
+            // copy of every filter (the table holds only its own columns).
+            let storedFilterList: SavedFilter[] | null | undefined;
+            const readStoredFilterList = async () => {
+                if (storedFilterList === undefined) {
+                    const row = await timed(() => this.client.get<Record<string, unknown>>('SELECT data FROM settings WHERE id = 1'));
+                    const stored = row?.data ? fromJson<AppData['settings']>(row.data, {}) : {};
+                    storedFilterList = Array.isArray(stored.savedFilters) ? keepSavedFilters(stored.savedFilters) : null;
+                }
+                return storedFilterList;
+            };
+            // A snapshot without a list says nothing about saved filters: the stored list stays.
+            const filterList = Array.isArray(rawSavedFilters) ? rawSavedFilters : await readStoredFilterList();
+            const savedFilters = keepSavedFilters(filterList);
             // The settings list keeps each filter as written; this table copy
             // holds only its own columns, and a NOT NULL one it lacks is empty.
             const textOr = <T>(value: unknown, fallback: T) => (typeof value === 'string' ? value : fallback);
@@ -1562,21 +1609,28 @@ export class SqliteAdapter {
             );
             saveStep = 'sync-saved-filter-ids';
             // The table mirrors settings.savedFilters, which this save rewrites.
-            // A kept live filter goes back into that list too, so the next load
-            // (which reads the list, or the table when there is no list) still
-            // shows it and the two copies never disagree. It also stays known,
-            // so a second stale save before a reload keeps it again.
+            // A kept live filter goes back into that list too, whole and at its
+            // stored place, so the next load (which reads the list, or the table
+            // when there is no list) still shows it and the two copies never
+            // disagree. It also stays known, so a second stale save before a
+            // reload keeps it again.
             const keptFilterRows = await syncIds('saved_filters', savedFilters.map((filter) => filter.id));
             const knownFilterVersions = nextKnownRows.get('saved_filters');
-            const keptFilters = keptFilterRows.flatMap((row) => {
+            const keptFilterRowById = new Map(keptFilterRows.map((row) => {
                 knownFilterVersions?.set(String(row.id), this.knownRowVersionFromRow(row));
-                const filter = this.mapSavedFilterRow(row);
-                return filter ? [filter] : [];
-            });
+                return [String(row.id), row] as const;
+            }));
 
             const settingsForSave = { ...(data.settings ?? {}) };
-            if (Array.isArray(rawSavedFilters)) {
-                settingsForSave.savedFilters = keptFilters.length > 0 ? [...savedFilters, ...keptFilters] : savedFilters;
+            if (Array.isArray(filterList)) {
+                settingsForSave.savedFilters = keptFilterRowById.size > 0
+                    ? restoreOmittedSavedFilters(
+                        savedFilters,
+                        (await readStoredFilterList()) ?? [],
+                        [...keptFilterRowById.keys()],
+                        (id) => this.mapSavedFilterRow(keptFilterRowById.get(id)!),
+                    )
+                    : savedFilters;
             } else {
                 delete settingsForSave.savedFilters;
             }

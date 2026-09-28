@@ -8,10 +8,12 @@ import {
     getFocusReorderPositionLabel,
     getFocusSortOptions,
     moveFocusReorderTask,
+    planFocusFilterCriterionRemoval,
     planFocusFilterDelete,
     planFocusGroupChange,
     reconcileFocusReorderOrder,
     resolveFocusFilterState,
+    selectFocusSavedFilters,
 } from './focus-controls';
 import {
     createCoreFocusDriver,
@@ -115,6 +117,30 @@ describe('Focus controls', () => {
         const filters: SavedFilter[] = [{ id: 's', name: 'S', view: 'focus', criteria: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }];
         expect(planFocusFilterDelete(filters, 's', '2026-02-01T00:00:00.000Z').savedFilters)
             .toEqual([{ ...filters[0], updatedAt: '2026-02-01T00:00:00.000Z', deletedAt: '2026-02-01T00:00:00.000Z' }]);
+    });
+
+    it('removes an advanced criterion from the stored filter, keeping what this build does not know', () => {
+        // A newer app's field and criterion on a Focus filter this build can show.
+        const stored = {
+            id: 's', name: 'S', view: 'focus', color: 'red',
+            criteria: { areas: [' area ', 'other'], futureCriterion: 'keep' },
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        } as unknown as SavedFilter;
+        const other: SavedFilter = { id: 'o', name: 'O', view: 'focus', criteria: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+        const [active] = selectFocusSavedFilters([stored]);
+
+        const plan = planFocusFilterCriterionRemoval({
+            activeSavedFilter: active!,
+            criterionId: 'area:area',
+            savedFilters: [stored, other],
+            nowIso: '2026-02-01T00:00:00.000Z',
+        });
+
+        expect(plan?.savedFilters).toEqual([
+            { ...stored, criteria: { areas: ['other'], futureCriterion: 'keep' }, updatedAt: '2026-02-01T00:00:00.000Z' },
+            other,
+        ]);
+        expect(plan?.savedFilters[1]).toBe(other);
     });
 
     it('allows reorder only on the default sort without a filter, and keeps a dragged order against the live list', () => {
