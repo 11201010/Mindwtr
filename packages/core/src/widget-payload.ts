@@ -3,7 +3,6 @@ import {
     hasTimeComponent,
     isLocaleDateDayFirst,
     normalizeDateFormatSetting,
-    normalizeTimeFormatSetting,
     safeParseDate,
     safeParseDueDate,
 } from './date';
@@ -347,30 +346,22 @@ const computeDueLabel = (
     return { dueLabel, dueEmphasis: false, dueTone: 'normal' };
 };
 
-// A due TIME for a row inside a dated section (Todoist shows "17:00", not the
-// date, under a "Today" header); null when the due date carries no time.
-const formatDueTime = (date: Date, language: string): string => {
-    try {
-        return new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit' }).format(date);
-    } catch {
-        return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
-    }
-};
-
-// An explicit 12- or 24-hour setting reads as the app's own times do (core's
-// 'p' under the same date settings); System keeps the language's own form.
+// A time reads exactly as the app's own times do: core's 'p' under the date
+// settings the app configures (its language input, date format, calendar,
+// time format and the device locale), so an en-GB phone shows 21:30 on both.
+// It needs no Intl, so an engine without it formats the same. The row inside a
+// dated section shows only this time (Todoist shows "17:00", not the date,
+// under a "Today" header).
 const createWidgetTimeFormatter = (
     settings: AppData['settings'] | undefined,
     language: Language,
     systemLocale?: string,
 ): ((date: Date) => string) => {
-    const timeFormat = normalizeTimeFormatSetting(settings?.timeFormat);
-    if (timeFormat === 'system') return (date) => formatDueTime(date, language);
     const format = createDateFormatter({
-        language,
+        language: settings?.language || language,
         dateFormat: settings?.dateFormat,
         calendarSystem: settings?.calendarSystem,
-        timeFormat,
+        timeFormat: settings?.timeFormat,
         systemLocale: systemLocale || getDeviceLocaleTag(),
     });
     return (date) => format(date, 'p');

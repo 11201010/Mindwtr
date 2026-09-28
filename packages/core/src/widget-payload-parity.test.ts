@@ -115,14 +115,21 @@ function replay(scenario: Scenario): unknown {
 
 describe('widget payload parity with React Native', () => {
     const originalTz = process.env.TZ;
+    // The device locale the React Native harness pins (its DEVICE_LOCALE).
+    const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+    const deviceLocale = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions');
     beforeAll(async () => {
         process.env.TZ = 'UTC';
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date(fixture.now));
+        deviceLocale.mockImplementation(function (this: Intl.DateTimeFormat) {
+            return { ...resolvedOptions.call(this), locale: 'und' };
+        });
         for (const language of fixture.languages) await loadTranslations(language);
     }, 30_000);
     afterEach(() => resetFocusWidgetFilter());
     afterAll(() => {
+        deviceLocale.mockRestore();
         vi.useRealTimers();
         if (originalTz === undefined) delete process.env.TZ;
         else process.env.TZ = originalTz;

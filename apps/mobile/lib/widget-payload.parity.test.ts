@@ -12,6 +12,13 @@
  * strings it hands the Android widget module (setPayload) and the iOS App
  * Group (setItem); only the native modules, AsyncStorage, the app log and the
  * system colour scheme are stand-ins.
+ *
+ * A deliberate behavior change recaptures only the observations it changes,
+ * with the change still uncommitted on top of HEAD:
+ *   MINDWTR_RECAPTURE_WIDGET_PAYLOAD='<what changed and why>' TZ=UTC bunx vitest run lib/widget-payload.parity.test.ts
+ * It keeps the original provenance, refuses changed inputs, and appends the
+ * base commit, the changed files and the recaptured scenario names under
+ * `provenance.recaptured`.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -25,8 +32,12 @@ import { resetMobileWidgetRenderCache, updateMobileWidgetFromData } from './widg
 
 const FIXTURE_PATH = new URL('../../../packages/core/src/widget-payload-parity.fixtures.json', import.meta.url).pathname;
 const CAPTURE = process.env.MINDWTR_CAPTURE_WIDGET_PAYLOAD === '1';
+const RECAPTURE_CHANGE = process.env.MINDWTR_RECAPTURE_WIDGET_PAYLOAD;
 const NOW = '2026-09-28T15:30:00.000Z';
 const LANGUAGES = ['en', 'de', 'zh'] as const;
+// The device locale Intl reported at the first capture. Pinned, so the "System"
+// date and time formats do not follow the machine that runs the test.
+const DEVICE_LOCALE = 'und';
 
 const harness = vi.hoisted(() => ({
     platform: { OS: 'android' },
@@ -444,19 +455,44 @@ function captureProvenance() {
         command: 'cd apps/mobile && MINDWTR_CAPTURE_WIDGET_PAYLOAD=1 MINDWTR_CAPTURE_WIDGET_PAYLOAD_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run lib/widget-payload.parity.test.ts',
         capturedAt: head,
         sourceState: 'Every file under apps/ and packages/ was at HEAD except this harness and its fixture.',
-        runtime: `node ${process.version}, ICU ${process.versions.icu ?? 'none'}, TZ=UTC, clock fixed at ${NOW}; translations for ${LANGUAGES.join(', ')} loaded before the first build.`,
+        runtime: `node ${process.version}, ICU ${process.versions.icu ?? 'none'}, TZ=UTC, device locale ${DEVICE_LOCALE}, clock fixed at ${NOW}; translations for ${LANGUAGES.join(', ')} loaded before the first build.`,
         observations: 'publish: the strings the real widget service handed AndroidWidget.setPayload or react-native-widgetkit setItem (key, value); build: JSON.stringify(buildWidgetPayload(...)); destination: resolveWidgetListDestination title and task ids; snapshot: JSON.stringify(buildShortcutsSnapshot(...)). noIntl: Intl.DateTimeFormat throws, as in an engine without Intl.',
     };
 }
 
 const normalize = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 
+function recaptureChangedObservations(change: string, inputs: Record<string, unknown>, captured: Record<string, unknown>): void {
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: new URL('.', import.meta.url).pathname, encoding: 'utf8' });
+    const frozen = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
+    const { observations, provenance, ...frozenInputs } = frozen;
+    expect(frozenInputs).toEqual(inputs);
+    const recaptured = scenarios.map((scenario) => scenario.name)
+        .filter((name) => JSON.stringify(captured[name]) !== JSON.stringify(observations[name]));
+    for (const name of recaptured) observations[name] = captured[name];
+    provenance.recaptured = [...(provenance.recaptured ?? []), {
+        base: git('rev-parse', 'HEAD').trim(),
+        change,
+        changedFiles: git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean)
+            .map((line) => line.slice(3).replace(/^"|"$/g, '')),
+        command: 'cd apps/mobile && MINDWTR_RECAPTURE_WIDGET_PAYLOAD=\'<change>\' TZ=UTC bunx vitest run lib/widget-payload.parity.test.ts',
+        runtime: `node ${process.version}, ICU ${process.versions.icu ?? 'none'}`,
+        observations: recaptured,
+    }];
+    writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance, ...frozenInputs, observations }, null, 1)}\n`);
+}
+
 describe('React Native widget payload parity fixture', () => {
     const originalTz = process.env.TZ;
+    const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+    const deviceLocale = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions');
     beforeAll(async () => {
         process.env.TZ = 'UTC';
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date(NOW));
+        deviceLocale.mockImplementation(function (this: Intl.DateTimeFormat) {
+            return { ...resolvedOptions.call(this), locale: DEVICE_LOCALE };
+        });
         for (const language of LANGUAGES) await loadTranslations(language);
     }, 30_000);
     afterEach(() => {
@@ -464,6 +500,7 @@ describe('React Native widget payload parity fixture', () => {
         resetMobileWidgetRenderCache();
     });
     afterAll(() => {
+        deviceLocale.mockRestore();
         vi.useRealTimers();
         if (originalTz === undefined) delete process.env.TZ;
         else process.env.TZ = originalTz;
@@ -477,6 +514,7 @@ describe('React Native widget payload parity fixture', () => {
         if (CAPTURE) {
             writeFileSync(FIXTURE_PATH, `${JSON.stringify({ provenance: captureProvenance(), ...inputs, observations: captured }, null, 1)}\n`);
         }
+        if (RECAPTURE_CHANGE) recaptureChangedObservations(RECAPTURE_CHANGE, inputs, captured);
         const { observations, provenance: _provenance, ...frozenInputs } = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'));
         expect(frozenInputs).toEqual(inputs);
         for (const scenario of scenarios) {
