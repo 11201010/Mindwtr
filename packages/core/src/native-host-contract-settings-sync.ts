@@ -29,17 +29,21 @@
  * Toasts are React Native's, in order: each command answers the toasts shown
  * since the last answer (`toasts`), whichever action showed them.
  *
- * Replay rules. setSyncPreference is a synced-settings write: target-state, so a
- * replay writes nothing when the option already holds the value. The other
- * commands act on this device's sync configuration and are not written to the
- * request journal (`NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS`): several carry a
- * secret, which must never reach disk outside the keystore, and the configuration
- * commit is itself crash-safe (the backend key is the activation flag, so a crash
- * leaves the old or the new proven configuration). Each is still safe to replay:
- * a backend already proven is not activated again, a save re-proves the same
- * settings, an encryption submit needs its flow open (a new visit has none), and
- * Dropbox connect or disconnect does nothing when the account is already in that
- * state.
+ * Replay rules. setSyncPreference is a synced-settings write with a request
+ * receipt: target-state, so a replay writes nothing when the option already holds
+ * the value. The other commands act on this device's sync configuration and must
+ * never be written to disk, by the request journal or by durable receipts
+ * (`NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS`): several carry a secret, which
+ * must never reach disk outside the keystore, and the configuration commit is
+ * itself crash-safe (the backend key is the activation flag, so a crash leaves the
+ * old or the new proven configuration). They keep no request payload: a retry of
+ * a request still running joins it, and a retry of one that finished answers
+ * without running again. Each is also target-state, so a replay after a restart
+ * writes nothing wrong: a backend already proven is not activated again, Off
+ * already stored writes nothing, a save re-proves and stores the same settings, an
+ * encryption submit needs its flow open (a new visit has none), and Dropbox
+ * connect or disconnect does nothing when the account is already in that state.
+ * getSyncSettings's `draft.token` is a typed token too; it is a read.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -102,7 +106,6 @@ import {
 } from './sync-settings-transport';
 import { isValidCloudSyncToken } from './cloud';
 import { SYNC_BACKEND_KEY } from './sync-storage-keys';
-import { hashComparableSignature } from './sync-signatures';
 
 type Translate = (key: string) => string;
 
@@ -324,13 +327,6 @@ const MONTH_FIRST_LOCALE = /^en(?:[-_]US)?$/i;
 const PASSWORD_DOTS = '••••••••';
 const PASSPHRASE_FIELDS = new Set<string>(['current', 'next', 'confirm']);
 const FLOWS = new Set<string>(['enable', 'change', 'disable', 'unlock']);
-
-/** A request's payload for its receipt, with a password or token as a fingerprint. */
-const withoutSecrets = (fields: NativeSyncWebDavFields | NativeSyncSelfHostedFields | null) => {
-    if (!fields) return null;
-    const mark = (secret: string | null) => (secret === null ? null : `fnv:${hashComparableSignature(secret)}`);
-    return 'password' in fields ? { ...fields, password: mark(fields.password) } : { ...fields, token: mark(fields.token) };
-};
 
 const readWebDavFields = (value: unknown): NativeSyncWebDavFields | null => (
     isObjectRecord(value) && Object.keys(value).every((key) => ['url', 'username', 'password', 'allowInsecureHttp'].includes(key))
@@ -902,18 +898,37 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
         return { ok: true, value: screen };
     };
 
+    // Screen commands keep no request payload (several carry a secret): a retry of a
+    // request still running joins it, and a retry of one that finished answers without
+    // running it again. Neither survives a restart; each command is target-state instead.
+    // ponytail: remembers the last 50 finished request UUIDs; an older retry runs as a replay.
+    const running = new Map<string, Promise<NativeHostResult<NativeSyncCommandResult>>>();
+    const finished: string[] = [];
+
     /** Runs a screen action under its request UUID; answers the toasts once its reads settle. */
     const runScreenAction = (
         requestId: string,
-        payload: unknown,
         current: Screen,
         run: () => Promise<void> | void,
-    ): Promise<NativeHostResult<NativeSyncCommandResult>> => receipts.run<NativeSyncCommandResult>(requestId, JSON.stringify(payload), async () => {
-        if (screen !== current) return fail('ACTION_FAILED', 'Settings › Sync was closed; open it again');
-        await run();
-        await settle(current);
-        return { ok: true, value: { toasts: takeToasts() } };
-    });
+    ): Promise<NativeHostResult<NativeSyncCommandResult>> => {
+        const joined = running.get(requestId);
+        if (joined) return joined;
+        if (finished.includes(requestId)) return Promise.resolve({ ok: true, value: { toasts: takeToasts() } });
+        const result = (async (): Promise<NativeHostResult<NativeSyncCommandResult>> => {
+            if (screen !== current) return fail('ACTION_FAILED', 'Settings › Sync was closed; open it again');
+            try {
+                await run();
+            } catch (error) {
+                return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+            }
+            await settle(current);
+            finished.push(requestId);
+            if (finished.length > 50) finished.shift();
+            return { ok: true, value: { toasts: takeToasts() } };
+        })().finally(() => running.delete(requestId));
+        running.set(requestId, result);
+        return result;
+    };
 
     const isRequestId = (value: unknown): value is string => typeof value === 'string' && deps.requestIdPattern.test(value);
 
@@ -994,7 +1009,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!isObjectRecord(input) || !isRequestId(input.requestId) || !offered.includes(input.option)) {
                 return fail('INVALID_INPUT', 'A request UUID and a backend option the screen offers are required');
             }
-            return runScreenAction(input.requestId, ['selectSyncBackend', input.option], current, async () => {
+            return runScreenAction(input.requestId, current, async () => {
                 if (input.option === 'off' && await isOffAlready(current)) return undefined;
                 switch (input.option) {
                     case 'dropbox':
@@ -1024,7 +1039,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             const kind = webdav ? 'webdav' : 'selfhosted';
             const panel = panelAction(current, 'save', webdav ? { url: webdav.url } : { url: selfHosted!.url, token: selfHosted!.token });
             if (!panel || panel.kind !== kind) return fail('ACTION_FAILED', 'That form\'s Save is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['saveSyncBackend', withoutSecrets(webdav ?? selfHosted)], current, () => (
+            return runScreenAction(input.requestId, current, () => (
                 webdav
                     ? current.transport.handleSaveWebDavSettings(webdavSettings(current, webdav))
                     : current.transport.handleSaveSelfHostedSettings(selfHostedSettings(current, selfHosted!))
@@ -1054,7 +1069,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             }
             const draft = webdav ? { url: webdav.url } : selfHosted ? { url: selfHosted.url, token: selfHosted.token } : {};
             if (!panelAction(current, 'syncNow', draft)) return fail('ACTION_FAILED', 'Sync now is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['syncNow', kind, withoutSecrets(webdav ?? selfHosted)], current, () => {
+            return runScreenAction(input.requestId, current, () => {
                 switch (kind) {
                     case 'webdav':
                         return current.transport.handleSync({ backend: 'webdav', webdav: webdavSettings(current, webdav!) });
@@ -1100,7 +1115,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!isObjectRecord(input) || !isRequestId(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
             if (!current.host.pickSyncFolder) return fail('ACTION_FAILED', 'The folder picker is not available on this host yet');
             if (buildPanel(current, {})?.kind !== 'file') return fail('ACTION_FAILED', 'Select folder is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['pickSyncFolder'], current, () => current.transport.handleSetSyncPath());
+            return runScreenAction(input.requestId, current, () => current.transport.handleSetSyncPath());
         },
 
         /** Dropbox's Connect: sign-in, then the account activates through its first sync. Nothing when already connected. */
@@ -1112,7 +1127,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!current.host.dropbox) return fail('ACTION_FAILED', 'Dropbox is not available on this host yet');
             const panel = buildPanel(current, {});
             if (panel?.kind !== 'dropbox' || !panel.connect.enabled) return fail('ACTION_FAILED', 'Connect Dropbox is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['connectDropbox'], current, () => {
+            return runScreenAction(input.requestId, current, () => {
                 // Target state: the toggle shows Disconnect for a connected account.
                 if (panel.connected) return undefined;
                 return current.transport.handleConnectDropbox();
@@ -1128,7 +1143,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (!current.host.dropbox) return fail('ACTION_FAILED', 'Dropbox is not available on this host yet');
             const panel = buildPanel(current, {});
             if (panel?.kind !== 'dropbox' || !panel.connect.enabled) return fail('ACTION_FAILED', 'Disconnect Dropbox is not available now; read the screen again');
-            return runScreenAction(input.requestId, ['disconnectDropbox'], current, () => {
+            return runScreenAction(input.requestId, current, () => {
                 // Target state: the toggle shows Connect once the account is gone.
                 if (!panel.connected) return undefined;
                 return current.transport.handleDisconnectDropbox();
@@ -1215,7 +1230,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                             : target!.flow === 'change' ? () => card.submitChange()
                                 : target!.flow === 'disable' ? () => card.submitDisable()
                                     : () => card.submitUnlock();
-                    const result = await runScreenAction(input.requestId!, ['encryption', target], current, async () => { await run(); });
+                    const result = await runScreenAction(input.requestId!, current, async () => { await run(); });
                     return result.ok ? { ok: true, value: { ...result.value, passphrase: null } } : result;
                 }
             }

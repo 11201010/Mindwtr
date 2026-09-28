@@ -922,6 +922,32 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
     });
 
+    it('openSyncSettings without the Dropbox port: a stored Dropbox backend survives the open and a restart untouched', async () => {
+        const { dev } = await start({ dropboxAppKey: 'app-key', storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' } });
+        delete (dev.host as { dropbox?: unknown }).dropbox;
+        const at = mark(dev);
+        const restarted = await restart(dev);
+        expect(value(restarted.getSyncSettings()).panel).toMatchObject({ kind: 'dropbox' });
+        const again = await restart(dev);
+        expect(value(again.getSyncSettings()).backend.current).toBe('Dropbox');
+        expect(since(dev, at)).toEqual({ device: [], writes: [], calls: [] });
+        expect(storedConfig(dev).storage).toEqual({ [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' });
+    });
+
+    it('a secret-bearing command keeps no payload: a retry joins the running request, and a finished one answers without running again', async () => {
+        const { dev, contract } = await start({});
+        value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
+        const input = { requestId: generateUUID(), webdav: { ...webdavFields, password: 'hunter22' } };
+        const at = mark(dev);
+        const [first, joined] = await Promise.all([contract.saveSyncBackend(input), contract.saveSyncBackend(input)]);
+        expect(value(first).toasts.map((toast) => toast.tone)).toEqual(['success']);
+        expect(joined).toBe(first);
+        expect(since(dev, at).calls.filter((call) => call[0] === 'performMobileSync')).toHaveLength(2);
+        const later = mark(dev);
+        expect(await contract.saveSyncBackend(input)).toEqual({ ok: true, value: { toasts: [] } });
+        expect(since(dev, later)).toEqual({ device: [], writes: [], calls: [] });
+    });
+
     it('closeSyncSettings: drops a staged backend; commands answer until the screen opens again', async () => {
         const { dev, contract } = await start({});
         value(await contract.selectSyncBackend({ requestId: generateUUID(), option: 'webdav' }));
