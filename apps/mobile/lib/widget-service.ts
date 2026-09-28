@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
+import { getSystemDefaultLanguage, isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
 import * as ReactNativeWidgetKit from 'react-native-widgetkit';
 
 import * as AndroidWidget from '../modules/android-widget';
@@ -70,7 +70,7 @@ async function getIosWidgetApi(): Promise<IosWidgetApi | null> {
 
 async function resolvePayloadLanguage(data: AppData): Promise<Language> {
     const languageValue = await AsyncStorage.getItem(WIDGET_LANGUAGE_KEY);
-    return resolveWidgetLanguage(languageValue, data.settings?.language);
+    return resolveWidgetLanguage(languageValue, data.settings?.language, getSystemDefaultLanguage());
 }
 
 // What each platform's payload carries is core's (widget-payload.ts); this

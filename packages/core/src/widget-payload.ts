@@ -367,10 +367,12 @@ const resolveWidgetSort = (data: AppData): TaskSortBy => (
     resolveTaskSortByForFeatures(resolveWidgetTaskSort(data.settings?.taskSortBy), data.settings)
 );
 
-export function resolveWidgetLanguage(saved: string | null, setting?: string): Language {
+// The app shows the chosen language, else the device's (its language context
+// falls back to getSystemDefaultLanguage), so the widget falls back the same way.
+export function resolveWidgetLanguage(saved: string | null, setting?: string, systemLanguage: Language = 'en'): Language {
     const candidate = setting && setting !== 'system' ? setting : saved;
     if (candidate && SUPPORTED_LANGUAGES.includes(candidate as Language)) return candidate as Language;
-    return 'en';
+    return systemLanguage;
 }
 
 const resolveWidgetPalette = (
