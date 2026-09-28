@@ -17,6 +17,8 @@ type Labels = {
     calendarChooseLocalFile: string;
     calendarRemove: string;
     calendarColorAuto: string;
+    calendarShowInAreas: string;
+    calendarAllAreas: string;
     externalCalendars: string;
     calendarSystemTitle: string;
     calendarSystemDesc: string;

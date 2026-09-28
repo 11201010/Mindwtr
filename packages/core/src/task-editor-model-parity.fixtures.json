@@ -362,7 +362,7 @@
       "done-focused|moveProject": [["projectId","p-home"]],
       "done-focused|moveToArea": [["projectId","<undefined>"],["areaId","a-life"]],
       "done-focused|pickSection": [["projectId","p-launch"],["sectionId","s-ship"]],
-      "done-focused|toReference": [["status","reference"],["completedAt","<undefined>"]],
+      "done-focused|toReference": [["status","reference"],["completedAt","<undefined>"],["isFocusedToday",false]],
       "done-focused|toWaiting": [["status","waiting"],["completedAt","<undefined>"]],
       "done-focused|toDone": [["completedAt","2026-09-20T10:00:00.000Z"],["timeSpentMinutes",25]],
       "done-focused|toInbox": [["status","inbox"],["completedAt","<undefined>"],["isFocusedToday",false]],

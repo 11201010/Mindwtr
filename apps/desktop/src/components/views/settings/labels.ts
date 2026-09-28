@@ -469,6 +469,8 @@ export const SETTINGS_LABEL_KEYS = [
     'calendarChooseLocalFile',
     'calendarRemove',
     'calendarColorAuto',
+    'calendarShowInAreas',
+    'calendarAllAreas',
     'calendarSystemTitle',
     'calendarSystemDesc',
     'calendarSystemStatus',
