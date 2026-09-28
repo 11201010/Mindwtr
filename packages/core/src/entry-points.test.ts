@@ -112,6 +112,17 @@ describe('entry points: React Native parity', () => {
         }
     });
 
+    it('keeps a link that an email body already holds out of its description', () => {
+        // The body carries the link: the description is the body alone, not the body and the link again.
+        expect(buildShareCaptureDraft({ shareSubject: 'Subject', shareText: 'Body with https://example.com/doc', shareWebUrl: 'https://example.com/doc' }))
+            .toEqual({ title: 'Subject', description: 'Body with https://example.com/doc' });
+        // A link the body does not hold still follows it, and a body that is the link is one line.
+        expect(buildShareCaptureDraft({ shareSubject: 'Subject', shareText: 'Body', shareWebUrl: 'https://example.com/doc' }))
+            .toEqual({ title: 'Subject', description: 'Body\nhttps://example.com/doc' });
+        expect(buildShareCaptureDraft({ shareSubject: 'Subject', shareText: 'https://example.com/doc', shareWebUrl: 'https://example.com/doc' }))
+            .toEqual({ title: 'Subject', description: 'https://example.com/doc' });
+    });
+
     it('turns an assistant note into the capture link React Native\'s MainActivity builds', () => {
         const link = fixture.urls.find(({ url }) => url.includes('source=create_note'))!;
         expect(buildCreateNoteCapture({ name: ' Voice note ', text: 'Longer spoken text ', extraText: 'ignored' })).toEqual(parseShortcutCaptureUrl(link.url));

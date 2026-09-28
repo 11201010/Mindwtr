@@ -66,7 +66,8 @@ export type ShareCaptureDraft = { title: string; description?: string };
 
 /**
  * The capture a text or link share opens. An email share (FairEmail and others) carries a real subject: it becomes the
- * title, and the body and link move to the description instead of being dumped into the title together. Otherwise the
+ * title, and the body and link move to the description instead of being dumped into the title together (the link once:
+ * not again after a body that already holds it). Otherwise the
  * text (else the link) is the title, and a link other than the title is the description. Null: nothing readable.
  */
 export function buildShareCaptureDraft({
@@ -82,7 +83,7 @@ export function buildShareCaptureDraft({
     if (subject) {
         const text = trimSharedValue(shareText);
         const url = trimSharedValue(shareWebUrl);
-        const descriptionLines = [text, url && url !== text ? url : null]
+        const descriptionLines = [text, url && !text.includes(url) ? url : null]
             .filter((line): line is string => Boolean(line));
         return descriptionLines.length > 0 ? { title: subject, description: descriptionLines.join('\n') } : { title: subject };
     }
