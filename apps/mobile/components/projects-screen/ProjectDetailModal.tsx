@@ -705,8 +705,8 @@ export function ProjectDetailModal({
     const resolvedSequentialScope = selectedProject?.sequentialScope === 'section' ? 'section' : 'project';
     const projectTaskSequenceCues = React.useMemo<Map<string, ProjectSequenceTaskCue>>(() => {
         if (!selectedProject || projectTaskSortBy !== 'default') return new Map();
-        return getSequentialProjectTaskCues(selectedProject, selectedProjectTasks ?? []);
-    }, [projectTaskSortBy, selectedProject, selectedProjectTasks]);
+        return getSequentialProjectTaskCues(selectedProject, selectedProjectTasks ?? [], selectedProjectSections);
+    }, [projectTaskSortBy, selectedProject, selectedProjectSections, selectedProjectTasks]);
     const getTaskSequenceCue = React.useCallback(
         (task: Task) => projectTaskSequenceCues.get(task.id),
         [projectTaskSequenceCues]

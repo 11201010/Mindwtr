@@ -16,6 +16,7 @@ import {
     shouldPromptForProjectNextAction,
 } from './project-utils';
 import { archiveSectionForProjectArchive } from './store-helpers';
+import { getSequentialFirstTaskIds, isSequentialChainStatus } from './task-utils';
 import type { Project, Section, Task } from './types';
 
 describe('project-utils', () => {
@@ -217,7 +218,7 @@ describe('project-utils', () => {
             { ...tasks[0], id: 'waiting-step', projectId: project.id, status: 'waiting', order: 3 },
         ];
 
-        const cues = getSequentialProjectTaskCues(project, projectTasks);
+        const cues = getSequentialProjectTaskCues(project, projectTasks, []);
 
         expect(cues.get('first-next')).toBe('available');
         expect(cues.get('second-next')).toBe('later');
@@ -234,7 +235,11 @@ describe('project-utils', () => {
             { ...tasks[0], id: 'unsectioned-later', projectId: project.id, order: 5 },
         ];
 
-        const cues = getSequentialProjectTaskCues(project, projectTasks, { sectionIds: ['a', 'b'] });
+        const sections: Section[] = [
+            { id: 'a', projectId: project.id, title: 'A', order: 0, createdAt: '', updatedAt: '' },
+            { id: 'b', projectId: project.id, title: 'B', order: 1, createdAt: '', updatedAt: '' },
+        ];
+        const cues = getSequentialProjectTaskCues(project, projectTasks, sections);
 
         expect(cues.get('section-a-first')).toBe('available');
         expect(cues.get('section-a-later')).toBe('later');
@@ -246,7 +251,103 @@ describe('project-utils', () => {
     it('does not mark tasks in parallel projects', () => {
         const project: Project = { ...projects[0], isSequential: false };
 
-        expect(getSequentialProjectTaskCues(project, tasks).size).toBe(0);
+        expect(getSequentialProjectTaskCues(project, tasks, []).size).toBe(0);
+    });
+
+    describe('sequence cue follows the sequence, not the caller list order', () => {
+        const project: Project = { ...projects[0], isSequential: true, sequentialScope: 'project' };
+        const step = (id: string, fields: Partial<Task>): Task => ({
+            id, title: id, status: 'next', projectId: project.id, tags: [], contexts: [],
+            createdAt: '2026-04-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z', ...fields,
+        });
+        const sections: Section[] = [
+            { id: 'setup', projectId: project.id, title: 'Set up', order: 0, createdAt: '', updatedAt: '' },
+            { id: 'final', projectId: project.id, title: 'Final', order: 1, createdAt: '', updatedAt: '' },
+        ];
+        const cueEntries = (cues: Map<string, string>) => [...cues.entries()].sort(([a], [b]) => a.localeCompare(b));
+
+        it('gives the same cues for the same tasks in two different orders', () => {
+            const storeOrder = [step('b', { order: 2 }), step('a', { order: 1 }), step('c', { order: 3 })];
+            const displayOrder = [storeOrder[1], storeOrder[0], storeOrder[2]];
+
+            const fromStore = getSequentialProjectTaskCues(project, storeOrder, sections);
+            const fromDisplay = getSequentialProjectTaskCues(project, displayOrder, sections);
+
+            expect(cueEntries(fromStore)).toEqual(cueEntries(fromDisplay));
+            expect(fromStore.get('a')).toBe('available');
+            expect(fromStore.get('b')).toBe('later');
+        });
+
+        it('moves the available cue when a manual reorder changes order', () => {
+            const before = [step('a', { order: 1 }), step('b', { order: 2 })];
+            const after = [step('a', { order: 3 }), step('b', { order: 2 })];
+
+            expect(getSequentialProjectTaskCues(project, before, sections).get('a')).toBe('available');
+            const cues = getSequentialProjectTaskCues(project, after, sections);
+            expect(cues.get('a')).toBe('later');
+            expect(cues.get('b')).toBe('available');
+        });
+
+        it('lets an earlier waiting task hold the slot, as Focus and Next do', () => {
+            const projectTasks = [
+                step('later-next', { order: 2 }),
+                step('waiting-first', { status: 'waiting', order: 1 }),
+            ];
+
+            const cues = getSequentialProjectTaskCues(project, projectTasks, sections);
+
+            expect(cues.get('later-next')).toBe('later');
+            expect(cues.has('waiting-first')).toBe(false);
+        });
+
+        it('ranks sections before task order across sections', () => {
+            const projectTasks = [
+                step('final-first-order', { sectionId: 'final', order: 0 }),
+                step('setup-task', { sectionId: 'setup', order: 10 }),
+            ];
+
+            const cues = getSequentialProjectTaskCues(project, projectTasks, sections);
+
+            expect(cues.get('setup-task')).toBe('available');
+            expect(cues.get('final-first-order')).toBe('later');
+        });
+
+        it('marks one available task per section by order when scope is section', () => {
+            const sectionProject: Project = { ...project, sequentialScope: 'section' };
+            const projectTasks = [
+                step('setup-second', { sectionId: 'setup', order: 2 }),
+                step('final-second', { sectionId: 'final', order: 4 }),
+                step('setup-first', { sectionId: 'setup', order: 1 }),
+                step('final-waiting', { sectionId: 'final', status: 'waiting', order: 3 }),
+            ];
+
+            const cues = getSequentialProjectTaskCues(sectionProject, projectTasks, sections);
+
+            expect(cues.get('setup-first')).toBe('available');
+            expect(cues.get('setup-second')).toBe('later');
+            expect(cues.get('final-second')).toBe('later');
+        });
+
+        it('marks as available exactly the task getSequentialFirstTaskIds picks', () => {
+            const projectTasks = [
+                step('inbox-early', { status: 'inbox', order: 0 }),
+                step('z-next', { sectionId: 'final', order: 1 }),
+                step('m-next', { sectionId: 'setup', order: 5 }),
+                step('done-early', { status: 'done', sectionId: 'setup', order: 0 }),
+                step('y-next', { sectionId: 'setup', order: 7 }),
+            ];
+            const firstTaskIds = getSequentialFirstTaskIds(
+                projectTasks.filter((task) => isSequentialChainStatus(task.status)),
+                new Set([project.id]),
+                { sections },
+            );
+
+            const cues = getSequentialProjectTaskCues(project, [...projectTasks].reverse(), sections);
+            const available = [...cues].filter(([, cue]) => cue === 'available').map(([id]) => id);
+
+            expect(available).toEqual([...firstTaskIds]);
+            expect(available).toEqual(['m-next']);
+        });
     });
 
     it('does not prompt for inactive projects or incomplete tasks', () => {
