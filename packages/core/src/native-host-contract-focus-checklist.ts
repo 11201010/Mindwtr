@@ -32,9 +32,9 @@ import { applyFocusChecklistEdit, buildFocusChecklistPageModel, type FocusCheckl
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
 import { fail, isObjectRecord, isPaging, isText, page, paramsKey } from './native-host-contract-menu-views';
 import { toChecklist } from './native-host-contract-task-view';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { useTaskStore } from './store';
-import type { ChecklistItem, Task } from './types';
+import type { ChecklistItem } from './types';
 
 /** An edit on the page, naming its item by position and ID. */
 export type NativeFocusChecklistEdit =
@@ -95,8 +95,6 @@ function readEdit(value: unknown): NativeFocusChecklistEdit | null {
 
 /** A visible task, as mobile's page finds it (state.tasks: not deleted, not archived). */
 const visibleTask = (id: string) => useTaskStore.getState().tasks.find((task) => task.id === id);
-/** Changes with every write to the task, here or synced from another device. */
-const taskRevisionOf = (task: Task) => `${task.rev ?? 0}:${task.revBy ?? ''}:${task.updatedAt}`;
 
 export function createFocusChecklistMethods(deps: FocusChecklistDeps) {
     const receipts = createNativeRequestReceipts({

@@ -431,18 +431,18 @@ describe('native host contract: selection mode', () => {
             expect(tasksNow()).toEqual(tasks);
         });
 
-        it('an exact match, or a replay after it landed, chooses the existing one and writes nothing', async () => {
+        it('refuses a name an option already carries: the picker\'s submit edit chooses it, and nothing is written', async () => {
             freezeClock();
             const saveData = vi.fn().mockResolvedValue(undefined);
             const { host } = await open(saveData);
-            expect(value(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'project', name: 'launch' })))
-                .toEqual({ id: 'p-launch', changed: false, draft: { ...EMPTY_BULK_ORGANIZE_DRAFT, projectChoice: 'p-launch' } });
+            const refused = { ok: false, error: { code: 'INVALID_INPUT' } };
+            expect(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'project', name: 'launch' })).toMatchObject(refused);
+            expect(picker(host, 'project', 'launch')).toMatchObject({ create: null, submit: { edit: { type: 'setProject', value: 'p-launch' } } });
             const first = value(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'area', name: 'Errands' }));
             expect(first.changed).toBe(true);
             const stored = destinationsNow();
             saveData.mockClear();
-            expect(value(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'area', name: ' errands ' })))
-                .toEqual({ ...first, changed: false });
+            expect(await host.createBulkOrganizeDestination({ requestId: requestId(), list: 'inbox', kind: 'area', name: ' errands ' })).toMatchObject(refused);
             expect(destinationsNow()).toEqual(stored);
             expect(saveData).not.toHaveBeenCalled();
         });

@@ -5,6 +5,7 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { formatListItemCount } from './list-count';
 import { createNativeHostContract } from './native-host-contract';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
+import { taskRevisionOf } from './native-request-receipts';
 import type { NativeReviewAction, NativeReviewOverview } from './native-host-contract-review-views';
 import { compareProjectsByPickerOrder } from './project-utils';
 import { getAdvancedReviewDate } from './review-utils';
@@ -87,10 +88,11 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
     const task = (id: string) => useTaskStore.getState()._tasksById.get(id)!;
     /** Every task as stored, less the device stamp. */
     const tasksNow = () => JSON.parse(JSON.stringify(useTaskStore.getState()._allTasks.map(({ revBy: _revBy, ...entry }) => entry)));
-    const markAction = (id: string, advance: boolean) => ({ type: 'markTaskReviewed' as const, taskId: id, advance, reviewAt: task(id).reviewAt ?? null });
+    const markAction = (id: string, advance: boolean) => ({ type: 'markTaskReviewed' as const, taskId: id, advance, taskRevision: taskRevisionOf(task(id)) });
+    const revisions = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, taskRevisionOf(task(id))]));
 
     describe('a row\'s Mark reviewed and Review in 1 week', () => {
-        it('are offered under every row due for review, in either scope, carrying the review date the row shows', async () => {
+        it('are offered under every row due for review, in either scope, carrying the task revision the row shows', async () => {
             freezeClock();
             const { host } = await openHost();
             const due = everything(host, { scope: 'due' });
@@ -99,11 +101,11 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
             expect(alice.review).toEqual({
                 markReviewed: {
                     label: t('review.markReviewed'), accessibilityLabel: `${t('review.markReviewed')}: ${task('w-alice').title}`,
-                    action: { type: 'markTaskReviewed', taskId: 'w-alice', advance: false, reviewAt: '2026-09-22' },
+                    action: { type: 'markTaskReviewed', taskId: 'w-alice', advance: false, taskRevision: taskRevisionOf(task('w-alice')) },
                 },
                 advance: {
                     label: t('review.advanceWeek'), accessibilityLabel: `${t('review.advanceWeek')}: ${task('w-alice').title}`,
-                    action: { type: 'markTaskReviewed', taskId: 'w-alice', advance: true, reviewAt: '2026-09-22' },
+                    action: { type: 'markTaskReviewed', taskId: 'w-alice', advance: true, taskRevision: taskRevisionOf(task('w-alice')) },
                 },
             });
             // Mobile shows them for due rows in the All scope too, and for no other row.
@@ -156,7 +158,7 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
             expect(await host.runReviewAction({ ...input, action: { ...input.action, advance: false } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         });
 
-        it('a replay after a restart writes nothing: the task is no longer due, or its review date moved on since', async () => {
+        it('a replay after a restart writes nothing: the task is no longer due, or it changed since', async () => {
             freezeClock();
             const { host, recorder } = await openHost();
             const advance = { requestId: generateUUID(), action: markAction('w-alice', true) };
@@ -188,7 +190,7 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
             expect(tasksNow()).toEqual(later);
         });
 
-        it('refuses a review date changed since the row showed it, and writes nothing for a task not due', async () => {
+        it('refuses a task changed since the row showed it, and writes nothing for a task not due', async () => {
             freezeClock();
             const { host, recorder } = await openHost();
             const action = markAction('w-alice', true);
@@ -256,13 +258,14 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
             await flushPendingSave();
 
             const contract = await openHost();
-            const draft = everything(contract.host, { selectedIds: REVIEW_SELECTION, organize: { draft: ORGANIZE } }).bulk!.organize!.draft;
-            expect(value(await run(contract.host, { type: 'organizeTasks', taskIds: REVIEW_SELECTION, draft }))).toEqual({
+            const { organize, taskRevisions } = everything(contract.host, { selectedIds: REVIEW_SELECTION, organize: { draft: ORGANIZE } }).bulk!;
+            expect(taskRevisions).toEqual(revisions(REVIEW_SELECTION));
+            expect(value(await run(contract.host, { type: 'organizeTasks', taskIds: REVIEW_SELECTION, draft: organize!.draft, taskRevisions }))).toEqual({
                 changed: true, toast: { tone: 'success', title: t('common.done'), message: formatListItemCount(updates.length, 'task', t), undo: null }, createdId: null,
             });
             expect({ tasks: tasksNow(), log: contract.recorder.log }).toEqual(expected);
             // One task: mobile's singular count.
-            expect(value(await run(contract.host, { type: 'organizeTasks', taskIds: ['n-rent'], draft: { tags: 'q4' } })).toast?.message)
+            expect(value(await run(contract.host, { type: 'organizeTasks', taskIds: ['n-rent'], draft: { tags: 'q4' }, taskRevisions: revisions(['n-rent']) })).toast?.message)
                 .toBe(formatListItemCount(1, 'task', t));
         });
 
@@ -270,7 +273,7 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
             freezeClock();
             const saveData = vi.fn().mockResolvedValue(undefined);
             const { host, recorder } = await openHost(saveData);
-            const input = { requestId: generateUUID(), action: { type: 'organizeTasks' as const, taskIds: REVIEW_SELECTION, draft: ORGANIZE } };
+            const input = { requestId: generateUUID(), action: { type: 'organizeTasks' as const, taskIds: REVIEW_SELECTION, draft: ORGANIZE, taskRevisions: revisions(REVIEW_SELECTION) } };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.runReviewAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
             expect(recorder.log).toHaveLength(1);
@@ -288,13 +291,13 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
             expect(value(await host.runReviewAction(input))).toEqual(retried);
             expect(saveData).toHaveBeenCalledTimes(saves);
             // A new request with that project is refused now: the dialog no longer offers it.
-            expect(await run(host, { type: 'organizeTasks', taskIds: ['n-rent'], draft: ORGANIZE })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(await run(host, { type: 'organizeTasks', taskIds: ['n-rent'], draft: ORGANIZE, taskRevisions: revisions(['n-rent']) })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         });
 
         it('a replay of Apply, or of a create from its pickers, after a restart writes nothing', async () => {
             freezeClock();
             const { host, recorder } = await openHost();
-            const apply = { requestId: generateUUID(), action: { type: 'organizeTasks' as const, taskIds: REVIEW_SELECTION, draft: ORGANIZE } };
+            const apply = { requestId: generateUUID(), action: { type: 'organizeTasks' as const, taskIds: REVIEW_SELECTION, draft: ORGANIZE, taskRevisions: revisions(REVIEW_SELECTION) } };
             const create = { requestId: generateUUID(), list: 'review' as const, kind: 'area' as const, name: 'Errands' };
             expect(value(await host.runReviewAction(apply)).changed).toBe(true);
             const made = value(await host.createBulkOrganizeDestination(create));
@@ -332,6 +335,118 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
         });
     });
 
+    describe('a replay after a restart, once a target changed since', () => {
+        const REVIEW_SELECTION = ['n-bike', 'n-cv'];
+        /** A new host has no receipts, as after a restart. */
+        const restart = async () => {
+            await flushPendingSave();
+            return startHost();
+        };
+        const row = (host: Awaited<ReturnType<typeof startHost>>, id: string, extra: Record<string, unknown> = {}) => (
+            taskItems(everything(host, extra)).find((item) => item.row.id === id)!
+        );
+
+        it('refuses Apply once a task it organizes changed since, and writes nothing', async () => {
+            freezeClock();
+            const { host, recorder } = await openHost();
+            const view = everything(host, { selectedIds: REVIEW_SELECTION, organize: { draft: ORGANIZE } });
+            expect(Object.keys(view.bulk!.taskRevisions)).toEqual(REVIEW_SELECTION);
+            const apply = {
+                requestId: generateUUID(),
+                action: { type: 'organizeTasks' as const, taskIds: REVIEW_SELECTION, draft: view.bulk!.organize!.draft, taskRevisions: view.bulk!.taskRevisions },
+            };
+            expect(value(await host.runReviewAction(apply)).changed).toBe(true);
+            expect(task('n-bike').dueDate).toBe('2026-10-02');
+            await useTaskStore.getState().updateTask('n-bike', { dueDate: '2026-11-01' });
+            const restarted = await restart();
+            const writes = recorder.log.length;
+            const stored = tasksNow();
+            expect(await restarted.runReviewAction(apply)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(recorder.log).toHaveLength(writes);
+            expect(tasksNow()).toEqual(stored);
+            expect(task('n-bike').dueDate).toBe('2026-11-01');
+        });
+
+        it('refuses a row\'s Mark reviewed once the same review date was set again', async () => {
+            freezeClock();
+            const { host, recorder } = await openHost();
+            const action = row(host, 'w-alice').review!.markReviewed.action;
+            expect(action).toMatchObject({ type: 'markTaskReviewed', taskId: 'w-alice', advance: false, taskRevision: expect.any(String) });
+            const mark = { requestId: generateUUID(), action };
+            expect(value(await host.runReviewAction(mark)).changed).toBe(true);
+            expect(task('w-alice').reviewAt).toBeUndefined();
+            await useTaskStore.getState().updateTask('w-alice', { reviewAt: '2026-09-22' });
+            const restarted = await restart();
+            const writes = recorder.log.length;
+            expect(await restarted.runReviewAction(mark)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(recorder.log).toHaveLength(writes);
+            expect(task('w-alice').reviewAt).toBe('2026-09-22');
+        });
+
+        it('refuses a create for a name an option carries, so no request resolves a destination by name', async () => {
+            freezeClock();
+            const { host } = await openHost();
+            const areas = () => JSON.stringify(useTaskStore.getState()._allAreas);
+            const stored = areas();
+            // The picker's Done chooses the exact match: its `submit.edit`, a draft edit, no write.
+            const picker = everything(host, { selectedIds: REVIEW_SELECTION, picker: { kind: 'area', query: 'Home' } }).bulk!.picker!;
+            expect(picker).toMatchObject({ create: null, submit: { edit: { type: 'setArea', value: 'a-home' } } });
+            const create = { requestId: generateUUID(), list: 'review' as const, kind: 'area' as const, name: 'Home' };
+            for (const list of ['review', 'inbox'] as const) {
+                expect(await host.createBulkOrganizeDestination({ ...create, list })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+                expect(await host.createBulkOrganizeDestination({ ...create, list, kind: 'project', name: ' launch ' }))
+                    .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            }
+            expect(areas()).toBe(stored);
+            // Renamed and restarted, the refused request was never an answer to replay: sent again it
+            // is a new create, and only ever the one row named by its request UUID.
+            await useTaskStore.getState().updateArea('a-home', { name: 'House' });
+            const restarted = await restart();
+            const made = value(await restarted.createBulkOrganizeDestination(create));
+            expect(made).toMatchObject({ id: create.requestId.toLowerCase(), changed: true });
+            const again = await restart();
+            expect(value(await again.createBulkOrganizeDestination(create))).toEqual({ ...made, changed: false });
+            expect(useTaskStore.getState()._allAreas.filter((area) => area.name === 'Home').map((area) => area.id)).toEqual([made.id]);
+        });
+
+        it.each(['all', 'due'] as const)('ends the %s scope\'s selection when a selected row is no longer shown, as mobile does', async (scope) => {
+            freezeClock();
+            const { host } = await openHost();
+            const [first, second] = scope === 'all' ? REVIEW_SELECTION : ['w-alice', 's-piano'];
+            const open = everything(host, { scope, selectedIds: [first, second], organize: {} });
+            expect(open.bulk).toMatchObject({ selectedIds: [first, second], organize: { draft: EMPTY_BULK_ORGANIZE_DRAFT } });
+            const item = taskItems(open).find((entry) => entry.row.id === first)!;
+            const expanded = { scope, expandedAreaIds: open.expandedAreaIds, expandedProjectIds: open.expandedProjectIds };
+            // Folding the area or the project of one selected row ends the whole selection, and the sheet.
+            for (const expansionEdit of [{ type: 'toggleArea' as const, id: item.areaGroupId }, { type: 'toggleProject' as const, id: item.projectGroupId }]) {
+                const folded = value(host.getReviewOverview({ ...expanded, selectedIds: [first, second], expansionEdit, organize: {}, picker: { kind: 'area' }, ...page }));
+                expect(folded.bulk).toBeNull();
+                expect(folded.items.some((entry) => entry.type === 'task' && entry.selected)).toBe(false);
+            }
+            // So does a row the scope stops showing: in Due, a task reviewed elsewhere.
+            if (scope === 'due') {
+                await useTaskStore.getState().updateTask(first, { reviewAt: undefined });
+                expect(value(host.getReviewOverview({ ...expanded, selectedIds: [first, second], ...page })).bulk).toBeNull();
+            }
+        });
+
+        it('refuses the batch Mark reviewed once a task got a new past review date', async () => {
+            freezeClock();
+            const { host, recorder } = await openHost();
+            const view = everything(host, { scope: 'due', selectedIds: ['w-alice', 's-piano'] });
+            const mark = { requestId: generateUUID(), action: { type: 'markReviewedTasks' as const, taskIds: ['w-alice', 's-piano'], taskRevisions: view.bulk!.taskRevisions } };
+            expect(value(await host.runReviewAction(mark)).changed).toBe(true);
+            await useTaskStore.getState().updateTask('w-alice', { reviewAt: '2026-09-21' });
+            const restarted = await restart();
+            const writes = recorder.log.length;
+            const stored = tasksNow();
+            expect(await restarted.runReviewAction(mark)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(recorder.log).toHaveLength(writes);
+            expect(tasksNow()).toEqual(stored);
+            expect(task('w-alice').reviewAt).toBe('2026-09-21');
+        });
+    });
+
     it('refuses invalid input without writing', async () => {
         freezeClock();
         const { host, recorder } = await openHost();
@@ -349,12 +464,17 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
         await refused({ type: 'markTaskReviewed', taskId: 'w-alice', advance: 'yes', reviewAt: '2026-09-22' });
         await refused({ type: 'markTaskReviewed', taskId: 'w-alice', advance: true, reviewAt: 20260922 });
         await refused({ type: 'markTaskReviewed', taskId: 'w-alice', advance: true });
+        await refused({ type: 'markTaskReviewed', taskId: 'w-alice', advance: true, taskRevision: '' });
+        await refused({ type: 'markReviewedTasks', taskIds: ['w-alice'] });
+        await refused({ type: 'markReviewedTasks', taskIds: ['w-alice', 's-piano'], taskRevisions: revisions(['w-alice']) });
+        await refused({ type: 'organizeTasks', taskIds: ['n-bike'], draft: { tags: 'q4' } });
+        await refused({ type: 'organizeTasks', taskIds: ['n-bike'], draft: { tags: 'q4' }, taskRevisions: { ...revisions(['n-bike']), 'n-cv': 'x' } });
         await refused({ type: 'organizeTasks', taskIds: ['n-bike'], draft: {}, input: {} });
         await refused({ type: 'organizeTasks', taskIds: ['n-bike'], draft: { status: 'waiting' } });
         await refused({ type: 'organizeTasks', taskIds: ['n-bike'], draft: { areaChoice: 'a-nowhere' } });
         await refused({ type: 'organizeTasks', taskIds: ['n-bike'], draft: { dueDate: 'soon' } });
         await refused({ type: 'organizeTasks', taskIds: ['missing'], draft: { tags: 'q4' } });
-        expect(await run(host, { type: 'markTaskReviewed', taskId: 'missing', advance: true, reviewAt: null })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run(host, { type: 'markTaskReviewed', taskId: 'missing', advance: true, taskRevision: 'r' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
         expect(await host.createBulkOrganizeDestination({ requestId: generateUUID(), list: 'calendar' as never, kind: 'area', name: 'Errands' })).toMatchObject(invalid);
         expect(recorder.log).toEqual([]);
     });
@@ -364,9 +484,10 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
         const host = createNativeHostContract();
         const notReady = { ok: false, error: { code: 'NOT_READY' } };
         expect(host.getReviewOverview({ selectedIds: ['n-bike'], organize: {}, picker: { kind: 'project' }, ...page })).toMatchObject(notReady);
-        expect(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'markTaskReviewed', taskId: 'w-alice', advance: true, reviewAt: null } }))
+        expect(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'markTaskReviewed', taskId: 'w-alice', advance: true, taskRevision: 'r' } }))
             .toMatchObject(notReady);
-        expect(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'organizeTasks', taskIds: ['n-bike'], draft: {} } })).toMatchObject(notReady);
+        expect(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'organizeTasks', taskIds: ['n-bike'], draft: {}, taskRevisions: { 'n-bike': 'r' } } })).toMatchObject(notReady);
+        expect(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'markReviewedTasks', taskIds: ['w-alice'], taskRevisions: { 'w-alice': 'r' } } })).toMatchObject(notReady);
         expect(await host.createBulkOrganizeDestination({ requestId: generateUUID(), list: 'review', kind: 'area', name: 'Errands' })).toMatchObject(notReady);
     });
 });

@@ -296,7 +296,7 @@ async function replayReview(contract: Contract, scenario: ReviewScenario, record
                 await bulkWrite({ type: 'removeTags', taskIds: selected, tags: target as string[] });
                 return;
             case 'organize':
-                await bulkWrite({ type: 'organizeTasks', taskIds: selected, input: target as never });
+                await bulkWrite({ type: 'organizeTasks', taskIds: selected, input: target as never, taskRevisions: view.bulk!.taskRevisions });
                 modal = null;
                 return;
             case 'alert': {

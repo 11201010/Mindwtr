@@ -1,6 +1,7 @@
 import type { NativeHostResult } from './native-host-contract';
 import { useTaskStore } from './store';
 import type { StoreActionResult } from './store-types';
+import type { Task } from './types';
 
 /**
  * Exact-retry bookkeeping for native host writes, shared by every contract write
@@ -72,6 +73,13 @@ export function settleWrite<T>(written: NativeHostResult<null>, value: T): Nativ
     if (written.error.code === 'SAVE_FAILED') return { ok: false, error: { code: 'SAVE_FAILED', message: written.error.message }, value };
     return written;
 }
+
+/**
+ * A task's revision for a compare-and-set write: it changes with every write to the task,
+ * here or synced from another device. A command made on one revision refuses a task
+ * that changed since, so a replay after a restart never undoes a later change.
+ */
+export const taskRevisionOf = (task: Task): string => `${task.rev ?? 0}:${task.revBy ?? ''}:${task.updatedAt}`;
 
 const REQUEST_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 

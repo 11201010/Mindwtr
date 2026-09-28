@@ -19,6 +19,7 @@ import {
     titleWeeklyReviewSteps,
 } from './review-views-model';
 import { createReviewRecorder, loadReviewViewsFixture, seedReviewStore, type ReviewScenario } from './review-views-model.replay';
+import { taskRevisionOf } from './native-request-receipts';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
@@ -120,7 +121,10 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         expect(due.bulk).toBeNull();
         expect(due.empty).toBeNull();
 
-        const input = { requestId: generateUUID(), action: { type: 'markReviewedTasks' as const, taskIds: ['n-launch'] } };
+        const input = {
+            requestId: generateUUID(),
+            action: { type: 'markReviewedTasks' as const, taskIds: ['n-launch'], taskRevisions: { 'n-launch': taskRevisionOf(useTaskStore.getState()._tasksById.get('n-launch')!) } },
+        };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runReviewAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         expect(recorder.log).toEqual([['batchUpdateTasks', [{ id: 'n-launch', updates: { reviewAt: '<undefined>' } }]]]);
@@ -289,7 +293,10 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
             [generateUUID(), { type: 'trashTasks', taskIds: ['i-thought', 'n-bike'] }],
             [generateUUID(), { type: 'setTaskStatus', taskId: 'n-cv', status: 'someday' }],
             [generateUUID(), { type: 'addTag', taskIds: ['n-logo'], tag: '#design' }],
-            [generateUUID(), { type: 'organizeTasks', taskIds: ['n-rent'], input: { areaId: 'a-home', tags: ['#bills'] } }],
+            [generateUUID(), {
+                type: 'organizeTasks', taskIds: ['n-rent'], input: { areaId: 'a-home', tags: ['#bills'] },
+                taskRevisions: { 'n-rent': taskRevisionOf(useTaskStore.getState()._tasksById.get('n-rent')!) },
+            }],
             [generateUUID(), { type: 'followUpToday', taskId: 'w-vendor' }],
             [generateUUID(), { type: 'trashTask', taskId: 'n-orphan' }],
         ];
@@ -405,8 +412,10 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         const run = (action: unknown) => host.runReviewAction({ requestId: generateUUID(), action: action as never });
         expect(await host.runReviewAction({ requestId: 'not-a-uuid', action: { type: 'trashTask', taskId: 'i-thought' } })).toMatchObject(invalid);
         expect(await run({ type: 'moveTasks', taskIds: ['i-thought'], status: 'archived' })).toMatchObject(invalid);
-        expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { areaId: 'no-such-area' } })).toMatchObject(invalid);
-        expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { dueDate: 'soon' } })).toMatchObject(invalid);
+        const revision = { 'i-thought': taskRevisionOf(useTaskStore.getState()._tasksById.get('i-thought')!) };
+        expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { areaId: 'no-such-area' }, taskRevisions: revision })).toMatchObject(invalid);
+        expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { dueDate: 'soon' }, taskRevisions: revision })).toMatchObject(invalid);
+        expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { tags: ['#x'] } })).toMatchObject(invalid);
         expect(await run({ type: 'addProjectTask', projectId: 'p-garden', title: '   ' })).toMatchObject(invalid);
         expect(await run({ type: 'applySuggestions', suggestions: [{ id: 'n-bike', action: 'delete', reason: '' }] })).toMatchObject(invalid);
         expect(await run({ type: 'setTaskStatus', taskId: 'missing', status: 'next' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });

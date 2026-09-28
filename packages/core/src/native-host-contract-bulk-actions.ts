@@ -33,7 +33,8 @@
  *   createBulkOrganizeDestination with the draft; keep the `draft` it returns
  *   (the new project or area chosen). Creating writes no task: Apply does. A new
  *   project or area takes the request UUID as its ID, so a replay after a restart
- *   finds the row it made (renamed, archived or deleted since) and adds nothing.
+ *   finds the row it made (renamed, archived or deleted since) and adds nothing. A
+ *   name an option already carries is refused: choose it with `submit.edit`.
  *
  * Review's selection offers the same dialog: the organize view, its pickers and the
  * draft's Apply check are exported for native-host-contract-review-views.ts, and
@@ -595,9 +596,11 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
 
         /**
          * Create a project or area from the organize dialog's picker (its `create.name`,
-         * or its search box's text on Done), as mobile does: a name an option already
-         * carries chooses that option; a project goes in the draft's chosen area. Returns
-         * the draft with it chosen (a project resets the area to Keep). Writes no task.
+         * or its search box's text on Done), as mobile does; a project goes in the draft's
+         * chosen area. A name an option already carries is refused (INVALID_INPUT): the
+         * picker's `submit.edit` chooses it, as mobile's Done does, so no request ever
+         * resolves a destination by name. Returns the draft with the new one chosen (a
+         * project resets the area to Keep). Writes no task.
          * Reuse `requestId` to retry. A new project or area takes the request UUID as its
          * ID: a replay after a restart answers with that row and writes nothing, choosing
          * it only while the dialog still offers it. Review's organize dialog (getReviewOverview)
@@ -636,9 +639,9 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 const state = useTaskStore.getState();
                 if (kind === 'project' ? state._projectsById.has(id) : state._areasById.has(id)) return { ok: true, value: choose(id, false) };
                 if (!offersChoices(draft)) return fail('INVALID_INPUT', 'The draft\'s project or area is not one the dialog offers');
-                // The search box's Done on an exact match chooses it.
-                const exact = exactDestination(kind, name);
-                if (exact) return { ok: true, value: choose(exact.id, false) };
+                // The search box's Done on an exact match is the picker's `submit.edit`, not a create:
+                // choosing by name here could not be told apart from a later row of that name on replay.
+                if (exactDestination(kind, name)) return fail('INVALID_INPUT', 'An option already has that name; choose it with the picker\'s submit edit');
                 const before = useTaskStore.getState();
                 // RN's picker creates the project in the dialog's chosen area (dialog.area.selectedId).
                 const areaId = draft.areaChoice !== BULK_ORGANIZE_KEEP && draft.areaChoice !== BULK_ORGANIZE_NONE ? draft.areaChoice : undefined;
@@ -650,6 +653,8 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                 if (!made.entity) return written.ok ? fail('ACTION_FAILED', 'Creation failed') : written;
                 const after = useTaskStore.getState();
                 const changed = kind === 'project' ? after._allProjects !== before._allProjects : after._allAreas !== before._allAreas;
+                // The store reused a live row of that name (its own name match): nothing was made, so nothing to answer.
+                if (made.entity.id !== id && !changed) return fail('INVALID_INPUT', 'An option already has that name; choose it with the picker\'s submit edit');
                 return settleWrite(written, choose(made.entity.id, changed));
             });
         },
