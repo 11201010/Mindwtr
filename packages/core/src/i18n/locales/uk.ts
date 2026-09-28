@@ -774,6 +774,7 @@ export const ukOverrides: Record<string, string> = {
     "projects.tagFilter": "Фільтр тегів",
     "projects.allTags": "Всі теги",
     "projects.noTags": "Без тегів",
+    "projects.emptyTag": "Порожній тег",
     "projects.deferredSection": "Коли-небудь / Очікування",
     "projects.duplicate": "дублікат",
     "projects.complete": "Повний",

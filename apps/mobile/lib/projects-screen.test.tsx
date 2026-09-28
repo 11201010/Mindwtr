@@ -23,6 +23,7 @@ const detailModal = vi.hoisted(() => ({ props: null as Record<string, any> | nul
 const taskEditModal = vi.hoisted(() => ({ props: null as Record<string, any> | null }));
 const focusEffect = vi.hoisted(() => ({ callback: null as null | (() => void | (() => void)) }));
 const consumePendingCaptureTaskOpenMock = vi.hoisted(() => vi.fn());
+const filteringHarness = vi.hoisted(() => ({ useRealHook: false }));
 
 const flattenStyle = (value: unknown): Record<string, unknown> => Object.assign(
   {},
@@ -110,6 +111,7 @@ const storeState: {
 };
 
 beforeEach(() => {
+  filteringHarness.useRealHook = false;
   routeParams.current = {};
   detailModal.props = null;
   taskEditModal.props = null;
@@ -179,6 +181,8 @@ vi.mock('../contexts/language-context', () => ({
       'projects.noArea': 'No Area',
       'projects.addPlaceholder': 'Add new project...',
       'projects.allTags': 'All tags',
+      'projects.emptyTag': 'Empty tag',
+      'projects.noTags': 'No tags',
       'projects.tagFilter': 'Tag filter',
       'projects.show': 'Show',
       'projects.empty': 'No projects yet',
@@ -230,8 +234,10 @@ vi.mock('@/hooks/use-mobile-area-filter', () => ({
   }),
 }));
 
-vi.mock('@/hooks/use-project-filtering', () => ({
-  useProjectFiltering: () => ({
+vi.mock('@/hooks/use-project-filtering', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/use-project-filtering')>();
+  return { useProjectFiltering: (params: Parameters<typeof actual.useProjectFiltering>[0]) => (
+    filteringHarness.useRealHook ? actual.useProjectFiltering(params) : ({
     areaUsage: new Map(),
     focusedCount: 0,
     groupedActiveProjects: [
@@ -244,8 +250,9 @@ vi.mock('@/hooks/use-project-filtering', () => ({
     groupedArchivedProjects: [],
     projectTagOptions: [],
     tagFilterOptions: { list: ['work'], hasNoTags: false },
-  }),
-}));
+    })
+  ) };
+});
 
 vi.mock('@/components/projects-screen/use-project-notes-editor', () => ({
   useProjectNotesEditor: () => ({
@@ -366,6 +373,35 @@ describe('ProjectsScreen project quick add', () => {
 });
 
 describe('ProjectsScreen list controls', () => {
+  it('labels the empty raw tag and filters it separately from untagged projects', async () => {
+    filteringHarness.useRealHook = true;
+    storeState.projects = [
+      { ...testProject, id: 'empty-tag', title: 'Empty tag project', tagIds: [''] },
+      { ...testProject, id: 'untagged', title: 'Untagged project', tagIds: [] },
+    ];
+    storeState._allProjects = storeState.projects;
+
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<ProjectsScreen />);
+      await Promise.resolve();
+    });
+    act(() => tree.root.findByProps({ testID: 'projects-tag-filter-toggle' }).props.onPress());
+    const emptyTagChip = tree.root.findByProps({ accessibilityLabel: 'Empty tag' });
+    expect(emptyTagChip.props.accessibilityRole).toBe('button');
+    expect(emptyTagChip.findByType(Text).props.children).toBe('Empty tag');
+    act(() => emptyTagChip.props.onPress());
+    expect(tree.root.findByProps({ testID: 'projects-tag-filter-toggle' }).props.accessibilityLabel)
+      .toBe('Tag filter: Empty tag, Hide');
+
+    const visibleProjects = () => tree.root.findByType(FlatList).props.data
+      .filter((row: { type: string }) => row.type === 'project')
+      .map((row: { project: Project }) => row.project.id);
+    expect(visibleProjects()).toEqual(['empty-tag']);
+    act(() => tree.root.findByProps({ accessibilityLabel: 'No tags' }).props.onPress());
+    expect(visibleProjects()).toEqual(['untagged']);
+  });
+
   it('toggles tag filters from the project heading while preserving and clearing the selection', async () => {
     let tree!: ReturnType<typeof create>;
     await act(async () => {

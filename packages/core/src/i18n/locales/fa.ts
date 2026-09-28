@@ -794,6 +794,7 @@ export const faOverrides: Record<string, string> = {
         'projects.tagFilter': 'فیلتر برچسب',
         'projects.allTags': 'همه برچسب‌ها',
         'projects.noTags': 'بدون برچسب',
+        'projects.emptyTag': 'برچسب خالی',
         'projects.deferredSection': 'یک روزی / در انتظار',
         'projects.duplicate': 'تکرار',
         'projects.complete': 'تکمیل',

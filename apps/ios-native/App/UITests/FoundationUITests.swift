@@ -5334,6 +5334,148 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+
+    func testProjectTagFiltersPreserveDraftsAndNavigation() {
+        projectTagFilters(library: "3c965e3b-721a-4e02-8932-2666da0d02aa")
+    }
+
+    func testProjectTagFiltersLargestText() {
+        projectTagFilters(library: "7c274d23-10b6-4864-8909-560cb5c59fad")
+    }
+
+
+    func testProjectTagFilterReadFailureRetainsViewAndRetriesIntendedSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "042432f2-dde3-4dae-9b0b-021028413527",
+                               "--native-project-tag-read-failure"]
+        app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        let draft = app.textFields["projects-create-title"]
+        boardEnabled(draft); draft.tap(); draft.typeText("Retained failed filter draft")
+        projectManagerTap(app, "projects-create-area-af884128-31d5-41eb-978c-2fd1a44b62e8")
+        projectManagerTap(app, "projects-tag-filter-toggle")
+        projectManagerTap(app, "projects-tag-filter-4")
+        XCTAssertTrue(app.staticTexts["projects-create-read-error"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["projects-tag-filter-all"].isSelected)
+        XCTAssertFalse(app.buttons["projects-tag-filter-4"].isSelected)
+        XCTAssertFalse(app.buttons["projects-tag-filter-4"].isEnabled)
+        XCTAssertEqual(draft.value as? String, "Retained failed filter draft")
+        XCTAssertTrue(app.buttons["projects-create-area-af884128-31d5-41eb-978c-2fd1a44b62e8"].isSelected)
+        let previous = app.buttons["project-open-53b2bd73-6240-4998-b0fc-4f3af333dc01"]
+        revealPagedElement(app, previous, in: app.scrollViews["projects-scroll"])
+        XCTAssertTrue(previous.exists)
+        projectManagerTap(app, "projects-create-read-retry")
+        boardEnabled(app.buttons["projects-tag-filter-4"])
+        XCTAssertTrue(app.buttons["projects-tag-filter-4"].isSelected)
+        XCTAssertFalse(app.buttons["projects-tag-filter-all"].isSelected)
+        XCTAssertFalse(app.staticTexts["projects-create-read-error"].exists)
+        XCTAssertFalse(previous.exists)
+        XCTAssertEqual(draft.value as? String, "Retained failed filter draft")
+        XCTAssertTrue(app.buttons["projects-create-area-af884128-31d5-41eb-978c-2fd1a44b62e8"].isSelected)
+        app.terminate()
+    }
+
+    private func projectTagFilters(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        let target = "776dd5c5-1926-4da1-96ff-5d5096971050"
+        let destination = "53b2bd73-6240-4998-b0fc-4f3af333dc01"
+        let source = "170c1eab-65ec-4a38-931d-3f03399b7d17"
+        let home = "af884128-31d5-41eb-978c-2fd1a44b62e8"
+        let draft = app.textFields["projects-create-title"]
+        let toggle = "projects-tag-filter-toggle"
+        func tap(_ id: String) { projectManagerTap(app, id) }
+        func selected(_ id: String) {
+            boardEnabled(app.buttons[id])
+            expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: app.buttons[id])
+            waitForExpectations(timeout: 15)
+        }
+        func choose(_ id: String) { tap(id); selected(id) }
+        func row(_ id: String) -> XCUIElement {
+            let value = app.buttons["project-open-" + id]
+            revealPagedElement(app, value, in: app.scrollViews["projects-scroll"])
+            boardEnabled(value)
+            return value
+        }
+        func section(_ name: String) {
+            let button = app.buttons["projects-section-" + name]
+            revealPagedElement(app, button, in: app.scrollViews["projects-scroll"])
+            boardEnabled(button)
+            if button.value as? String == "Expand" { button.tap() }
+        }
+        func area(_ id: String) {
+            boardTap(app, "area-open"); boardTap(app, "area-option-" + id)
+            selected("area-option-" + id)
+            app.buttons["area-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts["area-title"])
+            waitForExpectations(timeout: 10)
+        }
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardEnabled(draft)
+        XCTAssertFalse(app.buttons["projects-tag-filter-all"].exists)
+        draft.tap(); draft.typeText("Retained tag filter Project draft")
+        choose("projects-create-area-" + home)
+        tap(toggle); selected("projects-tag-filter-all")
+        choose("projects-tag-filter-4") // #work, inventory sorted by shared JS policy.
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertEqual(draft.value as? String, "Retained tag filter Project draft")
+        XCTAssertTrue(app.buttons["projects-create-area-" + home].isSelected)
+        _ = row(target)
+        XCTAssertFalse(app.buttons["project-open-" + destination].exists)
+        section("deferred"); _ = row("603a295c-f5cf-4704-8b31-ae73c7f31bea")
+        section("archived"); _ = row("98432619-81dd-480e-9c35-d4dfa1705ff1")
+        tap(toggle)
+        XCTAssertFalse(app.buttons["projects-tag-filter-all"].exists)
+        XCTAssertTrue(app.buttons[toggle].label.contains("#work"))
+        tap(toggle); selected("projects-tag-filter-4")
+
+        choose("projects-tag-filter-2") // composed Unicode
+        _ = row(target)
+        XCTAssertFalse(app.buttons["project-open-" + destination].exists)
+        choose("projects-tag-filter-1") // canonically equivalent, distinct raw tag
+        _ = row(destination)
+        XCTAssertFalse(app.buttons["project-open-" + target].exists)
+        choose("projects-tag-filter-none")
+        _ = row("120596fd-e02e-4187-8403-c70bcd0fb35a")
+        XCTAssertEqual(app.buttons["projects-tag-filter-0"].label, "Empty tag")
+        choose("projects-tag-filter-0") // existing empty raw tag is not No tags.
+        _ = row("60b46b37-77c2-40c0-b3ce-17faf3217f1e")
+        XCTAssertFalse(app.buttons["project-open-120596fd-e02e-4187-8403-c70bcd0fb35a"].exists)
+        choose("projects-tag-filter-4")
+        area(source)
+        selected("projects-tag-filter-4")
+        XCTAssertTrue(app.buttons["projects-tag-filter-3"].exists) // global #home inventory survives Area filtering.
+        choose("projects-tag-filter-3")
+        XCTAssertTrue(app.staticTexts["projects-empty"].waitForExistence(timeout: 10))
+        choose("projects-tag-filter-4"); _ = row(target)
+        area("__all__")
+        selected("projects-tag-filter-4")
+        choose("projects-create-area-" + home)
+        row(target).tap(); boardTap(app, "project-details-toggle")
+        tap("project-area-open"); tap("project-area-manage")
+        boardEnabled(app.textFields["area-create-name"])
+        tap("area-manager-close"); boardTap(app, "project-back")
+        selected("projects-tag-filter-4")
+        XCTAssertEqual(draft.value as? String, "Retained tag filter Project draft")
+        XCTAssertTrue(app.buttons["projects-create-area-" + home].isSelected)
+        boardTap(app, "search-open"); boardEnabled(app.textFields["search-input"])
+        boardTap(app, "search-close"); selected("projects-tag-filter-4")
+        XCTAssertEqual(draft.value as? String, "Retained tag filter Project draft")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Project tag filter retains raw selection and creation draft"
+        capture.lifetime = .keepAlways; add(capture)
+        app.terminate(); app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        boardEnabled(draft)
+        XCTAssertFalse(app.buttons["projects-tag-filter-all"].exists)
+        tap(toggle); selected("projects-tag-filter-all")
+        _ = row(target); _ = row(destination)
+        app.terminate()
+    }
+
     func testProjectManageAreaRenameFailure() { projectManagerRecovery(phase: "rename", failed: true) }
     func testProjectManageAreaRenameColdRecovery() { projectManagerRecovery(phase: "rename", failed: false) }
     func testProjectManageAreaCreateFailure() { projectManagerRecovery(phase: "create", failed: true) }

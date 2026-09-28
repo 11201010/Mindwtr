@@ -814,6 +814,7 @@ export const en: Record<string, string> = {
         'projects.tagFilter': 'Tag filter',
         'projects.allTags': 'All tags',
         'projects.noTags': 'No tags',
+        'projects.emptyTag': 'Empty tag',
         'projects.deferredSection': 'Someday / Waiting',
         'projects.duplicate': 'Duplicate',
         'projects.complete': 'Complete',

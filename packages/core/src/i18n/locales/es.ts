@@ -778,6 +778,7 @@ export const esOverrides: Record<string, string> = {
 'projects.tagFilter': "Filtro de etiquetas",
 'projects.allTags': "Todas las etiquetas",
 'projects.noTags': "Sin etiquetas",
+'projects.emptyTag': "Etiqueta vacía",
 'projects.deferredSection': "Algún día/Tal vez o En espera",
 'projects.duplicate': "Duplicar",
 'projects.complete': "Completar",

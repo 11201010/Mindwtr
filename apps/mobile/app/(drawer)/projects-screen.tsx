@@ -573,9 +573,10 @@ export default function ProjectsScreen() {
   }, [persistProjectListViewState]);
 
   const projectTagFilterActive = selectedTagFilter !== ALL_TAGS;
+  const projectTagLabel = (tag: string) => tag === '' ? t('projects.emptyTag') : tag;
   const selectedTagFilterLabel = selectedTagFilter === NO_TAGS
     ? t('projects.noTags')
-    : selectedTagFilter;
+    : projectTagLabel(selectedTagFilter);
   const projectTagFilterHeading = projectTagFilterActive
     ? `${t('projects.tagFilter')}: ${selectedTagFilterLabel}`
     : t('projects.tagFilter');
@@ -614,7 +615,7 @@ export default function ProjectsScreen() {
           ]}
           onPress={() => setSelectedTagFilter(tag)}
           accessibilityRole="button"
-          accessibilityLabel={tag}
+          accessibilityLabel={projectTagLabel(tag)}
           accessibilityState={{ selected: selectedTagFilter === tag }}
         >
           <Text
@@ -623,7 +624,7 @@ export default function ProjectsScreen() {
               { color: selectedTagFilter === tag ? tc.onTint : tc.text },
             ]}
           >
-            {tag}
+            {projectTagLabel(tag)}
           </Text>
         </TouchableOpacity>
       ))}

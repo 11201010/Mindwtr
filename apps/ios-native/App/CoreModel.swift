@@ -84,6 +84,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var moreMenu: CoreObject = [:]
     @Published private(set) var morePresented = false
     @Published private(set) var projects: CoreObject = [:]
+    @Published private(set) var selectedProjectTagFilter = "__all__"
+    @Published private(set) var projectTagFilterShown = false
     @Published private(set) var projectCreateOptions: CoreObject = [:]
     @Published private(set) var projectCreateTitle = ""
     @Published private(set) var projectCreateAreaID: String?
@@ -372,6 +374,7 @@ final class CoreModel: ObservableObject {
     // Response faults are enabled only for an explicitly isolated UI-test library.
     private var projectAreaTestReadFailure = false
     private var projectAreaTestBlockedWrite = false
+    private var projectTagTestReadFailure = false
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -401,6 +404,7 @@ final class CoreModel: ObservableObject {
     private var projectNotesFlushTask: Task<Bool, Never>?
     private var projectNotesFlushID: UUID?
     private var projectCreateAreaFilterValue: String?
+    private var pendingProjectTagFilter: String?
     private var projectCreateRequest: String?
     private var projectCreateRequestID: String?
     private var projectCreateOptionsCurrent = false
@@ -862,6 +866,15 @@ final class CoreModel: ObservableObject {
                 .contains(where: { $0.text("id") == id }) } ?? true)
     }
     var projectCreatePending: Bool { projectCreateRequest != nil }
+    var projectTagValues: [String] { projects.object("tagInventory")["values"] as? [String] ?? [] }
+    var projectTagHasUntagged: Bool { projects.object("tagInventory").flag("hasUntagged") }
+    var projectTagFilterInputEnabled: Bool {
+        projectCreateInputEnabled && projectCreateOptionsCurrent && projectCreateReadError == nil
+            && pendingProjectTagFilter == nil && !projects.isEmpty
+    }
+    func projectTagIsSelected(_ value: String) -> Bool {
+        selectedProjectTagFilter.utf8.elementsEqual(value.utf8)
+    }
     var projectFocusPending: Bool { projectFocusRequest != nil }
     var projectFocusInputEnabled: Bool {
         projectCreateInputEnabled && projectFocusReadError == nil
@@ -1076,6 +1089,7 @@ final class CoreModel: ObservableObject {
                     preferenceDefaults = isolatedDefaults
                     projectAreaTestReadFailure = arguments.contains("--native-project-area-read-failure")
                     projectAreaTestBlockedWrite = arguments.contains("--native-project-area-blocked-write")
+                    projectTagTestReadFailure = arguments.contains("--native-project-tag-read-failure")
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1135,7 +1149,8 @@ final class CoreModel: ObservableObject {
                         "task.aria.openContext", "task.aria.openTag",
                         "projects.title", "projects.activeSection", "projects.deferredSection", "projects.closed",
                         "projects.noArea", "projects.empty", "list.noTasks", "projects.noNextAction",
-                        "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.areaLabel",
+                        "projects.addPlaceholder", "projects.add", "projects.tagFilter", "projects.allTags", "projects.noTags", "projects.emptyTag",
+                        "filters.show", "filters.hide", "projects.areaLabel",
                         "projects.areaAvailableSelectToAssign", "common.add",
                         "taskEdit.details", "projects.statusLabel", "projects.projectTypeLabel", "projects.sequentialScope",
                         "projects.sequentialAcrossSections", "projects.sequentialWithinSections",
@@ -1243,6 +1258,25 @@ final class CoreModel: ObservableObject {
         }
         projectCreateAreaID = id
         projectCreateError = nil
+    }
+
+    func toggleProjectTagFilter() {
+        guard projectTagFilterInputEnabled else { return }
+        projectTagFilterShown.toggle()
+    }
+
+    func selectProjectTagFilter(_ value: String) async {
+        guard projectTagFilterInputEnabled,
+              value == "__all__" || (value == "__none__" && projectTagHasUntagged)
+                  || projectTagValues.contains(where: { $0.utf8.elementsEqual(value.utf8) }) else { return }
+        guard !projectTagIsSelected(value) else { return }
+        pendingProjectTagFilter = value
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await readProjectsWithCreateOptions()
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 
     func beginProjectCreate() -> Bool {
@@ -1354,8 +1388,18 @@ final class CoreModel: ObservableObject {
     private func readProjectsWithCreateOptions() async throws {
         projectCreateOptionsCurrent = false
         do {
-            projects = try await query("projects")
+            let requested = pendingProjectTagFilter ?? selectedProjectTagFilter
+            let next = try await query("menuRead", ["projects", try json(["tagFilter": requested])])
+            let inventory = next.object("tagInventory")
+            guard let returned = next["tagFilter"] as? String,
+                  returned.utf16.count <= 100_000, returned.utf8.elementsEqual(requested.utf8),
+                  inventory.count == 2, let values = inventory["values"] as? [String],
+                  values.count <= 100_000, values.allSatisfy({ $0.utf16.count <= 100_000 }),
+                  inventory["hasUntagged"] is Bool else { throw CocoaError(.coderReadCorrupt) }
             try await readProjectCreateOptions()
+            projects = next
+            selectedProjectTagFilter = requested
+            pendingProjectTagFilter = nil
             projectFocusReadError = nil
         } catch {
             projectCreateReadError = error.localizedDescription
@@ -10121,6 +10165,11 @@ final class CoreModel: ObservableObject {
     private func query(_ method: String, _ args: [Any] = []) async throws -> CoreObject {
         guard let host else { throw CocoaError(.coderInvalidValue) }
         #if DEBUG && targetEnvironment(simulator)
+        if method == "menuRead", args.first as? String == "projects",
+           pendingProjectTagFilter != nil, projectTagTestReadFailure {
+            projectTagTestReadFailure = false
+            throw CocoaError(.fileReadUnknown)
+        }
         if projectAreaCreatedID != nil {
             if method == "projectAreaOptions", projectAreaTestReadFailure {
                 projectAreaTestReadFailure = false

@@ -778,6 +778,7 @@ export const huOverrides: Record<string, string> = {
     'projects.tagFilter': 'Címkeszűrő',
     'projects.allTags': 'Összes címke',
     'projects.noTags': 'Nincsenek címkék',
+    'projects.emptyTag': 'Üres címke',
     'projects.deferredSection': 'Ötlettár / Másra vár',
     'projects.duplicate': 'Megkettőzés',
     'projects.complete': 'Befejezés',

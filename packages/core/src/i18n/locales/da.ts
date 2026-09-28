@@ -799,6 +799,7 @@ export const daOverrides: Record<string, string> = {
     'projects.tagFilter': 'Tagfilter',
     'projects.allTags': 'Alle tags',
     'projects.noTags': 'Ingen tags',
+    'projects.emptyTag': 'Tomt tag',
     'projects.deferredSection': 'Engang / Venter på',
     'projects.duplicate': 'Duplikat',
     'projects.complete': 'Komplet',

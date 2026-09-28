@@ -13883,4 +13883,108 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try projectRows("focus-target").first?["tagIds"] as? String, "[\"#changed\"]")
         await reopened.close()
     }
+
+    func testFilteredProjectsUsesRNTagIdentityGroupingAndAreaIntersectionWithoutWrites() async throws {
+        _ = try await seedDestinationTask()
+        let seed = try SQLiteBridge(url: database)
+        for (id, tags) in [
+            ("destination-project-a", ["#work", "#caf\u{00e9}"]),
+            ("destination-project-b", ["#home", "#cafe\u{0301}"]),
+            ("destination-project-archived", ["#work"]),
+            ("destination-project-deleted", ["#gone"]),
+        ] {
+            _ = try seed.execute("UPDATE projects SET tagIds = ? WHERE id = ?", parametersJSON: json([json(tags), id]))
+        }
+        _ = try seed.execute("UPDATE projects SET isFocused = 1, orderNum = 9 WHERE id = 'destination-project-a'")
+        let at = recentAreaTestTime()
+        for (id, status, tags) in [("filter-ordinary", "active", ["#work"]),
+                                    ("filter-waiting", "waiting", ["#work"]),
+                                    ("filter-empty", "active", [""]),
+                                    ("filter-untagged", "active", [String]())] {
+            _ = try seed.execute("INSERT INTO projects (id, title, status, color, areaId, orderNum, tagIds, isSequential, isFocused, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                parametersJSON: json([id, id, status, "#94a3b8", "destination-area-a", 0, json(tags), 0, 0, at, at, 1]))
+        }
+        seed.close()
+        let faults = HostIOFaults()
+        var writes = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT|UPDATE|DELETE)\b"#, options: .regularExpression) != nil { writes += 1 }
+        }
+        let core = host(faults)
+        _ = try await core.start()
+        let check = try SQLiteBridge(url: database)
+        defer { check.close() }
+        let before = try nineTableSnapshot(check)
+        writes = 0
+        func read(_ filter: String) async throws -> [String: Any] {
+            let value = try object(await core.call("menuRead", argumentsJSON: json(["projects", json(["tagFilter": filter])])))
+            XCTAssertEqual(Data((try XCTUnwrap(value["tagFilter"] as? String)).utf8), Data(filter.utf8))
+            return value
+        }
+        func ids(_ value: [String: Any], _ section: String = "active") -> [String] {
+            (value[section] as? [[String: Any]] ?? []).flatMap { group in
+                (group["projects"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+            }
+        }
+        let all = try await read("__all__")
+        let work = try await read("#work")
+        XCTAssertEqual(ids(work), ["destination-project-a", "filter-ordinary"])
+        XCTAssertEqual(ids(work, "deferred"), ["filter-waiting"])
+        XCTAssertEqual(ids(work, "archived"), ["destination-project-archived"])
+        let composed = try await read("#caf\u{00e9}")
+        let decomposed = try await read("#cafe\u{0301}")
+        XCTAssertEqual(ids(composed), ["destination-project-a"])
+        XCTAssertEqual(ids(decomposed), ["destination-project-b"])
+        let untagged = try await read("__none__")
+        XCTAssertEqual(ids(untagged), ["filter-untagged"])
+        let empty = try await read("")
+        XCTAssertEqual(ids(empty), ["filter-empty"])
+        let unknown = try await read("#unknown")
+        XCTAssertEqual(ids(unknown), [])
+        let inventory = try XCTUnwrap(all["tagInventory"] as? [String: Any])
+        let values = try XCTUnwrap(inventory["values"] as? [String])
+        XCTAssertEqual(values.map { Data($0.utf8) }, ["", "#cafe\u{0301}", "#caf\u{00e9}", "#home", "#work"].map { Data($0.utf8) })
+        XCTAssertEqual(inventory["hasUntagged"] as? Bool, true)
+        let legacy = try object(await core.call("projects"))
+        XCTAssertEqual(Set(legacy.keys), Set(["version", "revision", "active", "deferred", "archived"]))
+        XCTAssertEqual(ids(legacy), ids(all))
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+
+        // The Area choice is an intentional settings write; subsequent tag reads remain pure.
+        let area = try object(await core.call("areaFilter"))
+        let option = try XCTUnwrap((area["options"] as? [[String: Any]])?.first { $0["id"] as? String == "destination-area-a" })
+        _ = try await core.call("setAreaFilter", argumentsJSON: json([json(XCTUnwrap(option["next"]))]))
+        let afterArea = try nineTableSnapshot(check)
+        writes = 0
+        let home = try await read("#home")
+        XCTAssertTrue(ids(home).isEmpty)
+        XCTAssertEqual(try json(XCTUnwrap(home["tagInventory"])), try json(inventory))
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try nineTableSnapshot(check), afterArea)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testFilteredProjectsRejectsMalformedAndOversizedInputsWithoutWrites() async throws {
+        let core = host()
+        _ = try await core.start()
+        let check = try SQLiteBridge(url: database)
+        defer { check.close() }
+        let before = try nineTableSnapshot(check)
+        let invalid: [Any] = [NSNull(), [], "#work", [:], ["tagFilter": NSNull()], ["tagFilter": 1],
+                           ["tagFilter": "#work", "extra": true], ["tagFilter": String(repeating: "x", count: 100_001)],
+                           ["tagFilter": String(repeating: "😀", count: 50_001)]]
+        for input in invalid {
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: input, options: [.fragmentsAllowed]), as: UTF8.self)
+            await expectFailure { _ = try await core.call("menuRead", argumentsJSON: json(["projects", encoded])) }
+        }
+        for filter in ["", String(repeating: "x", count: 100_000)] {
+            let value = try object(await core.call("menuRead", argumentsJSON: json(["projects", json(["tagFilter": filter])])))
+            XCTAssertEqual(Data((try XCTUnwrap(value["tagFilter"] as? String)).utf8), Data(filter.utf8))
+        }
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
 }

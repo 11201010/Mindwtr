@@ -793,6 +793,7 @@ export const zhHans: Record<string, string> = {
         'projects.tagFilter': '标签筛选',
         'projects.allTags': '所有标签',
         'projects.noTags': '无标签',
+        'projects.emptyTag': '空标签',
         'projects.deferredSection': '将来 / 等待',
         'projects.duplicate': '复制',
         'projects.complete': '完成',

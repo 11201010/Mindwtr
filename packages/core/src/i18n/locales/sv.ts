@@ -794,6 +794,7 @@ export const svOverrides: Record<string, string> = {
         'projects.tagFilter': 'Taggfilter',
         'projects.allTags': 'Alla taggar',
         'projects.noTags': 'Inga taggar',
+        'projects.emptyTag': 'Tom tagg',
         'projects.deferredSection': 'Någon gång / Väntar',
         'projects.duplicate': 'Duplicera',
         'projects.complete': 'Slutför',

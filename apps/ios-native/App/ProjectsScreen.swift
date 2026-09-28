@@ -115,20 +115,41 @@ struct ProjectsScreen: View {
                 FailureBanner(model: model, palette: palette)
             }
             HStack(spacing: 12) {
-                Button {} label: {
-                    HStack {
-                        Text(model.label("projects.tagFilter")).rnFont(12, .semibold)
-                        Spacer()
-                        Text(model.label("common.all")).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+                Button {
+                    resignProjectCreateInput()
+                    model.toggleProjectTagFilter()
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(projectTagFilterHeading).rnFont(12, .semibold)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Text(model.label(model.projectTagFilterShown ? "filters.hide" : "filters.show"))
+                            .rnFont(12, .semibold).foregroundStyle(palette.secondary)
                     }
                     .frame(minHeight: 44).contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).disabled(true)
+                .buttonStyle(.plain).disabled(!model.projectTagFilterInputEnabled)
+                    .accessibilityIdentifier("projects-tag-filter-toggle")
                 Button(model.label("areas.manage")) { Task { await model.openAreaManager() } }
                     .rnFont(12, .semibold).padding(.horizontal, 8).frame(minHeight: 44)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
                     .buttonStyle(.plain).disabled(!model.projectCreateInputEnabled)
                     .accessibilityIdentifier("projects-manage-areas")
+            }
+            if model.projectTagFilterShown {
+                let tags = model.projectTagValues
+                AppChipFlow {
+                    projectTagChip("__all__", label: model.label("projects.allTags"), id: "projects-tag-filter-all")
+                    ForEach(tags.indices, id: \.self) { index in
+                        projectTagChip(tags[index], label: tags[index].isEmpty ? model.label("projects.emptyTag") : tags[index],
+                                       id: "projects-tag-filter-\(index)")
+                    }
+                    if model.projectTagHasUntagged {
+                        projectTagChip("__none__", label: model.label("projects.noTags"), id: "projects-tag-filter-none")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8).padding(.bottom, 12)
             }
         }
         .padding(.horizontal, 16).padding(.top, 16)
@@ -156,9 +177,39 @@ struct ProjectsScreen: View {
         .accessibilityIdentifier("projects-create-area-" + (id ?? "none"))
     }
 
-    private func submitProject() {
+    private var projectTagFilterHeading: String {
+        let title = model.label("projects.tagFilter")
+        if model.projectTagIsSelected("__all__") { return title }
+        let selected = model.projectTagIsSelected("__none__") ? model.label("projects.noTags")
+            : model.selectedProjectTagFilter.isEmpty ? model.label("projects.emptyTag") : model.selectedProjectTagFilter
+        return title + ": " + selected
+    }
+
+    private func projectTagChip(_ value: String, label: String, id: String) -> some View {
+        let selected = model.projectTagIsSelected(value)
+        return Button {
+            resignProjectCreateInput()
+            Task { await model.selectProjectTagFilter(value) }
+        } label: {
+            Text(label).rnFont(14, selected ? .semibold : .regular)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(selected ? palette.onTint : palette.text)
+                .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44)
+                .background(selected ? palette.tint : palette.card, in: Capsule())
+                .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain).disabled(!model.projectTagFilterInputEnabled)
+        .accessibilityLabel(label).accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(id)
+    }
+
+    private func resignProjectCreateInput() {
         titleFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func submitProject() {
+        resignProjectCreateInput()
         guard model.beginProjectCreate() else { return }
         Task { await model.addProject() }
     }

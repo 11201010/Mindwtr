@@ -3291,10 +3291,16 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
+            guard let name = args[0] as? String, ["more", "projects", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
+            }
+            if name == "projects" {
+                guard Set(input.keys) == Set(["tagFilter"]), let filter = input["tagFilter"] as? String,
+                      filter.utf16.count <= 100_000 else {
+                    throw HostFailure("Unsupported native Projects tag filter")
+                }
             }
             if name == "contexts" {
                 let fields = Set(["tokens", "matchMode", "searchQuery", "offset", "limit", "revision"])

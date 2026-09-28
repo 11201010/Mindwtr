@@ -822,6 +822,7 @@ export const jaOverrides: Record<string, string> = {
         'projects.tagFilter': 'タグで絞り込む',
         'projects.allTags': 'すべてのタグ',
         'projects.noTags': 'タグなし',
+        'projects.emptyTag': '空のタグ',
         'projects.deferredSection': 'いつか・たぶん／連絡待ち',
         'projects.duplicate': '複製',
         'projects.complete': '完了にする',

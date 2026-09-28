@@ -793,6 +793,7 @@ export const zhHant: Record<string, string> = {
         'projects.tagFilter': '標籤篩選',
         'projects.allTags': '所有標籤',
         'projects.noTags': '無標籤',
+        'projects.emptyTag': '空標籤',
         'projects.deferredSection': '將來 / 等待',
         'projects.duplicate': '複製',
         'projects.complete': '完成',
