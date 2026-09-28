@@ -456,7 +456,7 @@ describe('native host contract: Settings › GTD', () => {
         expect(model).toEqual(buildGtdSettingsModel({ settings: state.settings, areas: state.areas, taskOpenMode: 'preview', t: getTranslator('de') }));
         expect(value(host.getGtdSettings({ taskOpenMode: 'sideways' })).taskEditor.openMode.options.find((option) => option.selected)?.value).toBe('automatic');
         const menu = value(host.getSettingsMenu());
-        expect(menu.groups.flat().filter((row) => row.enabled).map((row) => row.id)).toEqual(['general', 'gtd', 'manage']);
+        expect(menu.groups.flat().filter((row) => row.enabled).map((row) => row.id)).toEqual(['general', 'gtd', 'manage', 'data']);
     });
 
     it('changes the revision with the settings and the language', async () => {

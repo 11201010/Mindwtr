@@ -1,7 +1,8 @@
 /**
  * The native host contract for Settings: the menu (settings-menu-model.ts), the
  * General screen (general-settings-model.ts), the Manage screen
- * (manage-settings-model.ts) and the GTD screens (gtd-settings-model.ts). Kept in its own file and spread into
+ * (manage-settings-model.ts), the GTD screens (gtd-settings-model.ts) and Data's Diagnostics card
+ * (data-settings-model.ts). Kept in its own file and spread into
  * createNativeHostContract. Someday sections on Manage use the Someday methods
  * (getSomedaySections, createSomedaySection, renameSomedaySection,
  * reorderSomedaySections, deleteSomedaySection in native-host-contract-menu-views.ts).
@@ -62,6 +63,7 @@
  */
 import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
 import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
+import { buildDataSettingsModel, buildDataSettingsUpdate, isDataSettingStored, type DataSettingsEdit, type DataSettingsModel } from './data-settings-model';
 import {
     buildGeneralSettingsModel,
     buildGeneralSettingsUpdate,
@@ -90,6 +92,7 @@ import {
 import { formatLocalDate } from './import-source-reader';
 import { tFallback } from './i18n';
 import type { Language } from './i18n/i18n-types';
+import { logInfo } from './logger';
 import {
     buildManagePersonRow,
     getManageDeleteConfirm,
@@ -146,7 +149,7 @@ export type SettingsDeps = {
 };
 
 /** Settings screens the native host draws so far; draw the other rows disabled. */
-export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage'];
+export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'data'];
 
 type NativeMenuRow<Id extends string = string> = SettingsMenuRow<Id> & { enabled: boolean };
 
@@ -165,6 +168,8 @@ export type NativeSettingsMenu = {
 export type NativeGeneralSettings = GeneralSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
 
 export type NativeGtdSettings = GtdSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
+
+export type NativeDataSettings = DataSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
 
 /** A write's answer: whether the store changed, and what the host stores on the device. */
 export type NativeSettingsWriteResult = { changed: boolean; deviceWrites: SettingsDeviceWrite[] };
@@ -320,6 +325,12 @@ function readGtdEdit(value: unknown, liveAreaIds: Set<string>): GtdSettingsEdit 
 }
 
 const isName = (value: unknown): value is string => isText(value, 500) && value.trim().length > 0;
+
+const readDataEdit = (value: unknown): DataSettingsEdit | null => (
+    isObjectRecord(value) && Object.keys(value).length === 2 && value.type === 'debugLogging' && typeof value.value === 'boolean'
+        ? { type: 'debugLogging', value: value.value }
+        : null
+);
 
 export function createSettingsMethods(deps: SettingsDeps) {
     const durableSave = async (): Promise<NativeHostResult<null>> => {
@@ -939,6 +950,38 @@ export function createSettingsMethods(deps: SettingsDeps) {
                     }
                 });
                 return settleWrite(written, { changed: true });
+            });
+        },
+
+        /**
+         * Settings › Data: RN's Diagnostics card (data-settings-model.ts). The host's own diagnostics log
+         * (diagnostics-log.ts) makes the file for Share log and deletes it for Clear log; the model has
+         * RN's toast words for both.
+         */
+        getDataSettings(): NativeHostResult<NativeDataSettings> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const model = buildDataSettingsModel(useTaskStore.getState().settings, deps.t());
+            return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
+        },
+
+        /**
+         * The Debug logging switch's `edit`. Turning logging on then writes RN's forced
+         * "Debug logging enabled" line through core's logger, so the log starts with it.
+         */
+        async setDataSetting(input: { requestId: string; edit: DataSettingsEdit }): Promise<NativeHostResult<NativeSettingsWriteResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const edit = isObjectRecord(input) ? readDataEdit(input.edit) : null;
+            if (!edit || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'A request UUID and the Debug logging switch\'s edit are required');
+            }
+            return receipts.run<NativeSettingsWriteResult>(input.requestId, JSON.stringify(['data', edit]), async () => {
+                const settings = useTaskStore.getState().settings;
+                if (isDataSettingStored(settings, edit)) return { ok: true, value: { changed: false, deviceWrites: [] } };
+                const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(buildDataSettingsUpdate(settings, edit)));
+                if (written.ok && edit.value) logInfo('Debug logging enabled', { scope: 'diagnostics', force: true });
+                return settleWrite(written, { changed: true, deviceWrites: [] });
             });
         },
     };
