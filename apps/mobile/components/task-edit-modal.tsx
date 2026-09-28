@@ -1302,6 +1302,7 @@ function TaskEditModalInner({
                         linkInputTouched={linkInputTouched}
                         linkModalVisible={linkModalVisible}
                         linkModalTitle={editingLinkAttachmentId ? t('common.edit') : t('attachments.addLink')}
+                        linkMultiline={!editingLinkAttachmentId}
                         destinationFields={destinationFields}
                         projectFilterAreaId={projectFilterAreaId}
                         projects={projects}

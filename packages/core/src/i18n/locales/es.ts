@@ -362,6 +362,8 @@ export const esOverrides: Record<string, string> = {
 'attachments.transferProgress': "Progreso de transferencia del adjunto",
 'attachments.linkPlaceholder': "https://example.com",
 'attachments.linkInputHint': "Consejo: pega una URL o usa \"Título | URL\".",
+"attachments.linkBatchHint": "Pega un enlace por línea. Usa \"Título | URL\" para las etiquetas.",
+"attachments.invalidLinkLine": "Línea {{line}}: introduce un enlace válido.",
 'attachments.attachObsidianNote': "Adjuntar nota de Obsidian",
 'attachments.obsidianLinkPlaceholder': "obsidian://open?vault=Vault&file=Note",
 'attachments.obsidianLinkInputHint': "Pega un enlace de nota obsidian:// o usa \"Título | obsidian://...\".",

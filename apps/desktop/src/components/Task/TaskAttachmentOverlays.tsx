@@ -1,3 +1,4 @@
+import { formatI18nTemplate, parseAttachmentLinkBatch } from '@mindwtr/core';
 import { browseForLinkTarget } from '../../lib/attachment-import';
 import { isTauriRuntime } from '../../lib/runtime';
 import { PromptModal } from '../PromptModal';
@@ -47,6 +48,7 @@ export function TaskAttachmentOverlays({ attachments, t }: TaskAttachmentOverlay
     // Browsing for a target only makes sense for plain links, and only in the
     // desktop shell where a file dialog exists.
     const canBrowseLinkTarget = linkPromptVariant === 'link' && isTauriRuntime();
+    const batchEntry = !editingLinkAttachmentId && linkPromptVariant === 'link';
 
     return (
         <>
@@ -58,13 +60,20 @@ export function TaskAttachmentOverlays({ attachments, t }: TaskAttachmentOverlay
                         : isObsidianLink
                             ? t('attachments.attachObsidianNote')
                             : t('attachments.addLink')}
-                    description={isObsidianLink
+                    description={batchEntry
+                        ? t('attachments.linkBatchHint')
+                        : isObsidianLink
                         ? t('attachments.obsidianLinkInputHint')
                         : t('attachments.linkInputHint')}
                     placeholder={isObsidianLink
                         ? t('attachments.obsidianLinkPlaceholder')
                         : t('attachments.linkPlaceholder')}
                     defaultValue={linkPromptDefaultValue}
+                    multiline={batchEntry}
+                    validate={batchEntry ? (value) => {
+                        const { invalidLine } = parseAttachmentLinkBatch(value, true);
+                        return invalidLine === null ? null : formatI18nTemplate(t('attachments.invalidLinkLine'), { line: invalidLine });
+                    } : undefined}
                     browseLabel={canBrowseLinkTarget ? t('attachments.linkToFile') : undefined}
                     onBrowse={canBrowseLinkTarget
                         ? () => browseForLinkTarget(t('attachments.linkToFile'))

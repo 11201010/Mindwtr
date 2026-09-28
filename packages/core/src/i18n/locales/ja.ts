@@ -391,6 +391,8 @@ export const jaOverrides: Record<string, string> = {
         'attachments.transferProgress': '添付ファイルの転送状況',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'ヒント：URL を貼り付けるか、「タイトル | URL」の形式で入力できます。',
+        "attachments.linkBatchHint": "1 行に 1 件ずつリンクを貼り付けてください。ラベルには「タイトル | URL」を使います。",
+        "attachments.invalidLinkLine": "{{line}} 行目: 有効なリンクを入力してください。",
         'attachments.attachObsidianNote': 'Obsidian のノートを添付',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'obsidian:// のノートリンクを貼り付けるか、「タイトル | obsidian://…」の形式で入力してください。',

@@ -328,6 +328,8 @@ export const hiOverrides: Record<string, string> = {
         'attachments.transferProgress': 'अटैचमेंट ट्रांसफ़र प्रगति',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'युक्ति: एक यूआरएल पेस्ट करें, या "शीर्षक | यूआरएल" का उपयोग करें।',
+        "attachments.linkBatchHint": "हर पंक्ति में एक लिंक पेस्ट करें। नाम के लिए \"शीर्षक | URL\" लिखें।",
+        "attachments.invalidLinkLine": "पंक्ति {{line}}: मान्य लिंक दर्ज करें।",
         'attachments.attachObsidianNote': 'Obsidian नोट संलग्न करें',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'obsidian:// नोट लिंक पेस्ट करें, या "शीर्षक | obsidian://..." का उपयोग करें।',

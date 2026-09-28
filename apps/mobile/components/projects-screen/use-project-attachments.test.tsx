@@ -103,6 +103,9 @@ const makeProject = (attachment: Attachment, overrides: Partial<Project> = {}): 
 
 type HarnessApi = {
   selectedProject: Project | null;
+  linkInput: string;
+  setLinkInput: ReturnType<typeof useProjectAttachments>['setLinkInput'];
+  confirmAddProjectLink: ReturnType<typeof useProjectAttachments>['confirmAddProjectLink'];
   addProjectFileAttachment: ReturnType<typeof useProjectAttachments>['addProjectFileAttachment'];
   downloadAttachment: ReturnType<typeof useProjectAttachments>['downloadAttachment'];
   openAttachment: ReturnType<typeof useProjectAttachments>['openAttachment'];
@@ -128,6 +131,9 @@ function Harness({ expose, initial }: {
   });
   expose.current = {
     selectedProject,
+    linkInput: hook.linkInput,
+    setLinkInput: hook.setLinkInput,
+    confirmAddProjectLink: hook.confirmAddProjectLink,
     addProjectFileAttachment: hook.addProjectFileAttachment,
     downloadAttachment: hook.downloadAttachment,
     openAttachment: hook.openAttachment,
@@ -152,6 +158,24 @@ describe('useProjectAttachments download settlement', () => {
   afterEach(() => {
     coreStoreState._allProjects = [];
     vi.restoreAllMocks();
+  });
+
+  it('adds two project links in one update and leaves an invalid batch untouched', () => {
+    const project = makeProject(makeAttachment(1));
+    coreStoreState._allProjects = [project];
+    const expose = React.createRef<HarnessApi | null>();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<Harness expose={expose} initial={project} />); });
+    act(() => { expose.current!.setLinkInput('https://one.example\nTwo | https://two.example'); });
+    act(() => { expose.current!.confirmAddProjectLink(); });
+    expect(expose.current!.selectedProject?.attachments?.map((item) => item.uri)).toEqual([
+      '', 'https://one.example', 'https://two.example',
+    ]);
+    act(() => { expose.current!.setLinkInput('https://three.example\ninvalid line'); });
+    act(() => { expose.current!.confirmAddProjectLink(); });
+    expect(expose.current!.selectedProject?.attachments).toHaveLength(3);
+    expect(expose.current!.linkInput).toBe('https://three.example\ninvalid line');
+    act(() => tree.unmount());
   });
 
   it('restores missing state and shows localized conflict guidance without changing project metadata', async () => {

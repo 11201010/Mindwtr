@@ -328,6 +328,8 @@ export const ruOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Ход передачи вложения',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Совет: вставьте URL-адрес или используйте «Заголовок | URL-адрес».',
+        "attachments.linkBatchHint": "Вставьте по одной ссылке на строку. Для подписи используйте «Название | URL».",
+        "attachments.invalidLinkLine": "Строка {{line}}: введите допустимую ссылку.",
         'attachments.attachObsidianNote': 'Прикрепить заметку Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Вставьте ссылку заметки obsidian:// или используйте «Название | obsidian://...».',

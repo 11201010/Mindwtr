@@ -409,6 +409,8 @@ export const zhHans: Record<string, string> = {
         'attachments.transferProgress': '附件传输进度',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': '提示：可直接粘贴链接，或使用“标题 | 链接”。',
+        "attachments.linkBatchHint": "每行粘贴一个链接。可用“标题 | URL”添加标签。",
+        "attachments.invalidLinkLine": "第 {{line}} 行：请输入有效链接。",
         'attachments.attachObsidianNote': '附加 Obsidian 笔记',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': '粘贴 obsidian:// 笔记链接，或使用“标题 | obsidian://...”。',

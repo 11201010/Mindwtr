@@ -371,6 +371,8 @@ export const svOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Överföringsförlopp för bilaga',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Tips: klistra in en URL, eller använd "Titel | URL".',
+        "attachments.linkBatchHint": "Klistra in en länk per rad. Använd \"Titel | URL\" för etiketter.",
+        "attachments.invalidLinkLine": "Rad {{line}}: ange en giltig länk.",
         'attachments.attachObsidianNote': 'Bifoga Obsidian-anteckning',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Klistra in en obsidian://-anteckningslänk, eller använd "Titel | obsidian://...".',

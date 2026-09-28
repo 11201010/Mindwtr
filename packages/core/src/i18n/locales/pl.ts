@@ -328,6 +328,8 @@ export const plOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Postęp przesyłania załącznika',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Wskazówka: wklej URL lub użyj „Tytuł | URL”.',
+        "attachments.linkBatchHint": "Wklej jeden link w każdym wierszu. Dla etykiet użyj „Tytuł | URL”.",
+        "attachments.invalidLinkLine": "Wiersz {{line}}: wpisz poprawny link.",
         'attachments.attachObsidianNote': 'Dołącz notatkę Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Wklej link notatki obsidian:// albo użyj „Tytuł | obsidian://...”.',

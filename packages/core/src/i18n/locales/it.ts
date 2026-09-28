@@ -375,6 +375,8 @@ export const itOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Avanzamento trasferimento allegato',
         'attachments.linkPlaceholder': 'https://esempio.com',
         'attachments.linkInputHint': 'Suggerimento: incolla un URL, oppure usa "Titolo | URL".',
+        "attachments.linkBatchHint": "Incolla un link per riga. Usa \"Titolo | URL\" per le etichette.",
+        "attachments.invalidLinkLine": "Riga {{line}}: inserisci un link valido.",
         'attachments.attachObsidianNote': 'Allega nota Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Incolla un link nota obsidian:// oppure usa "Titolo | obsidian://...".',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Attachment, DEFAULT_PROJECT_COLOR, areDraftAttachmentsDirty, buildTaskUpdatesFromSpeechResult, findSelectableProjectByTitleAndArea, generateUUID, isSandboxMode, normalizeLinkAttachmentInput, planAttachmentDraftSettlement, translateWithFallback, useTaskStore, type Task } from '@mindwtr/core';
+import { Attachment, DEFAULT_PROJECT_COLOR, areDraftAttachmentsDirty, buildTaskUpdatesFromSpeechResult, findSelectableProjectByTitleAndArea, generateUUID, isSandboxMode, normalizeLinkAttachmentInput, parseAttachmentLinkBatch, planAttachmentDraftSettlement, translateWithFallback, useTaskStore, type Task } from '@mindwtr/core';
 import { dataDir } from '@tauri-apps/api/path';
 import { BaseDirectory, readFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { importDroppedFileAttachment, importPickedFileAttachment } from '../../lib/attachment-import';
@@ -535,17 +535,20 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
             )));
             return true;
         }
-        const attachment: Attachment = {
+        const batch = linkPromptVariant === 'link'
+            ? parseAttachmentLinkBatch(value, true)
+            : { entries: [normalized], invalidLine: null };
+        if (batch.invalidLine !== null || batch.entries.length === 0) return false;
+        setEditAttachments((prev) => [...prev, ...batch.entries.map((entry): Attachment => ({
             id: generateUUID(),
-            kind: normalized.kind,
-            title: normalized.title,
-            uri: normalized.uri,
+            kind: entry.kind,
+            title: entry.title,
+            uri: entry.uri,
             createdAt: now,
             updatedAt: now,
-        };
-        setEditAttachments((prev) => [...prev, attachment]);
+        }))]);
         return true;
-    }, [editingLinkAttachmentId]);
+    }, [editingLinkAttachmentId, linkPromptVariant]);
 
     const editLinkAttachment = useCallback((attachment: Attachment) => {
         // 'file' is allowed on purpose: a pre-#1001-fix "Add link" item was

@@ -381,6 +381,8 @@ export const en: Record<string, string> = {
         'attachments.transferProgress': 'Attachment transfer progress',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Tip: paste a URL, or use "Title | URL".',
+        "attachments.linkBatchHint": "Paste one link per line. Use \"Title | URL\" for labels.",
+        "attachments.invalidLinkLine": "Line {{line}}: enter a valid link.",
         'attachments.attachObsidianNote': 'Attach Obsidian note',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Paste an obsidian:// note link, or use "Title | obsidian://...".',

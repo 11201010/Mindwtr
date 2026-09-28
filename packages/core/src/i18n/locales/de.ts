@@ -352,6 +352,8 @@ export const deOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Fortschritt der Übertragung von Anhängen',
         'attachments.linkPlaceholder': 'https://beispiel.com',
         'attachments.linkInputHint': 'Tipp: eine URL einfügen, oder "Titel | URL" benutzen.',
+        "attachments.linkBatchHint": "Füge einen Link pro Zeile ein. Für Beschriftungen: \"Titel | URL\".",
+        "attachments.invalidLinkLine": "Zeile {{line}}: Gib einen gültigen Link ein.",
         'attachments.attachObsidianNote': 'Obsidian-Notiz anhängen',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Füge einen obsidian://-Notizlink ein oder verwende „Titel | obsidian://…“.',

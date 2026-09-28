@@ -362,6 +362,8 @@ export const huOverrides: Record<string, string> = {
     'attachments.transferProgress': 'Melléklet átvitelének folyamata',
     'attachments.linkPlaceholder': 'https://example.com',
     'attachments.linkInputHint': 'Tipp: illesszen be egy URL-t, vagy használja ezt a formát: "Cím | URL".',
+    "attachments.linkBatchHint": "Soronként egy hivatkozást illesszen be. Címkéhez használja a „Cím | URL” formátumot.",
+    "attachments.invalidLinkLine": "{{line}}. sor: adjon meg érvényes hivatkozást.",
     'attachments.attachObsidianNote': 'Obsidian jegyzet csatolása',
     'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
     'attachments.obsidianLinkInputHint': 'Illesszen be egy obsidian:// jegyzethivatkozást, vagy használja ezt a formát: "Cím | obsidian://...".',

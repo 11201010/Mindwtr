@@ -370,6 +370,8 @@ export const daOverrides: Record<string, string> = {
     'attachments.transferProgress': 'Fremskridt for overførsel af vedhæftede filer',
     'attachments.linkPlaceholder': 'https://example.com',
     'attachments.linkInputHint': 'Tip: Indsæt en URL, eller brug "Titel | URL".',
+    "attachments.linkBatchHint": "Indsæt ét link pr. linje. Brug \"Titel | URL\" til etiketter.",
+    "attachments.invalidLinkLine": "Linje {{line}}: indtast et gyldigt link.",
     'attachments.attachObsidianNote': 'Vedhæft Obsidian note',
     'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Bemærk',
     'attachments.obsidianLinkInputHint': 'Indsæt et obsidian://-notelink, eller brug "Titel | obsidian://...".',

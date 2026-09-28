@@ -426,6 +426,8 @@ export const viOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Tiến độ truyền tệp đính kèm',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Mẹo: dán URL, hoặc dùng "Tiêu đề | URL".',
+        "attachments.linkBatchHint": "Dán một liên kết mỗi dòng. Dùng \"Tiêu đề | URL\" để đặt nhãn.",
+        "attachments.invalidLinkLine": "Dòng {{line}}: nhập liên kết hợp lệ.",
         'attachments.attachObsidianNote': 'Đính kèm ghi chú Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Dán liên kết ghi chú obsidian:// hoặc dùng "Tiêu đề | obsidian://...".',

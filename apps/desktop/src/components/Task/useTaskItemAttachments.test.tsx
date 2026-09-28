@@ -67,7 +67,7 @@ const task = {
     updatedAt: new Date().toISOString(),
 } as unknown as Task;
 
-const t = (key: string) => key;
+const t = (key: string) => key === 'attachments.invalidLinkLine' ? 'Line {{line}}: invalid link.' : key;
 
 describe('useTaskItemAttachments addFileAttachment', () => {
     beforeEach(() => {
@@ -543,6 +543,7 @@ describe('useTaskItemAttachments resetAttachmentState orphan cleanup', () => {
             await Promise.resolve();
         });
 
+        expect(result.current.editAttachments).toHaveLength(0);
         expect(removeMock).not.toHaveBeenCalled();
     });
 
@@ -637,11 +638,25 @@ describe('TaskAttachmentOverlays', () => {
         fireEvent.click(screen.getByText('add-link'));
         expect(screen.getByRole('dialog', { name: 'attachments.addLink' })).toBeTruthy();
 
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'https://example.com' } });
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: 'https://example.com\nhttps://mindwtr.app' } });
         fireEvent.click(screen.getByText('common.save'));
 
         expect(screen.queryByRole('dialog')).toBeNull();
         expect(screen.getByText('https://example.com')).toBeTruthy();
+        expect(screen.getByText('https://mindwtr.app')).toBeTruthy();
+    });
+
+    it('keeps the original paste and appends nothing when a later line is invalid', () => {
+        render(<OverlaysHarness />);
+        fireEvent.click(screen.getByText('add-link'));
+        const input = screen.getByRole('textbox');
+        const pasted = 'https://example.com\n\nnot a link';
+        fireEvent.change(input, { target: { value: pasted } });
+
+        expect(screen.getByRole('alert')).toHaveTextContent('3');
+        expect(screen.getByText('common.save')).toBeDisabled();
+        expect(input).toHaveValue(pasted);
+        expect(screen.queryByText('https://example.com')).toBeNull();
     });
 
     it('labels the prompt for the Obsidian variant', () => {

@@ -5,6 +5,7 @@ import {
     getAttachmentDisplayTitle,
     normalizeAttachmentInput,
     normalizeLinkAttachmentInput,
+    parseAttachmentLinkBatch,
 } from './attachment-link-utils';
 
 describe('normalizeLinkAttachmentInput', () => {
@@ -29,6 +30,31 @@ describe('normalizeLinkAttachmentInput', () => {
         expect(result.kind).toBe('link');
         expect(result.title).toBe('Sprint Plan');
         expect(result.uri).toBe('https://example.com/doc');
+    });
+});
+
+describe('parseAttachmentLinkBatch', () => {
+    it('preserves order, original line numbers, labels, and links containing spaces or commas', () => {
+        const result = parseAttachmentLinkBatch('  https://example.com/one  \r\n\r\nTitle | https://example.com/two,three\n[Third](https://example.com/a%20b)');
+        expect(result.invalidLine).toBeNull();
+        expect(result.entries.map(({ title, uri }) => ({ title, uri }))).toEqual([
+            { title: 'example.com/one', uri: 'https://example.com/one' },
+            { title: 'Title', uri: 'https://example.com/two,three' },
+            { title: 'Third', uri: 'https://example.com/a%20b' },
+        ]);
+    });
+
+    it('rejects the whole batch at the original invalid line', () => {
+        expect(parseAttachmentLinkBatch('https://example.com\n\nnot a link\nhttps://mindwtr.app')).toEqual({
+            entries: [], invalidLine: 3,
+        });
+    });
+
+    it('keeps desktop paths with spaces as link pointers and rejects them on mobile', () => {
+        expect(parseAttachmentLinkBatch('/home/user/My Docs/spec.pdf\nhttps://example.com', true).entries[0]).toEqual({
+            kind: 'link', title: 'spec.pdf', uri: '/home/user/My Docs/spec.pdf',
+        });
+        expect(parseAttachmentLinkBatch('/home/user/My Docs/spec.pdf')).toEqual({ entries: [], invalidLine: 1 });
     });
 });
 

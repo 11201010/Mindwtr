@@ -420,6 +420,8 @@ export const csOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Průběh přenosu přílohy',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Tip: vložte URL, nebo použijte „Název | URL“.',
+        "attachments.linkBatchHint": "Vložte jeden odkaz na řádek. Pro popisky použijte „Název | URL“.",
+        "attachments.invalidLinkLine": "Řádek {{line}}: zadejte platný odkaz.",
         'attachments.attachObsidianNote': 'Připojit poznámku Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Vložte odkaz na poznámku obsidian:// nebo použijte „Název | obsidian://...“.',

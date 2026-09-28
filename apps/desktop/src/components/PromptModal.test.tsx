@@ -84,6 +84,19 @@ describe('PromptModal refused value', () => {
     });
 });
 
+describe('PromptModal multiline', () => {
+    it('uses a textarea only when opted in and submits with the button', () => {
+        const onConfirm = vi.fn();
+        render(<PromptModal {...baseProps} multiline onConfirm={onConfirm} />);
+        const input = screen.getByRole('textbox');
+        fireEvent.change(input, { target: { value: 'https://a.test\nhttps://b.test' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(onConfirm).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        expect(onConfirm).toHaveBeenCalledWith('https://a.test\nhttps://b.test');
+    });
+});
+
 describe('PromptModal datetime-local field', () => {
     const dateTimeProps = {
         ...baseProps,

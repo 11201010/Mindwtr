@@ -1,5 +1,7 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    "attachments.linkBatchHint": "Plak één link per regel. Gebruik \"Titel | URL\" voor labels.",
+    "attachments.invalidLinkLine": "Regel {{line}}: voer een geldige link in.",
     'calendar.eventSingular': 'gebeurtenis',
     'calendar.eventPlural': 'gebeurtenissen',
     'filters.searchTasks': "Taaktitels zoeken",

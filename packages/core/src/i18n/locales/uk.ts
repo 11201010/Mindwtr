@@ -360,6 +360,8 @@ export const ukOverrides: Record<string, string> = {
     "attachments.transferProgress": "Хід передавання вкладених файлів",
     "attachments.linkPlaceholder": "https://example.com",
     "attachments.linkInputHint": "Порада: вставте URL-адресу або використовуйте «Назва | URL».",
+    "attachments.linkBatchHint": "Вставте по одному посиланню в рядок. Для назви використовуйте «Назва | URL».",
+    "attachments.invalidLinkLine": "Рядок {{line}}: введіть дійсне посилання.",
     "attachments.attachObsidianNote": "Прикріпіть обсидіанову записку",
     "attachments.obsidianLinkPlaceholder": "obsidian://open?vault=Vault&file=Примітка",
     "attachments.obsidianLinkInputHint": "Вставте посилання на примітку obsidian:// або використовуйте «Назва | obsidian://...».",

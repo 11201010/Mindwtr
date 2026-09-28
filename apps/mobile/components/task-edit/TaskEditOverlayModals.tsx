@@ -1,11 +1,12 @@
 import React from 'react';
-import { Image, Modal, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { AccessibilityInfo, Image, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { translateWithFallback, type Attachment } from '@mindwtr/core';
+import { formatI18nTemplate, parseAttachmentLinkBatch, translateWithFallback, type Attachment } from '@mindwtr/core';
 
 import { styles } from './task-edit-modal.styles';
 import { logTaskError } from './task-edit-modal.utils';
 import { shareFileWithFeedback } from '../../lib/share-file-with-feedback';
+import { useKeyboardInset } from '../../lib/use-android-keyboard-inset';
 
 type ThemeColors = {
     cardBg: string;
@@ -24,6 +25,7 @@ type TaskEditLinkModalProps = {
     t: Translator;
     tc: ThemeColors;
     title: string;
+    multiline: boolean;
     linkInput: string;
     linkInputTouched: boolean;
     onChangeLinkInput: (value: string) => void;
@@ -37,61 +39,78 @@ export const TaskEditLinkModal = ({
     t,
     tc,
     title,
+    multiline,
     linkInput,
     linkInputTouched,
     onChangeLinkInput,
     onBlurLinkInput,
     onClose,
     onSave,
-}: TaskEditLinkModalProps) => (
-    <Modal
-        visible={visible}
-        transparent
-        animationType="fade"
-        onRequestClose={onClose}
-    >
-        <View style={styles.overlay}>
-            <View style={[styles.modalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
-                <Text style={[styles.modalTitle, { color: tc.text }]}>{title}</Text>
-                <TextInput
-                    value={linkInput}
-                    onChangeText={onChangeLinkInput}
-                    onBlur={onBlurLinkInput}
-                    placeholder={t('attachments.linkPlaceholder')}
-                    placeholderTextColor={tc.secondaryText}
-                    style={[styles.modalInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="done"
-                    accessibilityLabel={t('attachments.addLink')}
-                    accessibilityHint={t('attachments.linkInputHint')}
-                />
-                <Text style={[styles.modalLabel, { color: tc.secondaryText, marginTop: 8 }]}>
-                    {t('attachments.linkInputHint')}
-                </Text>
-                {linkInputTouched && !linkInput.trim() && (
-                    <Text style={[styles.validationText, { color: tc.danger }]}>
-                        Link is required.
+}: TaskEditLinkModalProps) => {
+    const invalidLine = multiline ? parseAttachmentLinkBatch(linkInput).invalidLine : null;
+    const error = invalidLine !== null
+        ? formatI18nTemplate(t('attachments.invalidLinkLine'), { line: invalidLine })
+        : null;
+    const keyboardInset = useKeyboardInset(visible);
+    React.useEffect(() => {
+        if (visible && error && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(error);
+    }, [visible, error]);
+    return (
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onClose}
+        >
+            <View style={keyboardInset > 0 ? [styles.overlay, { paddingBottom: keyboardInset }] : styles.overlay}>
+                <View style={[styles.modalCard, { maxHeight: '100%', backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                    <Text style={[styles.modalTitle, { color: tc.text }]}>{title}</Text>
+                    <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled">
+                    <TextInput
+                        value={linkInput}
+                        onChangeText={onChangeLinkInput}
+                        onBlur={onBlurLinkInput}
+                        placeholder={t('attachments.linkPlaceholder')}
+                        placeholderTextColor={tc.secondaryText}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        multiline={multiline}
+                        textAlignVertical={multiline ? 'top' : undefined}
+                        style={[styles.modalInput, multiline && { height: 120 }, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                        returnKeyType={multiline ? undefined : 'done'}
+                        accessibilityLabel={t('attachments.addLink')}
+                        accessibilityHint={t(multiline ? 'attachments.linkBatchHint' : 'attachments.linkInputHint')}
+                    />
+                    <Text style={[styles.modalLabel, { color: tc.secondaryText, marginTop: 8 }]}>
+                        {t(multiline ? 'attachments.linkBatchHint' : 'attachments.linkInputHint')}
                     </Text>
-                )}
-                <View style={styles.modalButtons}>
-                    <TouchableOpacity
-                        onPress={onClose}
-                        style={styles.modalButton}
-                    >
-                        <Text style={[styles.modalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        onPress={onSave}
-                        style={[styles.modalButton, !linkInput.trim() && styles.modalButtonDisabled]}
-                    >
-                        <Text style={[styles.modalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
-                    </TouchableOpacity>
+                    {linkInputTouched && !linkInput.trim() && (
+                        <Text style={[styles.validationText, { color: tc.danger }]}>
+                            {t('common.validationRequired')}
+                        </Text>
+                    )}
+                    {error && <Text accessibilityLiveRegion="polite" style={[styles.validationText, { color: tc.danger }]}>{error}</Text>}
+                    </ScrollView>
+                    <View style={styles.modalButtons}>
+                        <TouchableOpacity
+                            onPress={onClose}
+                            style={styles.modalButton}
+                        >
+                            <Text style={[styles.modalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            onPress={onSave}
+                            disabled={!linkInput.trim() || Boolean(error)}
+                            style={[styles.modalButton, (!linkInput.trim() || error) && styles.modalButtonDisabled]}
+                        >
+                            <Text style={[styles.modalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </View>
-        </View>
-    </Modal>
-);
+        </Modal>
+    );
+};
 
 type TaskEditWaitingAssignmentModalProps = {
     visible: boolean;

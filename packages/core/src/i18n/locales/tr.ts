@@ -331,6 +331,8 @@ export const trOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Ek aktarım ilerlemesi',
         'attachments.linkPlaceholder': 'https://örnek.com',
         'attachments.linkInputHint': 'İpucu: Bir URL yapıştırın veya "Başlık | URL"yi kullanın.',
+        "attachments.linkBatchHint": "Her satıra bir bağlantı yapıştırın. Etiket için \"Başlık | URL\" kullanın.",
+        "attachments.invalidLinkLine": "Satır {{line}}: geçerli bir bağlantı girin.",
         'attachments.attachObsidianNote': 'Obsidian notu ekle',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Bir obsidian:// not bağlantısı yapıştırın veya "Başlık | obsidian://..." kullanın.',

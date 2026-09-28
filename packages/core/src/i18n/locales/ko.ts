@@ -425,6 +425,8 @@ export const koOverrides: Record<string, string> = {
         'attachments.transferProgress': '첨부 파일 전송 진행률',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': '팁: URL을 붙여넣거나 "제목 | URL"을 사용하세요.',
+        "attachments.linkBatchHint": "한 줄에 링크 하나씩 붙여넣으세요. 이름은 \"제목 | URL\" 형식을 사용하세요.",
+        "attachments.invalidLinkLine": "{{line}}번째 줄: 유효한 링크를 입력하세요.",
         'attachments.attachObsidianNote': 'Obsidian 노트 첨부',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'obsidian:// 노트 링크를 붙여넣거나 "제목 | obsidian://..."를 사용하세요.',

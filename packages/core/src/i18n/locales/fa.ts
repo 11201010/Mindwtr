@@ -371,6 +371,8 @@ export const faOverrides: Record<string, string> = {
         'attachments.transferProgress': 'پیشرفت انتقال پیوست',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'نکته: یک آدرس را بچسبانید یا از «عنوان | آدرس» استفاده کنید.',
+        "attachments.linkBatchHint": "در هر خط یک پیوند جای‌گذاری کنید. برای عنوان از «عنوان | URL» استفاده کنید.",
+        "attachments.invalidLinkLine": "خط {{line}}: یک پیوند معتبر وارد کنید.",
         'attachments.attachObsidianNote': 'پیوست یادداشت Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'یک پیوند obsidian:// را بچسبانید یا از «عنوان | obsidian://...» استفاده کنید.',

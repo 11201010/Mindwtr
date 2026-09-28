@@ -4,7 +4,7 @@ import {
   Attachment,
   generateUUID,
   isSandboxMode,
-  normalizeLinkAttachmentInput,
+  parseAttachmentLinkBatch,
   Project,
   useTaskStore,
   validateAttachmentForUpload, tFallback, formatI18nTemplate } from '@mindwtr/core';
@@ -297,23 +297,27 @@ export function useProjectAttachments({
     }
     const current = getMutableSelectedProject();
     if (!current) return;
-    const normalized = normalizeLinkAttachmentInput(linkInput);
-    if (!normalized.uri) return;
+    const batch = parseAttachmentLinkBatch(linkInput);
+    if (batch.invalidLine !== null) {
+      Alert.alert(t('attachments.title'), formatI18nTemplate(t('attachments.invalidLinkLine'), { line: batch.invalidLine }));
+      return;
+    }
+    if (batch.entries.length === 0) return;
     const now = new Date().toISOString();
-    const attachment: Attachment = {
+    const added: Attachment[] = batch.entries.map((entry) => ({
       id: generateUUID(),
-      kind: normalized.kind,
-      title: normalized.title,
-      uri: normalized.uri,
+      kind: entry.kind,
+      title: entry.title,
+      uri: entry.uri,
       createdAt: now,
       updatedAt: now,
-    };
-    const next = [...(current.attachments || []), attachment];
+    }));
+    const next = [...(current.attachments || []), ...added];
     updateProject(current.id, { attachments: next });
     setSelectedProject({ ...current, attachments: next });
     setLinkModalVisible(false);
     setLinkInput('');
-  }, [getMutableSelectedProject, linkInput, setSelectedProject, showSandboxUnavailable, updateProject]);
+  }, [getMutableSelectedProject, linkInput, setSelectedProject, showSandboxUnavailable, t, updateProject]);
 
   const removeProjectAttachment = useCallback((id: string) => {
     const current = getMutableSelectedProject();

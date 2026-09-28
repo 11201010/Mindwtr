@@ -1,11 +1,11 @@
 import React from 'react';
-import { Image, Modal, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { type Attachment } from '@mindwtr/core';
+import { AccessibilityInfo, Image, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { formatI18nTemplate, parseAttachmentLinkBatch, type Attachment } from '@mindwtr/core';
 import { logError } from '../../lib/app-log';
 import { shareFileWithFeedback } from '../../lib/share-file-with-feedback';
 
 import { projectsScreenStyles as styles } from '@/components/projects-screen/projects-screen.styles';
-import { useAndroidKeyboardInset } from '../../lib/use-android-keyboard-inset';
+import { useAndroidKeyboardInset, useKeyboardInset } from '../../lib/use-android-keyboard-inset';
 
 type ThemeColors = {
     border: string;
@@ -43,7 +43,12 @@ export function ProjectLinkModal({
     onClose,
     onSave,
 }: ProjectLinkModalProps) {
-    const keyboardInset = useAndroidKeyboardInset(visible);
+    const keyboardInset = useKeyboardInset(visible);
+    const invalidLine = parseAttachmentLinkBatch(linkInput).invalidLine;
+    const error = invalidLine === null ? null : formatI18nTemplate(t('attachments.invalidLinkLine'), { line: invalidLine });
+    React.useEffect(() => {
+        if (visible && error && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(error);
+    }, [visible, error]);
     return (
         <Modal
             visible={visible}
@@ -53,8 +58,9 @@ export function ProjectLinkModal({
             onRequestClose={onClose}
         >
             <View style={keyboardInset > 0 ? [styles.overlay, { paddingBottom: keyboardInset }] : styles.overlay}>
-                <View style={[styles.linkModalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                <View style={[styles.linkModalCard, { maxHeight: '100%', backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                     <Text style={[styles.linkModalTitle, { color: tc.text }]}>{t('attachments.addLink')}</Text>
+                    <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled">
                     <TextInput
                         value={linkInput}
                         onChangeText={onChangeLinkInput}
@@ -62,14 +68,20 @@ export function ProjectLinkModal({
                         placeholderTextColor={tc.secondaryText}
                         style={[
                             styles.linkModalInput,
-                            { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text },
+                            { height: 120, backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text },
                         ]}
                         autoCapitalize="none"
                         autoCorrect={false}
+                        multiline
+                        textAlignVertical="top"
+                        accessibilityLabel={t('attachments.addLink')}
+                        accessibilityHint={t('attachments.linkBatchHint')}
                     />
                     <Text style={[styles.linkModalHint, { color: tc.secondaryText }]}>
-                        {t('attachments.linkInputHint')}
+                        {t('attachments.linkBatchHint')}
                     </Text>
+                    {error && <Text accessibilityLiveRegion="polite" style={[styles.linkModalHint, { color: tc.text }]}>{error}</Text>}
+                    </ScrollView>
                     <View style={styles.linkModalButtons}>
                         <TouchableOpacity onPress={onClose} style={styles.linkModalButton}>
                             <Text style={[styles.linkModalButtonText, { color: tc.secondaryText }]}>
@@ -78,8 +90,8 @@ export function ProjectLinkModal({
                         </TouchableOpacity>
                         <TouchableOpacity
                             onPress={onSave}
-                            disabled={!linkInput.trim()}
-                            style={[styles.linkModalButton, !linkInput.trim() && styles.linkModalButtonDisabled]}
+                            disabled={!linkInput.trim() || Boolean(error)}
+                            style={[styles.linkModalButton, (!linkInput.trim() || error) && styles.linkModalButtonDisabled]}
                         >
                             <Text style={[styles.linkModalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
                         </TouchableOpacity>

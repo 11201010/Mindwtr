@@ -8,6 +8,7 @@ import {
     isImageAttachment,
     isSandboxMode,
     normalizeLinkAttachmentInput,
+    parseAttachmentLinkBatch,
     planAttachmentDraftSettlement,
     translateWithFallback,
     type Attachment,
@@ -296,13 +297,13 @@ export function useTaskEditAttachments({
             setLinkInputTouched(true);
             return;
         }
-        const normalized = normalizeLinkAttachmentInput(linkInput);
-        if (!normalized.uri || !isValidLinkUri(normalized.uri)) {
-            Alert.alert(t('attachments.title'), t('attachments.invalidLink'));
-            return;
-        }
         const now = new Date().toISOString();
         if (editingLinkAttachmentId) {
+            const normalized = normalizeLinkAttachmentInput(linkInput);
+            if (!normalized.uri || !isValidLinkUri(normalized.uri)) {
+                Alert.alert(t('attachments.title'), t('attachments.invalidLink'));
+                return;
+            }
             setAttachments((current) => (
                 (current || []).map((attachment) => (
                     attachment.id === editingLinkAttachmentId
@@ -322,15 +323,21 @@ export function useTaskEditAttachments({
             setLinkModalVisible(false);
             return;
         }
-        const attachment: Attachment = {
+        const batch = parseAttachmentLinkBatch(linkInput);
+        if (batch.invalidLine !== null) {
+            Alert.alert(t('attachments.title'), formatI18nTemplate(t('attachments.invalidLinkLine'), { line: batch.invalidLine }));
+            return;
+        }
+        if (batch.entries.length === 0) return;
+        const added: Attachment[] = batch.entries.map((entry) => ({
             id: generateUUID(),
-            kind: normalized.kind,
-            title: normalized.title,
-            uri: normalized.uri,
+            kind: entry.kind,
+            title: entry.title,
+            uri: entry.uri,
             createdAt: now,
             updatedAt: now,
-        };
-        setAttachments((current) => [...(current || []), attachment]);
+        }));
+        setAttachments((current) => [...(current || []), ...added]);
         setLinkInput('');
         setLinkInputTouched(false);
         setEditingLinkAttachmentId(null);

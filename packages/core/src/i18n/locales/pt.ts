@@ -320,6 +320,8 @@ export const ptOverrides: Record<string, string> = {
         'attachments.transferProgress': 'Progresso da transferência do anexo',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'Dica: cole uma URL ou use "Título | URL".',
+        "attachments.linkBatchHint": "Cole um link por linha. Use \"Título | URL\" para rótulos.",
+        "attachments.invalidLinkLine": "Linha {{line}}: insira um link válido.",
         'attachments.attachObsidianNote': 'Anexar nota do Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'Cole um link de nota obsidian:// ou use "Título | obsidian://...".',

@@ -323,6 +323,8 @@ export const arOverrides: Record<string, string> = {
         'attachments.transferProgress': 'تقدم نقل المرفق',
         'attachments.linkPlaceholder': 'https://example.com',
         'attachments.linkInputHint': 'نصيحة: الصق عنوان URL، أو استخدم "العنوان | URL".',
+        "attachments.linkBatchHint": "الصق رابطًا واحدًا في كل سطر. استخدم \"العنوان | الرابط\" للتسمية.",
+        "attachments.invalidLinkLine": "السطر {{line}}: أدخل رابطًا صالحًا.",
         'attachments.attachObsidianNote': 'إرفاق ملاحظة Obsidian',
         'attachments.obsidianLinkPlaceholder': 'obsidian://open?vault=Vault&file=Note',
         'attachments.obsidianLinkInputHint': 'الصق رابط ملاحظة obsidian://، أو استخدم "العنوان | obsidian://...".',

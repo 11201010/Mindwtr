@@ -1,8 +1,8 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { Alert } from 'react-native';
+import { AccessibilityInfo, Alert, Platform, ScrollView, TextInput } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TaskEditAudioModal, TaskEditImagePreviewModal } from './TaskEditOverlayModals';
+import { TaskEditAudioModal, TaskEditImagePreviewModal, TaskEditLinkModal } from './TaskEditOverlayModals';
 
 const sharingMocks = vi.hoisted(() => ({
   isAvailableAsync: vi.fn(async () => true),
@@ -15,6 +15,63 @@ beforeEach(() => {
   sharingMocks.isAvailableAsync.mockReset().mockResolvedValue(true);
   sharingMocks.shareAsync.mockReset().mockResolvedValue(undefined);
   vi.restoreAllMocks();
+});
+
+it('makes Add link multiline and keeps edit link single line', () => {
+  const props = {
+    visible: true,
+    t: (key: string) => key === 'attachments.invalidLinkLine' ? 'Line {{line}} invalid' : key,
+    tc: { cardBg: '#111', border: '#222', text: '#fff', secondaryText: '#aaa', inputBg: '#000', tint: '#3b82f6', danger: '#ef4444' },
+    title: 'Add link',
+    linkInput: 'https://one.example\ninvalid line',
+    linkInputTouched: true,
+    onChangeLinkInput: vi.fn(),
+    onBlurLinkInput: vi.fn(),
+    onClose: vi.fn(),
+    onSave: vi.fn(),
+  };
+  let tree!: renderer.ReactTestRenderer;
+  renderer.act(() => { tree = renderer.create(<TaskEditLinkModal {...props} multiline />); });
+  expect(tree.root.findByType(TextInput).props).toMatchObject({ multiline: true, style: expect.arrayContaining([{ height: 120 }]) });
+  expect(tree.root.findByType(ScrollView).props.style).toEqual({ flexShrink: 1 });
+  expect(tree.root.findByType(ScrollView).parent?.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ maxHeight: '100%' })]));
+  expect(tree.root.findByType(ScrollView).findAllByProps({ children: 'common.save' })).toHaveLength(0);
+  expect(tree.root.findByProps({ children: 'Line 2 invalid' })).toBeTruthy();
+  renderer.act(() => { tree.update(<TaskEditLinkModal {...props} multiline={false} />); });
+  expect(tree.root.findByType(TextInput).props).toMatchObject({ multiline: false, returnKeyType: 'done' });
+  renderer.act(() => tree.unmount());
+});
+
+it('announces a new invalid line once on iOS', () => {
+  const originalOS = Platform.OS;
+  Object.assign(Platform, { OS: 'ios' });
+  const announce = vi.spyOn(AccessibilityInfo, 'announceForAccessibility');
+  const props = {
+    visible: true,
+    t: (key: string) => key === 'attachments.invalidLinkLine' ? 'Line {{line}} invalid' : key,
+    tc: { cardBg: '#111', border: '#222', text: '#fff', secondaryText: '#aaa', inputBg: '#000', tint: '#3b82f6', danger: '#ef4444' },
+    title: 'Add link',
+    multiline: true,
+    linkInput: 'https://one.example\ninvalid',
+    linkInputTouched: true,
+    onChangeLinkInput: vi.fn(),
+    onBlurLinkInput: vi.fn(),
+    onClose: vi.fn(),
+    onSave: vi.fn(),
+  };
+  let tree: renderer.ReactTestRenderer | undefined;
+  try {
+    renderer.act(() => { tree = renderer.create(<TaskEditLinkModal {...props} />); });
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith('Line 2 invalid');
+    renderer.act(() => { tree!.update(<TaskEditLinkModal {...props} linkInput={'https://one.example\nstill invalid'} />); });
+    expect(announce).toHaveBeenCalledTimes(1);
+    renderer.act(() => { tree!.update(<TaskEditLinkModal {...props} linkInput={'https://one.example\n\ninvalid'} />); });
+    expect(announce).toHaveBeenCalledTimes(2);
+  } finally {
+    if (tree) renderer.act(() => tree!.unmount());
+    Object.assign(Platform, { OS: originalOS });
+  }
 });
 
 describe('TaskEditAudioModal', () => {

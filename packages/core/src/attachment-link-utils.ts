@@ -158,6 +158,22 @@ export function normalizeAttachmentInput(input: string): NormalizedAttachmentInp
     return normalizeLinkAttachmentInput(trimmed);
 }
 
+export function parseAttachmentLinkBatch(input: string, allowFilePaths = false):
+    | { entries: NormalizedAttachmentInput[]; invalidLine: null }
+    | { entries: []; invalidLine: number } {
+    const entries: NormalizedAttachmentInput[] = [];
+    for (const [index, raw] of input.split(/\r\n|\n|\r/).entries()) {
+        const line = raw.trim();
+        if (!line) continue;
+        const entry = allowFilePaths ? normalizeAttachmentInput(line) : normalizeLinkAttachmentInput(line);
+        if (!entry.uri || (!(allowFilePaths && isLikelyFilePath(entry.uri)) && !isLikelyLinkUri(entry.uri))) {
+            return { entries: [], invalidLine: index + 1 };
+        }
+        entries.push(entry);
+    }
+    return { entries, invalidLine: null };
+}
+
 export function getAttachmentDisplayTitle(attachment: Pick<Attachment, 'kind' | 'title' | 'uri'>): string {
     const rawTitle = collapseWhitespace(attachment.title || '');
     const rawUri = collapseWhitespace(attachment.uri || '');
