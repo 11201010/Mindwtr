@@ -17,7 +17,7 @@ import {
     validateMergedSyncData,
 } from './sync-normalization';
 import { parseSyncDocument } from './sync-document';
-import { advanceLatestSyncTimestamp } from './sync-helpers';
+import { advanceLatestSyncTimestamp, sanitizeAppDataForRemote } from './sync-helpers';
 import { DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS } from './sync-types';
 
 export const BACKUP_FILE_PREFIX = 'mindwtr-backup-';
@@ -369,10 +369,17 @@ const prepareRestoredSettingsForSync = (
     restoredAt: string,
 ): AppData['settings'] => {
     const restored = stripDeviceLocalRestoreSettings(settings);
+    const settingsOnWire = (value: AppData['settings']) => sanitizeAppDataForRemote({
+        tasks: [], projects: [], sections: [], areas: [], people: [], settings: value,
+    }).settings;
+    const restoredWire = settingsOnWire(restored);
+    const previousWire = previous ? settingsOnWire(previous) : undefined;
     const syncPreferencesUpdatedAt = { ...(restored.syncPreferencesUpdatedAt ?? {}) };
     syncPreferencesUpdatedAt.preferences = restoreTimestampAfter(restoredAt, [
         restored.syncPreferencesUpdatedAt?.preferences,
         previous?.syncPreferencesUpdatedAt?.preferences,
+        restoredWire.syncPreferencesUpdatedAt?.preferences,
+        previousWire?.syncPreferencesUpdatedAt?.preferences,
     ]);
     for (const group of RESTORED_SETTINGS_SYNC_GROUPS) {
         if (!isSettingsSyncGroupEnabled(restored.syncPreferences, group)) continue;

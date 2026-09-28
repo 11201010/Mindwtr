@@ -510,7 +510,7 @@ describe('backup transfer', () => {
         const restoredFilters = restored.settings.savedFilters as unknown as Array<Record<string, unknown>>;
 
         expect(restored.settings.syncPreferencesUpdatedAt).toMatchObject({
-            preferences: '2030-01-03T00:00:00.001Z',
+            preferences: '2030-01-03T00:00:00.002Z',
             appearance: '2030-01-03T00:00:00.001Z',
             savedFilters: '2030-01-03T00:00:00.001Z',
         });
@@ -585,6 +585,49 @@ describe('backup transfer', () => {
         expect(restored.settings.savedFilters?.[0]?.updatedAt).toBe('2026-09-28T12:00:30.001Z');
         expect(restored.settings.savedFilters?.[0]?.deletedAt).toBeUndefined();
         expect(merged.settings.savedFilters?.[0]?.deletedAt).toBeUndefined();
+    });
+
+    it.each([
+        ['a later GTD clock', '2026-09-01T00:00:00.000Z', '2026-09-28T12:00:00.000Z'],
+        ['equal preference and GTD clocks', '2026-09-28T12:00:00.000Z', '2026-09-28T12:00:00.000Z'],
+        ['a future GTD clock', '2026-09-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z'],
+    ])('keeps a restored GTD opt-out authoritative over %s after two merges', (
+        _label,
+        previousPreferencesAt,
+        previousGtdAt,
+    ) => {
+        const restoredAt = '2026-09-28T12:00:00.000Z';
+        const old = '2026-09-01T00:00:00.000Z';
+        const backup: AppData = {
+            tasks: [], projects: [], sections: [], areas: [], people: [],
+            settings: {
+                gtd: { focusTaskLimit: 1 },
+                syncPreferences: { gtd: false },
+                syncPreferencesUpdatedAt: { preferences: old, gtd: old },
+            },
+        };
+        const previousData: AppData = {
+            tasks: [], projects: [], sections: [], areas: [], people: [],
+            settings: {
+                gtd: { focusTaskLimit: 5 },
+                syncPreferences: {},
+                syncPreferencesUpdatedAt: {
+                    preferences: previousPreferencesAt,
+                    gtd: previousGtdAt,
+                },
+            },
+        };
+
+        const restored = prepareRestoredBackupDataForSync(backup, { previousData, restoredAt });
+        const remoteBeforeRestore = toRemoteSyncDocument(previousData);
+        const firstMerge = mergeAppData(restored, remoteBeforeRestore, { nowIso: restoredAt });
+        const secondMerge = mergeAppData(firstMerge, remoteBeforeRestore, { nowIso: restoredAt });
+
+        for (const merged of [firstMerge, secondMerge]) {
+            expect(merged.settings.syncPreferences?.gtd).toBe(false);
+            expect(merged.settings.gtd?.focusTaskLimit).toBe(1);
+        }
+        expect(toRemoteSyncDocument(secondMerge)).toEqual(toRemoteSyncDocument(firstMerge));
     });
 
     it('keeps opted-out restored groups and device-local fields off the wire', () => {
