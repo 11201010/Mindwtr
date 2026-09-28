@@ -73,7 +73,7 @@ const count = (text, needle) => text.split('\n').filter((line) => line.includes(
 const boots = (processId) => count(logs(processId), 'Core host boot started');
 const recreations = (processId) => count(logs(processId), 'reason=activity-recreate');
 const newScreens = (processId) => count(logs(processId), 'reason=new-screen');
-// The log's `extra` is itself a JSON string, so its quotes arrive escaped.
+// The log's `context` is itself a JSON string, so its quotes arrive escaped.
 const completes = (processId, outcome) => logs(processId).replace(/\\/g, '').split('\n').filter((line) => line.includes('native-android-dev-task-command')
     && line.includes('"operation":"complete"') && line.includes(`"outcome":"${outcome}"`)).length;
 const setRotation = (rotation) => {

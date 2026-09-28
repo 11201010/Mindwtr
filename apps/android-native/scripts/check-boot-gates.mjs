@@ -472,12 +472,13 @@ for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, ro
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const themeKt = source('Theme.kt');
 const iconsKt = source('Icons.kt');
+const logFileKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/DiagnosticsLogFile.kt'), 'utf8');
 const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, snapshotsKt, coreHost, sqliteBridge, guard,
-    menuModel, ...Object.values(menuScreens)];
+    menuModel, logFileKt, ...Object.values(menuScreens)];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none.
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
@@ -586,7 +587,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 13, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, and the fetch and secret calls: each guarded');
+assert.equal(bridgeCallbacks.length, 14, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, the fetch and secret calls, and logFile: each guarded');
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
 // fetch and the secrets (HostIo.kt, SecretStore.kt): started on the engine thread, run off it, answered only through the pump.
 {
@@ -1833,7 +1834,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(settingsModel, /fun gtd\(edit: JSONObject\) = menu\.command\("gtdSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
     assert.match(settingsModel, /fun saveEditor\(action: FailedAction\) = menu\.create\(action\)/);
     assert.match(settingsModel, /return FailedAction\("manageEditor", open\.getString\("requestId"\), input\.toString\(\)\)/, 'the editor\'s request UUID stays with its dialog');
-    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
     assert.match(menuModel, /"somedayRename", "somedayReorder", "somedayDelete" -> JSONObject\(action\.title\)/);
     for (const call of ['"manageDelete")', '"somedayDelete")']) {
         const at = settingsUi.indexOf(call);
@@ -2274,7 +2275,56 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(entryCode, /\bText\(|contentDescription|showToast\("/, 'EntryPoints.kt: every word is core\'s');
 }
 
+// Pass A4 (L1): RN's diagnostics log (files/logs/mindwtr.log) written by core's diagnostics-log.ts through Kotlin's file bridge,
+// and Settings › Data's Diagnostics card on core's getDataSettings.
+{
+    const coreLog = readFileSync(resolve(app, '../../packages/core/src/diagnostics-log.ts'), 'utf8');
+    const relative = /export const DIAGNOSTICS_LOG_RELATIVE_PATH = '([^']+)'/.exec(coreLog)[1];
+    assert.equal(relative, 'logs/mindwtr.log', 'RN\'s log path, relative to its documents directory (Android files/)');
+    assert.match(logFileKt, new RegExp(`const val RELATIVE_PATH = "${relative}"`), 'Kotlin\'s log path is core\'s');
+    assert.match(owner, /File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\)/);
+    // Plain IO only: one unbuffered append per line (a kill keeps every returned line), a replace through a synced rename.
+    assert.match(logFileKt, /"append" -> \{\s+FileOutputStream\(file, true\)\.use \{ it\.write\(text\.toByteArray\(\)\) \}/);
+    assert.match(logFileKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+    assert.doesNotMatch(code(logFileKt), /[Bb]uffered|appendText|JSONObject|loggingEnabled|500_?000|mindwtr-native-dev/, 'Kotlin holds no log policy');
+    assert.match(coreHost, /val logs = DiagnosticsLogFile\(logFile\)\s+bridge\.setProperty\("logFile", guarded \{ args -> logs\.run\(/);
+    assert.match(coreHost, /fun logShare\(\): JSONObject = callAsync\("logShare"\)/);
+    assert.match(coreHost, /fun logClear\(\): JSONObject = callAsync\("logClear"\)/);
+    // Core's logger writes through the file port; the gate reads the store's setting, as RN's isLoggingEnabled does.
+    assert.match(hostEntry, /setLogger\(\(payload\) => \{\s+consoleLogger\(payload\);\s+try \{\s+void diagnosticsLog\.append\(diagnosticsEntryFromLogPayload\(payload\), \{ force: payload\.force \}\);/);
+    assert.match(hostEntry, /isEnabled: \(\) => isDiagnosticsLoggingEnabled\(useTaskStore\.getState\(\)\.settings\),\s+files: \[nativeLogFile\],/);
+    assert.match(hostEntry, /logShare\(\): string \{\s+return submit\(async \(\) => \(\{ path: await diagnosticsLog\.ensurePath\(\) \}\)\);/);
+    assert.match(hostEntry, /logClear\(\): string \{\s+return submit\(async \(\) => \{\s+await diagnosticsLog\.clear\(\);/);
+    // The host's diagnostic lines put their fields in the payload's context, the part the log file keeps.
+    assert.doesNotMatch(hostEntry, /\bextra: \{|, extra \}/);
+    assert.match(hostEntry, /^\s+dataSettings: \(\) => contract\.getDataSettings\(\),$/m);
+    assert.match(hostEntry, /^\s+dataSetting: \(input\) => contract\.setDataSetting\(input\),$/m);
+    // Share log: only the logs folder is shareable, through a private FileProvider and the system share sheet; nothing is sent by the app.
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    assert.match(manifest, /<provider\s+android:name="androidx\.core\.content\.FileProvider"\s+android:authorities="\$\{applicationId\}\.diagnostics"\s+android:exported="false"\s+android:grantUriPermissions="true">/);
+    const paths = readFileSync(resolve(app, 'android/app/src/main/res/xml/diagnostics_paths.xml'), 'utf8');
+    assert.deepEqual(paths.match(/<[\w-]+-path [^>]*>/g), ['<files-path name="logs" path="logs/" />']);
+    const settingsModelKt = source('SettingsModel.kt');
+    const share = code(settingsModelKt.slice(settingsModelKt.indexOf('fun shareLog()'), settingsModelKt.indexOf('fun clearLog()')));
+    assert.match(share, /FileProvider\.getUriForFile\(app, "\$\{app\.packageName\}\.diagnostics", File\(path\)\)/);
+    assert.match(share, /Intent\(Intent\.ACTION_SEND\)\.setType\("text\/plain"\)\.putExtra\(Intent\.EXTRA_STREAM, uri\)\s+\.addFlags\(Intent\.FLAG_GRANT_READ_URI_PERMISSION\)/);
+    assert.equal(share.match(/startActivity\(/g).length, 1);
+    assert.match(share, /app\.startActivity\(Intent\.createChooser\(send, null\)/, 'the share sheet only: the user picks where it goes');
+    for (const word of ['logMissing', 'shareUnavailable']) assert.match(share, new RegExp(`words\\.getString\\("${word}"\\)`), `RN's ${word} toast, core's words`);
+    assert.match(settingsModelKt, /fun data\(edit: JSONObject\) = menu\.command\("dataSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
+    // The Data screen draws core's view: the switch sends core's edit; Share and Clear show only when core sends them.
+    const settingsUiKt = source('SettingsScreen.kt');
+    const data = code(settingsUiKt.slice(settingsUiKt.indexOf('private fun DataSettings('), settingsUiKt.indexOf('private fun ActionRow(')));
+    assert.match(data, /ToggleRow\(model, diagnostics\.getJSONObject\("debugLogging"\), true\) \{ settings\.data\(it\) \}/);
+    assert.match(data, /diagnostics\.optJSONObject\("shareLog"\)\?\.let/);
+    assert.match(data, /diagnostics\.optJSONObject\("clearLog"\)\?\.let/);
+    assert.doesNotMatch(data, /\bt\(|"settings\./, 'every word is the view\'s');
+}
+
 const fakeCore = `
+export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
+export function setLogger(logger) { globalThis.coreLogger = logger; }
+export function consoleLogger() {}
 export class SqliteAdapter {
   async getData() {
     globalThis.events.push('load');
@@ -2439,7 +2489,7 @@ const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
     plugins: [{ name: 'fake-core', setup(plugin) {
         plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
-        plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCore, loader: 'js' }));
+        plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCore, loader: 'js', resolveDir: app }));
     } }],
 });
 const makeState = (taskCount, fakeDataSequence = []) => {
@@ -2460,6 +2510,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         updateResult: { ok: true, value: { id: 't', changed: true } },
         saveDraftResult: { ok: true, value: { id: 't', draft: { title: 'b' } } },
         inboxCommitResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
+        logText: null, logOps: [], logFailure: null,
         __mindwtrNative: {
             sqlAll(sql) {
                 // 'auto': the tasks count matches the load, as a real database would.
@@ -2471,6 +2522,22 @@ const makeState = (taskCount, fakeDataSequence = []) => {
             },
             sqlRun() {}, sqlExec() {},
             rnStateCommit(change) { state.events.push(`commit:${change}`); return state.commitResult; },
+            // Kotlin's DiagnosticsLogFile on one in-memory file (logText null: no file).
+            logFile(operation, text) {
+                state.logOps.push(operation);
+                if (state.logFailure) return `!MindwtrNativeError:${state.logFailure}`;
+                switch (operation) {
+                    case 'path': return 'files/logs/mindwtr.log';
+                    case 'ensure': state.logText ??= ''; return 'files/logs/mindwtr.log';
+                    case 'exists': return state.logText === null ? '' : '1';
+                    case 'read': return state.logText;
+                    case 'size': return String(Buffer.byteLength(state.logText ?? ''));
+                    case 'append': state.logText += text; return '';
+                    case 'write': state.logText = text; return '';
+                    case 'delete': { const had = state.logText !== null; state.logText = null; return had ? '1' : ''; }
+                    default: throw new Error(`unknown log operation ${operation}`);
+                }
+            },
         },
     };
     vm.runInNewContext(built.outputFiles[0].text, state);
@@ -2890,6 +2957,37 @@ assert.equal(brokenStorage.activationCount, 0);
         assert.deepEqual([child.status, child.stdout], [status, 'props\nreverse\n'], ending);
     }
 }
+// Core's logger on the file bridge, with core's real diagnostics-log.ts: RN's gate, force, line and sanitizer; one append per line.
+{
+    const log = makeState(0);
+    assert.equal((await poll(log, log.MindwtrHost.boot())).ok, true);
+    const tick = () => new Promise((resolveTick) => setImmediate(resolveTick));
+    const lines = () => (log.logText ?? '').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    log.logOps.length = 0;
+    log.coreLogger({ level: 'info', message: 'not written' });
+    await tick();
+    assert.deepEqual(log.logOps, [], 'debug logging off: no file work at all');
+    log.coreLogger({ level: 'warn', message: 'forced token=secret-value', scope: 'diagnostics', force: true });
+    await tick();
+    assert.deepEqual(lines().map(({ ts: _ts, ...line }) => line), [{ level: 'warn', scope: 'diagnostics', message: 'forced token=[redacted]' }]);
+    log.settings = { diagnostics: { loggingEnabled: true } };
+    log.coreLogger({ level: 'info', message: 'Native Android task command', category: 'storage', context: { operation: 'complete', password: 'p' } });
+    await tick();
+    const last = lines().at(-1);
+    assert.deepEqual(Object.keys(last), ['ts', 'level', 'scope', 'message', 'context']);
+    assert.deepEqual({ ...last, ts: '' }, { ts: '', level: 'info', scope: 'core', message: 'Native Android task command', context: { operation: 'complete', password: '[redacted]', category: 'storage' } });
+    assert.match(last.ts, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.equal(log.logOps.filter((op) => op === 'append').length, 2, 'one append per line');
+    assert.equal(log.logOps.filter((op) => op === 'write').length, 0, 'no rewrite under the size cap');
+    assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: 'files/logs/mindwtr.log' } });
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClear()), { ok: true, value: {} });
+    assert.equal(log.logText, null);
+    // A failing bridge never reaches the caller: the line is dropped, and Share gets no path.
+    log.logFailure = 'disk full';
+    assert.doesNotThrow(() => log.coreLogger({ level: 'error', message: 'lost', force: true }));
+    await tick();
+    assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: null } });
+}
 console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
 console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
 console.log('Editor: core\'s model and suggestions in, saveTaskDraft out through perform with an exact retry, changed fields only, no Kotlin date parsing');
@@ -2909,6 +3007,7 @@ console.log('Review organize and picker search: row and batch Mark reviewed and 
 console.log('Settings and the editor\'s View tab: core\'s settings and task views through CoreHost, writes through perform with exact requests, device writes under RN\'s keys, checklist edits as core\'s edits in the one save');
 console.log('Mind Sweep and saved searches: core\'s views through CoreHost, captures and Bulk organize creates on disk first, stale windows read again whole, Focus picker search, no Kotlin policy');
 console.log('App lock: core\'s General row read at boot and after a failed save, locked on each leave but a rotation, no recents picture while on, AndroidX BiometricPrompt with Expo\'s credential fallback, General\'s switch on only after a yes, a scrolling lock screen in core\'s words, and a phone check that swaps the database atomically and restores loudly');
+console.log('Diagnostics log: core\'s rules on Kotlin\'s file bridge (RN\'s path, gate, force, line, sanitizer), Share through a private FileProvider and the share sheet, Clear, Data\'s card from core');
 // One run per phone: every device check waits for its phone's lock before anything else (device-lock.mjs).
 for (const file of ['device.mjs', 'check-net-device.mjs']) {
     assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);

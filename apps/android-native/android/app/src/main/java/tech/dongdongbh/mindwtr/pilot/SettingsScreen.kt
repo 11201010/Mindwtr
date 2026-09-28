@@ -87,6 +87,7 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "advanced" -> MenuCard(model, shown.view.getJSONObject("advanced").menuObjects("rows"))
             "general" -> GeneralSettings(model, shown.view)
             "manage" -> ManageSettings(model, shown)
+            "data" -> DataSettings(model, shown.view)
             else -> GtdSettings(model, shown.view)
         }
         Spacer(Modifier.height(16.dp))
@@ -308,6 +309,43 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
             val picker = regional.optJSONObject(name) ?: continue
             PressRow(picker.getString("label"), picker.getString("value"), true, idle) { open(name) }
         }
+    }
+}
+
+// ---- Data ----
+
+/**
+ * RN's Data screen's Diagnostics card (sync-settings-sections.tsx SyncDiagnosticsCard) on core's getDataSettings: the Debug
+ * logging switch sends core's edit; while logging is on, Share log and Clear log. The Data screen's other cards, RN's analytics
+ * row (builds with the heartbeat only) and its Encryption block (sync) come with their passes.
+ */
+@Composable
+private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
+    val c = LocalTheme.current.colors
+    val diagnostics = view.getJSONObject("diagnostics")
+    SectionTitle(diagnostics.getString("title"), top = 24)
+    Card {
+        // RN always draws this row's top border (it follows the Encryption block).
+        ToggleRow(model, diagnostics.getJSONObject("debugLogging"), true) { settings.data(it) }
+        diagnostics.optJSONObject("shareLog")?.let { share ->
+            ActionRow(share.getString("label"), share.getString("description"), c.tint, idle, "settings-share-log") { settings.shareLog() }
+        }
+        diagnostics.optJSONObject("clearLog")?.let { clear ->
+            ActionRow(clear.getString("label"), null, c.secondaryText, idle, "settings-clear-log") { settings.clearLog() }
+        }
+    }
+}
+
+/** RN's pressable settingRow with a colored label and no trailing control: one button node that reads its texts, as RN's does. */
+@Composable
+private fun ActionRow(label: String, description: String?, color: Color, enabled: Boolean, tag: String, onClick: () -> Unit) {
+    val c = LocalTheme.current.colors
+    val spoken = if (description == null) label else "$label, $description"
+    Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true)
+        .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = tag; if (enabled) onClick { onClick(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = onClick).padding(16.dp)) {
+        Text(label, style = rnText(16, 500, 21), color = color)
+        description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
     }
 }
 
