@@ -125,8 +125,8 @@ fun ReviewList(model: InboxViewModel) = with(model.menu) {
                     else -> item.row?.let { row ->
                         Column(Modifier.padding(start = 30.dp, top = 8.dp)) {
                             TaskRowItem(model, row, status = RowStatus.Badge, actions = RowActions(
-                                status = { status -> act("reviewAction", setTaskStatus(row.id, status)) },
-                                delete = { act("reviewAction", trashTask(row.id)) },
+                                status = { status -> act("reviewAction", setTaskStatus(row.id, status, row.taskRevision)) },
+                                delete = { act("reviewAction", trashTask(row.id, row.taskRevision)) },
                                 selecting = bulk != null, selected = row.id in selected, select = { toggleRow("review", row.id) },
                             ))
                             // RN's Mark reviewed and Review in 1 week under every row due for review, in either scope: core's two actions.
@@ -236,7 +236,7 @@ private fun ReviewBulkBar(model: InboxViewModel, bulk: JSONObject, selected: Lis
                                     val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, bulk.getString("shareText"))
                                     runCatching { context.startActivity(Intent.createChooser(send, null)) }.onSuccess { endSelection(); reload() }
                                 }
-                                "delete" -> confirm(bulk.getJSONObject("deleteConfirmation"), trashTasks(selected), "reviewAction")
+                                "delete" -> confirm(bulk.getJSONObject("deleteConfirmation"), trashTasks(selected, bulk.getJSONObject("taskRevisions")), "reviewAction")
                             }
                         }.semantics { if (!on) disabled() }.fade(if (on) 1f else 0.5f).padding(horizontal = 10.dp, vertical = 6.dp))
             }
@@ -287,7 +287,7 @@ fun ReviewDialog(model: InboxViewModel, open: JSONObject) = with(model.menu) {
                             Text(status.getString("label"), style = rnText(12, 600), color = c.text, modifier = Modifier.clip(shape).background(c.filterBg)
                                 .border(1.dp, c.border, shape).clickable(enabled = idle && selected.isNotEmpty(), role = Role.Button) {
                                     keepDialog(null)
-                                    act("reviewAction", moveTasks(selected, status.getString("status")))
+                                    act("reviewAction", moveTasks(selected, status.getString("status"), move.getJSONObject("taskRevisions")))
                                 }.padding(horizontal = 10.dp, vertical = 8.dp))
                         }
                     }
@@ -318,7 +318,7 @@ fun ReviewDialog(model: InboxViewModel, open: JSONObject) = with(model.menu) {
                     val value = open.optString("text").trim()
                     val can = idle && value.isNotEmpty() && selected.isNotEmpty()
                     Text(tag?.getString("saveLabel").orEmpty(), style = rnText(14, 600), color = c.tint, modifier = Modifier.heightIn(min = 44.dp)
-                        .clickable(enabled = can, role = Role.Button) { keepDialog(null); act("reviewAction", addTag(selected, value)) }
+                        .clickable(enabled = can, role = Role.Button) { keepDialog(null); act("reviewAction", addTag(selected, value, bulk?.optJSONObject("taskRevisions") ?: JSONObject())) }
                         .fade(if (can) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 12.dp))
                 }
             }

@@ -177,6 +177,7 @@ const sqlite = (db, sql) => JSON.parse(execFileSync('sqlite3', ['-json', db, sql
 const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
     import { Database } from 'bun:sqlite';
     import { SqliteAdapter, createNativeHostContract, flushPendingSave, setStorageAdapter, useTaskStore } from '${coreSrc}/index.ts';
+    import { revisionOf } from '${coreSrc}/native-request-receipts.ts';
     const db = new Database(process.env.CHECK_DB);
     const client = {
         run: async (sql, params = []) => { db.query(sql).run(...params); },
@@ -302,7 +303,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             await flushPendingSave();
         }
         for (const project of live(store()._allProjects).filter((item) => [names.sequential, names.many].includes(item.title) && item.isFocused)) {
-            value(await host.setProjectFocus({ id: project.id, focused: false }));
+            value(await host.setProjectFocus({ id: project.id, focused: false, projectRevision: revisionOf(project) }));
         }
         const areaId = () => live(store()._allAreas).find((area) => area.name === names.area)?.id;
         const find = (title) => live(store()._allProjects).filter((project) => project.title === title);

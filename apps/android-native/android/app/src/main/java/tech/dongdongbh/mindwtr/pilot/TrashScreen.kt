@@ -112,11 +112,12 @@ private fun TrashItem(model: InboxViewModel, item: MenuItem, labels: JSONObject,
     val row = item.row
     val kind = if (row != null) "task" else "project"
     val id = row?.id ?: json.getString("id")
+    val revision = row?.taskRevision ?: json.optString("projectRevision")
     val title = row?.title ?: json.getString("title")
     val confirmation = page?.view?.getJSONObject("confirmations")?.getJSONObject("purgeItem")
     ArchiveSwipe(model, enabled = !selecting && idle, restore = labels.getString("restore"), delete = labels.getString("delete"),
-        onRestore = { act("trashAction", restoreItem(kind, id)) },
-        onDelete = { confirmation?.let { confirm(it, purgeItem(kind, id), "trashAction") } },
+        onRestore = { act("trashAction", restoreItem(kind, id, revision)) },
+        onDelete = { confirmation?.let { confirm(it, purgeItem(kind, id, revision), "trashAction") } },
         width = 120.dp, restoreColor = theme.trashRestore) { actions ->
         val shape = RoundedCornerShape(12.dp)
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clip(shape).background(c.taskItemBg)
@@ -159,9 +160,9 @@ private fun TrashBulkBar(model: InboxViewModel, view: JSONObject, tasks: List<St
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val total = view.getInt("total")
             BulkButton(labels.getString("selectAll"), c.text, idle && total > 0 && count != total) { selectAll() }
-            BulkButton(labels.getString("restoreSelected"), c.text, idle && count > 0) { act("trashAction", restoreItems(tasks, projects)) }
+            BulkButton(labels.getString("restoreSelected"), c.text, idle && count > 0) { act("trashAction", restoreItems(view.getJSONObject("selected"))) }
             BulkButton(labels.getString("deleteSelected"), c.danger, idle && count > 0) {
-                confirm(view.getJSONObject("confirmations").getJSONObject("purgeSelection"), purgeItems(tasks, projects), "trashAction")
+                confirm(view.getJSONObject("confirmations").getJSONObject("purgeSelection"), purgeItems(view.getJSONObject("selected")), "trashAction")
             }
         }
     }

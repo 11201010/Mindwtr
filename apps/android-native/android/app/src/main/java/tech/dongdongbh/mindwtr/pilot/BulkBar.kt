@@ -115,7 +115,7 @@ fun BulkBar(model: InboxViewModel) = with(model.menu) {
             BarButton(labels.getString("selectAll"), idle && all > 0 && bulk.getInt("selectedCount") < all, c.filterBg, c.text) { bulkSelectAll() }
             bar.optJSONObject("moveToSection")?.let { move ->
                 BarButton(move.getString("label"), enabled(move), c.filterBg, c.text) {
-                    bulk.optJSONObject("moveToSection")?.let { openMove(it.getJSONArray("taskIds").ids()) }
+                    bulk.optJSONObject("moveToSection")?.let { openMove(it.getJSONArray("taskIds").ids(), it.getJSONObject("taskRevisions")) }
                 }
             }
             bar.optJSONObject("organize")?.let { organize ->

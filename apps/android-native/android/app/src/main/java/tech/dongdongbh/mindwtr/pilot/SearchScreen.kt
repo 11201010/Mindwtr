@@ -118,6 +118,8 @@ private fun JSONArray.segments(): List<Pair<String, Boolean>> = List(length()) {
 data class SearchTask(
     val id: String, val title: String, val segments: List<Pair<String, Boolean>>, val inProject: Boolean, val cancelled: Boolean,
     val canComplete: Boolean, val dateTone: String?, val dateLabel: String?, val editor: Boolean, val route: String?, val projectId: String?,
+    /** Core's revision of the task as the result showed it; Done sends it. */
+    val taskRevision: String,
 )
 data class SearchProject(val id: String, val title: String, val segments: List<Pair<String, Boolean>>)
 
@@ -141,7 +143,8 @@ class SearchView(
                     val date = if (row.isNull("date")) null else row.getJSONObject("date")
                     SearchTask(row.getString("id"), row.getString("title"), row.getJSONArray("titleSegments").segments(), !row.isNull("projectTitle"),
                         row.getBoolean("cancelled"), row.getBoolean("canComplete"), date?.getString("tone"), date?.getString("label"), tap.getString("kind") == "editor",
-                        tap.optString("route").ifEmpty { null }, if (tap.isNull("projectId")) null else tap.optString("projectId").ifEmpty { null })
+                        tap.optString("route").ifEmpty { null }, if (tap.isNull("projectId")) null else tap.optString("projectId").ifEmpty { null },
+                        row.optString("taskRevision"))
                 },
                 List(projects.length()) { index ->
                     projects.getJSONObject(index).let { SearchProject(it.getString("id"), it.getString("title"), it.getJSONArray("titleSegments").segments()) }
@@ -241,8 +244,8 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
                     when {
                         task.canComplete -> {
                             val markDone = t("review.markDone")
-                            val canDone = writable && !busy && (failedAction == null || failedAction == FailedAction("complete", task.id))
-                            Box(Modifier.size(32.dp).clickable(enabled = canDone, role = Role.Button) { complete(task.id) }
+                            val canDone = writable && !busy && (failedAction == null || failedAction == completeAction(task.id, task.taskRevision))
+                            Box(Modifier.size(32.dp).clickable(enabled = canDone, role = Role.Button) { complete(task.id, task.taskRevision) }
                                 .semantics { contentDescription = markDone }, contentAlignment = Alignment.Center) {
                                 Icon(Lucide.CheckCircle, null, tint = c.secondaryText, modifier = Modifier.size(24.dp))
                             }

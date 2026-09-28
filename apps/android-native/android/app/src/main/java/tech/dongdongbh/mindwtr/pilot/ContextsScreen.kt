@@ -112,7 +112,7 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
                 }
             }
         }
-        bulk?.let { bar -> item(key = "bulk") { ContextsBulkBar(model, bar, selected) } }
+        bulk?.let { bar -> item(key = "bulk") { ContextsBulkBar(model, bar, selected, view.optJSONObject("taskRevisions") ?: JSONObject()) } }
         if (shown.items.isEmpty()) view.optJSONObject("empty")?.let { empty ->
             item(key = "empty") {
                 IconEmptyState(if (empty.getString("icon") == "tag") Lucide.TagThin else Lucide.CheckCircle2Thin, empty.getString("title"), empty.getString("message"))
@@ -122,8 +122,8 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
             val row = item.row ?: return@items
             Box(Modifier.padding(start = 16.dp, end = 16.dp, top = if (item === shown.items.first()) 16.dp else 0.dp)) {
                 TaskRowItem(model, row, status = RowStatus.Badge, actions = RowActions(
-                    status = { status -> act("contextsAction", setTaskStatus(row.id, status)) },
-                    delete = { act("contextsAction", trashTask(row.id)) },
+                    status = { status -> act("contextsAction", setTaskStatus(row.id, status, row.taskRevision)) },
+                    delete = { act("contextsAction", trashTask(row.id, row.taskRevision)) },
                     selecting = bulk != null, selected = row.id in selected, select = { toggleRow("contexts", row.id) },
                 ))
             }
@@ -132,9 +132,12 @@ fun ContextsList(model: InboxViewModel) = with(model.menu) {
     }
 }
 
-/** RN's Contexts bulk bar: core's count and Done, core's statuses, then core's token actions and Delete (core's question first). */
+/**
+ * RN's Contexts bulk bar: core's count and Done, core's statuses, then core's token actions and Delete (core's question first). Each
+ * sends the selection with [revisions], the view's taskRevisions for it.
+ */
 @Composable
-private fun ContextsBulkBar(model: InboxViewModel, bulk: JSONObject, selected: List<String>) = with(model.menu) {
+private fun ContextsBulkBar(model: InboxViewModel, bulk: JSONObject, selected: List<String>, revisions: JSONObject) = with(model.menu) {
     val c = LocalTheme.current.colors
     Column(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -144,7 +147,7 @@ private fun ContextsBulkBar(model: InboxViewModel, bulk: JSONObject, selected: L
         }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (status in bulk.menuObjects("statuses")) {
-                PillChip(status.getString("label"), c.text, idle && selected.isNotEmpty()) { act("contextsAction", moveTasks(selected, status.getString("status"))) }
+                PillChip(status.getString("label"), c.text, idle && selected.isNotEmpty()) { act("contextsAction", moveTasks(selected, status.getString("status"), revisions)) }
             }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -155,7 +158,7 @@ private fun ContextsBulkBar(model: InboxViewModel, bulk: JSONObject, selected: L
                 }
             }
             PillChip(bulk.getString("deleteLabel"), c.text, idle && selected.isNotEmpty()) {
-                confirm(bulk.getJSONObject("deleteConfirmation"), trashTasks(selected), "contextsAction")
+                confirm(bulk.getJSONObject("deleteConfirmation"), trashTasks(selected, revisions), "contextsAction")
             }
         }
     }
@@ -252,13 +255,16 @@ fun TokenPicker(model: InboxViewModel, open: JSONObject) = with(model.menu) {
     val canSave = values.isNotEmpty() && idle
     val review = open.optString("list") == "review"
     val save = {
-        val ids = page?.view?.optJSONArray("selectedIds")?.ids() ?: page?.view?.optJSONObject("bulk")?.optJSONArray("selectedIds").ids()
+        // The selection and its revisions as core's view showed them: Contexts' top-level ones, or Review's bar's.
+        val selection = page?.view?.takeIf { it.has("selectedIds") } ?: page?.view?.optJSONObject("bulk")
+        val ids = selection?.optJSONArray("selectedIds").ids()
+        val revisions = selection?.optJSONObject("taskRevisions") ?: JSONObject()
         keepDialog(null)
         when {
             // A list's Remove tag: core's editTaskTokens on its selection (or Select all).
             open.optString("list") == "bulk" -> bulkAction(JSONObject().put("type", "editTaskTokens").put("field", "tags").put("mode", "remove").put("values", JSONArray(values)), "removeTag")
-            review -> act("reviewAction", removeTags(ids, values))
-            else -> act("contextsAction", editTaskTokens(ids, open.getString("field"), open.getString("mode"), values))
+            review -> act("reviewAction", removeTags(ids, values, revisions))
+            else -> act("contextsAction", editTaskTokens(ids, open.getString("field"), open.getString("mode"), values, revisions))
         }
     }
     Box(Modifier.fillMaxSize().background(theme.pickerScrim).clickable(role = Role.Button) { keepDialog(null) }.imePadding().padding(20.dp),

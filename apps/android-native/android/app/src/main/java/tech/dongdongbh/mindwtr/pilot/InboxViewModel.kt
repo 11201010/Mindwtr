@@ -43,6 +43,7 @@ data class RowMeta(
 /**
  * One task row as core sent it (NativeTaskRow). Kotlin never parses or formats a date:
  * the meta line is core's text. [revealLabel] (Upcoming, in the user's date format) and [laterToday] are core's.
+ * [taskRevision] is core's revision of the task as the view showed it: a command that writes this task sends it.
  */
 data class TaskRow(
     val id: String,
@@ -52,20 +53,34 @@ data class TaskRow(
     val meta: RowMeta,
     val revealLabel: String? = null,
     val laterToday: Boolean = false,
+    val taskRevision: String = "",
 )
 /** The three lists. [label] is the core key of the tab label mobile shows. */
 enum class Screen(val label: String) { Inbox("tab.inbox"), Focus("tab.next"), Projects("nav.projects") }
-/** A command whose outcome is unknown; only this exact command may run again. */
+/**
+ * A command whose outcome is unknown; only this exact command may run again. [requestId] is the request UUID of an update and an
+ * editor save (the other commands keep theirs in [id] or [title]).
+ */
 data class FailedAction(
     val kind: String,
     val id: String,
     val title: String = "",
     val base: Map<String, String?> = emptyMap(),
     val patch: Map<String, String?> = emptyMap(),
+    val requestId: String = "",
 )
+
+/** [action] with a new request UUID, or the owed request [owed] when it is that same command: its control sends it again. */
+private fun withRequestId(action: FailedAction, owed: FailedAction?) =
+    owed?.takeIf { it.copy(requestId = "") == action } ?: action.copy(requestId = UUID.randomUUID().toString())
 
 /** Core refused the update or the editor save before writing anything, so there is no retry to hold. */
 internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
+/**
+ * The commands whose STALE_REVISION keeps core's line on screen: the editor save's conflict (with Reload), the status menu's update, and
+ * the saves of a draft that stays open (the Calendar composer, Manage's editor), so a Save that wrote nothing never looks done.
+ */
+private val STALE_SHOWN = setOf("saveDraft", "update", "calendarCreate", "manageEditor")
 /** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
 private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS
 
@@ -87,7 +102,7 @@ fun JSONObject.taskRow() = getJSONObject("meta").let { meta ->
             meta.text("priority"), meta.text("statusLabel"), meta.getBoolean("canFocus"),
             meta.getJSONObject("swipe").let { RowSwipe(it.getString("target"), it.getString("label"), it.getString("icon")) },
             meta.getString("textDirection") == "rtl", meta.getString("accessibilityLabel")),
-        text("revealLabel"), getBoolean("laterToday"))
+        text("revealLabel"), getBoolean("laterToday"), optString("taskRevision"))
 }
 
 /** Core's `rows` array, in its order. */
@@ -310,7 +325,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
         val key = editorKey ?: UUID.randomUUID().toString().also(::keepKey)
         val state = value.state()
-        pendingSave?.let { state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch)).put("checklist", it.title)) }
+        pendingSave?.let {
+            state.put("pending", JSONObject().put("base", JSONObject(it.base)).put("patch", JSONObject(it.patch)).put("checklist", it.title).put("requestId", it.requestId))
+        }
         drafts.write(key, state)
     }
 
@@ -323,7 +340,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         keepEditor(restored)
         if (pending == null || failedAction != null) return
         fun map(name: String) = pending.getJSONObject(name).let { m -> m.keys().asSequence().associateWith<String, String?> { m.getString(it) } }
-        val action = FailedAction("saveDraft", restored.id, pending.optString("checklist"), base = map("base"), patch = map("patch"))
+        val action = FailedAction("saveDraft", restored.id, pending.optString("checklist"), base = map("base"), patch = map("patch"),
+            requestId = pending.optString("requestId"))
         failedAction = action
         sendDraft(action)
     }
@@ -352,11 +370,14 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         loading = false
     }
 
+    /** Done's exact request: the task and the revision its row showed ([TaskRow.taskRevision]). */
+    fun completeAction(id: String, taskRevision: String) = FailedAction("complete", id, patch = mapOf("taskRevision" to taskRevision))
+
     /** From the Inbox, Focus, or a project: the same command, the same exact-retry lock. */
-    fun complete(id: String) {
-        val action = FailedAction("complete", id)
+    fun complete(id: String, taskRevision: String) {
+        val action = completeAction(id, taskRevision)
         perform(action) { runtime ->
-            runtime.completeTask(id)
+            runtime.completeTask(id, taskRevision)
             acknowledged(action)
         }
     }
@@ -557,11 +578,19 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      */
     fun resetChecklist() {
         val current = editor ?: return
-        sendReset(FailedAction("resetChecklist", current.id, UUID.randomUUID().toString()))
+        // The saved task's revision as the View tab showed it (getTaskView's taskRevision).
+        val revision = taskView?.takeIf { it.getString("id") == current.id }?.optString("taskRevision") ?: return
+        sendReset(FailedAction("resetChecklist", current.id, UUID.randomUUID().toString(), patch = mapOf("taskRevision" to revision)))
     }
 
     private fun sendReset(action: FailedAction) = perform(action) { runtime ->
-        runtime.resetTaskChecklist(action.id, action.title)
+        try {
+            runtime.resetTaskChecklist(action.id, action.title, action.patch["taskRevision"].orEmpty())
+        } catch (failure: Exception) {
+            // The task changed since the View tab showed it: nothing was written; the View tab is read again, with its new revision.
+            if (failure.message?.startsWith("STALE_REVISION") == true) ui { menu.whenIdle { readTaskView() } }
+            throw failure
+        }
         acknowledged(action)
         val fresh = readEditor(runtime, action.id)
         ui {
@@ -629,8 +658,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         editFields(mapOf("status" to "waiting", "assignedTo" to person))
     }
 
-    /** A save's exact request: the changed draft fields with their loaded values, and the checklist's base and value ("" when unchanged). */
-    fun saveDraftAction(current: TaskEditor) = FailedAction("saveDraft", current.id, current.checklistSave, base = current.base, patch = current.patch)
+    /**
+     * A save's exact request: the changed draft fields with their loaded values, the checklist's base and value ("" when unchanged),
+     * and a request UUID (the owed save's, when it is this one).
+     */
+    fun saveDraftAction(current: TaskEditor) =
+        withRequestId(FailedAction("saveDraft", current.id, current.checklistSave, base = current.base, patch = current.patch), failedAction)
 
     /**
      * Sends only the changed draft fields with their loaded values, to core's saveTaskDraft. Nothing
@@ -651,7 +684,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** Core's saveTaskDraft with [action]'s exact request. A refusal wrote nothing, so no request is owed. */
     private fun sendDraft(action: FailedAction) = perform(action) { runtime ->
         try {
-            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch), action.title)
+            runtime.saveTaskDraft(action.id, draftJson(action.base), draftJson(action.patch), action.title, action.requestId)
         } catch (failure: Exception) {
             // A restored request locked the draft before it was sent; a refusal unlocks it, as nothing is owed.
             if (UPDATE_REFUSALS.any { failure.message?.startsWith(it) == true }) ui { pendingSave = null; failedAction = null; editor?.let(::keepEditor) }
@@ -767,33 +800,36 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     fun dismissToast() { toast = null }
 
-    /** The star's target state: the exact retry of a failed star re-sends the same target. */
-    fun taskFocusAction(id: String, focused: Boolean) = FailedAction("taskFocus", id, patch = mapOf("focused" to "$focused"))
+    /** The star's target state and the row's revision: the exact retry of a failed star re-sends the same request. */
+    fun taskFocusAction(id: String, focused: Boolean, taskRevision: String) =
+        FailedAction("taskFocus", id, patch = mapOf("focused" to "$focused", "taskRevision" to taskRevision))
 
     /** RN's row star through core's setTaskFocus. A refusal writes nothing and shows core's text in RN's toast. */
-    fun setTaskFocus(id: String, focused: Boolean) {
-        val action = taskFocusAction(id, focused)
+    fun setTaskFocus(id: String, focused: Boolean, taskRevision: String) {
+        val action = taskFocusAction(id, focused, taskRevision)
         perform(action) { runtime ->
-            val reply = runtime.setTaskFocus(id, focused)
+            val reply = runtime.setTaskFocus(id, focused, taskRevision)
             acknowledged(action)
             val blocked = reply.optString("blocked")
             if (blocked.isNotEmpty()) ui { showToast(reply.getString("blockedTitle"), blocked) }
         }
     }
 
-    fun projectFocusAction(id: String, focused: Boolean) = FailedAction("projectFocus", id, patch = mapOf("focused" to "$focused"))
+    fun projectFocusAction(id: String, focused: Boolean, projectRevision: String) =
+        FailedAction("projectFocus", id, patch = mapOf("focused" to "$focused", "projectRevision" to projectRevision))
 
     /** RN's project star through core's setProjectFocus. Core's `{ blocked: "" }` shows nothing, as RN gives only its haptic. */
-    fun setProjectFocus(id: String, focused: Boolean) {
-        val action = projectFocusAction(id, focused)
+    fun setProjectFocus(id: String, focused: Boolean, projectRevision: String) {
+        val action = projectFocusAction(id, focused, projectRevision)
         perform(action) { runtime ->
-            runtime.setProjectFocus(id, focused)
+            runtime.setProjectFocus(id, focused, projectRevision)
             acknowledged(action)
         }
     }
 
+    /** The status change's exact request, with a request UUID (the owed change's, when it is this one). */
     fun statusAction(task: TaskRow, status: String) =
-        FailedAction("update", task.id, base = mapOf("status" to task.status), patch = mapOf("status" to status))
+        withRequestId(FailedAction("update", task.id, base = mapOf("status" to task.status), patch = mapOf("status" to status)), failedAction)
 
     /** RN's status menu: core's updateTask with the status the row was loaded with, so core refuses a stale change. */
     fun changeStatus(task: TaskRow, status: String) {
@@ -804,7 +840,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     /** Core's updateTask with [action]'s exact request: the status menu, the Restore and Next swipes, and their retry. */
     private fun sendUpdate(action: FailedAction) = perform(action) { runtime ->
-        runtime.updateTask(action.id, json(action.base), json(action.patch))
+        runtime.updateTask(action.id, json(action.base), json(action.patch), action.requestId)
         acknowledged(action)
     }
 
@@ -818,12 +854,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "capture" -> sendCapture(action)
             "captureLines" -> sendLines(action)
             "capturePicker" -> sendPicker(action)
-            "complete" -> complete(action.id)
+            "complete" -> complete(action.id, action.patch["taskRevision"].orEmpty())
             "update" -> sendUpdate(action)
             "saveDraft" -> sendDraft(action)
             "resetChecklist" -> sendReset(action)
-            "taskFocus" -> setTaskFocus(action.id, action.patch["focused"] == "true")
-            "projectFocus" -> setProjectFocus(action.id, action.patch["focused"] == "true")
+            "taskFocus" -> setTaskFocus(action.id, action.patch["focused"] == "true", action.patch["taskRevision"].orEmpty())
+            "projectFocus" -> setProjectFocus(action.id, action.patch["focused"] == "true", action.patch["projectRevision"].orEmpty())
             "createProject" -> createProject(action.base["areaId"].orEmpty())
             "areaFilter" -> sendAreaFilter(action)
             "saveSearch" -> sendSaveSearch(action)
@@ -1653,10 +1689,15 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         conflict = false
         Thread({
             var done = false
+            // A command refused as stale (STALE_REVISION) wrote nothing: its row changed since the view showed it, so nothing is owed.
+            // RN has no revisions, so nothing shows and the lists are read again, as after a command; the commands in STALE_SHOWN keep
+            // core's line on screen instead (a read's success would clear it).
+            var stale = false
             try { work(runtime); done = true }
             catch (failure: Throwable) {
                 val message = failure.message ?: failure.javaClass.simpleName
-                val refused = action?.kind in REFUSABLE && UPDATE_REFUSALS.any { message.startsWith(it) }
+                val refused = message.startsWith("STALE_REVISION") || (action?.kind in REFUSABLE && UPDATE_REFUSALS.any { message.startsWith(it) })
+                stale = action != null && action.kind !in STALE_SHOWN && message.startsWith("STALE_REVISION")
                 val failed = if ((action != null && !refused) || message.startsWith("SAVE_FAILED")) {
                     action ?: FailedAction("storage", "")
                 } else null
@@ -1665,7 +1706,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 if (failed != null) {
                     ProcessCoreHost.recordFailure(ProcessCoreHost.PendingFailure(failed, message, menu.page, editor, screen, focus, projects, project, areaFilter))
                 }
-                ui {
+                if (stale) acknowledged(action!!)
+                else ui {
                     // A read never replaces an owed command's retry, whatever order the failures arrive in.
                     val owed = failedAction?.takeIf { action == null && it.kind != "storage" }
                     if (owed == null) {
@@ -1677,7 +1719,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             } finally {
                 ui {
                     busy = false
-                    if (done && action != null) refreshAll()
+                    if ((done || stale) && action != null) refreshAll()
                 }
             }
         }, "mindwtr-action").start()

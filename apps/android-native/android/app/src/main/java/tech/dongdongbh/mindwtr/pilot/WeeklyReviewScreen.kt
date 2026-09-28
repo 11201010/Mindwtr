@@ -211,8 +211,8 @@ private fun LazyListScope.stepHeading(icon: ImageVector, title: String, hint: St
 @Composable
 private fun ReviewRow(model: InboxViewModel, row: TaskRow) = with(model.menu) {
     TaskRowItem(model, row, status = RowStatus.Badge, actions = RowActions(
-        status = { status -> act("reviewAction", setTaskStatus(row.id, status)) },
-        delete = { act("reviewAction", trashTask(row.id)) },
+        status = { status -> act("reviewAction", setTaskStatus(row.id, status, row.taskRevision)) },
+        delete = { act("reviewAction", trashTask(row.id, row.taskRevision)) },
     ))
 }
 

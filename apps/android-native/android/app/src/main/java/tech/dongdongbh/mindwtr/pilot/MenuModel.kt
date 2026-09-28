@@ -789,7 +789,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun archiveSelection(type: String): JSONObject {
         val view = page?.view
         return JSONObject().put("type", type).apply {
-            view?.optJSONObject("selectAll")?.let { put("selectAll", it) } ?: put("taskIds", view?.optJSONArray("selectedIds") ?: JSONArray())
+            // The explicit selection goes with each row's revision as the view showed it (core's taskRevisions for selectedIds).
+            view?.optJSONObject("selectAll")?.let { put("selectAll", it) }
+                ?: put("taskIds", view?.optJSONArray("selectedIds") ?: JSONArray()).put("taskRevisions", view?.optJSONObject("taskRevisions") ?: JSONObject())
         }
     }
 
@@ -887,7 +889,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         when {
             open.has("page") -> dialogPage(null)
             open.has("picker") -> keepDialog(JSONObject(open.toString()).apply { remove("picker"); remove("query") })
-            open.optString("kind") == "newSection" && open.has("taskIds") -> openMove(open.getJSONArray("taskIds").strings())
+            open.optString("kind") == "newSection" && open.has("taskIds") -> openMove(open.getJSONArray("taskIds").strings(), open.optJSONObject("taskRevisions") ?: JSONObject())
             else -> keepDialog(null)
         }
     }
@@ -909,10 +911,13 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         return shown.view.getJSONObject("text").getString("moveToSection")
     }
 
-    /** RN's move dialog for [taskIds]: core's choices ("No section" first, the current one selected). */
-    fun openMove(taskIds: List<String>) {
+    /**
+     * RN's move dialog for [taskIds] with their revisions as core's view showed them ([taskRevisions]: a row's taskRevision, or the
+     * bulk bar's moveToSection.taskRevisions): core's choices ("No section" first, the current one selected).
+     */
+    fun openMove(taskIds: List<String>, taskRevisions: JSONObject) {
         moveChoices = null
-        keepDialog(JSONObject().put("kind", "move").put("taskIds", JSONArray(taskIds)))
+        keepDialog(JSONObject().put("kind", "move").put("taskIds", JSONArray(taskIds)).put("taskRevisions", taskRevisions))
         readMoveChoices()
     }
 
@@ -945,11 +950,11 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /** The move dialog's More: its choices read again from the first window, one window deeper. */
     fun moreMoveChoices() { moveChoices?.getJSONObject("choices")?.getJSONArray("items")?.length()?.let { readMoveChoices(it + WINDOW) } }
 
-    fun moveAction(taskIds: List<String>, sectionId: String?) =
-        FailedAction("somedayMove", UUID.randomUUID().toString(), patch = mapOf("taskIds" to taskIds.joinToString(","), "sectionId" to sectionId))
+    fun moveAction(taskIds: List<String>, sectionId: String?, taskRevisions: JSONObject) = FailedAction("somedayMove", UUID.randomUUID().toString(),
+        patch = mapOf("taskIds" to taskIds.joinToString(","), "sectionId" to sectionId, "taskRevisions" to taskRevisions.toString()))
 
-    /** A move dialog choice: core's moveSomedayTasksToSection with a new request UUID. */
-    fun move(taskIds: List<String>, sectionId: String?) = send(moveAction(taskIds, sectionId))
+    /** A move dialog choice: core's moveSomedayTasksToSection with a new request UUID and the tasks' revisions the dialog opened with. */
+    fun move(taskIds: List<String>, sectionId: String?, taskRevisions: JSONObject) = send(moveAction(taskIds, sectionId, taskRevisions))
 
     /** The toast's Undo: core's undoSomedaySectionMove for the move's request, with its own request UUID. */
     private fun undo(moveRequestId: String) {
@@ -957,9 +962,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         whenIdle { send(FailedAction("somedayUndo", UUID.randomUUID().toString(), moveRequestId)) }
     }
 
-    /** RN's New section… (the list menu's, or the move dialog's "+ New section…", which then moves the tasks into it). */
-    fun openNewSection(taskIds: List<String>? = null) = keepDialog(JSONObject().put("kind", "newSection").put("text", "")
-        .put("requestId", UUID.randomUUID().toString()).apply { taskIds?.let { put("taskIds", JSONArray(it)) } })
+    /** RN's New section… (the list menu's, or the move dialog's "+ New section…", which then moves the tasks into it, at their [taskRevisions]). */
+    fun openNewSection(taskIds: List<String>? = null, taskRevisions: JSONObject? = null) = keepDialog(JSONObject().put("kind", "newSection").put("text", "")
+        .put("requestId", UUID.randomUUID().toString()).apply { taskIds?.let { put("taskIds", JSONArray(it)).put("taskRevisions", taskRevisions ?: JSONObject()) } })
 
     /** A heading's Add task: RN's dialog for that section (null = No section), titled with core's label. */
     fun openAddTask(heading: JSONObject) {
@@ -1003,8 +1008,11 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /** A Calendar or Board action ([kind]) with core's whole [input] and a new request UUID; the input itself is its exact retry. */
     internal fun command(kind: String, input: JSONObject) = send(FailedAction(kind, UUID.randomUUID().toString(), input.toString()))
 
-    /** Waiting's and Someday's parked projects: RN's swipe makes one active (a target state; a retry writes nothing). */
-    fun activate(projectId: String) = send(FailedAction("activateProject", projectId))
+    /**
+     * Waiting's and Someday's parked projects: RN's swipe makes one active (a target state; a retry writes nothing), at the row's
+     * [projectRevision] (a project changed since is refused).
+     */
+    fun activate(projectId: String, projectRevision: String) = send(FailedAction("activateProject", projectId, patch = mapOf("projectRevision" to projectRevision)))
 
     // ---- Archive ----
 
@@ -1022,7 +1030,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         val kind = ROW_KINDS[list ?: return false] ?: return false
         if (page?.items?.none { it.row?.id == task.id } != false) return false
         shell.showStatusMenu(null)
-        if (status != task.status) act(kind, setTaskStatus(task.id, status))
+        if (status != task.status) act(kind, setTaskStatus(task.id, status, task.taskRevision))
         return true
     }
 
@@ -1030,8 +1038,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
      * RN's CompletedAtPicker on Android: the system date dialog, then the time dialog, starting at core's local day and time for
      * the row (completedAtPicker); the picked day and time go to core's setCompletedAt, which stores them as RN's picker does.
      */
-    fun openCompletedAt(taskId: String, start: JSONObject) =
-        keepDialog(JSONObject().put("kind", "completedAt").put("taskId", taskId).put("day", start.getString("day")).put("time", start.getString("time")))
+    fun openCompletedAt(row: TaskRow, start: JSONObject) = keepDialog(JSONObject().put("kind", "completedAt").put("taskId", row.id)
+        .put("taskRevision", row.taskRevision).put("day", start.getString("day")).put("time", start.getString("time")))
 
     /** The date dialog's day (`yyyy-MM-dd`, the picker's own fields): the time dialog opens next. */
     fun pickCompletedDay(day: String) { dialog?.takeIf { it.optString("kind") == "completedAt" }?.let { keepDialog(JSONObject(it.toString()).put("day", day).put("step", "time")) } }
@@ -1040,7 +1048,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun pickCompletedTime(time: String) {
         val open = dialog?.takeIf { it.optString("kind") == "completedAt" } ?: return
         keepDialog(null)
-        archive(JSONObject().put("type", "setCompletedAt").put("taskId", open.getString("taskId")).put("day", open.getString("day")).put("time", time))
+        archive(JSONObject().put("type", "setCompletedAt").put("taskId", open.getString("taskId")).put("day", open.getString("day")).put("time", time)
+            .put("taskRevision", open.optString("taskRevision")))
     }
 
     // ---- Selection mode (Inbox, Waiting, Someday, Reference, Done: RN's TaskList and TaskListView bulk bar) ----
@@ -1135,7 +1144,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         val list = list ?: return null
         val bulk = page?.bulk ?: return null
         val target = JSONObject(action.toString()).apply {
-            bulk.optJSONObject("selectAll")?.let { put("selectAll", it) } ?: put("taskIds", bulk.getJSONArray("selectedIds"))
+            // The explicit selection goes with each row's revision as core's bar showed it (its taskRevisions); Select all's own object carries its revision.
+            bulk.optJSONObject("selectAll")?.let { put("selectAll", it) }
+                ?: put("taskIds", bulk.getJSONArray("selectedIds")).put("taskRevisions", bulk.getJSONObject("taskRevisions"))
         }
         return JSONObject().put("list", list).put("action", target)
     }
@@ -1259,12 +1270,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
 
     /** A menu command's input, as host-entry.ts passes it to core. */
     private fun input(action: FailedAction): String = when (action.kind) {
-        "activateProject" -> JSONObject().put("projectId", action.id)
+        "activateProject" -> JSONObject().put("projectId", action.id).put("projectRevision", action.patch["projectRevision"])
         "somedayMove" -> JSONObject().put("taskIds", JSONArray(action.patch["taskIds"].orEmpty().split(","))).put("requestId", action.id)
-            .put("sectionId", action.patch["sectionId"] ?: JSONObject.NULL)
+            .put("sectionId", action.patch["sectionId"] ?: JSONObject.NULL).put("taskRevisions", JSONObject(action.patch["taskRevisions"] ?: "{}"))
         "somedayUndo" -> JSONObject().put("moveRequestId", action.title).put("requestId", action.id)
         "somedayTask" -> JSONObject().put("title", action.title).put("captureId", action.id).put("sectionId", action.patch["sectionId"] ?: JSONObject.NULL)
-        "somedaySection" -> JSONObject().put("title", action.title)
+        "somedaySection" -> JSONObject().put("title", action.title).put("requestId", action.id)
         "taskListSort" -> JSONObject().put("sortBy", action.id)
         // The Calendar's and the Board's input: core's action with the view's state (or filters), and the request UUID.
         "calendarAction", "calendarCreate", "boardAction", "boardCreate" -> JSONObject(action.title).put("requestId", action.id)
@@ -1357,7 +1368,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 val open = dialog?.takeIf { it.optString("kind") == "newSection" }
                 closeDialog("newSection")
                 // From the move dialog's "+ New section…": the tasks go into the new section, as RN's picker selects it.
-                open?.optJSONArray("taskIds")?.let { ids -> whenIdle { move(ids.strings(), reply.getString("id")) } }
+                open?.optJSONArray("taskIds")?.let { ids -> whenIdle { move(ids.strings(), reply.getString("id"), open.optJSONObject("taskRevisions") ?: JSONObject()) } }
             }
             "archiveAction" -> {
                 if (JSONObject(action.title).optString("type") in setOf("moveTasksToInbox", "trashTasks")) selecting(false)

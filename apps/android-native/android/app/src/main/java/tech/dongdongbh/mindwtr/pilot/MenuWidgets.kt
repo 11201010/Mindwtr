@@ -438,6 +438,7 @@ private fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: 
     val scope = rememberCoroutineScope()
     val shape = RoundedCornerShape(10.dp)
     val id = project.getString("id")
+    val revision = project.optString("projectRevision")
     val enabled = menu.idle
     Box {
         if (offset.value > 0f) {
@@ -450,12 +451,12 @@ private fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: 
                 enabled = enabled, onDragStopped = {
                     val opened = with(density) { offset.value.toDp() } > 72.dp
                     scope.launch { offset.animateTo(0f) }
-                    if (opened) menu.activate(id)
+                    if (opened) menu.activate(id, revision)
                 })
             .clickable(enabled = failedAction == null && !busy, role = Role.Button) { menu.openProjects(id) }
             .semantics {
                 contentDescription = title
-                customActions = listOf(CustomAccessibilityAction(activate) { if (enabled) menu.activate(id); enabled })
+                customActions = listOf(CustomAccessibilityAction(activate) { if (enabled) menu.activate(id, revision); enabled })
             }.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Lucide.Folder, null, tint = coreColorOrNull(project.menuText("color")) ?: c.secondaryText, modifier = Modifier.size(18.dp))
@@ -847,6 +848,7 @@ private fun MoveDialog(model: InboxViewModel, open: JSONObject) = with(model.men
     val theme = LocalTheme.current
     val c = theme.colors
     val taskIds = open.getJSONArray("taskIds").strings()
+    val taskRevisions = open.optJSONObject("taskRevisions") ?: JSONObject()
     val reply = moveChoices
     DialogCard(model, dismissible = true) {
         val title = reply?.getString("title") ?: page?.view?.getJSONObject("text")?.getString("moveToSection").orEmpty()
@@ -859,13 +861,13 @@ private fun MoveDialog(model: InboxViewModel, open: JSONObject) = with(model.men
                 val title = choice.getString("title")
                 Text(title, style = rnText(15, 400), color = if (selected) c.onTint else c.text, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
                     .clip(RoundedCornerShape(8.dp)).background(if (selected) c.tint else c.filterBg).border(1.dp, if (selected) c.tint else c.border, RoundedCornerShape(8.dp))
-                    .selectable(selected = selected, enabled = idle, role = Role.Button) { move(taskIds, choice.menuText("sectionId")) }
+                    .selectable(selected = selected, enabled = idle, role = Role.Button) { move(taskIds, choice.menuText("sectionId"), taskRevisions) }
                     .semantics { contentDescription = title }.padding(horizontal = 12.dp, vertical = 12.dp))
             }
             if (choices != null && choices.menuObjects("items").size < choices.getInt("total")) MoreChip(idle) { moreMoveChoices() }
             reply?.getString("newSectionLabel")?.let { label ->
                 Text(label, style = rnText(15, 400), color = c.tint, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp))
-                    .background(c.filterBg).border(1.dp, c.border, RoundedCornerShape(8.dp)).clickable(enabled = idle, role = Role.Button) { openNewSection(taskIds) }
+                    .background(c.filterBg).border(1.dp, c.border, RoundedCornerShape(8.dp)).clickable(enabled = idle, role = Role.Button) { openNewSection(taskIds, taskRevisions) }
                     .semantics { contentDescription = label }.padding(horizontal = 12.dp, vertical = 12.dp))
             }
         }

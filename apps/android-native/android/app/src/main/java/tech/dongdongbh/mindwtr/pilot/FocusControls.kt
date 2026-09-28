@@ -248,6 +248,8 @@ fun FocusReorder(model: InboxViewModel, screen: JSONObject, modifier: Modifier) 
     val c = theme.colors
     val rows = screen.getJSONObject("rows").menuObjects("items")
     val ids = rows.map { it.getString("id") }
+    // Each row's revision as core showed it: reorderFocus sends them all.
+    val revisions = JSONObject().apply { rows.forEach { put(it.getString("id"), it.optString("taskRevision")) } }
     var hint by rememberSaveable { mutableStateOf(true) }
     val enabled = model.menu.idle
     Column(modifier.background(c.bg)) {
@@ -273,8 +275,8 @@ fun FocusReorder(model: InboxViewModel, screen: JSONObject, modifier: Modifier) 
                 // The place a drop would take: the row's own, moved by whole rows under the finger.
                 val target = if (active) (index + (shift / rowHeight).roundToInt()).coerceIn(0, rows.size - 1) else index
                 val moves = listOfNotNull(
-                    row.optJSONArray("moveUp")?.let { order -> CustomAccessibilityAction(screen.getString("moveUpLabel")) { if (enabled) { hint = false; reorderTo(order.ids()) }; enabled } },
-                    row.optJSONArray("moveDown")?.let { order -> CustomAccessibilityAction(screen.getString("moveDownLabel")) { if (enabled) { hint = false; reorderTo(order.ids()) }; enabled } },
+                    row.optJSONArray("moveUp")?.let { order -> CustomAccessibilityAction(screen.getString("moveUpLabel")) { if (enabled) { hint = false; reorderTo(order.ids(), revisions) }; enabled } },
+                    row.optJSONArray("moveDown")?.let { order -> CustomAccessibilityAction(screen.getString("moveDownLabel")) { if (enabled) { hint = false; reorderTo(order.ids(), revisions) }; enabled } },
                 )
                 Box(Modifier.height(80.dp).padding(vertical = 4.dp).then(if (active) Modifier.offset { IntOffset(0, shift.roundToInt()) } else Modifier)) {
                     val shape = RoundedCornerShape(12.dp)
@@ -292,7 +294,7 @@ fun FocusReorder(model: InboxViewModel, screen: JSONObject, modifier: Modifier) 
                                     val to = (index + (shift / rowHeight).roundToInt()).coerceIn(0, ids.size - 1)
                                     dragged = null; shift = 0f
                                     // The drop's order: this row taken out and put back at the place it was dropped.
-                                    if (to != index) reorderTo(ids.toMutableList().apply { add(to, removeAt(index)) })
+                                    if (to != index) reorderTo(ids.toMutableList().apply { add(to, removeAt(index)) }, revisions)
                                 },
                                 onDragCancel = { dragged = null; shift = 0f },
                             ) { change, amount -> change.consume(); shift += amount.y }

@@ -249,6 +249,8 @@ private fun BoardCard(model: InboxViewModel, shown: BoardPage, card: JSONObject,
     val row = card.getJSONObject("row")
     val meta = card.getJSONObject("card")
     val id = row.getString("id")
+    // The card's revision as core's view showed it: its moves and its Delete send it.
+    val revision = row.optString("taskRevision")
     val title = row.getString("title")
     val swipes = shown.view.getJSONObject("cardActions").getJSONObject("swipes")
     val duplicateLabel = swipes.getJSONObject("left").getString("label")
@@ -265,7 +267,7 @@ private fun BoardCard(model: InboxViewModel, shown: BoardPage, card: JSONObject,
     var finger by remember { mutableFloatStateOf(0f) }
     val lift = if (held) (finger - grab) - (top - startTop) else 0f
     val canEdit = model.writable && !model.busy && model.failedAction == null
-    val run = { action: String -> if (canEdit) { if (action == "duplicate") board.duplicate(id) else board.trash(id) } }
+    val run = { action: String -> if (canEdit) { if (action == "duplicate") board.duplicate(id) else board.trash(id, revision) } }
     val swipeActions = listOf("left" to duplicateLabel, "right" to deleteLabel)
     val drop = {
         val center = startTop + height / 2 + (finger - grab)
@@ -276,7 +278,7 @@ private fun BoardCard(model: InboxViewModel, shown: BoardPage, card: JSONObject,
             val distance = if (center < columnTop) columnTop - center else if (center > columnBottom) center - columnBottom else 0f
             if (distance < nearest) { nearest = distance; target = column.getString("status") }
         }
-        if (target != status) board.move(id, target, null, sameColumn = false)
+        if (target != status) board.move(id, revision, target, null, sameColumn = false)
         else {
             var after: String? = null
             for (other in cards) {
@@ -285,14 +287,14 @@ private fun BoardCard(model: InboxViewModel, shown: BoardPage, card: JSONObject,
                 val (otherTop, otherHeight) = layouts.cards[otherId] ?: continue
                 if (center > otherTop + otherHeight / 2) after = otherId
             }
-            if (after != before) board.move(id, status, after, sameColumn = true)
+            if (after != before) board.move(id, revision, status, after, sameColumn = true)
         }
     }
     // The gesture outlives a recomposition: it drops with the column as it is now.
     val dropNow by rememberUpdatedState(drop)
     val moveActions = columns.mapNotNull { column ->
         val target = column.getString("status")
-        if (target == status) null else CustomAccessibilityAction("${t("bulk.moveTo")}: ${column.getString("label")}") { if (canEdit) board.move(id, target, null, sameColumn = false); canEdit }
+        if (target == status) null else CustomAccessibilityAction("${t("bulk.moveTo")}: ${column.getString("label")}") { if (canEdit) board.move(id, revision, target, null, sameColumn = false); canEdit }
     }
     val spoken = listOfNotNull(title, meta.menuText("projectTitle")).plus(meta.optJSONArray("tags").ids()).plus(meta.optJSONArray("contexts").ids())
         .plus(listOfNotNull(meta.menuText("timeEstimateLabel"))).joinToString(", ")

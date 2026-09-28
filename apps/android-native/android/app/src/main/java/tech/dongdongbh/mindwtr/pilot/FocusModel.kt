@@ -201,8 +201,11 @@ class FocusModel(private val menu: MenuModel, private val saved: SavedStateHandl
         else command("focusDelete", JSONObject().put("id", open.getString("id")))
     }
 
-    /** Today's Focus in a new order ([ids]: every starred task Focus shows, once): core's reorderFocus writes only the moved tasks. */
-    fun reorderTo(ids: List<String>) = command("focusReorder", JSONObject().put("ids", JSONArray(ids)))
+    /**
+     * Today's Focus in a new order ([ids]: every starred task Focus shows, once), with each row's taskRevision as core's reorder
+     * screen showed it ([taskRevisions]): core's reorderFocus writes only the moved tasks.
+     */
+    fun reorderTo(ids: List<String>, taskRevisions: JSONObject) = command("focusReorder", JSONObject().put("ids", JSONArray(ids)).put("taskRevisions", taskRevisions))
 
     /** Core's answer: its control state (a saved filter applied or detached) becomes the screen's; Save's dialog closes. */
     fun done(action: FailedAction, reply: JSONObject) {

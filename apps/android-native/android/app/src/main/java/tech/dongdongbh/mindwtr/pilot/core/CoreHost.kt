@@ -180,13 +180,14 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     /** Core's submitQuickCapturePickerQuery with [json] unchanged; its requestId makes a create's retry exact. */
     fun submitQuickCapturePickerQuery(json: String): JSONObject = callAsync("capturePicker", json)
 
-    fun completeTask(id: String): JSONObject = callAsync("complete", id)
+    /** Core's completeTask; [taskRevision] is the row's: a task changed since is refused (STALE_REVISION). */
+    fun completeTask(id: String, taskRevision: String): JSONObject = callAsync("complete", id, taskRevision)
 
-    /** Core's setTaskFocus to the target [focused]. A reply with `blocked` wrote nothing. */
-    fun setTaskFocus(id: String, focused: Boolean): JSONObject = callAsync("taskFocus", id, focused)
+    /** Core's setTaskFocus to the target [focused], at the row's [taskRevision]. A reply with `blocked` wrote nothing. */
+    fun setTaskFocus(id: String, focused: Boolean, taskRevision: String): JSONObject = callAsync("taskFocus", id, focused, taskRevision)
 
-    /** Core's setProjectFocus to the target [focused]. `{ blocked: "" }` wrote nothing. */
-    fun setProjectFocus(id: String, focused: Boolean): JSONObject = callAsync("projectFocus", id, focused)
+    /** Core's setProjectFocus to the target [focused], at the row's [projectRevision]. `{ blocked: "" }` wrote nothing. */
+    fun setProjectFocus(id: String, focused: Boolean, projectRevision: String): JSONObject = callAsync("projectFocus", id, focused, projectRevision)
 
     /** Core's createProject; [areaId] "" is no area, and [requestId] is kept for the exact retry. */
     fun createProject(title: String, areaId: String, requestId: String): JSONObject =
@@ -249,9 +250,12 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
         callAsync("editChecklist", JSONObject().put("id", id).put("draft", JSONObject(draftJson)).put("checklist", JSONArray(checklistJson))
             .apply { if (editJson.isNotEmpty()) put("edit", JSONObject(editJson)) }.toString())
 
-    /** Core's resetTaskChecklist, written at once; [requestId] makes a retry only finish a failed save. */
-    fun resetTaskChecklist(id: String, requestId: String): JSONObject =
-        callAsync("resetChecklist", JSONObject().put("id", id).put("requestId", requestId).toString())
+    /**
+     * Core's resetTaskChecklist, written at once; [requestId] makes a retry only finish a failed save, and [taskRevision] (getTaskView's)
+     * refuses a task changed since (STALE_REVISION).
+     */
+    fun resetTaskChecklist(id: String, requestId: String, taskRevision: String): JSONObject =
+        callAsync("resetChecklist", JSONObject().put("id", id).put("requestId", requestId).put("taskRevision", taskRevision).toString())
 
     /** Core's getTaskEditorSuggestions for a context, tag, or person input's whole text as typed. */
     fun editorSuggestions(id: String, field: String, query: String, limit: Int): JSONObject =
@@ -259,15 +263,19 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
 
     /**
      * [baseJson], [patchJson] and [checklistJson] (`{ base, value }`, "" when the checklist is unchanged) go to core's saveTaskDraft
-     * unchanged, in one write; core decides everything.
+     * unchanged, in one write; core decides everything. [requestId] makes a repeat answer the first reply (core's receipt).
      */
-    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String): JSONObject =
+    fun saveTaskDraft(id: String, baseJson: String, patchJson: String, checklistJson: String, requestId: String): JSONObject =
         callAsync("saveDraft", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
-            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }.toString())
+            .apply { if (checklistJson.isNotEmpty()) put("checklist", JSONObject(checklistJson)) }.put("requestId", requestId).toString())
 
-    /** The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged. */
-    fun updateTask(id: String, baseJson: String, patchJson: String): JSONObject =
-        callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson)).toString())
+    /**
+     * The status menu and the Restore and Next swipes: [baseJson] and [patchJson] go to core's updateTask unchanged, with the
+     * request's [requestId].
+     */
+    fun updateTask(id: String, baseJson: String, patchJson: String, requestId: String): JSONObject =
+        callAsync("update", JSONObject().put("id", id).put("base", JSONObject(baseJson)).put("patch", JSONObject(patchJson))
+            .put("requestId", requestId).toString())
 
     /**
      * Core's setLanguage: [stored] is RN's saved language ("" for none), [system] the device locale tag.

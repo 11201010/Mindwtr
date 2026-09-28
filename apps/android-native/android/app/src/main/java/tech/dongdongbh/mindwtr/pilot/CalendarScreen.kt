@@ -529,7 +529,7 @@ private fun CalendarItemRow(model: InboxViewModel, item: JSONObject, lane: Strin
     val fill = if (!event && projected) theme.wash(c.tint, 0.1f, 0.18f) else c.inputBg
     val accent = if (event) source ?: c.secondaryText else c.tint
     val done = calendar.view?.getJSONObject("text")?.getString("done").orEmpty()
-    val complete = { if (idle) calendar.complete(item.getString("taskId")) }
+    val complete = { if (idle) calendar.complete(item.getString("taskId"), item.rowRevision()) }
     // RN's Done beside the row; TalkBack reaches it as the row's action.
     val actions = if (item.optBoolean("showDone")) listOf(CustomAccessibilityAction(done) { complete(); true }) else emptyList()
     CalendarRow(item.getString("title"), item.menuText("detail"), if (projected) c.tint else c.text, fill, accent, tones.optBoolean("dashed"),
