@@ -12,7 +12,6 @@ import {
   getBaseSyncUrl,
   getCloudBaseUrl,
   isAttachmentPresenceStampFresh,
-  isDropboxUnauthorizedError,
   isSandboxMode,
   markAttachmentUnrecoverable,
   preserveRefusedAttachmentContentUpload,
@@ -30,11 +29,8 @@ import {
   CLOUD_TOKEN_KEY,
   CLOUD_ALLOW_INSECURE_HTTP_KEY,
   CLOUD_URL_KEY,
-  WEBDAV_PASSWORD_KEY,
-  WEBDAV_URL_KEY,
-  WEBDAV_USERNAME_KEY,
-  WEBDAV_ALLOW_INSECURE_HTTP_KEY,
 } from './sync-constants';
+import { loadWebDavSyncConfig, readDropboxAppKey, runDropboxAuthorized as runCoreDropboxAuthorized } from '@mindwtr/core/mobile-sync-utils';
 import { getSecureConfigValue } from './secure-config';
 import { readActiveSyncLocationScope } from './sync-location-scope';
 import { logInfo, logWarn, sanitizeLogMessage } from './app-log';
@@ -325,9 +321,8 @@ export const getAttachmentLocalStatus = (
 export const getDropboxClientId = async (): Promise<string> => {
   try {
     const constantsModule = await import('expo-constants');
-    const constants = constantsModule.default as { expoConfig?: { extra?: { dropboxAppKey?: unknown } } } | undefined;
-    const extra = constants?.expoConfig?.extra;
-    return typeof extra?.dropboxAppKey === 'string' ? extra.dropboxAppKey.trim() : '';
+    const constants = constantsModule.default as { expoConfig?: { extra?: unknown } } | undefined;
+    return readDropboxAppKey(constants?.expoConfig?.extra);
   } catch {
     return '';
   }
@@ -352,31 +347,13 @@ export const runDropboxAuthorized = async <T,>(
       : getValidDropboxAccessToken(dropboxClientId, fetcher);
   }
 
-  let accessToken = await resolver(false);
-  try {
-    return await operation(accessToken);
-  } catch (error) {
-    if (!isDropboxUnauthorizedError(error)) throw error;
-    accessToken = await resolver(true);
-    return operation(accessToken);
-  }
+  return runCoreDropboxAuthorized(resolver, operation);
 };
 
-export const loadWebDavConfig = async (): Promise<WebDavConfig | null> => {
-  const [url, username, password, allowInsecureHttp] = await Promise.all([
-    AsyncStorage.getItem(WEBDAV_URL_KEY),
-    AsyncStorage.getItem(WEBDAV_USERNAME_KEY),
-    getSecureConfigValue(WEBDAV_PASSWORD_KEY),
-    AsyncStorage.getItem(WEBDAV_ALLOW_INSECURE_HTTP_KEY),
-  ]);
-  if (!url) return null;
-  return {
-    url,
-    username: username || '',
-    password: password || '',
-    allowInsecureHttp: allowInsecureHttp === 'true',
-  };
-};
+export const loadWebDavConfig = async (): Promise<WebDavConfig | null> => loadWebDavSyncConfig(
+  { getItem: (key) => AsyncStorage.getItem(key) },
+  (key) => getSecureConfigValue(key),
+);
 
 export const loadCloudConfig = async (): Promise<CloudConfig | null> => {
   const [url, token, allowInsecureHttp] = await Promise.all([

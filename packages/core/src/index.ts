@@ -74,6 +74,8 @@ export * from './dropbox-auth-tokens';
 export * from './base64-bytes';
 export * from './sync-encryption-local-state';
 export * from './sync-encryption-service';
+export * from './mobile-sync-utils';
+export * from './mobile-sync-service';
 export * from './diceware';
 export * from './task-utils';
 export * from './task-similarity';

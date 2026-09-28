@@ -35,7 +35,9 @@
     "./import-runner": "./src/import-runner.ts",
     "./whisper-models": "./src/whisper-models.ts",
     "./sync-secret-storage": "./src/sync-secret-storage.ts",
-    "./dropbox-auth-tokens": "./src/dropbox-auth-tokens.ts"
+    "./dropbox-auth-tokens": "./src/dropbox-auth-tokens.ts",
+    "./mobile-sync-utils": "./src/mobile-sync-utils.ts",
+    "./mobile-sync-service": "./src/mobile-sync-service.ts"
   },
   "sideEffects": false,
   "type": "module",

@@ -1,12 +1,7 @@
 import { assertConnectionAllowed, SYNC_LOCAL_INSECURE_URL_OPTIONS } from '@mindwtr/core';
 
-export const getMobileWebDavRequestOptions = (allowInsecureHttp?: boolean) => (
-  allowInsecureHttp === true ? { allowInsecureHttp: true } : {}
-);
-
-export const getMobileCloudRequestOptions = (allowInsecureHttp?: boolean) => (
-  allowInsecureHttp === true ? { allowInsecureHttp: true } : {}
-);
+// One home for the request options, shared with core's mobile sync service.
+export { getMobileCloudRequestOptions, getMobileWebDavRequestOptions } from '@mindwtr/core/mobile-sync-utils';
 
 const WEBDAV_HTTPS_ERROR =
   'WebDAV requires HTTPS for public URLs (HTTP allowed for localhost, private IPs, and local hostnames).';
