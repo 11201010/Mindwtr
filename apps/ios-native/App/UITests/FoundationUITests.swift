@@ -3322,6 +3322,139 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testProjectSectionOrderAndRelaunch() {
+        projectSectionOrder(library: "d354d682-4947-4cb7-b435-0eb356ab6302")
+    }
+
+    func testProjectSectionOrderLargestTextAndRelaunch() {
+        projectSectionOrder(library: "e27e7c0b-54bd-4200-b8d9-c61bf5f58c5c")
+    }
+
+    private func projectSectionOrder(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        let first = "d3918ccf-d6bf-4317-b93e-cf229334b0b4"
+        let second = "7ede4d8e-359b-4612-8d5f-f0f11e9218a9"
+        let third = "6eb78a42-e503-4098-a905-b703935fe657"
+        func scroll() -> XCUIElement {
+            let sheet = app.scrollViews["project-sections-scroll"]
+            return sheet.exists ? sheet : app.scrollViews.firstMatch
+        }
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            revealPagedElement(app, button, in: scroll()); boardEnabled(button)
+            XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, 44)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        func projects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        }
+        func open(_ id: String = "776dd5c5-1926-4da1-96ff-5d5096971050") {
+            let row = app.buttons["project-open-" + id]
+            revealPagedElement(app, row, in: app.scrollViews["projects-scroll"])
+            row.tap(); tap("project-details-toggle")
+        }
+        func assertOrder(_ ids: [String]) {
+            boardEnabled(app.buttons["project-sections-close"])
+            let rows = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "project-section-row-"))
+            XCTAssertEqual(rows.allElementsBoundByIndex.map(\.identifier), ids.map { "project-section-row-" + $0 })
+            XCTAssertFalse(app.buttons["project-section-up-" + ids.first!].isEnabled)
+            XCTAssertFalse(app.buttons["project-section-down-" + ids.last!].isEnabled)
+        }
+        projects()
+        let draft = app.textFields["projects-create-title"]
+        draft.tap(); draft.typeText("Retained Section order Project")
+        open(); tap("project-notes-toggle")
+        let notes = app.textViews["project-notes-input"]
+        revealPagedElement(app, notes, in: scroll())
+        replaceProjectNotesText(notes, with: "Notes before Section order\n")
+        tap("project-sections-open"); assertOrder([first, second, third])
+        XCTAssertEqual(app.staticTexts["project-section-row-" + first].label, "Renamed Section")
+        XCTAssertEqual(app.staticTexts["project-section-row-" + second].label, "Renamed Section")
+        tap("project-section-down-" + first); assertOrder([second, first, third])
+        tap("project-section-up-" + third); assertOrder([second, third, first])
+        tap("project-section-up-" + first); assertOrder([second, first, third])
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Section order RN controls and duplicate titles"
+        capture.lifetime = .keepAlways; add(capture)
+        boardTap(app, "project-sections-close")
+        XCTAssertEqual(notes.value as? String, "Notes before Section order\n")
+        boardTap(app, "project-back"); XCTAssertEqual(draft.value as? String, "Retained Section order Project")
+        let archived = app.buttons["projects-section-archived"]
+        revealPagedElement(app, archived, in: app.scrollViews["projects-scroll"])
+        if archived.value as? String == "Expand" { archived.tap() }
+        open("98432619-81dd-480e-9c35-d4dfa1705ff1"); tap("project-sections-open")
+        for prefix in ["project-section-up-", "project-section-down-"] {
+            XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).count, 0)
+        }
+        boardTap(app, "project-sections-close"); boardTap(app, "project-back")
+        app.terminate(); app.launch(); projects(); open(); tap("project-sections-open")
+        assertOrder([second, first, third])
+        boardTap(app, "project-sections-close"); tap("project-notes-toggle")
+        XCTAssertEqual(notes.value as? String, "Notes before Section order\n")
+        boardTap(app, "project-back"); app.terminate()
+    }
+
+    func testProjectSectionOrderFailureKeepsIntent() {
+        projectSectionOrderRecovery(expectFailure: true)
+    }
+
+    func testProjectSectionOrderColdRecovery() {
+        projectSectionOrderRecovery(expectFailure: false)
+    }
+
+    private func projectSectionOrderRecovery(expectFailure: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e0b4ab84-f022-4568-9fa8-274c04b72ffb"]
+        app.launch()
+        if expectFailure {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        } else { XCTAssertTrue(app.staticTexts["projects-title"].waitForExistence(timeout: 30)) }
+        let project = app.buttons["project-open-776dd5c5-1926-4da1-96ff-5d5096971050"]
+        revealPagedElement(app, project, in: app.scrollViews["projects-scroll"]); project.tap()
+        func tap(_ id: String) {
+            let sheet = app.scrollViews["project-sections-scroll"]
+            let button = app.buttons[id]
+            revealPagedElement(app, button, in: sheet.exists ? sheet : app.scrollViews.firstMatch)
+            boardEnabled(button); XCTAssertGreaterThanOrEqual(button.frame.height + 0.000001, 44)
+            button.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: button.frame.width - 4, dy: 4)).tap()
+        }
+        tap("project-details-toggle"); tap("project-sections-open")
+        let first = "d3918ccf-d6bf-4317-b93e-cf229334b0b4"
+        let second = "7ede4d8e-359b-4612-8d5f-f0f11e9218a9"
+        let third = "6eb78a42-e503-4098-a905-b703935fe657"
+        let rows = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "project-section-row-"))
+        if expectFailure {
+            tap("project-section-down-" + first)
+            let failure = app.staticTexts["project-section-error"]
+            XCTAssertTrue(failure.waitForExistence(timeout: 20))
+            for _ in 0..<2 {
+                XCTAssertEqual(rows.allElementsBoundByIndex.map(\.identifier), [first, second, third].map { "project-section-row-" + $0 })
+                for id in ["project-section-add", "project-sections-close"] + [first, second, third].flatMap({ id in
+                    ["project-section-edit-", "project-section-delete-", "project-section-up-", "project-section-down-"].map { $0 + id }
+                }) { XCTAssertFalse(app.buttons[id].isEnabled) }
+                tap("project-section-retry"); boardEnabled(app.buttons["project-section-retry"], timeout: 20)
+                XCTAssertTrue(failure.exists)
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Section order failed save retains exact intent"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            XCTAssertEqual(rows.allElementsBoundByIndex.map(\.identifier), [second, first, third].map { "project-section-row-" + $0 })
+            XCTAssertFalse(app.staticTexts["project-section-error"].exists)
+            XCTAssertFalse(app.buttons["project-section-up-" + second].isEnabled)
+            XCTAssertFalse(app.buttons["project-section-down-" + third].isEnabled)
+            boardEnabled(app.buttons["project-section-add"])
+            boardTap(app, "project-sections-close"); boardTap(app, "project-back")
+        }
+        app.terminate()
+    }
+
     func testProjectSectionDeleteAndRelaunch() {
         projectSectionDelete(library: "35d7ec08-3a52-439e-a708-8491a089675b")
     }

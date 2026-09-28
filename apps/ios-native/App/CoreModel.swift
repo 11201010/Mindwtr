@@ -108,6 +108,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectSectionEditID: String?
     @Published private(set) var projectSectionTitle = ""
     @Published private(set) var projectSectionOptions: CoreObject = [:]
+    @Published private(set) var projectSectionOrderOptions: CoreObject = [:]
     @Published private(set) var projectSectionError: String?
     @Published private(set) var projectSectionReadError: String?
     @Published private(set) var areaManagerPresented = false
@@ -411,6 +412,10 @@ final class CoreModel: ObservableObject {
     private var projectSectionDeleteRequest: String?
     private var projectSectionDeleteExpectedID: String?
     private var projectSectionDeleteExpectedProjectID: String?
+    private var projectSectionOrderOptionsCurrent = false
+    private var projectSectionOrderRequest: String?
+    private var projectSectionOrderExpectedProjectID: String?
+    private var projectSectionOrderExpectedIDs: [String]?
     private var areaCreateRequest: String?
     private var areaCreateExpectedID: String?
     private var areaCreateOptionsCurrent = false
@@ -580,6 +585,7 @@ final class CoreModel: ObservableObject {
     var projectDatePending: Bool { projectDateRequest != nil }
     var projectSectionPending: Bool {
         projectSectionRequest != nil || projectSectionRenameRequest != nil || projectSectionDeleteRequest != nil
+            || projectSectionOrderRequest != nil
     }
     var projectSectionRows: [CoreObject] { projectSectionOptions.objects("sections") }
     var projectSectionCloseEnabled: Bool { !busy && !retryNeeded && !projectSectionPending }
@@ -587,6 +593,12 @@ final class CoreModel: ObservableObject {
         projectSectionOptionsCurrent && selectedSurface == .project && projectCurrent
             && projectSectionOptions.object("project").text("id") == projectHeader.text("id")
             && projectSectionOptions.text("revision") == projectDetail.text("mutationRevision")
+    }
+    private var projectSectionOrderOptionsFresh: Bool {
+        projectSectionOrderOptionsCurrent && projectSectionOptionsFresh
+            && projectSectionOrderOptions.object("project").text("id") == projectHeader.text("id")
+            && projectSectionOrderOptions.text("revision") == projectDetail.text("mutationRevision")
+            && projectSectionOrderOptions.objects("sections").map { $0.text("id") } == projectSectionRows.map { $0.text("id") }
     }
     private var projectSectionRenameOptionsFresh: Bool {
         guard let sectionID = projectSectionEditID else { return false }
@@ -617,13 +629,23 @@ final class CoreModel: ObservableObject {
             && projectSectionOptions.flag("canCreate") && projectSectionCloseEnabled
             && projectSectionRows.contains { $0.text("id") == id }
     }
+    func projectSectionMoveEnabled(_ id: String, direction: String) -> Bool {
+        guard ["up", "down"].contains(direction), projectSectionsPresented, !projectSectionEditing,
+              projectSectionCloseEnabled, projectSectionOrderOptionsFresh,
+              projectSectionOrderOptions.flag("canReorder"),
+              let row = projectSectionOrderOptions.objects("sections").first(where: { $0.text("id") == id }) else {
+            return false
+        }
+        return row.flag(direction == "up" ? "canMoveUp" : "canMoveDown")
+    }
     func projectSectionDeleteConfirmationReady(_ id: String) -> Bool {
         projectSectionDeleteReadyID == id && projectSectionDeleteOptionsFresh
             && projectSectionsPresented && !projectSectionEditing && projectSectionCloseEnabled
     }
     var projectSectionReadRetryVisible: Bool {
         projectSectionsPresented && !projectSectionPending
-            && (!projectSectionOptionsFresh || (projectSectionEditID != nil && !projectSectionRenameOptionsFresh)
+            && (!projectSectionOptionsFresh || !projectSectionOrderOptionsFresh
+                || (projectSectionEditID != nil && !projectSectionRenameOptionsFresh)
                 || projectSectionReadError != nil)
     }
     var projectSectionInputEnabled: Bool {
@@ -906,7 +928,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -939,7 +961,7 @@ final class CoreModel: ObservableObject {
                         "projects.reviewAt", "common.none",
                         "project.notes",
                         "areas.manage", "areas.nameExists", "projects.changeColor", "projects.colorNone",
-                        "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.areaInUse",
+                        "projects.sortByName", "projects.sortByColor", "projects.moveUp", "projects.moveDown", "projects.areaInUse",
                         "common.delete",
                         "projects.addToFocus", "projects.removeFromFocus", "projects.actionsLabel", "waiting.title",
                         "someday.title", "common.search", "filters.contexts", "filters.projects", "filters.timeEstimate",
@@ -1756,9 +1778,14 @@ final class CoreModel: ObservableObject {
         projectSectionDeleteReadyID = nil
         projectSectionDeleteOptions = [:]
         projectSectionDeleteOptionsCurrent = false
+        projectSectionOrderOptions = [:]
+        projectSectionOrderOptionsCurrent = false
         busy = true
         defer { finishOperation() }
-        do { try await readProjectSectionOptions(projectID: id) }
+        do {
+            try await readProjectSectionOptions(projectID: id)
+            try await readProjectSectionOrderOptions(projectID: id)
+        }
         catch { projectSectionReadError = error.localizedDescription }
     }
 
@@ -1772,6 +1799,8 @@ final class CoreModel: ObservableObject {
         projectSectionReadError = nil
         projectSectionOptions = [:]
         projectSectionOptionsCurrent = false
+        projectSectionOrderOptions = [:]
+        projectSectionOrderOptionsCurrent = false
         projectSectionRenameOptions = [:]
         projectSectionRenameOptionsCurrent = false
         projectSectionDeleteReadyID = nil
@@ -1862,6 +1891,57 @@ final class CoreModel: ObservableObject {
                 guard projectCurrent, projectDetail.text("projectId") == id else {
                     throw CocoaError(.coderReadCorrupt)
                 }
+            }
+        }
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func readProjectSectionOrderOptions(projectID id: String) async throws {
+        projectSectionOrderOptionsCurrent = false
+        guard projectSectionsPresented, projectSectionOptionsFresh, !id.isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        for attempt in 0..<2 {
+            let options = try await query("projectSectionOrderOptions", [try json(["projectId": id])])
+            let project = options.object("project")
+            guard options.count == 5, !options.text("revision").isEmpty,
+                  project.count == 3, project.text("id") == id, project["title"] is String,
+                  ["active", "waiting", "someday", "archived"].contains(project.text("status")),
+                  let canReorder = options["canReorder"] as? NSNumber,
+                  CFGetTypeID(canReorder) == CFBooleanGetTypeID(),
+                  (!canReorder.boolValue || project.text("status") != "archived"),
+                  let sections = options["sections"] as? [CoreObject],
+                  let token = options["token"] as? [CoreObject],
+                  token.count == sections.count,
+                  Set(sections.map { $0.text("id") }).count == sections.count,
+                  sections.enumerated().allSatisfy({ index, row in
+                      let raw = token[index]
+                      return row.count == 4 && !row.text("id").isEmpty && row["title"] is String
+                          && (row["canMoveUp"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
+                          && (row["canMoveDown"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
+                          && raw.text("id") == row.text("id") && raw.text("projectId") == id
+                          && raw.text("title") == row.text("title")
+                          && (canReorder.boolValue || (!row.flag("canMoveUp") && !row.flag("canMoveDown")))
+                  }) else { throw CocoaError(.coderReadCorrupt) }
+            let visible = projectSectionRows
+            if options.text("revision") == projectDetail.text("mutationRevision"),
+               projectSectionOptionsFresh, projectHeader.text("id") == id,
+               sections.count == visible.count,
+               sections.enumerated().allSatisfy({ index, row in
+                   row.text("id") == visible[index].text("id")
+                       && row.text("title") == visible[index].text("title")
+               }) {
+                projectSectionOrderOptions = options
+                projectSectionOrderOptionsCurrent = true
+                projectSectionReadError = nil
+                return
+            }
+            if attempt == 0 {
+                await readProjectDetail()
+                guard projectCurrent, projectDetail.text("projectId") == id else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                try await readProjectSectionOptions(projectID: id)
             }
         }
         throw CocoaError(.coderReadCorrupt)
@@ -2064,6 +2144,81 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    func moveProjectSection(_ sectionID: String, direction: String) async {
+        let id = projectHeader.text("id")
+        guard projectSectionMoveEnabled(sectionID, direction: direction),
+              await flushProjectNotesEdit(), projectHeader.text("id") == id,
+              projectSectionMoveEnabled(sectionID, direction: direction) else { return }
+        let rows = projectSectionOrderOptions.objects("sections")
+        let token = projectSectionOrderOptions.objects("token")
+        guard let index = rows.firstIndex(where: { $0.text("id") == sectionID }),
+              token.count == rows.count else { return }
+        let destination = index + (direction == "up" ? -1 : 1)
+        guard rows.indices.contains(destination) else { return }
+        var orderedIDs = rows.map { $0.text("id") }
+        orderedIDs.swapAt(index, destination)
+        busy = true
+        projectSectionError = nil
+        defer { finishOperation() }
+        do {
+            projectSectionOrderRequest = try json([
+                "requestId": UUID().uuidString.lowercased(), "projectId": id,
+                "sectionId": sectionID, "direction": direction, "expectedSections": token
+            ])
+            projectSectionOrderExpectedProjectID = id
+            projectSectionOrderExpectedIDs = orderedIDs
+        } catch {
+            projectSectionReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("projectSectionOrder", [projectSectionOrderRequest!]) }
+        catch { await handleProjectSectionOrderWriteError(error); return }
+        do { try acknowledgeProjectSectionOrder(result) }
+        catch { await handleProjectSectionOrderWriteError(error); return }
+        do { try await refreshProjectSectionsAfterWrite() }
+        catch {
+            projectSectionReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeProjectSectionOrder(_ result: CoreObject) throws {
+        guard projectSectionOrderRequest != nil, let projectID = projectSectionOrderExpectedProjectID,
+              let expected = projectSectionOrderExpectedIDs,
+              result.count == 2, result.text("projectId") == projectID,
+              let ordered = result["orderedIds"] as? [String], ordered == expected else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectSectionOrderRequest = nil
+        projectSectionOrderExpectedProjectID = nil
+        projectSectionOrderExpectedIDs = nil
+        projectSectionOrderOptionsCurrent = false
+        projectSectionOptionsCurrent = false
+        retryNeeded = false
+        projectSectionError = nil
+        projectSectionReadError = nil
+        error = nil
+    }
+
+    private func handleProjectSectionOrderWriteError(_ failure: Error) async {
+        if projectSectionOrderRequest != nil && isDefiniteRejection(failure) {
+            projectSectionOrderRequest = nil
+            projectSectionOrderExpectedProjectID = nil
+            projectSectionOrderExpectedIDs = nil
+            projectSectionOrderOptionsCurrent = false
+            retryNeeded = false
+            projectSectionError = failure.localizedDescription
+            error = nil
+            do { try await refreshProjectSectionsAfterWrite() }
+            catch { projectSectionReadError = error.localizedDescription }
+        } else {
+            retryNeeded = projectSectionOrderRequest != nil
+            projectSectionError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
     func saveProjectSection() async {
         if projectSectionEditID != nil { await saveProjectSectionRename(); return }
         let id = projectHeader.text("id")
@@ -2227,6 +2382,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .project, projectCurrent,
               projectDetail.text("projectId") == id else { throw CocoaError(.coderReadCorrupt) }
         try await readProjectSectionOptions(projectID: id)
+        try await readProjectSectionOrderOptions(projectID: id)
     }
 
     func retryProjectSectionRead() async {
@@ -5498,6 +5654,11 @@ final class CoreModel: ObservableObject {
         projectSectionDeleteRequest = nil
         projectSectionDeleteExpectedID = nil
         projectSectionDeleteExpectedProjectID = nil
+        projectSectionOrderOptions = [:]
+        projectSectionOrderOptionsCurrent = false
+        projectSectionOrderRequest = nil
+        projectSectionOrderExpectedProjectID = nil
+        projectSectionOrderExpectedIDs = nil
         morePresented = false
         selectedSurface = .project
         busy = true
@@ -5583,6 +5744,9 @@ final class CoreModel: ObservableObject {
                 }
                 if projectSectionOptions.text("revision") != next.text("mutationRevision") {
                     projectSectionOptionsCurrent = false
+                }
+                if projectSectionOrderOptions.text("revision") != next.text("mutationRevision") {
+                    projectSectionOrderOptionsCurrent = false
                 }
                 if projectSectionRenameOptions.text("revision") != next.text("mutationRevision") {
                     projectSectionRenameOptionsCurrent = false
@@ -8129,6 +8293,18 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = projectSectionOrderRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectSectionOrderRetryOutcome", [request]) }
+                try acknowledgeProjectSectionOrder(result)
+                do { try await refreshProjectSectionsAfterWrite() }
+                catch {
+                    projectSectionReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
             if let request = projectNotesWriteRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -8286,6 +8462,10 @@ final class CoreModel: ObservableObject {
             }
             if projectSectionDeleteRequest != nil {
                 await handleProjectSectionDeleteWriteError(error)
+                return
+            }
+            if projectSectionOrderRequest != nil {
+                await handleProjectSectionOrderWriteError(error)
                 return
             }
             if projectNotesWriteRequest != nil {

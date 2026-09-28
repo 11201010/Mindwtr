@@ -122,6 +122,18 @@ export type PreparedProjectSectionDelete = {
     preparedAt: string;
 };
 
+/** Frozen complete live Section scope and sparse order effect for a native move. */
+export type PreparedProjectSectionOrder = {
+    request: { requestId: string; projectId: string; sectionId: string; direction: 'up' | 'down';
+        expectedSections: Section[] };
+    scope: { project: Project; sections: Section[] };
+    effect: { sections: Array<{ before: Section; after: Section }> };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    preparedAt: string;
+    result: { projectId: string; orderedIds: string[] };
+};
+
 /** Frozen final rows for a native Area create or legacy tombstone restoration. */
 export type PreparedAreaCreate = {
     kind: 'fresh' | 'restored';
@@ -408,6 +420,7 @@ export interface TaskStore {
         projectId: string; sectionId: string; title: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionDelete: (input: PreparedProjectSectionDelete & { request: {
         projectId: string; sectionId: string } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectSectionOrder: (input: PreparedProjectSectionOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaColor: (input: PreparedAreaColor & { request: { requestId: string; areaId: string; color: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaOrder: (input: PreparedAreaOrder & { request: { requestId: string; intent: AreaOrderIntent; expectedAreas: unknown[] }; result: { orderedIds: string[] } }) => Promise<PreparedTaskEditResult>;

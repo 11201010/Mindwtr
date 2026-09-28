@@ -47,6 +47,7 @@ export * from './native-host-contract-project-date';
 export * from './native-host-contract-project-section';
 export * from './native-host-contract-project-section-rename';
 export * from './native-host-contract-project-section-delete';
+export * from './native-host-contract-project-section-order';
 export * from './native-host-contract-quick-capture';
 export * from './native-host-contract-task-save';
 export * from './task-creation';

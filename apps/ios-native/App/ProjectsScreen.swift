@@ -1147,6 +1147,25 @@ struct ProjectDetailScreen: View {
                                     .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                                     .accessibilityIdentifier("project-section-row-" + row.text("id"))
                                 if model.projectSectionOptions.flag("canCreate") {
+                                    HStack(spacing: 8) {
+                                        Button { Task { await model.moveProjectSection(row.text("id"), direction: "up") } } label: {
+                                            Image(systemName: "chevron.up")
+                                                .foregroundStyle(palette.secondary)
+                                                .frame(width: 48, height: 48).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.projectSectionMoveEnabled(row.text("id"), direction: "up"))
+                                        .accessibilityLabel(model.label("projects.moveUp") + ": " + row.text("title"))
+                                        .accessibilityIdentifier("project-section-up-" + row.text("id"))
+                                        Button { Task { await model.moveProjectSection(row.text("id"), direction: "down") } } label: {
+                                            Image(systemName: "chevron.down")
+                                                .foregroundStyle(palette.secondary)
+                                                .frame(width: 48, height: 48).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.projectSectionMoveEnabled(row.text("id"), direction: "down"))
+                                        .accessibilityLabel(model.label("projects.moveDown") + ": " + row.text("title"))
+                                        .accessibilityIdentifier("project-section-down-" + row.text("id"))
+                                        Spacer(minLength: 0)
+                                    }
                                     HStack(spacing: 12) {
                                         Button { Task { await model.beginProjectSectionRename(row.text("id")) } } label: {
                                             Text(model.label("common.edit")).rnFont(14, .semibold)

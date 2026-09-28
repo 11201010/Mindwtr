@@ -239,6 +239,7 @@ import { createProjectDateMethods } from './native-host-contract-project-date';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
 import { createProjectSectionRenameMethods } from './native-host-contract-project-section-rename';
 import { createProjectSectionDeleteMethods } from './native-host-contract-project-section-delete';
+import { createProjectSectionOrderMethods } from './native-host-contract-project-section-order';
 import { createAreaCreateMethods } from './native-host-contract-area-create';
 import { createAreaColorMethods } from './native-host-contract-area-color';
 import { createAreaOrderMethods } from './native-host-contract-area-order';
@@ -1298,6 +1299,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         ...createProjectSectionRenameMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createProjectSectionDeleteMethods({ readiness, save,
+            revision: projectMutationRevision }),
+        ...createProjectSectionOrderMethods({ readiness, save,
             revision: projectMutationRevision }),
 
         ...createAreaCreateMethods({ readiness, save,

@@ -701,6 +701,31 @@ globalThis.MindwtrHost = {
     projectSectionDeleteCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectSectionDelete(JSON.parse(json))));
     },
+    projectSectionOrderOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getProjectSectionOrderOptions(JSON.parse(json)));
+        });
+    },
+    projectSectionOrderRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeProjectSectionOrderOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    projectSectionOrderPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareProjectSectionOrder(JSON.parse(json)));
+        });
+    },
+    projectSectionOrderValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectSectionOrder(JSON.parse(json))));
+    },
+    projectSectionOrderCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectSectionOrder(JSON.parse(json))));
+    },
     areaCreateOptions(): string {
         return submit(async () => {
             requireSaved();

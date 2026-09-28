@@ -29,7 +29,7 @@ const validParent = (value: unknown, id: string): value is Project => record(val
     // Legacy optional nulls are validated as absent; the frozen parent stays byte-for-byte raw.
     && validProject(Object.fromEntries(Object.entries(value).map(([key, part]) =>
         [key, part === null ? undefined : part])), id);
-const validSection = (value: unknown, id: string, projectId: string): value is Section => {
+export const validSection = (value: unknown, id: string, projectId: string): value is Section => {
     if (!record(value) || Object.keys(value).some((key) => !SECTION_KEYS.has(key as keyof Section))) return false;
     const row = Object.fromEntries(Object.entries(value).map(([key, part]) =>
         [key, part === null ? undefined : part]));

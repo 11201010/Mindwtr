@@ -22,6 +22,7 @@ export type ProjectActions = Pick<
     | 'commitPreparedProjectSectionCreate'
     | 'commitPreparedProjectSectionRename'
     | 'commitPreparedProjectSectionDelete'
+    | 'commitPreparedProjectSectionOrder'
     | 'commitPreparedAreaCreate'
     | 'commitPreparedAreaColor'
     | 'commitPreparedAreaOrder'
@@ -88,7 +89,7 @@ export type SectionActions = Pick<ProjectActions, 'addSection' | 'commitPrepared
 
 export type AreaActions = Pick<ProjectActions, 'addArea' | 'commitPreparedAreaCreate' | 'commitPreparedAreaColor' | 'commitPreparedAreaOrder' | 'commitPreparedAreaDelete' | 'updateArea' | 'deleteArea' | 'restoreArea' | 'reorderAreas'>;
 
-export type OrderingActions = Pick<ProjectActions, 'reorderProjects' | 'reorderProjectTasks' | 'reorderBoardTasks' | 'reorderSections'>;
+export type OrderingActions = Pick<ProjectActions, 'reorderProjects' | 'reorderProjectTasks' | 'reorderBoardTasks' | 'reorderSections' | 'commitPreparedProjectSectionOrder'>;
 
 export type PeopleActions = Pick<ProjectActions, 'addPerson' | 'updatePerson' | 'renamePerson' | 'deletePerson' | 'restorePerson'>;
 

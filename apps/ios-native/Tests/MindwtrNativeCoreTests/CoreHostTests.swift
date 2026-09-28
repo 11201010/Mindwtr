@@ -7226,6 +7226,37 @@ final class CoreHostTests: XCTestCase {
                 "sectionId": sectionID, "expected": token]
     }
 
+    private func seedProjectSectionOrderRows() async throws {
+        try await seedProjectSectionDeleteRows()
+        let at = recentAreaTestTime()
+        let sqlite = try SQLiteBridge(url: database)
+        // Match a persisted core Section: a NULL isCollapsed would be canonicalized to 0 by the next full save.
+        _ = try sqlite.execute("UPDATE sections SET orderNum = 100, isCollapsed = 0 WHERE id = 'delete-sibling-section'", parametersJSON: "[]")
+        _ = try sqlite.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["order-third", "focus-target", "Keep sibling", 200, 0, at, at, 2]))
+        _ = try sqlite.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["order-tombstone", "focus-target", "Deleted section", 50, 0, at, at, at, 2]))
+        _ = try sqlite.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["order-foreign", "focus-other-0", "Other Project", 50, 0, at, at, 2]))
+        sqlite.close()
+    }
+
+    private func projectSectionOrderRequest(_ core: CoreHost, sectionID: String = "order-third",
+                                            direction: String = "up", projectID: String = "focus-target") async throws -> [String: Any] {
+        let options = try object(await core.call("projectSectionOrderOptions",
+                                                 argumentsJSON: json([json(["projectId": projectID])])))
+        return ["requestId": UUID().uuidString.lowercased(), "projectId": projectID,
+                "sectionId": sectionID, "direction": direction,
+                "expectedSections": try XCTUnwrap(options["token"] as? [[String: Any]])]
+    }
+
+    private func projectSectionOrderEnvelope() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "projectSectionOrderCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        return try object(XCTUnwrap(args.first))
+    }
+
     private func projectFocusRequest(_ core: CoreHost, focused: Bool,
                                      projectID: String = "focus-target") async throws -> [String: Any] {
         let options = try object(await core.call("projectFocusOptions", argumentsJSON: json([json(["projectId": projectID])])))
@@ -8415,6 +8446,267 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: journal), malformed)
         await blocked.close()
         directory = parent
+    }
+
+    func testProjectSectionOrderFailedCommitExactRetryPreservesUnrelatedRows() async throws {
+        try await seedProjectSectionOrderRows()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("projectSectionOrderOptions",
+                                                 argumentsJSON: json([json(["projectId": "focus-target"])])))
+        XCTAssertEqual(options["canReorder"] as? Bool, true)
+        let sections = try XCTUnwrap(options["sections"] as? [[String: Any]])
+        XCTAssertEqual(sections.compactMap { $0["id"] as? String }, ["rename-section", "delete-sibling-section", "order-third"])
+        XCTAssertEqual(sections.first?["canMoveUp"] as? Bool, false)
+        XCTAssertEqual(sections.last?["canMoveDown"] as? Bool, false)
+        let request = try await projectSectionOrderRequest(core)
+        let before = try projectSectionRows()
+        let beforeProjects = try json(projectRows())
+        let beforeTask = try json(storedTask("rename-task"))
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Section order COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+        XCTAssertTrue(diagnostics.isEmpty)
+        let frozen = try projectSectionOrderEnvelope()
+        let effect = try XCTUnwrap((frozen["prepared"] as? [String: Any])?["effect"] as? [String: Any])
+        let changes = try XCTUnwrap(effect["sections"] as? [[String: Any]])
+        XCTAssertEqual(changes.count, 1)
+        XCTAssertEqual(try json(projectSectionRows()), try json(before))
+        faults.beforeSQL = nil
+        let retry = try await core.retryPending()
+        let result = try object(XCTUnwrap(retry))
+        XCTAssertEqual(diagnostics, ["projectSectionOrderApplied"])
+        XCTAssertEqual(result["projectId"] as? String, "focus-target")
+        XCTAssertEqual(result["orderedIds"] as? [String], ["rename-section", "order-third", "delete-sibling-section"])
+        let after = try projectSectionRows()
+        let changedID = try XCTUnwrap((changes[0]["after"] as? [String: Any])?["id"] as? String)
+        for old in before {
+            let id = try XCTUnwrap(old["id"] as? String)
+            let row = try XCTUnwrap(after.first { $0["id"] as? String == id })
+            if id == changedID {
+                XCTAssertEqual(row["rev"] as? Int, (old["rev"] as? Int ?? 0) + 1)
+                for (field, value) in old where !["orderNum", "rev", "revBy", "updatedAt"].contains(field) {
+                    XCTAssertEqual(try json([row[field] ?? NSNull()]), try json([value]), "\(id).\(field)")
+                }
+            } else { XCTAssertEqual(try json(row), try json(old), id) }
+        }
+        XCTAssertEqual(try json(projectRows()), beforeProjects)
+        XCTAssertEqual(try json(storedTask("rename-task")), beforeTask)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await expectFailure("STALE_REVISION") { _ = try await core.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+        for method in ["projectSectionOrderPrepare", "projectSectionOrderValidate", "projectSectionOrderCommit"] {
+            await expectFailure("unavailable") { _ = try await core.call(method, argumentsJSON: json([json(request)])) }
+        }
+        await core.close()
+    }
+
+    func testProjectSectionOrderColdFirstApplyReceiptAndTerminalCleanupAfterParentChange() async throws {
+        for kind in ["first", "receipt", "terminal"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedProjectSectionOrderRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await projectSectionOrderRequest(writer)
+            if kind == "first" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected cold Section order failure") } }
+                await expectFailure("SAVE_FAILED") { _ = try await writer.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+            } else if kind == "receipt" {
+                var journalWrites = 0
+                faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Section order lost reply") } }
+                await expectFailure("lost reply") { _ = try await writer.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+            } else {
+                faults.journalRemove = { throw HostFailure("Injected Section order terminal cleanup failure") }
+                await expectFailure("terminal cleanup") { _ = try await writer.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+            }
+            let frozen = try projectSectionOrderEnvelope()
+            XCTAssertEqual(((frozen["prepared"] as? [String: Any])?["result"] as? [String: Any])?["orderedIds"] as? [String],
+                           ["rename-section", "order-third", "delete-sibling-section"])
+            await writer.close()
+            if kind != "first" {
+                let edit = try SQLiteBridge(url: database)
+                let at = recentAreaTestTime()
+                _ = try edit.execute("UPDATE projects SET title = 'Later parent edit', status = 'waiting', rev = rev + 1 WHERE id = 'focus-target'", parametersJSON: "[]")
+                _ = try edit.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                     parametersJSON: json(["order-later", "focus-target", "Later section", 300, 0, at, at, 1]))
+                edit.close()
+            }
+            let before = try json(projectSectionRows())
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:sections|projects|tasks)\b"#,
+                             options: .regularExpression) != nil { writes += 1 }
+            }
+            let reopened = host(replayFaults)
+            let startup = try object(await reopened.start())
+            let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+            XCTAssertEqual(recovery["method"] as? String, "projectSectionOrderCommit")
+            XCTAssertEqual((recovery["result"] as? [String: Any])?["orderedIds"] as? [String],
+                           ["rename-section", "order-third", "delete-sibling-section"])
+            if kind != "first" {
+                XCTAssertEqual(writes, 0)
+                XCTAssertEqual(try json(projectSectionRows()), before)
+                XCTAssertEqual(try projectRows("focus-target").first?["status"] as? String, "waiting")
+                XCTAssertEqual(try projectRows("focus-target").first?["title"] as? String, "Later parent edit")
+                XCTAssertEqual(try projectSectionRows("order-later").first?["orderNum"] as? Int, 300)
+            } else {
+                XCTAssertEqual(try projectSectionRows("order-third").first?["orderNum"] as? Int, 50)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await reopened.close()
+            directory = parent
+        }
+    }
+
+    func testProjectSectionOrderEdgesArchivedAndNilPendingProbeWriteNothing() async throws {
+        try await seedProjectSectionOrderRows()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        var writes = 0, journals = 0
+        faults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+"#,
+                         options: .regularExpression) != nil { writes += 1 }
+        }
+        faults.journalWrite = { journals += 1 }
+        let top = try await projectSectionOrderRequest(core, sectionID: "rename-section", direction: "up")
+        await expectFailure("STALE_REVISION") { _ = try await core.call("projectSectionOrder", argumentsJSON: json([json(top)])) }
+        let bottom = try await projectSectionOrderRequest(core, sectionID: "order-third", direction: "down")
+        await expectFailure("STALE_REVISION") { _ = try await core.call("projectSectionOrder", argumentsJSON: json([json(bottom)])) }
+        await expectFailure("STALE_REVISION") { _ = try await core.call("projectSectionOrderRetryOutcome", argumentsJSON: json([json(top)])) }
+        var invalid = top
+        invalid["requestId"] = UUID().uuidString.uppercased()
+        await expectFailure("INVALID_INPUT") { _ = try await core.call("projectSectionOrder", argumentsJSON: json([json(invalid)])) }
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE projects SET status = 'archived' WHERE id = 'focus-target'", parametersJSON: "[]")
+        edit.close()
+        let archived = host()
+        _ = try await archived.start()
+        let options = try object(await archived.call("projectSectionOrderOptions",
+                                                   argumentsJSON: json([json(["projectId": "focus-target"])])))
+        XCTAssertEqual(options["canReorder"] as? Bool, false)
+        let archivedSections = try XCTUnwrap(options["sections"] as? [[String: Any]])
+        XCTAssertEqual(archivedSections.count, 3)
+        XCTAssertTrue(archivedSections.allSatisfy { $0["canMoveUp"] as? Bool == false && $0["canMoveDown"] as? Bool == false })
+        await expectFailure("STALE_REVISION") { _ = try await archived.call("projectSectionOrder", argumentsJSON: json([json(top)])) }
+        await archived.close()
+    }
+
+    func testProjectSectionOrderStaleFullScopeAndPartialReceiptRefuseWithoutOverwrite() async throws {
+        for kind in ["new-section", "partial-receipt"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedProjectSectionOrderRows()
+            if kind == "partial-receipt" {
+                // No integer fits between 0 and 1, so the shared sparse planner rebalances two rows.
+                let dense = try SQLiteBridge(url: database)
+                _ = try dense.execute("UPDATE sections SET orderNum = 1 WHERE id = 'delete-sibling-section'", parametersJSON: "[]")
+                _ = try dense.execute("UPDATE sections SET orderNum = 2 WHERE id = 'order-third'", parametersJSON: "[]")
+                dense.close()
+            }
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await projectSectionOrderRequest(writer)
+            if kind == "new-section" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Section order") } }
+                await expectFailure("SAVE_FAILED") { _ = try await writer.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+            } else {
+                var journalWrites = 0
+                faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Section order lost reply") } }
+                await expectFailure("lost reply") { _ = try await writer.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+            }
+            let frozen = try projectSectionOrderEnvelope()
+            let effect = try XCTUnwrap((frozen["prepared"] as? [String: Any])?["effect"] as? [String: Any])
+            let changes = try XCTUnwrap(effect["sections"] as? [[String: Any]])
+            if kind == "partial-receipt" { XCTAssertGreaterThanOrEqual(changes.count, 2) }
+            await writer.close()
+            let edit = try SQLiteBridge(url: database)
+            if kind == "new-section" {
+                let at = recentAreaTestTime()
+                _ = try edit.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                     parametersJSON: json(["order-later", "focus-target", "Later", 300, 0, at, at, 1]))
+            } else {
+                let original = try XCTUnwrap(changes.first?["before"] as? [String: Any])
+                let id = try XCTUnwrap(original["id"] as? String)
+                _ = try edit.execute("UPDATE sections SET orderNum = ?, rev = ?, revBy = ?, updatedAt = ? WHERE id = ?",
+                                     parametersJSON: json([original["order"] ?? NSNull(), original["rev"] ?? NSNull(),
+                                                           original["revBy"] ?? NSNull(), original["updatedAt"] ?? NSNull(), id]))
+            }
+            edit.close()
+            let before = try json(projectSectionRows())
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:sections|projects|tasks)\b"#,
+                             options: .regularExpression) != nil { writes += 1 }
+            }
+            let replay = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+            XCTAssertEqual(writes, 0)
+            XCTAssertEqual(try json(projectSectionRows()), before)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+            await replay.close()
+            directory = parent
+        }
+    }
+
+    func testProjectSectionOrderForgedPendingAndTerminalJournalsRefuseBeforeSQLite() async throws {
+        try await seedProjectSectionOrderRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await projectSectionOrderRequest(writer)
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Section order") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("projectSectionOrder", argumentsJSON: json([json(request)])) }
+        let saved = try object(String(contentsOf: journal))
+        let original = try projectSectionOrderEnvelope()
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for corruption in ["request", "effect", "result", "terminal", "malformed"] {
+            var envelope = original
+            var forged = saved
+            if corruption == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["direction"] = "down"
+                envelope["request"] = changed
+            } else if corruption == "effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                effect["sections"] = []
+                prepared["effect"] = effect
+                envelope["prepared"] = prepared
+            } else if corruption == "result" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["result"] = ["projectId": "focus-target", "orderedIds": ["rename-section", "delete-sibling-section", "order-third"]]
+                envelope["prepared"] = prepared
+            } else if corruption == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["projectId": "focus-target", "orderedIds": ["order-third"]])]]
+            }
+            forged["argumentsJSON"] = corruption == "malformed" ? "[]" : try json([json(envelope)])
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0, removals = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            blockedFaults.journalRemove = { removals += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0, corruption)
+            XCTAssertEqual(removals, 0, corruption)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, corruption)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, corruption)
+            await blocked.close()
+        }
     }
 
     func testProjectCreateOptionsAllAreasDefaultAndDuplicateDoesNotWrite() async throws {
