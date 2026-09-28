@@ -254,6 +254,7 @@ export * from './quick-capture-model';
 export * from './capture-deeplink';
 export * from './dropbox-auth-callback';
 export * from './entry-points';
+export * from './capture-modal-model';
 export * from './session-restore';
 export * from './whisper-models';
 export * from './import-apply';
