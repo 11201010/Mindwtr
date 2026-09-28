@@ -6,6 +6,8 @@ import com.facebook.react.modules.network.OkHttpClientProvider
 import expo.modules.core.interfaces.ApplicationLifecycleListener
 import expo.modules.core.interfaces.Package
 import java.util.concurrent.TimeUnit
+import okhttp3.Interceptor
+import okhttp3.Response
 
 /** Connect timeout for every fetch/XHR the app makes on Android. Zero means not installed. */
 object SyncHttpClientConfig {
@@ -13,6 +15,26 @@ object SyncHttpClientConfig {
 
   @Volatile
   var installedConnectTimeoutMs: Long = 0L
+}
+
+/**
+ * Hands a write's redirect back to JavaScript unfollowed. Core asks for
+ * `redirect: 'error'` on these methods, but React Native's fetch and XHR drop that
+ * option, and OkHttp turns a PUT answered 301/302/303 into a body-less GET: the
+ * GET's 200 reads as a finished sync write that never happened. Without a Location
+ * OkHttp has nowhere to follow, and core refuses the 3xx like desktop does.
+ * Same method set as core's NO_REDIRECT_METHODS (http-utils.ts). Keyed on the method
+ * because the option never reaches native code; the app's few writes that bypass core
+ * (analytics, feedback, Dropbox token) go to fixed hosts that do not redirect.
+ */
+internal object WriteRedirectRefusal : Interceptor {
+  private val methods = setOf("PUT", "POST", "PATCH", "DELETE")
+
+  override fun intercept(chain: Interceptor.Chain): Response {
+    val response = chain.proceed(chain.request())
+    if (!response.isRedirect || chain.request().method !in methods) return response
+    return response.newBuilder().removeHeader("Location").build()
+  }
 }
 
 // Auto-discovered by expo-modules autolinking (any *Package.kt in a module's
@@ -30,6 +52,7 @@ class SyncHttpClientPackage : Package {
         OkHttpClientProvider.setOkHttpClientFactory {
           OkHttpClientProvider.createClientBuilder(application)
             .connectTimeout(SyncHttpClientConfig.CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .addNetworkInterceptor(WriteRedirectRefusal)
             .build()
         }
         SyncHttpClientConfig.installedConnectTimeoutMs = SyncHttpClientConfig.CONNECT_TIMEOUT_MS

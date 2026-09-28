@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { webdavPutJson } from '@mindwtr/core';
 
 class FakeXhr {
   static instances: FakeXhr[] = [];
@@ -122,6 +123,21 @@ describe('backgroundSafeFetch', () => {
     setBackgroundSafeFetchDeadline(Date.now() - 1);
     await expect(backgroundSafeFetch('https://dav.example/c')).rejects.toThrow(/deadline/);
     expect(FakeXhr.instances).toHaveLength(2);
+  });
+
+  it('fails a sync PUT whose redirect the Android client handed back unfollowed', async () => {
+    const { backgroundSafeFetch } = await loadModule();
+    const pending = webdavPutJson('https://dav.example/dav/data.json', { tasks: [] }, { fetcher: backgroundSafeFetch });
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    const xhr = FakeXhr.instances[0];
+    expect(xhr.method).toBe('PUT');
+    xhr.status = 301;
+    xhr.responseURL = xhr.url;
+    xhr.response = new ArrayBuffer(0);
+    xhr.onload?.();
+
+    await expect(pending).rejects.toThrow('fetch failed: unexpected redirect');
+    expect(FakeXhr.instances).toHaveLength(1);
   });
 
   it('falls back to the platform fetch where React Native XMLHttpRequest is absent', async () => {

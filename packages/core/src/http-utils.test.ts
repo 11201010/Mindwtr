@@ -11,6 +11,7 @@ import {
     SYNC_LOCAL_INSECURE_URL_OPTIONS,
 } from './http-utils';
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from './attachment-validation';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
 
 describe('isAllowedInsecureUrl', () => {
     it('allows HTTPS URLs', () => {
@@ -378,6 +379,44 @@ describe('fetchWithTimeout', () => {
             expect(calls).toEqual(['https://dav.example.com/data.json']);
         },
     );
+
+    it.each([301, 302, 303, 307, 308])(
+        'refuses a %s a fetcher handed back unfollowed on a write, like undici does',
+        async (status) => {
+            // React Native ignores `redirect`; its Android client returns the redirect
+            // unfollowed instead of turning the PUT into a GET.
+            const logs: LogPayload[] = [];
+            setLogger((payload) => { logs.push(payload); });
+            try {
+                await expect(fetchWithTimeoutAndConsume(
+                    'https://user:secret@dav.example.com/data.json',
+                    { method: 'PUT', body: '{"tasks":[]}' },
+                    1_000,
+                    async () => new Response(null, { status }),
+                    'Request timed out',
+                    () => 'written',
+                )).rejects.toThrow('fetch failed: unexpected redirect');
+            } finally {
+                setLogger(consoleLogger);
+            }
+            expect(logs).toEqual([expect.objectContaining({
+                level: 'warn',
+                context: { releaseCheck: 'v1.3.3/fetch-redirect-refused', method: 'PUT', status },
+            })]);
+            expect(JSON.stringify(logs)).not.toContain('secret');
+        },
+    );
+
+    it('hands a redirect status back to a read, which keeps the default policy', async () => {
+        await expect(fetchWithTimeoutAndConsume(
+            'https://dav.example.com/data.json',
+            { method: 'GET' },
+            1_000,
+            async () => new Response(null, { status: 301 }),
+            'Request timed out',
+            (response) => response.status,
+        )).resolves.toBe(301);
+    });
 
     it.each(['GET', 'HEAD', 'PROPFIND', 'MKCOL', undefined])(
         'leaves %s on the default redirect policy',

@@ -111,6 +111,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'operation',
     // cloudkit-retry-hint (desktop and mobile cloudkit-sync.ts)
     'retryAfterMs',
+    // fetch-redirect-refused (core http-utils.ts) reuses method above: the refused redirect's HTTP status.
+    'status',
     // font-family-applied (apps/desktop/src/App.tsx, #1244) — the chosen font's name, and
     // whether the renderer found a real bold face for it or is faking one.
     'family', 'boldFace',

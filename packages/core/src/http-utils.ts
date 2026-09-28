@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from './attachment-validation';
+import { logWarn } from './logger';
 
 export type InsecureUrlOptions = {
     allowAndroidEmulator?: boolean;
@@ -439,10 +440,14 @@ export const createProgressStream = (bytes: Uint8Array, onProgress: (loaded: num
  * header cross-origin but replays the BODY, so a compromised endpoint answering a PUT
  * with `307 Location: attacker.example` would be handed the whole sync document. Reads
  * keep the default `follow` -- WebDAV servers legitimately 301 collection URLs.
- * Known ceiling: React Native's XHR-backed fetch ignores `redirect`, so this only binds
- * on undici/browser fetch (desktop, cloud, MCP).
+ * React Native ignores `redirect`: its Android OkHttp client hands these methods'
+ * redirects back unfollowed (SyncHttpClientPackage.kt) and the check below refuses them.
+ * Known ceiling: RN on iOS still follows them, and expo-file-system's streamed uploads
+ * use their own clients on both platforms.
  */
 const NO_REDIRECT_METHODS = new Set(['PUT', 'POST', 'PATCH', 'DELETE']);
+/** The statuses undici refuses under `redirect: 'error'`. */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 /** Appended to a timeout message when the timer fired far later than its delay:
  *  the app was suspended by the OS with the request in flight. Sync treats it
@@ -499,6 +504,19 @@ export const fetchWithTimeoutAndConsume = async <T>(
             requestInit.duplex = 'half';
         }
         const response = await waitForAbort(fetcher(url, requestInit), signal);
+        if (requestInit.redirect === 'error' && REDIRECT_STATUSES.has(response.status)) {
+            cancelUnlockedResponseBody(response);
+            logWarn('Write request redirect refused', {
+                scope: 'http',
+                category: 'network',
+                context: {
+                    releaseCheck: 'v1.3.3/fetch-redirect-refused',
+                    method: (init.method ?? 'GET').toUpperCase(),
+                    status: response.status,
+                },
+            });
+            throw new TypeError('fetch failed: unexpected redirect');
+        }
         try {
             return await waitForAbort(
                 consume(response, signal),
