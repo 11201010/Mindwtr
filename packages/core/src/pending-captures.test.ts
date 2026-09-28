@@ -156,6 +156,61 @@ describe('drainPendingCaptureQueue', () => {
         expect(queue.stored.size).toBe(0);
     });
 
+    describe('a capture that makes a +Project', () => {
+        const liveProjects = () => useTaskStore.getState()._allProjects.filter((project) => !project.deletedAt);
+        const renameTrip = async () => {
+            const trip = liveProjects().find((project) => project.title === 'Trip')!;
+            await useTaskStore.getState().updateProject(trip.id, { title: 'Journey' });
+        };
+
+        it('replayed after its task was stored, writes nothing, even after the project was renamed', async () => {
+            await openStore([]);
+            const queue = fakeQueue({ [`${CAPTURE_ID}.json`]: { id: CAPTURE_ID, title: 'Buy milk +Trip', source: 'android-quick-capture' } });
+            queue.failDelete.add(`${CAPTURE_ID}.json`);
+
+            expect(await drainPendingCaptureQueue(storeDeps(queue.port))).toBe(0);
+            await renameTrip();
+            await restartStore();
+            const before = storeData();
+
+            expect(await drainPendingCaptureQueue(storeDeps(queue.port))).toBe(1);
+            storeData().forEach((entry, index) => expect(entry).toBe(before[index]));
+            expect(liveProjects().map((project) => project.title)).toEqual(['Journey']);
+            expect(queue.stored.size).toBe(0);
+        });
+
+        it('replayed after its task save failed, takes the project it made, renamed since, and makes no second one', async () => {
+            await openStore([]);
+            const queue = fakeQueue({ [`${CAPTURE_ID}.json`]: { id: CAPTURE_ID, title: 'Buy milk +Trip', source: 'android-quick-capture' } });
+            const refuseTask = vi.fn(async () => ({ success: false, error: 'store unavailable' }));
+
+            expect(await drainPendingCaptureQueue(storeDeps(queue.port, { addTask: refuseTask }))).toBe(0);
+            expect(liveProjects().map((project) => project.title)).toEqual(['Trip']);
+            await renameTrip();
+
+            expect(await drainPendingCaptureQueue(storeDeps(queue.port))).toBe(1);
+            const [journey] = liveProjects();
+            expect(liveProjects().map((project) => project.title)).toEqual(['Journey']);
+            expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === CAPTURE_ID)).toMatchObject({ title: 'Buy milk', projectId: journey.id });
+        });
+
+        it('replayed after the project it made was deleted, makes no project and keeps its verbatim title', async () => {
+            await openStore([]);
+            const queue = fakeQueue({ [`${CAPTURE_ID}.json`]: { id: CAPTURE_ID, title: 'Buy milk +Trip', source: 'android-quick-capture' } });
+            const refuseTask = vi.fn(async () => ({ success: false, error: 'store unavailable' }));
+            const allProjects = () => useTaskStore.getState()._allProjects;
+
+            expect(await drainPendingCaptureQueue(storeDeps(queue.port, { addTask: refuseTask, getProjects: allProjects }))).toBe(0);
+            await useTaskStore.getState().deleteProject(liveProjects()[0].id);
+
+            expect(await drainPendingCaptureQueue(storeDeps(queue.port, { getProjects: allProjects }))).toBe(1);
+            expect(liveProjects()).toEqual([]);
+            expect(new Set(allProjects().map((project) => project.id)).size).toBe(allProjects().length);
+            expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === CAPTURE_ID)).toMatchObject({ title: 'Buy milk +Trip' });
+            expect(useTaskStore.getState()._allTasks.find((entry) => entry.id === CAPTURE_ID)?.projectId).toBeUndefined();
+        });
+    });
+
     it('leaves audio and Pomodoro items in the queue untouched without their host ports', async () => {
         await openStore([task('open')]);
         const queue = fakeQueue({

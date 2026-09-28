@@ -36,6 +36,7 @@ export function drainPendingCapturesFromStore(extras: DrainExtras = {}): Promise
             people,
             settings,
             getTasks: () => useTaskStore.getState()._allTasks,
+            getProjects: () => useTaskStore.getState()._allProjects,
             flushPendingSave: flushPendingTaskActionSave,
             ...extras,
         });

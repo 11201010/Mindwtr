@@ -21,6 +21,7 @@ import { safeParseDate } from './date';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
 import { buildQuickAddParseOptions, parseQuickAdd } from './quick-add';
 import type { AppData, Area, Person, Project, Task } from './types';
+import { generateDeterministicUUID } from './uuid';
 
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const ANDROID_QUICK_CAPTURE_SOURCE = 'android-quick-capture';
@@ -274,6 +275,8 @@ export type PendingCaptureStoreDeps = {
     settings: AppData['settings'];
     /** Fresh all-task state, including tombstones, for commands and capture replay checks. */
     getTasks?: () => Task[];
+    /** Fresh all-project state, including tombstones, for the project a capture made. */
+    getProjects?: () => Project[];
     /** Resolves once the store's writes are durable; throws when they are not. */
     flushPendingSave?: () => Promise<void>;
     applyPomodoroCommand?: (command: PendingPomodoro) => Promise<'applied' | 'already-applied' | 'stale'>;
@@ -478,12 +481,25 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
         people,
         settings,
         getTasks,
+        getProjects,
         flushPendingSave,
         applyPomodoroCommand,
         queue,
         log,
         audio,
     } = deps;
+
+    // A +Project a capture makes is named by the capture: a replay finds it,
+    // renamed or not, and never makes a second one. One deleted or archived
+    // since is not used again, and the capture keeps its verbatim title.
+    const captureAddProject = (captureId: string | undefined): PendingCaptureStoreDeps['addProject'] => (
+        captureId === undefined ? addProject : async (title, color, props) => {
+            const id = generateDeterministicUUID(`${captureId}:project:${title.trim().toLowerCase()}`);
+            const own = (getProjects?.() ?? projects).find((project) => project.id === id);
+            if (own) return isSelectableProjectForTaskAssignment(own) ? own : null;
+            return addProject(title, color, { ...props, id });
+        }
+    );
 
     let names: string[];
     try {
@@ -781,7 +797,7 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
                 source: capture.source,
             };
             const activeTasks = currentTasks.filter((task) => !task.deletedAt && !task.purgedAt);
-            const assembled = await assembleCaptureTask(textCapture, { addProject, projects, areas, tasks: activeTasks, people, settings }, log);
+            const assembled = await assembleCaptureTask(textCapture, { addProject: captureAddProject(captureId), projects, areas, tasks: activeTasks, people, settings }, log);
             const title = assembled?.title ?? textCapture.title;
             const props = assembled?.props ?? buildPendingCaptureTaskProps(textCapture, projects);
             let result: unknown;
@@ -843,22 +859,26 @@ export async function drainPendingCaptureQueue(deps: PendingCaptureDrainDeps): P
             continue;
         }
 
-        const assembled = await assembleCaptureTask(capture, { addProject, projects, areas, tasks, people, settings }, log);
         // Every native writer emits a UUID id, so it doubles as the capture id:
-        // core makes it the task id and returns the existing one on replay, so a
-        // crash between the store write and the queue delete cannot duplicate the
-        // task. Non-UUID ids (the iOS Shortcut) keep the legacy path.
+        // core makes it the task id, so a crash between the store write and the
+        // queue delete cannot duplicate the task. A capture already stored under
+        // its id is a replay and writes nothing, not even a +Project it names.
+        // Non-UUID ids (the iOS Shortcut) keep the legacy path.
         const captureId = UUID_PATTERN.test(capture.id) ? capture.id.toLowerCase() : undefined;
-        const captureOptions: [{ captureId: string }?] = captureId ? [{ captureId }] : [];
-        const result = assembled
-            ? await addTask(assembled.title, assembled.props, ...captureOptions)
-            : await addTask(capture.title, buildPendingCaptureTaskProps(capture, projects), ...captureOptions);
-        // A different id back means the capture id did not take; retain the file
-        // rather than risk a second task, exactly like the audio branch.
-        if (
-            isFailedResult(result)
-            || (captureId && resultId(result)?.toLowerCase() !== captureId)
-        ) continue;
+        const stored = captureId !== undefined && (getTasks?.() ?? tasks).some((task) => task.id.toLowerCase() === captureId);
+        if (!stored) {
+            const assembled = await assembleCaptureTask(capture, { addProject: captureAddProject(captureId), projects, areas, tasks, people, settings }, log);
+            const captureOptions: [{ captureId: string }?] = captureId ? [{ captureId }] : [];
+            const result = assembled
+                ? await addTask(assembled.title, assembled.props, ...captureOptions)
+                : await addTask(capture.title, buildPendingCaptureTaskProps(capture, projects), ...captureOptions);
+            // A different id back means the capture id did not take; retain the file
+            // rather than risk a second task, exactly like the audio branch.
+            if (
+                isFailedResult(result)
+                || (captureId && resultId(result)?.toLowerCase() !== captureId)
+            ) continue;
+        }
 
         // Delete only after the store write resolved; a crash in between at
         // worst re-ingests one capture.

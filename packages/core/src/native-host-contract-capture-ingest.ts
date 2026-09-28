@@ -103,6 +103,7 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
                     people,
                     settings,
                     getTasks: () => useTaskStore.getState()._allTasks,
+                    getProjects: () => useTaskStore.getState()._allProjects,
                     flushPendingSave: flushDurably,
                     queue,
                     log,
