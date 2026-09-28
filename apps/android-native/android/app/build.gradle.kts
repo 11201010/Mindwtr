@@ -77,8 +77,9 @@ dependencies {
     implementation("androidx.biometric:biometric:1.2.0-alpha04")
     // biometric asks for fragment 1.2.5, which predates activity 1.10's result registry; MainActivity is a FragmentActivity.
     implementation("androidx.fragment:fragment:1.8.9")
-    // JVM unit tests of plain Kotlin (the entry queue).
+    // JVM unit tests of plain Kotlin (the entry queue, WriteJournalTest); Android's org.json is a stub there.
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
 val buildCoreBundle by tasks.registering(Exec::class) {

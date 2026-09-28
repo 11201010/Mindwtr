@@ -251,7 +251,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val reopenCapture = storedCapture?.takeIf { saved.get<Boolean>("capturing") == true || it.pending != null }
         Thread({
             try {
-                val runtime = ProcessCoreHost.get(getApplication())
+                val runtime = ProcessCoreHost.get(getApplication(), prefs.getString(LANGUAGE_KEY, null))
                 // The language and theme chosen in this app's Settings (RN's device keys) win over the ones found at boot.
                 applyDeviceChoices(runtime, prefs)
                 // RN's app lock, before any screen shows data (an owed save does not block it).
@@ -864,6 +864,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "areaFilter" -> sendAreaFilter(action)
             "saveSearch" -> sendSaveSearch(action)
             "inboxCommit", "inboxSkip" -> sendAnswer(action, reopen = processing?.hidden == false)
+            // A journal replay that stopped on an owed save (ProcessCoreHost's boot): the journal's requests again, in order.
+            "journal" -> perform(action) { runtime ->
+                runtime.replayJournal().owed?.let { throw IllegalStateException(it) }
+                acknowledged(action)
+            }
             // A read that met an unsaved write: read again under the same lock; its success clears it.
             "storage" -> perform(action) { runtime ->
                 val lists = read(runtime, depth())

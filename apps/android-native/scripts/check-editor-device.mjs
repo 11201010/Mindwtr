@@ -9,7 +9,7 @@
 // (e) clearing the due date; (b) a draft kept through rotation; (c) a draft
 // kept through process death that still saves; (d) a failed commit that keeps
 // its exact retry through rotation, Back, and a new screen, then stores once;
-// (i) a save whose reply dies with the process is sent again on relaunch and stored once;
+// (i) a save whose reply dies with the process is replayed from the journal and sent again on relaunch, and stored once;
 // (g) a context chosen from core's suggestions and (h) a due date with a time,
 // in one save; (j) a new day for a timed due date keeps its time; (f) status Reference, whose rule core applies (the due date
 // goes), and a project from the Destination picker. It asserts through the
@@ -378,7 +378,10 @@ try {
     nodes = await inbox();
     processId = pid();
     check(boots(processId) === 1 && !inEditor(nodes), '(i) the relaunch sent the saved request again and closed the editor');
-    check(saves(processId, 'saved') === 1, '(i) task-command log shows the re-sent saveTaskDraft saved in the new process');
+    // The boot's journal replay sends the request first (its entry was on disk); the editor's own re-send then unlocks the draft.
+    // Both answer saved, and core writes once (the revision below).
+    check(logs(processId).includes('Native Android journal replay sent=1 dropped=1 left=0 owed=none') && saves(processId, 'saved') === 2,
+        '(i) the boot replayed the journaled save, and the editor\'s re-send answered saved too, in the new process');
     row = expectStored({ title: titleI, status: 'inbox', dueDate: null, rev: row.rev + 1 }, '(i) the edit is stored from one write');
 
     // (g) A context from core's suggestions, and (h) a due date with a time (RN's clock button), in one save.

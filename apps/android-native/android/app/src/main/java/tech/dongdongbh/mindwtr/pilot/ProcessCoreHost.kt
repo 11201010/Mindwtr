@@ -57,11 +57,15 @@ internal object ProcessCoreHost {
         if (failure?.action == action) failure = null
     }
 
-    /** Blocks until the shared boot finishes. Call off the main thread. */
-    fun get(app: Application): CoreHost {
+    /**
+     * Blocks until the shared boot finishes. Call off the main thread. [language] is the language chosen in this app's
+     * Settings (RN's device key), if any: the boot that starts here sets it before the journal replay, so a replayed
+     * request (a capture's words) is read in the language it was written in.
+     */
+    fun get(app: Application, language: String? = null): CoreHost {
         var starter = false
         val task = synchronized(this) {
-            boot ?: FutureTask { start(app) }.also {
+            boot ?: FutureTask { start(app, language) }.also {
                 boot = it
                 boots += 1
                 starter = true
@@ -80,7 +84,7 @@ internal object ProcessCoreHost {
         return host
     }
 
-    private fun start(app: Application): CoreHost {
+    private fun start(app: Application, language: String?): CoreHost {
         // Nothing opens the RN database until the guard passes; it returns files/SQLite/mindwtr.db
         // and what RN left in AsyncStorage, which the JS host imports as RN's next launch would.
         val legacy = if (BuildConfig.RN_STORAGE) {
@@ -88,16 +92,32 @@ internal object ProcessCoreHost {
         } else {
             null
         }
-        val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app))
+        val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
+            File(app.filesDir, "journal"))
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
-            setLanguage(runtime, legacy?.language)
+            setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
+            replay(runtime)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
             throw failure
         }
+    }
+
+    /**
+     * The write journal's replay: after the validated load, before this boot hands the host to any screen or entry point
+     * (get() waits for it). A replay stopped by an owed save leaves that entry, and every screen opens on its exact retry
+     * (InboxViewModel.retryOwed, kind "journal"), as for any owed command. Only a replay that left nothing prunes core's old
+     * receipts, so an entry never outlives the receipt its replay needs; a failed prune only logs (the next boot prunes).
+     */
+    private fun replay(runtime: CoreHost) {
+        val owed = runtime.replayJournal().owed
+        if (owed != null) return recordFailure(PendingFailure(FailedAction("journal", ""), owed, null))
+        runCatching { runtime.pruneReceipts() }
+            .onSuccess { Log.i(CoreHost.TAG, "Native Android receipts pruned=${it.optInt("pruned")}") }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android receipts prune failed", it) }
     }
 
     /** Core's setLanguage, then the label map read again in that language. Screens render only after this. */
