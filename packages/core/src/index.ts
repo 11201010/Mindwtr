@@ -96,6 +96,8 @@ export * from './mobile-sync-utils';
 export * from './mobile-sync-service';
 export * from './mobile-background-sync';
 export * from './mobile-sync-triggers';
+export * from './mobile-reminder-alarms';
+export * from './mobile-notification-open';
 export * from './mobile-attachment-files';
 export * from './mobile-attachment-installer';
 export * from './mobile-attachment-common';
