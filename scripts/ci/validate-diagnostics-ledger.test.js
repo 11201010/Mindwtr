@@ -65,6 +65,14 @@ function collectCodeSlugs({ file, source }) {
       }
     }
   }
+  // Native Swift diagnostics use NSLog; unused string constants do not count.
+  if (file.endsWith(".swift")) {
+    for (const message of source.matchAll(/\bNSLog\(\s*"((?:\\[\s\S]|[^"\\])*)"/g)) {
+      for (const match of message[1].matchAll(/\breleaseCheck=([\w./-]+)/g)) {
+        sites.push({ file, slug: match[1] });
+      }
+    }
+  }
   return sites;
 }
 
@@ -162,6 +170,18 @@ describe("release diagnostics ledger", () => {
     ` })).toEqual([
       { file, slug: "v1.3.0/android-reuse" },
       { file, slug: "v1.3.0/android-guard" },
+    ]);
+  });
+
+  it("resolves native Swift diagnostic fields only inside NSLog calls", () => {
+    const file = "apps/ios-native/Sources/MindwtrNativeCore/Example.swift";
+    expect(collectCodeSlugs({ file, source: `
+      let unused = "releaseCheck=v1.3.3/unused-swift"
+      NSLog("Native save releaseCheck=v1.3.3/native-swift-save outcome=%@", outcome)
+      NSLog("Native retry releaseCheck=v1.3.3/native-swift-retry")
+    ` })).toEqual([
+      { file, slug: "v1.3.3/native-swift-save" },
+      { file, slug: "v1.3.3/native-swift-retry" },
     ]);
   });
 
