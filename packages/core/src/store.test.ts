@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { addDays } from 'date-fns';
 import { safeParseDate } from './date';
+import { prepareRestoredBackupDataForSync } from './backup-transfer';
 import {
     useTaskStore,
     flushPendingSave,
@@ -12,7 +13,9 @@ import {
 import { buildEntityMap } from './store-helpers';
 import { planTaskUpdateEffects } from './store-tasks';
 import { computeSyncPayloadFingerprint } from './sync-helpers';
+import { toRemoteSyncDocument } from './sync-document';
 import { mergeAppData } from './sync';
+import { markSavedFilterDeleted } from './saved-filters';
 import { mockAppData } from './sync-test-utils';
 import { shouldShowTaskForStart, sortTasksByBoardOrder } from './task-utils';
 import { generateUUID } from './uuid';
@@ -2087,6 +2090,77 @@ describe('TaskStore', () => {
         expect(state.settings.savedFilters?.[0]?.name).toBe('Desk');
         expect(state.settings.syncPreferencesUpdatedAt?.savedFilters).toBe('2026-03-21T12:00:00.000Z');
         expect(state.lastDataChangeAt).toBe(new Date('2026-03-21T12:00:00.000Z').getTime());
+    });
+
+    it('keeps immediate edits and deletes newer than restored saved-filter clocks', async () => {
+        const restoredAt = '2026-09-28T12:00:00.000Z';
+        vi.setSystemTime(new Date(restoredAt));
+        const filter = {
+            id: 'filter-1',
+            name: 'Backup name',
+            view: 'focus' as const,
+            criteria: {},
+            createdAt: '2026-09-01T00:00:00.000Z',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+        };
+        const backup: AppData = {
+            tasks: [], projects: [], sections: [], areas: [], people: [],
+            settings: {
+                theme: 'dark',
+                savedFilters: [filter],
+                syncPreferences: { appearance: true, savedFilters: true },
+            },
+        };
+        const previousData: AppData = {
+            ...backup,
+            settings: {
+                theme: 'light',
+                savedFilters: [{ ...filter, updatedAt: restoredAt, deletedAt: restoredAt }],
+                syncPreferences: { appearance: true, savedFilters: true },
+                syncPreferencesUpdatedAt: { appearance: restoredAt, savedFilters: restoredAt },
+            },
+        };
+        const restored = prepareRestoredBackupDataForSync(backup, { previousData, restoredAt });
+        useTaskStore.setState({ settings: { ...restored.settings, deviceId: 'device-a' } });
+
+        await useTaskStore.getState().updateSettings({
+            theme: 'light',
+            savedFilters: restored.settings.savedFilters?.map((saved) => (
+                saved.id === filter.id
+                    ? { ...saved, name: 'Edited immediately', updatedAt: restoredAt }
+                    : saved
+            )),
+        });
+
+        const editedSettings = useTaskStore.getState().settings;
+        const editedFilter = editedSettings.savedFilters?.[0];
+        expect(Date.parse(editedSettings.syncPreferencesUpdatedAt?.appearance ?? '')).toBeGreaterThan(
+            Date.parse(restored.settings.syncPreferencesUpdatedAt?.appearance ?? ''),
+        );
+        expect(Date.parse(editedSettings.syncPreferencesUpdatedAt?.savedFilters ?? '')).toBeGreaterThan(
+            Date.parse(restored.settings.syncPreferencesUpdatedAt?.savedFilters ?? ''),
+        );
+        expect(Date.parse(editedFilter?.updatedAt ?? '')).toBeGreaterThan(
+            Date.parse(restored.settings.savedFilters?.[0]?.updatedAt ?? ''),
+        );
+        const editedData = { ...backup, settings: editedSettings };
+        const mergedEdit = mergeAppData(editedData, toRemoteSyncDocument(restored), { nowIso: restoredAt });
+        expect(mergedEdit.settings.theme).toBe('light');
+        expect(mergedEdit.settings.savedFilters?.[0]?.name).toBe('Edited immediately');
+
+        await useTaskStore.getState().updateSettings({
+            savedFilters: markSavedFilterDeleted(editedSettings.savedFilters, filter.id, restoredAt),
+        });
+
+        const deletedSettings = useTaskStore.getState().settings;
+        const deletedFilter = deletedSettings.savedFilters?.[0];
+        expect(Date.parse(deletedFilter?.deletedAt ?? '')).toBeGreaterThan(Date.parse(editedFilter?.updatedAt ?? ''));
+        const deletedData = { ...backup, settings: deletedSettings };
+        const remoteEdited = toRemoteSyncDocument(editedData);
+        const mergedDelete = mergeAppData(deletedData, remoteEdited, { nowIso: restoredAt });
+        expect(mergedDelete.settings.savedFilters?.[0]?.deletedAt).toBe(deletedFilter?.deletedAt);
+        expect(toRemoteSyncDocument(mergeAppData(mergedDelete, remoteEdited, { nowIso: restoredAt })))
+            .toEqual(toRemoteSyncDocument(mergedDelete));
     });
 
     it('does not treat sync bookkeeping updates as local data mutations', async () => {

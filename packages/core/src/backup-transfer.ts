@@ -1,5 +1,8 @@
-import type { AppData, Attachment } from './types';
+import type { AppData, Attachment, SavedFilter, SettingsSyncGroup } from './types';
 import { createImportDiagnostics, type ImportDiagnostic } from './import-diagnostics';
+import { logInfo } from './logger';
+import { keepSavedFilters } from './saved-filters';
+import { isSettingsSyncGroupEnabled } from './settings-options';
 import { nextRevision, normalizeRevision, SYNC_BACKUP_RESTORE_REV_BY } from './sync-revision';
 import {
     compactPurgedProjectForLocalStorage,
@@ -14,6 +17,8 @@ import {
     validateMergedSyncData,
 } from './sync-normalization';
 import { parseSyncDocument } from './sync-document';
+import { advanceLatestSyncTimestamp } from './sync-helpers';
+import { DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS } from './sync-types';
 
 export const BACKUP_FILE_PREFIX = 'mindwtr-backup-';
 
@@ -294,6 +299,100 @@ const stripDeviceLocalRestoreSettings = (settings: AppData['settings']): AppData
     return nextSettings;
 };
 
+const RESTORED_SETTINGS_SYNC_GROUPS: SettingsSyncGroup[] = [
+    'appearance',
+    'language',
+    'gtd',
+    'externalCalendars',
+    'ai',
+    'savedFilters',
+];
+
+const timestampMs = (value: unknown): number | undefined => {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const restoreTimestampAfter = (
+    restoredAt: string,
+    knownValues: unknown[],
+    minimumGapMs = 0,
+): string => {
+    const knownLatest = Math.max(
+        ...knownValues.map(timestampMs).filter((value): value is number => value !== undefined),
+        Number.NEGATIVE_INFINITY,
+    );
+    const restoreFloor = new Date(Math.max(
+        Date.parse(restoredAt) - 1,
+        knownLatest + minimumGapMs,
+    )).toISOString();
+    return advanceLatestSyncTimestamp(restoreFloor) ?? restoredAt;
+};
+
+const prepareRestoredSavedFiltersForSync = (
+    restoredValue: AppData['settings']['savedFilters'],
+    previousValue: AppData['settings']['savedFilters'],
+    restoredAt: string,
+): SavedFilter[] => {
+    const restored = keepSavedFilters(restoredValue);
+    const previous = keepSavedFilters(previousValue);
+    const operationTimes = [...restored, ...previous].flatMap((filter) => [
+        filter.updatedAt,
+        filter.deletedAt,
+    ]);
+    const filterRestoredAt = restoreTimestampAfter(
+        restoredAt,
+        operationTimes,
+        DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS,
+    );
+    const restoredIds = new Set(restored.map((filter) => filter.id));
+    return [
+        ...restored.map((filter) => ({
+            ...filter,
+            updatedAt: filterRestoredAt,
+            ...(filter.deletedAt ? { deletedAt: filterRestoredAt } : {}),
+        })),
+        ...previous
+            .filter((filter) => !restoredIds.has(filter.id))
+            .map((filter) => ({
+                ...filter,
+                updatedAt: filterRestoredAt,
+                deletedAt: filterRestoredAt,
+            })),
+    ];
+};
+
+const prepareRestoredSettingsForSync = (
+    settings: AppData['settings'],
+    previous: AppData['settings'] | undefined,
+    restoredAt: string,
+): AppData['settings'] => {
+    const restored = stripDeviceLocalRestoreSettings(settings);
+    const syncPreferencesUpdatedAt = { ...(restored.syncPreferencesUpdatedAt ?? {}) };
+    syncPreferencesUpdatedAt.preferences = restoreTimestampAfter(restoredAt, [
+        restored.syncPreferencesUpdatedAt?.preferences,
+        previous?.syncPreferencesUpdatedAt?.preferences,
+    ]);
+    for (const group of RESTORED_SETTINGS_SYNC_GROUPS) {
+        if (!isSettingsSyncGroupEnabled(restored.syncPreferences, group)) continue;
+        syncPreferencesUpdatedAt[group] = restoreTimestampAfter(restoredAt, [
+            restored.syncPreferencesUpdatedAt?.[group],
+            previous?.syncPreferencesUpdatedAt?.[group],
+        ]);
+    }
+
+    return {
+        ...restored,
+        ...(
+            restored.savedFilters !== undefined || previous?.savedFilters !== undefined
+                ? { savedFilters: prepareRestoredSavedFiltersForSync(restored.savedFilters, previous?.savedFilters, restoredAt) }
+                : {}
+        ),
+        syncPreferencesUpdatedAt,
+    };
+};
+
 /**
  * A backup file is user-supplied bytes, and restore stamps fresh revisions so its records
  * win the next merge — without this, an attachment path the sync-merge sanitizer would have
@@ -365,8 +464,8 @@ export const prepareRestoredBackupDataForSync = (
     options: BackupRestoreSyncPreparationOptions = {}
 ): AppData => {
     const restoredAt = toIsoString(options.restoredAt) ?? new Date().toISOString();
-    const restoredSettings = stripDeviceLocalRestoreSettings(data.settings);
     const previous = options.previousData ?? null;
+    const restoredSettings = prepareRestoredSettingsForSync(data.settings, previous?.settings, restoredAt);
     const prepare = <T extends RestorableEntity>(restored: T[], before: T[] | undefined): T[] => {
         const beforeById = new Map((before ?? []).map((item) => [item.id, item]));
         return carryForwardEntitiesMissingFromBackup(restored, before, restoredAt)
@@ -394,6 +493,15 @@ export const prepareRestoredBackupDataForSync = (
         prepare(data.sections, previous?.sections),
         projects,
     );
+    try {
+        logInfo('Restored settings prepared for sync', {
+            scope: 'backup',
+            category: 'sync',
+            context: { releaseCheck: 'v1.3.3/restore-settings-sync' },
+        });
+    } catch {
+        // Diagnostics must never make a valid restore fail.
+    }
     return {
         ...data,
         tasks,

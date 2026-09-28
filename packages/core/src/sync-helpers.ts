@@ -13,7 +13,7 @@ import {
 const MISSING_ATTACHMENT_TIMESTAMP_SENTINEL = '1970-01-01T00:00:00.000Z';
 const MISSING_SETTINGS_SYNC_TIMESTAMP_SENTINEL = '1970-01-01T00:00:00.000Z';
 
-const advanceLatestSyncTimestamp = (...values: Array<string | undefined>): string | undefined => {
+export const advanceLatestSyncTimestamp = (...values: Array<string | undefined>): string | undefined => {
     let latestTime = Date.parse(MISSING_SETTINGS_SYNC_TIMESTAMP_SENTINEL);
     for (const value of values) {
         const parsed = Date.parse(value ?? '');

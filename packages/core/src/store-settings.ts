@@ -4,7 +4,7 @@ import { markCoreStartupPhase, measureCoreStartupPhase } from './startup-profile
 import { normalizeTaskForLoad } from './task-status';
 import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
-import type { AppData } from './types';
+import type { AppData, SavedFilter } from './types';
 import type { DerivedCache, TaskStore } from './store-types';
 import {
     computeProjectDerivedState,
@@ -26,7 +26,7 @@ import {
     stripSensitiveSettings,
     withTimeout,
 } from './store-helpers';
-import { SYNC_STATUS_BOOKKEEPING_SETTINGS_KEYS } from './sync-helpers';
+import { advanceLatestSyncTimestamp, SYNC_STATUS_BOOKKEEPING_SETTINGS_KEYS } from './sync-helpers';
 import { getGtdSyncSnapshot } from './settings-options';
 import { DEFAULT_TOMBSTONE_RETENTION_DAYS, purgeExpiredTombstones } from './sync-tombstones';
 import { buildLoadContext, runAutoArchive, runLoadMigrations } from './store-load-migrations';
@@ -71,6 +71,36 @@ const consumeDocumentReplacementMark = (): boolean => {
 };
 
 const settingsValueChanged = (left: unknown, right: unknown): boolean => JSON.stringify(left ?? null) !== JSON.stringify(right ?? null);
+
+const timestampAtLeastAfter = (floor: string, ...knownValues: Array<string | undefined>): string => {
+    const floorMs = Date.parse(floor);
+    const beforeFloor = Number.isFinite(floorMs) ? new Date(floorMs - 1).toISOString() : undefined;
+    return advanceLatestSyncTimestamp(beforeFloor, ...knownValues) ?? floor;
+};
+
+const prepareLocalSavedFilterUpdates = (
+    previous: readonly SavedFilter[] | undefined,
+    next: SavedFilter[],
+    nowIso: string,
+): SavedFilter[] => {
+    const previousById = new Map((previous ?? []).map((filter) => [filter.id, filter]));
+    return next.map((filter) => {
+        const before = previousById.get(filter.id);
+        if (!before || !settingsValueChanged(before, filter)) return filter;
+        const requestedMs = Math.max(
+            ...[nowIso, filter.updatedAt, filter.deletedAt]
+                .map((value) => Date.parse(value ?? ''))
+                .filter(Number.isFinite),
+        );
+        const requestedAt = Number.isFinite(requestedMs) ? new Date(requestedMs).toISOString() : nowIso;
+        const operationAt = timestampAtLeastAfter(requestedAt, before.updatedAt, before.deletedAt);
+        return {
+            ...filter,
+            updatedAt: operationAt,
+            ...(filter.deletedAt ? { deletedAt: operationAt } : {}),
+        };
+    });
+};
 
 const mergeSettingsUpdates = (
     settings: AppData['settings'],
@@ -566,12 +596,22 @@ export const createSettingsActions = ({
         set((state) => {
             const deviceState = ensureDeviceId(state.settings);
             const nowIso = new Date().toISOString();
-            const nextSettings = mergeSettingsUpdates(deviceState.settings, updates);
+            const preparedUpdates = updates.savedFilters
+                ? {
+                    ...updates,
+                    savedFilters: prepareLocalSavedFilterUpdates(
+                        deviceState.settings.savedFilters,
+                        updates.savedFilters,
+                        nowIso,
+                    ),
+                }
+                : updates;
+            const nextSettings = mergeSettingsUpdates(deviceState.settings, preparedUpdates);
             const nextSyncUpdatedAt = { ...(deviceState.settings.syncPreferencesUpdatedAt ?? {}) };
             let syncUpdated = false;
 
             const markSyncUpdated = (key: keyof NonNullable<AppData['settings']['syncPreferencesUpdatedAt']>) => {
-                nextSyncUpdatedAt[key] = nowIso;
+                nextSyncUpdatedAt[key] = timestampAtLeastAfter(nowIso, nextSyncUpdatedAt[key]);
                 syncUpdated = true;
             };
 

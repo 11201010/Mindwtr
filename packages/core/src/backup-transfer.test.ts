@@ -16,6 +16,7 @@ import {
     validateBackupJson,
 } from './backup-transfer';
 import { mergeAppData } from './sync';
+import { toRemoteSyncDocument } from './sync-document';
 import { assertNoPendingAttachmentUploads, sanitizeAppDataForRemote } from './sync-helpers';
 import { SYNC_BACKUP_RESTORE_REV_BY } from './sync-revision';
 import { purgeExpiredTombstones } from './sync-tombstones';
@@ -448,6 +449,194 @@ describe('backup transfer', () => {
         expect(restored.settings.security).toBeUndefined();
         expect(restored.settings.diagnostics).toEqual({ loggingEnabled: true });
         expect(restored.settings.pendingRemoteWriteAt).toBe(restoredAt);
+    });
+
+    it('keeps restored synced settings authoritative across repeated merges', () => {
+        const restoredAt = '2026-09-28T12:00:00.000Z';
+        const backup = buildAppData();
+        const previousData = buildAppData();
+        const unknownFilter = {
+            id: 'unknown-filter',
+            name: 'Newer client filter',
+            view: 'calendar-lane',
+            criteria: { futureRule: { mode: 'strict' } },
+            createdAt: '2026-09-01T00:00:00.000Z',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+            accent: { color: '#ff0000' },
+        };
+        const restoredFilter = {
+            id: 'restored-filter',
+            name: 'From backup',
+            view: 'focus' as const,
+            criteria: {},
+            createdAt: '2026-09-01T00:00:00.000Z',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+        };
+        backup.settings = {
+            theme: 'dark',
+            savedFilters: [unknownFilter, restoredFilter] as NonNullable<AppData['settings']['savedFilters']>,
+            syncPreferences: { appearance: true, savedFilters: true },
+            syncPreferencesUpdatedAt: {
+                preferences: '2026-09-01T00:00:00.000Z',
+                appearance: '2026-09-01T00:00:00.000Z',
+                savedFilters: '2026-09-01T00:00:00.000Z',
+            },
+        };
+        previousData.settings = {
+            theme: 'light',
+            savedFilters: [
+                {
+                    ...restoredFilter,
+                    name: 'Deleted after backup',
+                    updatedAt: '2030-01-01T00:00:00.000Z',
+                    deletedAt: '2030-01-01T00:00:00.000Z',
+                },
+                {
+                    ...restoredFilter,
+                    id: 'later-filter',
+                    name: 'Created after backup',
+                    updatedAt: '2030-01-02T00:00:00.000Z',
+                },
+            ],
+            syncPreferences: { appearance: true, savedFilters: true },
+            syncPreferencesUpdatedAt: {
+                preferences: '2030-01-03T00:00:00.000Z',
+                appearance: '2030-01-03T00:00:00.000Z',
+                savedFilters: '2030-01-03T00:00:00.000Z',
+            },
+        };
+
+        const restored = prepareRestoredBackupDataForSync(backup, { previousData, restoredAt });
+        const restoredFilters = restored.settings.savedFilters as unknown as Array<Record<string, unknown>>;
+
+        expect(restored.settings.syncPreferencesUpdatedAt).toMatchObject({
+            preferences: '2030-01-03T00:00:00.001Z',
+            appearance: '2030-01-03T00:00:00.001Z',
+            savedFilters: '2030-01-03T00:00:00.001Z',
+        });
+        expect(restoredFilters.map((filter) => filter.id)).toEqual([
+            'unknown-filter',
+            'restored-filter',
+            'later-filter',
+        ]);
+        expect(restoredFilters[0]).toMatchObject({
+            view: 'calendar-lane',
+            criteria: { futureRule: { mode: 'strict' } },
+            accent: { color: '#ff0000' },
+            updatedAt: '2030-01-02T00:00:30.001Z',
+        });
+        expect(restoredFilters[1]).toMatchObject({
+            name: 'From backup',
+            updatedAt: '2030-01-02T00:00:30.001Z',
+        });
+        expect(restoredFilters[1].deletedAt).toBeUndefined();
+        expect(restoredFilters[2]).toMatchObject({
+            name: 'Created after backup',
+            updatedAt: '2030-01-02T00:00:30.001Z',
+            deletedAt: '2030-01-02T00:00:30.001Z',
+        });
+
+        const remoteBeforeRestore = toRemoteSyncDocument(previousData);
+        const firstMerge = mergeAppData(restored, remoteBeforeRestore, { nowIso: restoredAt });
+        const firstRemote = toRemoteSyncDocument(firstMerge);
+        const secondMerge = mergeAppData(firstMerge, remoteBeforeRestore, { nowIso: restoredAt });
+
+        expect(firstMerge.settings.theme).toBe('dark');
+        expect(firstMerge.settings.savedFilters?.map((filter) => filter.id)).toEqual([
+            'unknown-filter',
+            'restored-filter',
+            'later-filter',
+        ]);
+        expect(firstMerge.settings.savedFilters?.find((filter) => filter.id === 'restored-filter')?.deletedAt)
+            .toBeUndefined();
+        expect(firstMerge.settings.savedFilters?.find((filter) => filter.id === 'later-filter')?.deletedAt)
+            .toBe('2030-01-02T00:00:30.001Z');
+        expect(toRemoteSyncDocument(secondMerge)).toEqual(firstRemote);
+    });
+
+    it('advances restored filters beyond the delete ambiguity window', () => {
+        const restoredAt = '2026-09-28T12:00:10.000Z';
+        const backup = buildAppData();
+        const previousData = buildAppData();
+        const filter = {
+            id: 'restored-filter',
+            name: 'From backup',
+            view: 'focus' as const,
+            criteria: {},
+            createdAt: '2026-09-01T00:00:00.000Z',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+        };
+        backup.settings = {
+            savedFilters: [filter],
+            syncPreferences: { savedFilters: true },
+        };
+        previousData.settings = {
+            savedFilters: [{
+                ...filter,
+                updatedAt: '2026-09-28T12:00:00.000Z',
+                deletedAt: '2026-09-28T12:00:00.000Z',
+            }],
+            syncPreferences: { savedFilters: true },
+        };
+
+        const restored = prepareRestoredBackupDataForSync(backup, { previousData, restoredAt });
+        const merged = mergeAppData(restored, toRemoteSyncDocument(previousData), { nowIso: restoredAt });
+
+        expect(restored.settings.savedFilters?.[0]?.updatedAt).toBe('2026-09-28T12:00:30.001Z');
+        expect(restored.settings.savedFilters?.[0]?.deletedAt).toBeUndefined();
+        expect(merged.settings.savedFilters?.[0]?.deletedAt).toBeUndefined();
+    });
+
+    it('keeps opted-out restored groups and device-local fields off the wire', () => {
+        const restoredAt = '2026-09-28T12:00:00.000Z';
+        const backup = buildAppData();
+        const previousData = buildAppData();
+        const localFilter = {
+            id: 'local-filter',
+            name: 'Local only',
+            view: 'focus' as const,
+            criteria: {},
+            createdAt: '2026-09-01T00:00:00.000Z',
+            updatedAt: '2026-09-01T00:00:00.000Z',
+        };
+        backup.settings = {
+            theme: 'dark',
+            savedFilters: [localFilter],
+            globalQuickAddShortcut: 'Ctrl+Shift+Space',
+            security: { mobileAppLockEnabled: true },
+            syncPreferences: { appearance: false, savedFilters: false },
+            syncPreferencesUpdatedAt: {
+                preferences: '2026-09-01T00:00:00.000Z',
+                appearance: '2026-09-01T00:00:00.000Z',
+                savedFilters: '2026-09-01T00:00:00.000Z',
+            },
+        };
+        previousData.settings = {
+            theme: 'light',
+            savedFilters: [{ ...localFilter, id: 'remote-filter', name: 'Remote' }],
+            syncPreferences: { appearance: true, savedFilters: true },
+            syncPreferencesUpdatedAt: {
+                preferences: '2026-09-20T00:00:00.000Z',
+                appearance: '2026-09-20T00:00:00.000Z',
+                savedFilters: '2026-09-20T00:00:00.000Z',
+            },
+        };
+
+        const restored = prepareRestoredBackupDataForSync(backup, { previousData, restoredAt });
+        const remote = toRemoteSyncDocument(restored);
+
+        expect(restored.settings.syncPreferences).toEqual({ appearance: false, savedFilters: false });
+        expect(restored.settings.syncPreferencesUpdatedAt).toMatchObject({
+            preferences: '2026-09-28T12:00:00.000Z',
+            appearance: '2026-09-01T00:00:00.000Z',
+            savedFilters: '2026-09-01T00:00:00.000Z',
+        });
+        expect(restored.settings.theme).toBe('dark');
+        expect(restored.settings.security).toBeUndefined();
+        expect(remote.settings.theme).toBeUndefined();
+        expect(remote.settings.savedFilters).toBeUndefined();
+        expect(remote.settings.globalQuickAddShortcut).toBeUndefined();
+        expect(remote.settings.security).toBeUndefined();
     });
 
     it('stamps backup rows above current same-id revisions, including deletions', () => {
