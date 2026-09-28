@@ -3,7 +3,7 @@
 //   ADB=/opt/android-sdk/platform-tools/adb node apps/android-native/scripts/check-log-device.mjs <adb-serial> [apk]
 //
 // Installs the debug APK with `install -r` (existing development data stays) and opens Settings › Data from the More sheet.
-// (a) The Debug logging switch turned on writes RN's forced "Debug logging enabled" line and the switch's own command line to
+// (a) The Debug logging switch (in RN's colors for it, read from a screenshot) turned on writes RN's forced "Debug logging enabled" line and the switch's own command line to
 // files/logs/mindwtr.log (pulled through run-as), each in RN's format: one JSON line per entry, keys in RN's order
 // (ts, level, scope, message, stack, context), string context values, an ISO time. (b) Share log opens Android's share sheet
 // (the chooser); the check presses Back and never picks a target, so nothing is sent. (c) Clear log deletes the file and shows
@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { check, connect, evidenced, fail, inboxCount, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { box, check, connect, evidenced, fail, inboxCount, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -88,6 +88,31 @@ const setLogging = async (on) => {
         (current) => switchOn(current, words.debugLogging) === on && Boolean(tagged(current, 'settings-share-log')) === on && Boolean(tagged(current, 'settings-clear-log')) === on,
         `Debug logging ${on ? 'on' : 'off'}`);
 };
+/**
+ * The Debug logging switch's colors on screen, as RN draws that switch (sync-settings-sections.tsx sets only trackColor, drawn
+ * solid; the thumb is AppCompat's, by the system's night mode): the track beside the thumb and the thumb's center, read from a
+ * screenshot with ImageMagick.
+ */
+const density = Number(/(\d+)\s*$/.exec(sh('wm density'))[1]) / 160;
+const systemDark = /yes/.test(sh('cmd uimode night'));
+const RN_SWITCH = { on: { track: '3B82F6', thumb: systemDark ? '80CBC4' : '008577' }, off: { track: '767577', thumb: systemDark ? 'BDBDBD' : 'F1F1F1' } };
+const switchColors = (nodes, on) => {
+    const [l, t, r, b] = box(withDescription(nodes, words.debugLogging) ?? fail('no Debug logging switch'));
+    const file = resolve(work, `switch-${on ? 'on' : 'off'}.png`);
+    writeFileSync(file, adbRaw('exec-out', 'screencap', '-p'));
+    const at = (dp) => execFileSync('magick', [file, '-format', `%[hex:p{${Math.round((l + r) / 2 + dp * density)},${Math.round((t + b) / 2)}}]`, 'info:'],
+        { encoding: 'utf8' }).trim().slice(0, 6).toUpperCase();
+    // The 34dp track and the 20dp thumb 7dp off center (RnSwitch): the track shows 12dp to the thumb's other side.
+    return { track: at(on ? -12 : 12), thumb: at(on ? 7 : -7) };
+};
+const near = (hex, want) => [0, 2, 4].every((i) => Math.abs(parseInt(hex.slice(i, i + 2), 16) - parseInt(want.slice(i, i + 2), 16)) <= 3);
+const expectSwitch = (nodes, on, step) => {
+    const seen = switchColors(nodes, on);
+    const want = on ? RN_SWITCH.on : RN_SWITCH.off;
+    check(near(seen.track, want.track) && near(seen.thumb, want.thumb),
+        `(${step}) the switch ${on ? 'on' : 'off'} is RN's: track #${seen.track}, thumb #${seen.thumb} (RN #${want.track}, #${want.thumb}, system ${systemDark ? 'dark' : 'light'})`);
+};
+
 /** Each line as RN's app-log.ts writes it: JSON.stringify of { ts, level, scope, message, stack?, context? } and a newline. */
 const RN_KEYS = ['ts', 'level', 'scope', 'message', 'stack', 'context'];
 const parseLines = (text) => {
@@ -173,6 +198,7 @@ try {
     let saves = commands('dataSetting');
     nodes = await setLogging(true);
     await waitFor('the switch\'s command', () => commands('dataSetting') === saves + 1, 15_000);
+    expectSwitch(await screen(), true, 'a');
     let text = null;
     for (let wait = 0; wait < 20 && !(text = logText())?.includes('native-android-dev-task-command'); wait += 1) await sleep(500);
     writeFileSync(resolve(work, 'on.log'), text ?? '');
@@ -229,6 +255,7 @@ try {
     saves = commands('dataSetting');
     nodes = await setLogging(false);
     await waitFor('the switch\'s command', () => commands('dataSetting') === saves + 1, 15_000);
+    expectSwitch(await screen(), false, 'd');
     await sleep(1500);
     check(!logPresent(), '(d) with logging off the switch\'s command line reaches logcat but no file is written');
     console.log('Diagnostics log device check passed');
