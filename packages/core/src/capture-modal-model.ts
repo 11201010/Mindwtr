@@ -20,13 +20,16 @@ import {
     type CaptureTransactionActions,
     type CaptureTransactionOptions,
 } from './capture';
-import type { TranslateFn } from './i18n';
+import type { DateFormatter } from './date';
+import { tFallback, type TranslateFn } from './i18n';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
-import type { QuickAddResult } from './quick-add';
+import { buildQuickAddPreviewEntries, formatQuickAddHelp, type QuickAddPreviewEntry, type QuickAddResult } from './quick-add';
+import { resolveFeatureFlags } from './resolve-feature-flags';
 import { isSandboxMode } from './sandbox';
 import type { StoreActionResult } from './store-types';
 import { sanitizeAttachmentUriForSyncMerge } from './sync-normalization';
-import type { Attachment, Project, Task, TimeEstimate } from './types';
+import { getUsedTaskTokens } from './task-token-usage';
+import type { AppSettings, Area, Attachment, Project, Task, TimeEstimate } from './types';
 
 export type CaptureModalParam = string | string[] | undefined;
 
@@ -350,12 +353,12 @@ type CaptureModalRequest = ReturnType<typeof buildCaptureModalRequest>;
 
 export type CaptureModalLinesOutcome =
     | { kind: 'saved'; count: number }
-    /** A line's date command could not be read: warn with these; nothing more is written. */
+    /** A line's date command could not be read: warn with these. Nothing was written. */
     | { kind: 'refused'; invalidDateCommands: string[] }
     /**
-     * Nothing was written: a line gave no request ('validation-rejected'), a line
-     * could not be prepared ('prepare-failed'), or the store refused the batch
-     * ('transaction-rejected').
+     * No task was written: a line gave no request ('validation-rejected'), a line
+     * could not be prepared ('prepare-failed'; a project an earlier line named may
+     * exist by then), or the store refused the batch ('transaction-rejected').
      */
     | { kind: 'failed'; stage: 'validation-rejected' | 'prepare-failed' | 'transaction-rejected' };
 
@@ -481,3 +484,175 @@ export function resolveCaptureModalAfterSave(input: {
 
 /** The question before creating one task per line: the capture popup's own. */
 export { getQuickCaptureBulkConfirm as getCaptureModalBulkConfirm } from './quick-capture-model';
+
+// ---------------------------------------------------------------------------
+// The whole screen, for a native host
+
+/** What the screen holds while it is open. */
+export type CaptureModalDraft = {
+    /** The title field. */
+    text: string;
+    /** The description field. */
+    description: string;
+    /** The syntax help is open. */
+    showHelp: boolean;
+    /** The AI's kept answer for the current title (keepCaptureModalCopilotSuggestion), or null. */
+    suggestion: CaptureModalCopilotSuggestion | null;
+    applied: CaptureModalCopilotApplied;
+    /** The last save failed; the card says so until the next save starts. */
+    failed: boolean;
+};
+
+/** What the screen's inputs and buttons change. Saving and closing are not edits. */
+export type CaptureModalEdit =
+    /** Typing in the title field. It clears the applied chips, and the suggestion once the screen would not ask. */
+    | { type: 'setText'; value: string }
+    | { type: 'setDescription'; value: string }
+    /** The ? button. */
+    | { type: 'toggleHelp' }
+    /** A suggested chip, or "Apply all": only parts the screen shows. */
+    | { type: 'applyCopilot'; parts: CaptureModalCopilotPart[] }
+    /** The AI's answer for `title`; an answer for another title than the field's is dropped, as a late answer is. */
+    | { type: 'setSuggestion'; title: string; suggestion: CaptureModalCopilotSuggestion };
+
+/** A fresh screen: the entry's title and description. */
+export function createCaptureModalDraft(params: CaptureModalParams, initialProps: Partial<Task>): CaptureModalDraft {
+    return {
+        text: readCaptureModalInitialText(params),
+        description: String(initialProps.description ?? ''),
+        showHelp: false,
+        suggestion: null,
+        applied: { tags: [] },
+        failed: false,
+    };
+}
+
+type CopilotSettings = { aiEnabled: boolean; timeEstimatesEnabled: boolean };
+const asksCopilot = (settings: CopilotSettings, title: string) => shouldRequestCaptureModalCopilot({
+    aiEnabled: settings.aiEnabled, keyRequired: false, hasKey: true, title,
+});
+
+/** Apply one edit. Null for an edit the screen cannot make (a part it does not show). */
+export function applyCaptureModalEdit(draft: CaptureModalDraft, edit: CaptureModalEdit, settings: CopilotSettings): CaptureModalDraft | null {
+    switch (edit.type) {
+        case 'setText':
+            return {
+                ...draft,
+                text: edit.value,
+                applied: { tags: [] },
+                suggestion: asksCopilot(settings, edit.value.trim()) ? draft.suggestion : null,
+            };
+        case 'setDescription':
+            return { ...draft, description: edit.value };
+        case 'toggleHelp':
+            return { ...draft, showHelp: !draft.showHelp };
+        case 'applyCopilot': {
+            const pending = getCaptureModalCopilotParts(draft.suggestion, draft.applied, settings.timeEstimatesEnabled);
+            const shown = edit.parts.every((part) => pending.some((entry) => entry.kind === part.kind && entry.value === part.value));
+            return edit.parts.length > 0 && shown
+                ? { ...draft, applied: applyCaptureModalCopilotParts(draft.applied, edit.parts, settings.timeEstimatesEnabled) }
+                : null;
+        }
+        case 'setSuggestion':
+            if (edit.title !== draft.text.trim() || !asksCopilot(settings, edit.title)) return draft;
+            return { ...draft, suggestion: keepCaptureModalCopilotSuggestion(edit.suggestion, settings.timeEstimatesEnabled) };
+        default:
+            return null;
+    }
+}
+
+export type CaptureModalView = {
+    /** The sandbox workspace's banner, in sandbox mode. */
+    sandboxCue: string | null;
+    title: string;
+    /** The button that hides the keyboard, shown while it is up. */
+    hideKeyboard: string;
+    help: { toggle: string; text: string | null; edit: CaptureModalEdit };
+    input: { value: string; placeholder: string };
+    /** The chips under the title field: what saving the text produces. */
+    preview: QuickAddPreviewEntry[];
+    /** Shared files the capture carries. */
+    attachments: { label: string; titles: string[] } | null;
+    /** Shown while the entry brought a description or the field holds one. */
+    description: { label: string; placeholder: string; value: string } | null;
+    copilot: {
+        /** What the screen asks the AI now (with a key, when the provider needs one); send the answer as setSuggestion. */
+        request: { title: string; contexts: string[]; tags: string[] } | null;
+        suggested: {
+            label: string;
+            parts: { label: string; edit: CaptureModalEdit }[];
+            /** Shown with two parts or more. */
+            applyAll: { label: string; edit: CaptureModalEdit } | null;
+            hint: string;
+        } | null;
+        applied: string | null;
+    };
+    /** The failure the card shows after a save failed. */
+    error: string | null;
+    actions: { cancel: string; saveAndEdit: string; save: string };
+};
+
+/** The screen for this draft, with the exact edit on every control. */
+export function buildCaptureModalView(draft: CaptureModalDraft, context: {
+    t: TranslateFn;
+    settings: AppSettings;
+    projects: readonly Project[];
+    areas: readonly Area[];
+    /** The tasks whose contexts and tags the AI chooses from. */
+    tasks: Task[];
+    /** readCaptureModalInitialProps. */
+    initialProps: Partial<Task>;
+    /** The text's parse (as buildCaptureModalRequest takes it); ignored while the text is blank. */
+    parsed: QuickAddResult;
+    formatDate: DateFormatter;
+}): CaptureModalView {
+    const { t, settings } = context;
+    const flags = resolveFeatureFlags(settings);
+    const copilotSettings = { aiEnabled: settings.ai?.enabled === true, timeEstimatesEnabled: flags.timeEstimates };
+    const title = draft.text.trim();
+    const parts = getCaptureModalCopilotParts(draft.suggestion, draft.applied, flags.timeEstimates);
+    const attachments = context.initialProps.attachments ?? [];
+    const initialDescription = String(context.initialProps.description ?? '');
+    return {
+        sandboxCue: isSandboxMode() ? t('sandbox.title') : null,
+        title: t('nav.addTask'),
+        hideKeyboard: tFallback(t, 'common.hideKeyboard', 'Hide keyboard'),
+        help: {
+            toggle: '?',
+            text: draft.showHelp ? formatQuickAddHelp(t('quickAdd.help'), { priorities: flags.priorities }) : null,
+            edit: { type: 'toggleHelp' },
+        },
+        input: { value: draft.text, placeholder: t('quickAdd.example') },
+        preview: title
+            ? buildQuickAddPreviewEntries(context.parsed, {
+                t, projects: context.projects, areas: context.areas, rawInput: draft.text, formatDate: context.formatDate,
+            })
+            : [],
+        attachments: attachments.length > 0
+            ? { label: tFallback(t, 'attachments.title', 'Attachments'), titles: attachments.map((attachment) => attachment.title) }
+            : null,
+        description: initialDescription.trim() || draft.description.trim()
+            ? { label: t('taskEdit.descriptionLabel'), placeholder: t('taskEdit.descriptionPlaceholder'), value: draft.description }
+            : null,
+        copilot: {
+            request: asksCopilot(copilotSettings, title)
+                ? {
+                    title,
+                    contexts: getUsedTaskTokens(context.tasks, (task) => task.contexts, { prefix: '@' }),
+                    tags: getUsedTaskTokens(context.tasks, (task) => task.tags, { prefix: '#' }),
+                }
+                : null,
+            suggested: parts.length > 0
+                ? {
+                    label: t('copilot.suggested'),
+                    parts: parts.map((part) => ({ label: part.value, edit: { type: 'applyCopilot', parts: [part] } })),
+                    applyAll: parts.length > 1 ? { label: t('copilot.applyAll'), edit: { type: 'applyCopilot', parts } } : null,
+                    hint: t('copilot.applyHint'),
+                }
+                : null,
+            applied: formatCaptureModalCopilotApplied(t, draft.applied, flags.timeEstimates),
+        },
+        error: draft.failed ? tFallback(t, 'task.addFailed', 'Failed to add task') : null,
+        actions: { cancel: t('common.cancel'), saveAndEdit: t('quickAdd.saveAndEdit'), save: t('common.save') },
+    };
+}

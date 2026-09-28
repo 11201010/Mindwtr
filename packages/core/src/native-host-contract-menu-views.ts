@@ -290,7 +290,7 @@ export const isTextList = (value: unknown, max = MAX_IDS): value is string[] => 
     Array.isArray(value) && value.length <= max && value.every((entry) => isText(entry))
 );
 const MATCH_MODES = new Set(['all', 'any']);
-const isTimeEstimate = (value: unknown): value is TimeEstimate => (
+export const isTimeEstimate = (value: unknown): value is TimeEstimate => (
     typeof value === 'string' && (TIME_ESTIMATE_OPTIONS.includes(value as TimeEstimate) || isCustomTimeEstimate(value as TimeEstimate))
 );
 // Selections are bounded by the window, so the chips they make are bounded too.

@@ -334,7 +334,7 @@ const projectGone = () => fail('STALE_REVISION', 'The project this capture creat
  * change on a starred capture (Inbox to Next) counts as a match, and so does
  * the project this request made (captureProjectId), renamed since.
  */
-const isTaskOfPlan = (task: Task, plan: CaptureTaskPlan, requestId: string): boolean => {
+export const isTaskOfPlan = (task: Task, plan: CaptureTaskPlan, requestId: string): boolean => {
     const { props } = plan;
     const project = task.projectId ? useTaskStore.getState()._allProjects.find((entry) => entry.id === task.projectId) : undefined;
     const projectMatches = props.projectId

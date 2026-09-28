@@ -288,6 +288,7 @@ import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChec
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 import { createReminderMethods } from './native-host-contract-reminders';
+import { createCaptureModalMethods } from './native-host-contract-capture-modal';
 
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export const NATIVE_HOST_MAX_WINDOW = 100;
@@ -1516,6 +1517,15 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         ...createCaptureIngestMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN }),
         // Reminder alarms and notification taps: native-host-contract-reminders.ts.
         ...createReminderMethods({ readiness, save, language: () => language, requestIdPattern: CAPTURE_ID_PATTERN }),
+        // The capture confirmation screen links, shares and notes open: native-host-contract-capture-modal.ts.
+        ...createCaptureModalMethods({
+            readiness,
+            save,
+            t: () => translate,
+            formatDate: () => createDateFormatter(dateFormatting()),
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            requestIdPattern: CAPTURE_ID_PATTERN,
+        }),
         // A saved search's screen: native-host-contract-saved-search.ts.
         ...createSavedSearchMethods({
             readiness,
