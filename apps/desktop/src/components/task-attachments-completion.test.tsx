@@ -129,7 +129,7 @@ describe('task attachments survive completion (#836)', () => {
             fireEvent.click(addLink);
         });
         const dialog = await waitFor(() => getByRole('dialog'));
-        const input = within(dialog).getByRole('combobox');
+        const input = within(dialog).getByRole('textbox', { name: 'Add link' });
         await act(async () => {
             fireEvent.change(input, { target: { value: 'https://example.com/spec' } });
         });
@@ -194,7 +194,7 @@ describe('task attachments survive completion (#836)', () => {
         await act(async () => fireEvent.click(detailsToggle));
         await act(async () => fireEvent.click(view.getAllByRole('button', { name: /add link/i })[0]));
         const linkDialog = await waitFor(() => view.getByRole('dialog'));
-        fireEvent.change(within(linkDialog).getByRole('combobox'), {
+        fireEvent.change(within(linkDialog).getByRole('textbox', { name: 'Add link' }), {
             target: { value: 'https://example.com/unsaved' },
         });
         await act(async () => fireEvent.click(within(linkDialog).getByRole('button', { name: /save/i })));
