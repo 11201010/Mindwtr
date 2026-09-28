@@ -70,8 +70,9 @@ enum class MenuScreen(val title: String) {
     MindSweep("mindSweep.title"), SavedSearch("search.title"), FocusChecklist("taskEdit.checklist"),
 }
 
-/** Core's bulk actions (Contexts, Trash, Review): each ends RN's selection mode once core answers. */
-private val BULK = setOf("moveTasks", "editTaskTokens", "trashTasks", "restoreItems", "purgeItems", "emptyTrash", "addTag", "removeTags", "markReviewedTasks")
+/** Core's bulk actions (Contexts, Trash, Review, and a Review row's Mark reviewed): each ends RN's selection mode once core answers. */
+private val BULK = setOf("moveTasks", "editTaskTokens", "trashTasks", "restoreItems", "purgeItems", "emptyTrash", "addTag", "removeTags", "markReviewedTasks",
+    "organizeTasks", "markTaskReviewed")
 
 /** The lists whose contract writes their rows' status (Contexts, and the Review screens): the command kind for each. */
 private val ROW_KINDS = mapOf("contexts" to "contextsAction", "review" to "reviewAction", "weekly" to "reviewAction", "daily" to "reviewAction")
@@ -113,7 +114,7 @@ private fun window(view: JSONObject, name: String): JSONObject? = when (name) {
 /**
  * A menu view at one revision: the [list] it was read for, core's reply for its first window ([view]), the inputs core accepted
  * ([params], sent again for every later window), its items as deep as shown, each windowed collection as paged, and, while the
- * list is selecting, core's getBulkActions reply for it ([bulk]).
+ * list is selecting, core's getBulkActions reply for it ([bulk]; Review's is its view's own bar, with its Organize dialog).
  */
 class MenuPage(val list: String, val view: JSONObject, val params: JSONObject, val items: List<MenuItem>, private val paged: Map<String, List<JSONObject>>,
                val bulk: JSONObject? = null) {
@@ -426,12 +427,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                     if (dialog?.optString("kind") == "filters") put("filterSheetOpen", true)
                     own.optJSONArray("except")?.let { put("selectAll", JSONObject().put("except", it)) } ?: put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
                 }
-            "contexts" -> kept(listOf("tokens", "matchMode", "searchQuery")).put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+            "contexts" -> kept(listOf("tokens", "matchMode", "searchQuery")).put("selectedIds", own.optJSONArray("selected") ?: JSONArray()).also { dialogInputs(list, it) }
             "trash" -> JSONObject().put("selected", JSONObject().put("taskIds", own.optJSONArray("selectedTasks") ?: JSONArray())
                 .put("projectIds", own.optJSONArray("selectedProjects") ?: JSONArray()))
             // RN's Review opens on its Due scope.
             "review" -> kept(listOf("expandedAreaIds", "expandedProjectIds")).put("scope", own.optString("scope", "due"))
-                .put("selectedIds", own.optJSONArray("selected") ?: JSONArray())
+                .put("selectedIds", own.optJSONArray("selected") ?: JSONArray()).also { dialogInputs(list, it) }
             // A review's place is the checkpoint core gave last, kept on the device as RN keeps its session.
             "weekly" -> JSONObject().put("checkpoint", prefs.getString(WEEKLY_REVIEW_KEY, null) ?: JSONObject.NULL)
                 .put("expandedProjectId", own.opt("expandedProjectId") ?: JSONObject.NULL)
@@ -441,8 +442,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         }
     }
 
-    /** What core accepted: the same inputs with core's returned filters and none of a one-time edit, for every later window. */
+    /** What core accepted: the same inputs with core's returned filters and none of a one-time edit or dialog input, for every later window. */
     private fun accepted(list: String, params: JSONObject, view: JSONObject): JSONObject = JSONObject(params.toString()).apply {
+        remove("organize"); remove("picker")
         view.optJSONObject("filters")?.optJSONObject("state")?.let { put("filters", it) }
         if (list == "waiting") put("person", view.getString("person"))
         if (list == "reference") put("includeArchivedProjects", view.getBoolean("includeArchivedProjects"))
@@ -462,7 +464,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             .apply { edit?.let { put(if (list == "review") "expansionEdit" else "filterEdit", it) } }.toString())
         check(first.optInt("version", 1) == 1) { "Unsupported core contract" }
         val sent = accepted(list, params, first)
-        var page = MenuPage(list, first, sent, first.menuItems(), emptyMap())
+        var page = MenuPage(list, first, sent, first.menuItems(), emptyMap(), first.optJSONObject("bulk")?.takeIf { list == "review" })
         try {
             while (page.items.size < minOf(depth, page.total)) {
                 val next = runtime.menuRead(list, JSONObject(sent.toString()).put("offset", page.items.size).put("limit", PAGE).put("revision", page.revision).toString()).menuItems()
@@ -537,6 +539,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         next.bulk?.optJSONObject("organize")?.let { organize ->
             dialog?.takeIf { it.optString("kind") == "organize" }?.let { keepDialog(JSONObject(it.toString()).put("draft", organize.getJSONObject("draft"))) }
         }
+        // Core ended Review's selection (a selected row is no longer drawn): the dialogs on it close with its bar.
+        if (list == "review" && next.bulk == null) closeSelectionDialogs(list)
         // A review's place: the checkpoint core answered with, kept under core's key until the review is finished.
         if (list == "weekly" || list == "daily") prefs.edit().putString(next.view.getString("storageKey"), next.view.getString("checkpoint")).apply()
     }
@@ -554,6 +558,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (list == "mindSweep") return@whenIdle sweep.reload()
         if (list == "focusChecklist") return@whenIdle focusChecklist.reload()
         val params = params(list)
+        // Review's Organize control edit goes to core once with the draft as it is now (the lists' goes with their bar, below).
+        if (list == "review") bulkEdit?.optJSONObject("organizeEdit")?.let { params.optJSONObject("organize")?.put("edit", it) }
         // A row tap (selectionEdit) or a Bulk Organize control's edit goes to core's bar once, with the selection as it is now.
         val bulk = bulkInput(list)?.apply {
             bulkEdit?.optJSONObject("selectionEdit")?.let { put("selectionEdit", it) }
@@ -1064,7 +1070,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 put("organize", JSONObject().put("draft", open.optJSONObject("draft") ?: JSONObject()))
                 open.menuText("picker")?.let { kind -> put("picker", JSONObject().put("kind", kind).apply { open.menuText("query")?.let { put("query", it) } }) }
             }
-            if (open?.optString("kind") == "tokens" && open.optString("list") == "bulk") put("picker", JSONObject().put("kind", "removeTag"))
+            if (open?.optString("kind") == "tokens" && open.optString("list") == "bulk") put("picker", JSONObject().put("kind", "removeTag").apply { tokenQuery(open)?.let { put("query", it) } })
         }
     }
 
@@ -1231,8 +1237,11 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         }
         whenIdle {
             val organize = page?.bulk?.optJSONObject("organize") ?: return@whenIdle
-            if (organize.getBoolean("canApply")) bulkAction(JSONObject().put("type", "organize").put("draft", organize.getJSONObject("draft")), "organize")
-            else dialog?.let { keepDialog(JSONObject(it.toString()).put("validation", true)) }
+            // Review's Apply is its own organizeTasks on its selection, with the revisions its bar showed.
+            val review = page?.bulk?.takeIf { list == "review" }
+            if (!organize.getBoolean("canApply")) dialog?.let { keepDialog(JSONObject(it.toString()).put("validation", true)) }
+            else if (review != null) { bulkBusy = "organize"; act("reviewAction", organizeTasks(review.getJSONArray("selectedIds").ids(), organize.getJSONObject("draft"), review.getJSONObject("taskRevisions"))) }
+            else bulkAction(JSONObject().put("type", "organize").put("draft", organize.getJSONObject("draft")), "organize")
         }
     }
 
@@ -1297,6 +1306,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             if (refused && action.kind == "focusSave") shell.ui { focusControls.refused(action) }
             // A refused Settings write wrote nothing: a GTD time core cannot read is RN's warning toast, not an error.
             if (refused && action.kind in SETTINGS_KINDS) { shell.ui { settings.refused(action, failure) }; if (action.kind == "gtdSetting") return@perform }
+            // Review's compare-and-set writes refused as stale wrote nothing: core's view is read again (never resent), with its new revisions.
+            if (refused && action.kind == "reviewAction" && failure.message?.startsWith("STALE_REVISION") == true) shell.ui { bulkBusy = null; whenIdle { reload() } }
             // An Undo core can no longer run wrote nothing: RN's undo-failed toast (core's text), not an error.
             if (refused && action.kind == "somedayUndo") {
                 Log.w(CoreHost.TAG, "Someday Undo refused: ${failure.message?.substringBefore(':')}")
@@ -1405,6 +1416,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             reply.text("createdId")?.takeIf { open?.optBoolean("edit") == true }?.let { id -> whenIdle { shell.openEditor(id, "task") } }
         }
         if (type in BULK) endSelection()
+        // Review's Organize: its dialog closes once core answers, as RN's onApply closes it.
+        if (type == "organizeTasks") { bulkBusy = null; closeDialog("organize") }
         if (type == "markReviewedTasks" && reply.optBoolean("changed")) shell.showToast(null, t("review.markReviewedDone"), "success")
         reply.optJSONObject("toast")?.let { toast ->
             val undo = toast.optJSONObject("undo")

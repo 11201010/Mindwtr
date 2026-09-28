@@ -7,8 +7,15 @@ import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
@@ -191,6 +198,10 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var search by mutableStateOf(saved.get<String>("search")?.let(SearchState::restore)); private set
     /** Core's searchTasks reply for the query on screen. */
     var searchView by mutableStateOf<SearchView?>(null); private set
+    /** RN's highlightTaskId: a task opened from search, outlined on the list it opened on ([highlightList]) until RN's 3.5 s pass. */
+    var highlightTaskId by mutableStateOf<String?>(null); private set
+    private var highlightList by mutableStateOf<String?>(null)
+    private var highlightJob: Job? = null
     /** Process Inbox on screen: core's session and step view, and an answer's exact request (see [ProcessingStore]). */
     var processing by mutableStateOf<InboxProcessing?>(null); private set
     private val processingStore = ProcessingStore(File(app.noBackupFilesDir, "process-inbox"))
@@ -1191,6 +1202,28 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
         acknowledged(action)
         ui { search?.let { keepSearch(it.copy(saveName = null, submitted = null, saveRequestId = UUID.randomUUID().toString())) } }
+    }
+
+    /** Which list's rows are on screen: the Menu screen and its list, the tab, and the open project ([project] once it opens). */
+    private fun listKey(project: String? = openProjectId) = listOf(menu.screen?.name, menu.list, screen.name, project).joinToString("|")
+
+    /** A row of the list a search hit opened on, while RN's highlight lasts. */
+    fun isHighlighted(taskId: String) = taskId == highlightTaskId && highlightList == listKey()
+
+    /**
+     * RN's setHighlightTask on a search hit: its row is outlined on the list it opened on (the list under the search, or the list
+     * [project] opens once read), and RN's list timer clears it after 3.5 s. Leaving that list, once reached, clears it sooner.
+     */
+    fun highlight(id: String, project: String? = null) {
+        val where = listKey(project ?: openProjectId)
+        highlightTaskId = id
+        highlightList = where
+        highlightJob?.cancel()
+        highlightJob = viewModelScope.launch {
+            withTimeoutOrNull(3_500) { snapshotFlow { listKey() }.dropWhile { it != where }.first { it != where } }
+            highlightTaskId = null
+            highlightList = null
+        }
     }
 
     /** A project hit, or a task core cannot open in the editor: the list RN routes to, when this app has it. */

@@ -77,7 +77,8 @@ import org.json.JSONObject
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BulkBar(model: InboxViewModel) = with(model.menu) {
-    val bulk = page?.bulk ?: return
+    // Review draws its own bar (ReviewScreen.kt); its page carries core's bar only for the Organize dialog.
+    val bulk = page?.bulk?.takeIf { list in BULK_LISTS } ?: return
     val theme = LocalTheme.current
     val c = theme.colors
     val bar = bulk.getJSONObject("bar")
@@ -276,7 +277,8 @@ fun OrganizeDialog(model: InboxViewModel, open: JSONObject) = with(model.menu) {
                     .clearAndSetSemantics { contentDescription = cancel; role = Role.Button; if (!model.busy) onClick { keepDialog(null); true } else disabled() }
                     .clickable(enabled = !model.busy) { keepDialog(null) }.padding(horizontal = 12.dp, vertical = 10.dp))
                 val apply = organize.getString("applyLabel")
-                val canApply = !locked && (page?.bulk?.optInt("selectedCount") ?: 0) > 0
+                // The lists' bar counts the selection (Select all included); Review's lists its selected ids.
+                val canApply = !locked && (page?.bulk?.let { it.optInt("selectedCount", it.optJSONArray("selectedIds")?.length() ?: 0) } ?: 0) > 0
                 Row(Modifier.heightIn(min = 40.dp).clip(RoundedCornerShape(8.dp)).background(theme.filledBg)
                     .clearAndSetSemantics { contentDescription = apply; role = Role.Button; if (canApply) onClick { organizeApply(); true } else disabled() }
                     .clickable(enabled = canApply) { organizeApply() }.fade(if (canApply) 1f else 0.6f).padding(horizontal = 14.dp),

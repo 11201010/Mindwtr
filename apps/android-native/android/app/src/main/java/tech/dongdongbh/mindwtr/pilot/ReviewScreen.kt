@@ -37,11 +37,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -50,8 +54,8 @@ import org.json.JSONObject
 /**
  * RN's Review (app/(drawer)/review.tsx), as a stack screen or the quick-access tab, on core's getReviewOverview (with its
  * scope) and runReviewAction: the Due and All scope buttons with core's help, the expansion button and Start Review, the bulk
- * bar while rows are selected (core's actions), and core's areas, projects and task rows as far as they are expanded, each
- * due row with Mark reviewed. Back leaves selection first, as in RN.
+ * bar while rows are selected (core's actions and its Organize dialog), and core's areas, projects and task rows as far as they
+ * are expanded, each row due for review with Mark reviewed and Review in 1 week. Back leaves selection first, as in RN.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -125,11 +129,14 @@ fun ReviewList(model: InboxViewModel) = with(model.menu) {
                                 delete = { act("reviewAction", trashTask(row.id)) },
                                 selecting = bulk != null, selected = row.id in selected, select = { toggleRow("review", row.id) },
                             ))
-                            // Every row of the Due scope is due for review: RN's Mark reviewed, and its Review in 1 week (no core action yet).
-                            if (due) Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                                val mark = t("review.markReviewed")
-                                ReviewLink(mark, "$mark: ${row.title}", idle) { act("reviewAction", markReviewedTasks(listOf(row.id))) }
-                                ReviewLink(t("review.advanceWeek"), "${t("review.advanceWeek")}: ${row.title}", false) { }
+                            // RN's Mark reviewed and Review in 1 week under every row due for review, in either scope: core's two actions.
+                            item.json.optJSONObject("review")?.let { review ->
+                                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                                    for (name in listOf("markReviewed", "advance")) {
+                                        val link = review.getJSONObject(name)
+                                        ReviewLink(link.getString("label"), link.getString("accessibilityLabel"), idle, "review-$name") { act("reviewAction", link.getJSONObject("action")) }
+                                    }
+                                }
                             }
                         }
                     }
@@ -140,12 +147,13 @@ fun ReviewList(model: InboxViewModel) = with(model.menu) {
     }
 }
 
-/** RN's Review text button (Mark reviewed): 44 high, the tint; a disabled one is dimmed and TalkBack hears it is unavailable. */
+/** RN's Review text button (Mark reviewed, Review in 1 week): 44 high, the tint; a disabled one is dimmed and TalkBack hears it is unavailable. */
 @Composable
-private fun ReviewLink(label: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+private fun ReviewLink(label: String, description: String, enabled: Boolean, tag: String, action: () -> Unit) {
     val c = LocalTheme.current.colors
-    Box(Modifier.heightIn(min = 44.dp).widthIn(min = 44.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .semantics { contentDescription = description; if (!enabled) disabled() }.fade(if (enabled) 1f else 0.45f), contentAlignment = Alignment.CenterStart) {
+    Box(Modifier.heightIn(min = 44.dp).widthIn(min = 44.dp)
+        .clearAndSetSemantics { contentDescription = description; role = Role.Button; testTag = tag; if (enabled) onClick { action(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.45f), contentAlignment = Alignment.CenterStart) {
         Text(label, style = rnText(14, 400), color = c.tint)
     }
 }
@@ -194,8 +202,8 @@ private fun ReviewProject(model: InboxViewModel, project: JSONObject) = with(mod
 }
 
 /**
- * RN's Review bulk bar: core's count and Cancel, then core's actions in core's order. Organize needs the organize sheet's choices
- * (a contract gap), so it is drawn disabled.
+ * RN's Review bulk bar: core's count and Cancel, then core's actions in core's order. Organize opens the lists' Bulk organize
+ * dialog on Review's own bar (core's `bulk.organize`); Mark reviewed sends the revisions the bar showed.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -213,13 +221,14 @@ private fun ReviewBulkBar(model: InboxViewModel, bulk: JSONObject, selected: Lis
             for (action in bulk.menuObjects("actions")) {
                 val id = action.getString("id")
                 val filled = id == "organize" || id == "markReviewed"
-                val on = idle && action.getBoolean("enabled") && selected.isNotEmpty() && id != "organize"
+                val on = idle && action.getBoolean("enabled") && selected.isNotEmpty()
                 Text(action.getString("label"), style = rnText(12, 600), color = if (filled) c.onTint else c.text,
                     modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (filled) c.tint else c.filterBg)
                         .clickable(enabled = on, role = Role.Button) {
                             when (id) {
+                                "organize" -> openOrganize()
                                 "moveTo" -> openDialog("reviewMove")
-                                "markReviewed" -> act("reviewAction", markReviewedTasks(selected))
+                                "markReviewed" -> act("reviewAction", markReviewedTasks(selected, bulk.getJSONObject("taskRevisions")))
                                 "addTag" -> keepDialog(JSONObject().put("kind", "reviewTag").put("text", ""))
                                 "removeTag" -> keepDialog(JSONObject().put("kind", "tokens").put("list", "review").put("picked", org.json.JSONArray()))
                                 "share" -> {

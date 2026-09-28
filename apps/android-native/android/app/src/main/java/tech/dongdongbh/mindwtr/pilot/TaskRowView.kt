@@ -118,7 +118,9 @@ fun TaskRowItem(
     val strip = theme.priority(meta.priority)
     val showStar = star != RowStar.Hidden && meta.canFocus
     val showStatus = status != RowStatus.Hidden && meta.statusLabel != null
-    val highlighted = focusHighlight && showStar && task.isFocusedToday && !selecting
+    // RN outlines a starred row outside Today's Focus, and a task opened from search on the task list it opened on (not on Contexts
+    // or the Review screens, whose rows RN draws without it), both in the tint.
+    val highlighted = (focusHighlight && showStar && task.isFocusedToday || listed == null && isHighlighted(task.id)) && !selecting
     val picked = selecting && actions?.selected == true
     Box(Modifier.padding(bottom = 6.dp)) {
         SwipeAction(enabled = swipeOn, swipe = meta.swipe, shape = shape, onSwipe = onSwipe, onMenu = { showStatusMenu(task) }, onDelete = onDelete) {

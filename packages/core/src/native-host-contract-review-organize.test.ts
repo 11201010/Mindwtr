@@ -91,6 +91,15 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
     const markAction = (id: string, advance: boolean) => ({ type: 'markTaskReviewed' as const, taskId: id, advance, taskRevision: taskRevisionOf(task(id)) });
     const revisions = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, taskRevisionOf(task(id))]));
 
+    it.each([
+        ['due', ['markReviewed', 'organize', 'moveTo', 'addTag', 'removeTag', 'share', 'delete']],
+        ['all', ['organize', 'moveTo', 'addTag', 'removeTag', 'share', 'delete']],
+    ] as const)('orders the %s scope\'s bar as mobile draws it (review.tsx: Mark reviewed first, on Due only)', async (scope, ids) => {
+        freezeClock();
+        const { host } = await openHost();
+        expect(everything(host, { scope, selectedIds: ['w-alice'] }).bulk?.actions.map((action) => action.id)).toEqual(ids);
+    });
+
     describe('a row\'s Mark reviewed and Review in 1 week', () => {
         it('are offered under every row due for review, in either scope, carrying the task revision the row shows', async () => {
             freezeClock();

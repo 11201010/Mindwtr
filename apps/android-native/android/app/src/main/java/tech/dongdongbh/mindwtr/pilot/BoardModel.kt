@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
+import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.InboxViewModel.Part
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
@@ -13,7 +14,8 @@ import java.util.UUID
 
 /*
  * RN's Board (components/views/board-view.tsx) on core's Board contract (native-host-contract-board.ts). Kotlin keeps only RN's
- * screen state: core's filter state (sent back with every read and move), the search as typed, and the open filter sheet. The
+ * screen state: core's filter state (sent back with every read and move), the search as typed, and the open filter sheet (its
+ * picker's search as typed). The
  * columns, cards, counts, filter options and labels are core's; every write is core's runBoardAction through MenuModel.
  */
 
@@ -42,8 +44,10 @@ class BoardModel(private val menu: MenuModel, private val saved: SavedStateHandl
     /** The search box as typed, until core's setSearch has read it. */
     var typed by mutableStateOf(saved.get<String>("boardSearch")); private set
     var page by mutableStateOf<BoardPage?>(null); private set
-    /** RN's filter sheet: open with its page (the tokens or projects picker) and the due-date section's fold. */
+    /** RN's filter sheet: open with its page (the tokens or projects picker, with its search as typed) and the due-date section's fold. */
     var sheet by mutableStateOf(saved.get<String>("boardSheet")?.let(::JSONObject)); private set
+    /** The picker's search: core's tokens or projects matching the typed query, from offset zero, at the Board's revision. */
+    var found by mutableStateOf<JSONObject?>(null); private set
 
     private fun keepFilters(value: JSONObject) { filters = value; saved["boardFilters"] = value.toString() }
     private fun keepTyped(value: String?) { typed = value; saved["boardSearch"] = value }
@@ -145,6 +149,51 @@ class BoardModel(private val menu: MenuModel, private val saved: SavedStateHandl
         keepTyped(text)
         val mine = ++searchTyped
         main.postDelayed({ if (mine == searchTyped) reload(JSONObject().put("type", "setSearch").put("value", text)) }, 200)
+    }
+
+    private var pickerTyped = 0
+
+    /** The picker's search box: kept with the sheet as typed, then core's matches once typing pauses. */
+    fun pickerQuery(name: String, text: String) {
+        sheet?.let { keepSheet(JSONObject(it.toString()).put("query", text)) }
+        val mine = ++pickerTyped
+        main.postDelayed({ if (mine == pickerTyped) searchPicker(name, text) }, 200)
+    }
+
+    /** The picker's Back: the sheet's first page again, its search empty (RN's picker opens with none). */
+    fun closePicker() {
+        found = null
+        sheet?.let { keepSheet(JSONObject(it.toString()).apply { remove("page"); remove("query") }) }
+    }
+
+    /**
+     * Core's [name] options (getBoardList's `query`) matching [query] from offset zero at the shown Board's revision, to [depth] (a
+     * More reads one window deeper); a blank query shows the sheet's own list. A Board that changed meanwhile is read again, and
+     * its new revision runs the search again (the sheet's LaunchedEffect), so a typed search never stays unanswered.
+     */
+    fun searchPicker(name: String, query: String, depth: Int = WINDOW) {
+        val shown = page ?: return
+        if (query.isBlank()) { found = null; return }
+        shell.background(listOf(Part.MenuDialog), { runtime ->
+            val items = JSONArray()
+            var total: Int
+            try {
+                do {
+                    val window = runtime.menuRead("boardList", JSONObject().put("filters", shown.filters).put("list", name).put("query", query)
+                        .put("offset", items.length()).put("limit", WINDOW).put("revision", shown.revision).toString())
+                    total = window.getInt("total")
+                    val next = window.getJSONArray("items")
+                    for (index in 0 until next.length()) items.put(next.get(index))
+                } while (next.length() > 0 && items.length() < minOf(depth, total))
+                JSONObject().put("name", name).put("query", query).put("revision", shown.revision).put("total", total).put("items", items)
+            } catch (failure: Exception) {
+                if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+                null
+            }
+        }) { result, mine ->
+            if (result != null && shell.fresh(mine, Part.MenuDialog)) found = result
+            else if (result == null) reload()
+        }
     }
 
     /** The sheet's token and project rows and the match control, as the contract documents their edits. */

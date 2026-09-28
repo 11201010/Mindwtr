@@ -963,7 +963,7 @@ assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(m
 for (const key of ['menuSheet', 'menuScreen', 'historyTab', 'menuState', 'menuDialog', 'quickAccess', 'reviewFrom']) assert.match(menuModel, new RegExp(`saved(\\.get<\\w+>\\("${key}"\\)|\\["${key}"\\])`), `${key} rides the Bundle`);
 assert.match(menuUi, /BackHandler\(enabled = failedAction == null\) \{ if \(menu\.dialog != null\) menu\.backInDialog\(\) else if \(menu\.page\?\.bulk != null\) menu\.list\?\.let\(menu::endBulk\) else menu\.closeScreen\(\) \}/);
 // Search results for the Menu lists open them (review ruling 5 of pass 4).
-assert.match(searchUi, /listed != null -> \{ closeSearch\(\); menu\.openRoute\(listed\) \}/);
+assert.match(searchUi, /listed != null -> \{ closeSearch\(\); menu\.openRoute\(listed\); highlight\(task\.id\) \}/);
 assert.match(menuModel, /"\/waiting" to \(MenuScreen\.Waiting to null\), "\/someday" to \(MenuScreen\.Someday to null\),\s+"\/reference" to \(MenuScreen\.Reference to null\), "\/done" to \(MenuScreen\.History to "done"\), "\/archived" to \(MenuScreen\.History to "archived"\)/);
 // RN's device view state: Done and Archived under RN's keys, folded groups under RN's per-list key.
 assert.match(viewStateKt, /const val DONE_VIEW_KEY = "mindwtr:view:done:v1"/);
@@ -1204,6 +1204,73 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.doesNotMatch(code(text), /\.(sort\w*|sorted\w*|filter(?!Bg\b|Edit\b)\w*|groupBy|reversed|asReversed|shuffled|distinct\w*|partition|minBy|maxBy)\b/, `${name}: no Kotlin sorting, filtering, or grouping`);
         assert.doesNotMatch(code(text), /SimpleDateFormat|DateTimeFormatter|LocalDate|java\.time|java\.util\.Calendar|Calendar\.getInstance|GregorianCalendar|Instant\b|\.format\(|toLocal/, `${name}: no Kotlin date formatting or parsing`);
     }
+}
+
+// Pass 12: Review's row Mark reviewed and Review in 1 week, its batch Mark reviewed and Organize sheet (compare-and-set on the task
+// revisions core shows), the token and Board pickers' search, and RN's highlight of a task opened from search.
+{
+    const organizeKt = source('ReviewOrganize.kt');
+    const boardModelKt = source('BoardModel.kt');
+    const boardUiKt = source('BoardScreen.kt');
+    // A row's links send core's own action (its task revision inside) with a new request UUID; Kotlin builds no row action. Each
+    // link sets its label, role, state and test tag in its one semantics block.
+    assert.match(reviewUi, /item\.json\.optJSONObject\("review"\)\?\.let \{ review ->[\s\S]{0,700}?act\("reviewAction", link\.getJSONObject\("action"\)\)/);
+    assert.match(reviewUi, /\.clearAndSetSemantics \{ contentDescription = description; role = Role\.Button; testTag = tag; if \(enabled\) onClick \{ action\(\); true \} else disabled\(\) \}/);
+    assert.doesNotMatch(code(reviewUi), /\.testTag\(tag\)/, 'the link\'s tag sits inside its semantics block');
+    assert.doesNotMatch(code(Object.values(reviewScreens).join('\n') + organizeKt + menuModel), /put\("type", "markTaskReviewed"\)/, 'Kotlin never builds a row\'s Mark reviewed');
+    // The batch Mark reviewed and Organize's Apply carry the revisions core's bar showed; neither is built without them.
+    assert.match(listActionsKt, /internal fun markReviewedTasks\(taskIds: List<String>, taskRevisions: JSONObject\): JSONObject =\s+JSONObject\(\)\.put\("type", "markReviewedTasks"\)\.put\("taskIds", JSONArray\(taskIds\)\)\.put\("taskRevisions", taskRevisions\)/);
+    assert.match(listActionsKt, /internal fun organizeTasks\(taskIds: List<String>, draft: JSONObject, taskRevisions: JSONObject\): JSONObject =\s+JSONObject\(\)\.put\("type", "organizeTasks"\)\.put\("taskIds", JSONArray\(taskIds\)\)\.put\("draft", draft\)\.put\("taskRevisions", taskRevisions\)/);
+    assert.match(reviewUi, /"markReviewed" -> act\("reviewAction", markReviewedTasks\(selected, bulk\.getJSONObject\("taskRevisions"\)\)\)/);
+    assert.match(menuModel, /else if \(review != null\) \{ bulkBusy = "organize"; act\("reviewAction", organizeTasks\(review\.getJSONArray\("selectedIds"\)\.ids\(\), organize\.getJSONObject\("draft"\), review\.getJSONObject\("taskRevisions"\)\)\) \}/);
+    // A stale refusal wrote nothing and is never resent: core's view is read again, with its new revisions.
+    assert.match(menuModel, /if \(refused && action\.kind == "reviewAction" && failure\.message\?\.startsWith\("STALE_REVISION"\) == true\) shell\.ui \{ bulkBusy = null; whenIdle \{ reload\(\) \} \}/);
+    // Review's Organize is the lists' dialog on Review's own bar: the read carries the dialog (its draft, one control's edit, the
+    // picker and its search), later windows go without it, and the page's bar is the view's.
+    assert.match(menuModel, /first\.optJSONObject\("bulk"\)\?\.takeIf \{ list == "review" \}/);
+    assert.match(menuModel, /JSONObject\(params\.toString\(\)\)\.apply \{\s+remove\("organize"\); remove\("picker"\)/, 'later windows go without the dialog\'s inputs');
+    for (const list of ['contexts', 'review']) assert.match(menuModel, new RegExp(`"${list}" -> kept\\([\\s\\S]{0,240}?\\.also \\{ dialogInputs\\(list, it\\) \\}`), `${list}'s read carries its open dialog`);
+    assert.match(menuModel, /if \(list == "review"\) bulkEdit\?\.optJSONObject\("organizeEdit"\)\?\.let \{ params\.optJSONObject\("organize"\)\?\.put\("edit", it\) \}/);
+    assert.match(organizeKt, /into\.put\("organize", JSONObject\(\)\.put\("draft", open\.optJSONObject\("draft"\) \?: JSONObject\(\)\)\)/);
+    assert.match(bulkUi, /val bulk = page\?\.bulk\?\.takeIf \{ list in BULK_LISTS \} \?: return/, 'the lists\' bar never draws Review\'s');
+    assert.match(menuModel, /if \(type == "organizeTasks"\) \{ bulkBusy = null; closeDialog\("organize"\) \}/);
+    // Core ends Review's selection when a selected row is no longer drawn (RN's review.tsx); the dialogs on it close with it.
+    assert.match(menuModel, /if \(list == "review" && next\.bulk == null\) closeSelectionDialogs\(list\)/);
+    // The token pickers' search: core's matching tokens (Contexts' picker, Review's and the lists' Remove tag query), the typed text
+    // kept with the dialog and read once typing pauses; a blank search shows core's whole list.
+    assert.match(organizeKt, /into\.put\("picker", \(if \(list == "review"\) JSONObject\(\)\.put\("kind", "removeTag"\) else JSONObject\(\)\.put\("field", open\.getString\("field"\)\)\.put\("mode", open\.getString\("mode"\)\)\)\s+\.put\("query", query\)\)/);
+    assert.match(menuModel, /put\("picker", JSONObject\(\)\.put\("kind", "removeTag"\)\.apply \{ tokenQuery\(open\)\?\.let \{ put\("query", it\) \} \}\)/);
+    assert.match(contextsUi, /BasicTextField\(text, \{ typed -> typeToken\(/);
+    // The Board's picker search: getBoardList's query at the shown revision, read again whenever the Board changes.
+    assert.match(boardModelKt, /runtime\.menuRead\("boardList", JSONObject\(\)\.put\("filters", shown\.filters\)\.put\("list", name\)\.put\("query", query\)\s+\.put\("offset", items\.length\(\)\)\.put\("limit", WINDOW\)\.put\("revision", shown\.revision\)\.toString\(\)\)/);
+    assert.match(boardUiKt, /LaunchedEffect\(shown\.revision, picker\) \{ if \(query\.isNotBlank\(\)\) board\.searchPicker\(picker, query,/);
+    // RN's highlight of a task opened from search, scoped to the list it opens on (the list under the search for the editor, the
+    // hit's list for a route, the project once it opens): outlined only there, cleared after RN's 3.5 s or on leaving that list.
+    assert.match(searchUi, /task\.editor -> \{ highlight\(task\.id\); openEditor\(task\.id\) \}\s+route != null -> \{ openFromSearch\(route, task\.projectId\); highlight\(task\.id, task\.projectId\) \}\s+listed != null -> \{ closeSearch\(\); menu\.openRoute\(listed\); highlight\(task\.id\) \}/);
+    assert.match(model, /private fun listKey\(project: String\? = openProjectId\) = listOf\(menu\.screen\?\.name, menu\.list, screen\.name, project\)\.joinToString\("\|"\)/);
+    assert.match(model, /fun isHighlighted\(taskId: String\) = taskId == highlightTaskId && highlightList == listKey\(\)/);
+    assert.match(model, /withTimeoutOrNull\(3_500\) \{ snapshotFlow \{ listKey\(\) \}\.dropWhile \{ it != where \}\.first \{ it != where \} \}\s+highlightTaskId = null\s+highlightList = null/);
+    assert.match(rowUi, /listed == null && isHighlighted\(task\.id\)/);
+    assert.doesNotMatch(code(rowUi), /== highlightTaskId/, 'a row asks the model, which knows the list the highlight belongs to');
+    // The new file holds dialog inputs only: no Kotlin policy, no UI text, no write around perform.
+    assert.doesNotMatch(code(organizeKt), /\.(sort\w*|sorted\w*|filter\w*|groupBy|distinct\w*)\b|SimpleDateFormat|LocalDate|java\.time|\bText\(|contentDescription|\bsend\(|shell\.perform|FailedAction\(|runtime\./,
+        'ReviewOrganize.kt: dialog inputs only');
+    // The device check: English for the run (the original language put back), an owed failure settled first, then this run's
+    // fixtures removed (never while a write is owed), and an Apply that assigns a project; --prune-old removes interrupted runs' data.
+    const check12 = readFileSync(resolve(app, 'scripts/check-review-organize-device.mjs'), 'utf8');
+    const restore12 = check12.slice(check12.indexOf('const restore = async () => {'));
+    assert(restore12.indexOf('await settleOwed();') > 0 && restore12.indexOf('await settleOwed();') < restore12.indexOf('await removeFixtures();'), 'cleanup settles an owed failure before removing the fixtures');
+    assert.match(check12, /const removeFixtures = async \(\) => \{\s+if \(!injected\) return;\s+if \(owed\) \{/);
+    assert.match(check12, /done\(await store\(\)\.batchDeleteTasks\(tasks\)\); done\(await store\(\)\.purgeTasks\(tasks\)\);/);
+    assert.match(check12, /setProp\('language', 'en'\);/);
+    assert.match(check12, /const originalLanguage = sh\('getprop debug\.mindwtr\.native\.language'\);[\s\S]*setProp\('language', originalLanguage\)/);
+    assert.doesNotMatch(check12, /setProp\('language', ''\)|for \(const name of PROPS\)/, 'the run never clears the language property to the app\'s own');
+    assert.match(check12, /task\.projectId === injected\.project && task\.areaId === null && task\.dueDate === today\.value/);
+    assert.match(readFileSync(resolve(app, 'scripts/check-projects-device.mjs'), 'utf8'), /\/\^76\[0-9\]\{12\}\[1-6\]\$\/[\s\S]{0,900}?\/\^76\[0-9\]\{12\}9\$\/[\s\S]{0,500}?\/\^76\[0-9\]\{12\}\[07\]\$\//,
+        '--prune-old removes the Review organize check\'s tasks, project and areas');
+    // Core draws Review's bar in RN's order (Mark reviewed first on Due), so Kotlin keeps core's order.
+    const reviewContract = readFileSync(resolve(app, '../../packages/core/src/native-host-contract-review-views.ts'), 'utf8');
+    assert.match(reviewContract, /actions: \[\s+\.\.\.\(scope === 'due' \? \[\{ id: 'markReviewed' as const, label: text\.markReviewed, enabled: true \}\] : \[\]\),\s+\{ id: 'organize'/);
 }
 
 // Pass 10: Settings (the menu, General, Manage with its Someday sections, and GTD's seven screens) on core's settings contract,
@@ -2033,6 +2100,7 @@ console.log('Menu tab: core\'s menu views through CoreHost, writes through perfo
 console.log('Contexts, Trash, Review and the reviews: core\'s views, core\'s actions through perform, destructive actions behind core\'s question, checkpoints under core\'s keys');
 console.log('Calendar and Board: core\'s views under one revision, core\'s actions through perform, composer and Duplicate on disk first, a drop is one core action, no Kotlin date math or policy');
 console.log('Toolbars and bulk: the Inbox on core\'s view, core\'s bulk bar and Focus controls through perform with exact requests, a saved Focus filter on disk first, stateless Select all, no deprecated Archive fields, no Kotlin policy');
+console.log('Review organize and picker search: row and batch Mark reviewed and Organize\'s Apply carry core\'s task revisions, a stale refusal rereads core\'s view, the Organize sheet is the lists\' dialog on Review\'s bar, the token and Board pickers search through core, and a search hit is highlighted on the list it opened on');
 console.log('Settings and the editor\'s View tab: core\'s settings and task views through CoreHost, writes through perform with exact requests, device writes under RN\'s keys, checklist edits as core\'s edits in the one save');
 console.log('Mind Sweep, saved searches and the Focus checklist page: core\'s views through CoreHost, captures and Bulk organize creates on disk first, checklist edits compare-and-set on core\'s task revision, on disk before they go and moved on whatever page is open, stale windows read again whole, Focus picker search, no Kotlin policy');
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

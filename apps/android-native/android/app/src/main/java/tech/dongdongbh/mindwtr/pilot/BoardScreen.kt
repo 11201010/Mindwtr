@@ -102,7 +102,7 @@ private class Layouts {
 @Composable
 fun BoardList(model: InboxViewModel) = with(model.menu.board) {
     val shown = page ?: return
-    BackHandler(enabled = sheet != null) { sheet?.let { if (it.has("page")) keepSheet(JSONObject(it.toString()).apply { remove("page") }) else keepSheet(null) } }
+    BackHandler(enabled = sheet != null) { sheet?.let { if (it.has("page")) closePicker() else keepSheet(null) } }
     Box(Modifier.fillMaxSize().testTag("board")) {
         Column(Modifier.fillMaxSize()) {
             FilterBar(model, shown)
@@ -403,7 +403,7 @@ private fun BoardFilterSheet(model: InboxViewModel, shown: BoardPage, open: JSON
             .semantics { contentDescription = t("filters.label") }.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (picker != null) Text(t("common.back"), style = rnText(13, 600), color = c.tint, modifier = Modifier.heightIn(min = 44.dp)
-                    .clickable(role = Role.Button) { setSheet(JSONObject(open.toString()).apply { remove("page") }) }.padding(end = 8.dp, top = 12.dp, bottom = 12.dp))
+                    .clickable(role = Role.Button) { board.closePicker() }.padding(end = 8.dp, top = 12.dp, bottom = 12.dp))
                 val sheetTitle = t(when (picker) { "tokens" -> "filters.contexts"; "projects" -> "filters.projects"; else -> "filters.label" })
                 Text(sheetTitle, style = rnText(16, 700), color = c.text,
                     modifier = Modifier.weight(1f).semantics { heading() })
@@ -411,9 +411,17 @@ private fun BoardFilterSheet(model: InboxViewModel, shown: BoardPage, open: JSON
                     .clickable(enabled = idle, role = Role.Button) { board.clearFilters() }.padding(horizontal = 10.dp, vertical = 12.dp))
             }
             if (picker != null) {
-                val options = shown.collection(picker)
+                // RN's picker search, as the Inbox's: core's matching options (the query from offset zero), read again whenever the
+                // Board changes, since a tap changes the options' states.
+                val query = open.optString("query")
+                val found = board.found?.takeIf { it.getString("name") == picker && it.getString("query") == query && it.getString("revision") == shown.revision }
+                LaunchedEffect(shown.revision, picker) { if (query.isNotBlank()) board.searchPicker(picker, query, board.found?.optJSONArray("items")?.length() ?: 0) }
+                Box(Modifier.padding(bottom = 10.dp)) {
+                    SheetField(query, t("common.search"), "${t("common.search")} ${t(if (picker == "tokens") "filters.contexts" else "filters.projects")}") { board.pickerQuery(picker, it) }
+                }
+                val options = if (query.isBlank()) shown.collection(picker) else found?.menuObjects("items").orEmpty()
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    if (options.isEmpty()) Text(t("search.noResults"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
+                    if (options.isEmpty() && (query.isBlank() || found != null)) Text(t("search.noResults"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp))
                     for (option in options) {
                         val label = option.optString("title").ifEmpty { option.getString("value") }
@@ -429,7 +437,8 @@ private fun BoardFilterSheet(model: InboxViewModel, shown: BoardPage, open: JSON
                             if (on || out) Text(if (out) excluded else t("bulk.selected"), style = rnText(12, 600), color = if (out) c.danger else c.tint)
                         }
                     }
-                    if (options.size < shown.collectionTotal(picker)) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { board.more(picker) } }
+                    if (query.isBlank() && options.size < shown.collectionTotal(picker)) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { board.more(picker) } }
+                    if (found != null && options.size < found.getInt("total")) Box(Modifier.padding(vertical = 8.dp)) { MoreChip(idle) { board.searchPicker(picker, query, options.size + 100) } }
                     if (picker == "tokens") Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (sheetView.getBoolean("showContextMatchMode")) MatchMode(model, "context", t("filters.contextMatchMode"), filters.optString("contextMatchMode"))
                         if (sheetView.getBoolean("showTagMatchMode")) MatchMode(model, "tag", t("filters.tagMatchMode"), filters.optString("tagMatchMode"))

@@ -203,7 +203,11 @@ internal fun MenuModel.toggleRow(list: String, id: String) {
     reload()
 }
 
-/** The picker the open dialog names: a Contexts token action (core's picker), Review's Remove tag (core's tags), or a list's Remove tag (core's bulk picker). */
+/**
+ * The picker the open dialog names: a Contexts token action (core's picker), Review's Remove tag (core's tags), or a list's Remove
+ * tag (core's bulk picker). While text is typed, its tokens are core's search answer (the view's `bulk.picker`; a list's bar picker
+ * is read with the query already); before core's first answer, the whole list shows.
+ */
 private fun MenuModel.tokenPicker(open: JSONObject): JSONObject? {
     if (open.optString("list") == "bulk") {
         val bar = page?.bulk ?: return null
@@ -213,18 +217,26 @@ private fun MenuModel.tokenPicker(open: JSONObject): JSONObject? {
             .put("tokens", tokens).put("allowCustomValue", false).put("multiSelect", true)
     }
     val bulk = page?.view?.optJSONObject("bulk") ?: return null
-    if (open.optString("list") == "review") {
+    val review = open.optString("list") == "review"
+    // ponytail: a typed search shows core's first window of matches (100 tokens, no More); page `picker.offset` if a query ever matches more.
+    val found = bulk.optJSONObject("picker")?.takeIf { picker ->
+        tokenQuery(open) != null && if (review) picker.optString("kind") == "removeTag"
+            else picker.optString("field") == open.optString("field") && picker.optString("mode") == open.optString("mode")
+    }?.getJSONArray("items")?.let { items -> JSONArray().apply { for (index in 0 until items.length()) put(items.optJSONObject(index)?.getString("value") ?: items.getString(index)) } }
+    if (review) {
         val remove = bulk.getJSONObject("removeTag")
         return JSONObject().put("title", remove.getString("title")).put("placeholder", remove.getString("placeholder"))
-            .put("tokens", remove.getJSONArray("tags")).put("allowCustomValue", false).put("multiSelect", true)
+            .put("tokens", found ?: remove.getJSONArray("tags")).put("allowCustomValue", false).put("multiSelect", true)
     }
     return bulk.menuObjects("tokenActions").firstOrNull { it.getString("field") == open.getString("field") && it.getString("mode") == open.getString("mode") }
+        ?.let { action -> found?.let { JSONObject(action.toString()).put("tokens", it) } ?: action }
 }
 
 /**
- * RN's TokenPickerModal: a card over a dimmed screen with core's title (RN repeats it as the description), the field (a new
- * token's text, where core allows a custom value), core's tokens as chips, and Cancel and Save. Adding takes the tapped token
- * or the typed text; removing takes every tapped token. Save sends core's editTaskTokens (Contexts) or removeTags (Review).
+ * RN's TokenPickerModal: a card over a dimmed screen with core's title (RN repeats it as the description), the field (RN's query:
+ * core's matching tokens show, and it is a new token's text where core allows a custom value), core's tokens as chips, and Cancel
+ * and Save. Adding takes the tapped token or the typed text; removing takes every tapped token. Save sends core's editTaskTokens
+ * (Contexts) or removeTags (Review).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -257,12 +269,12 @@ fun TokenPicker(model: InboxViewModel, open: JSONObject) = with(model.menu) {
             val title = picker.getString("title")
             Text(title, style = rnText(18, 700), color = c.text, modifier = Modifier.semantics { heading() })
             Text(title, style = rnText(13, 400, 18), color = c.secondaryText)
-            // Typed text only names a new token; filtering core's tokens by it is not the host's to do (see the README).
-            if (!multi) {
+            // RN's query field in both modes: typing asks core for the matching tokens; a single pick also names the typed token.
+            run {
                 val focus = remember { FocusRequester() }
                 LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
                 val field = RoundedCornerShape(12.dp)
-                BasicTextField(text, { typed -> keepDialog(JSONObject(open.toString()).put("text", typed).apply { if (picked.firstOrNull() != typed) put("picked", JSONArray()) }) },
+                BasicTextField(text, { typed -> typeToken(JSONObject(open.toString()).put("text", typed).apply { if (!multi && picked.firstOrNull() != typed) put("picked", JSONArray()) }) },
                     singleLine = true, textStyle = rnText(15, 400).copy(color = c.text), cursorBrush = SolidColor(c.tint),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = picker.getString("placeholder") }.testTag("menu-dialog-field"),
@@ -276,7 +288,8 @@ fun TokenPicker(model: InboxViewModel, open: JSONObject) = with(model.menu) {
             }
             val list = RoundedCornerShape(14.dp)
             val tokens = picker.optJSONArray("tokens").ids()
-            Box(Modifier.fillMaxWidth().heightIn(max = 240.dp).clip(list).background(c.bg).border(1.dp, c.border, list).verticalScroll(rememberScrollState()).padding(12.dp)) {
+            Box(Modifier.testTag("token-picker-list").fillMaxWidth().heightIn(max = 240.dp).clip(list).background(c.bg).border(1.dp, c.border, list)
+                .verticalScroll(rememberScrollState()).padding(12.dp)) {
                 if (tokens.isEmpty()) Text(t("common.noMatches"), style = rnText(14, 400), color = c.secondaryText, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -285,10 +298,9 @@ fun TokenPicker(model: InboxViewModel, open: JSONObject) = with(model.menu) {
                         Text(token, style = rnText(13, 600), color = if (on) c.onTint else c.text, modifier = Modifier.clip(CircleShape)
                             .background(if (on) c.tint else c.filterBg).border(1.dp, if (on) c.tint else c.border, CircleShape)
                             .selectable(selected = on, role = Role.Button) {
-                                keepDialog(JSONObject(open.toString()).apply {
-                                    if (multi) put("picked", JSONArray(if (on) picked - token else picked + token))
-                                    else put("picked", JSONArray(listOf(token))).put("text", token)
-                                })
+                                // A single pick fills the field (RN's setQuery), so core's search narrows to it; a multi pick leaves the search.
+                                if (multi) keepDialog(JSONObject(open.toString()).put("picked", JSONArray(if (on) picked - token else picked + token)))
+                                else typeToken(JSONObject(open.toString()).put("picked", JSONArray(listOf(token))).put("text", token))
                             }.padding(horizontal = 12.dp, vertical = 8.dp))
                     }
                 }

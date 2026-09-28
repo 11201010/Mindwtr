@@ -251,10 +251,11 @@ fun SearchScreen(model: InboxViewModel, state: SearchState) = with(model) {
                         else -> Icon(Lucide.CheckCircle, null, tint = c.tint, modifier = Modifier.size(24.dp))
                     }
                 }) {
+                    // RN's setHighlightTask: the hit is outlined on the list it opens on (the one under the search for the editor).
                     when {
-                        task.editor -> openEditor(task.id)
-                        route != null -> openFromSearch(route, task.projectId)
-                        listed != null -> { closeSearch(); menu.openRoute(listed) }
+                        task.editor -> { highlight(task.id); openEditor(task.id) }
+                        route != null -> { openFromSearch(route, task.projectId); highlight(task.id, task.projectId) }
+                        listed != null -> { closeSearch(); menu.openRoute(listed); highlight(task.id) }
                     }
                 }
             }

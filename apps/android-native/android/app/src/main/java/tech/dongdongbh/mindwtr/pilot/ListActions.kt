@@ -27,10 +27,17 @@ internal fun purgeItems(taskIds: List<String>, projectIds: List<String>): JSONOb
     JSONObject().put("type", "purgeItems").put("taskIds", JSONArray(taskIds)).put("projectIds", JSONArray(projectIds))
 internal fun emptyTrash(revision: String): JSONObject = JSONObject().put("type", "emptyTrash").put("revision", revision)
 
-/** Review's bulk bar: the typed tag, the tags picked from core's list, and Mark reviewed. */
+/**
+ * Review's bulk bar: the typed tag, the tags picked from core's list, Mark reviewed, and Organize's Apply (the draft core answered).
+ * Mark reviewed and Apply carry each task's revision as the view showed it (core's `bulk.taskRevisions`): core refuses a task that
+ * changed since (STALE_REVISION).
+ */
 internal fun addTag(taskIds: List<String>, tag: String): JSONObject = JSONObject().put("type", "addTag").put("taskIds", JSONArray(taskIds)).put("tag", tag)
 internal fun removeTags(taskIds: List<String>, tags: List<String>): JSONObject = JSONObject().put("type", "removeTags").put("taskIds", JSONArray(taskIds)).put("tags", JSONArray(tags))
-internal fun markReviewedTasks(taskIds: List<String>): JSONObject = JSONObject().put("type", "markReviewedTasks").put("taskIds", JSONArray(taskIds))
+internal fun markReviewedTasks(taskIds: List<String>, taskRevisions: JSONObject): JSONObject =
+    JSONObject().put("type", "markReviewedTasks").put("taskIds", JSONArray(taskIds)).put("taskRevisions", taskRevisions)
+internal fun organizeTasks(taskIds: List<String>, draft: JSONObject, taskRevisions: JSONObject): JSONObject =
+    JSONObject().put("type", "organizeTasks").put("taskIds", JSONArray(taskIds)).put("draft", draft).put("taskRevisions", taskRevisions)
 
 /** The Weekly Review's project Add task (the typed title, core's quick-add grammar) and the Daily Review's Follow up today. */
 internal fun addProjectTask(projectId: String, title: String): JSONObject = JSONObject().put("type", "addProjectTask").put("projectId", projectId).put("title", title)

@@ -197,6 +197,29 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
         let pruned = 0;
         const prunedChecks = {};
         if (process.env.CHECK_PRUNE === '1') {
+            // The Review organize check's runs it could not clean up (76, a 12-digit run id): its six tasks (1-6) first, then its
+            // project (9), then its two areas (0 and 7).
+            {
+                const ids = live(store()._allTasks).filter((item) => /^76[0-9]{12}[1-6]$/.test(item.title)).map((item) => item.id);
+                if (ids.length > 0) {
+                    const result = await store().batchDeleteTasks(ids);
+                    if (!result.success) throw new Error('prune failed: ' + result.error);
+                    await flushPendingSave();
+                }
+                prunedChecks.reviewOrganize = ids.length;
+                for (const project of live(store()._allProjects).filter((item) => /^76[0-9]{12}9$/.test(item.title))) {
+                    const result = await store().deleteProject(project.id);
+                    if (!result.success) throw new Error('prune failed: ' + result.error);
+                    await flushPendingSave();
+                    pruned += 1;
+                }
+                for (const area of live(store()._allAreas).filter((item) => /^76[0-9]{12}[07]$/.test(item.name))) {
+                    const result = await store().deleteArea(area.id);
+                    if (!result.success) throw new Error('prune failed: ' + result.error);
+                    await flushPendingSave();
+                    pruned += 1;
+                }
+            }
             // Only what earlier versions of this check injected per run: its four title shapes with a 12-digit run id.
             // [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             for (const project of live(store()._allProjects).filter((item) => /^(Seq|Arch|Many)[0-9]{12}$/.test(item.title) && !item.title.endsWith(names.run))) {

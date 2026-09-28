@@ -651,10 +651,11 @@ export function createReviewViewMethods(deps: ReviewViewDeps) {
             taskRevisions: Object.fromEntries(selectedIds.map((id) => [id, taskRevisionOf(tasksById[id])])),
             countLabel: `${selectedIds.length} ${text.selected}`,
             cancelLabel: text.cancel,
+            // Mobile's order (review.tsx): Mark reviewed first on the Due scope, then Organize and the rest.
             actions: [
+                ...(scope === 'due' ? [{ id: 'markReviewed' as const, label: text.markReviewed, enabled: true }] : []),
                 { id: 'organize', label: text.organize, enabled: true },
                 { id: 'moveTo', label: text.moveTo, enabled: true },
-                ...(scope === 'due' ? [{ id: 'markReviewed' as const, label: text.markReviewed, enabled: true }] : []),
                 { id: 'addTag', label: text.addTag, enabled: true },
                 { id: 'removeTag', label: text.removeTag, enabled: removableTags.length > 0 },
                 { id: 'share', label: text.share, enabled: true },
