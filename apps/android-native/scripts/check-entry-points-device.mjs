@@ -4,7 +4,7 @@
 //
 // Installs the debug APK with `install -r` (existing development data stays) and checks RN's system entry points on the
 // development scheme mindwtr-native-dev (the phone's RN app keeps mindwtr://, so no link here can reach it):
-// (a) `dumpsys shortcut` lists RN's launcher shortcuts (add_task_inbox, open_focus, open_calendar) as manifest shortcuts;
+// (a) `cmd shortcut get-shortcuts` lists RN's launcher shortcuts (Add task, Focus, Calendar) on RN's component name;
 // (b) a text share (ACTION_SEND text/plain) opens the capture popup with the shared text, and Save stores it once (core,
 // on a copy of the app's database); (c) links land on core's screen: the Inbox, Focus (open-feature today), Waiting,
 // Someday (open-feature), the Calendar, the global search with its query, a task (the editor over Focus), a project, the
@@ -19,7 +19,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, draftText, evidenced, fail, field, hasText, inEditor, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { button, check, connect, draftText, evidenced, fail, field, hasText, inEditor, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -94,18 +94,38 @@ const core = () => JSON.parse(execFileSync('bun', ['-e', `
 const onTabs = (name) => (nodes) => tabSelected(nodes, name) && !inEditor(nodes) && !tagged(nodes, 'global-search') && !tagged(nodes, 'menu-screen');
 const inScreen = (title) => (nodes) => Boolean(tagged(nodes, 'menu-screen')) && hasText(nodes, title);
 const popup = (text) => (nodes) => Boolean(tagged(nodes, 'quick-capture')) && draftText(nodes) === text;
-/** Sends [intent] (am start arguments) to this app only, and waits for [expected]. */
+/**
+ * Sends [intent] (am start arguments) to this app only, waits until core has answered it (its entry-point log line: a
+ * later intent would replace one not yet opened), then waits for [expected].
+ */
 const send = async (intent, expected, description, timeoutMs = 20_000) => {
     requireAppFront();
+    const answered = lines('native-android-entry-point');
     sh(`am start -W ${intent} ${PKG}`);
+    const deadline = Date.now() + 20_000;
+    while (lines('native-android-entry-point') === answered) {
+        if (Date.now() > deadline) fail(`core never answered the entry for ${description}`);
+        await sleep(500);
+    }
     return waitFor(description, expected, timeoutMs);
 };
-const link = (path, expected, description) => send(`-a android.intent.action.VIEW -d '${SCHEME}://${path}'`, expected, description);
-/** Leaves a screen the check opened with the system Back, back to the tabs. */
+const link = (path, expected, description, timeoutMs) => send(`-a android.intent.action.VIEW -d '${SCHEME}://${path}'`, expected, description, timeoutMs);
+const atTabs = (nodes) => Boolean(tab(nodes, en['tab.inbox'])) && !tagged(nodes, 'menu-screen') && !tagged(nodes, 'global-search') && !inEditor(nodes);
+/**
+ * Leaves a screen the check opened with the system Back, back to the tabs. A project open on RN's Projects screen takes
+ * two Backs (the project, then the screen); Back is pressed again only while the tabs are not showing.
+ */
 const back = async (description) => {
-    requireAppFront();
-    sh('input keyevent KEYCODE_BACK');
-    return waitFor(description, (nodes) => Boolean(tab(nodes, en['tab.inbox'])) && !tagged(nodes, 'menu-screen') && !tagged(nodes, 'global-search') && !inEditor(nodes), 15_000);
+    for (let press = 0; press < 3; press += 1) {
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        const deadline = Date.now() + 6_000;
+        while (Date.now() < deadline) {
+            if (atTabs(await screen())) return;
+            await sleep(500);
+        }
+    }
+    await waitFor(description, atTabs, 5_000);
 };
 const closePopup = (nodes) => tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'),
     (current) => !tagged(current, 'quick-capture'), 'the popup to close');
@@ -147,18 +167,33 @@ try {
     sh('settings put system user_rotation 0');
     await waitFor('the tabs', (nodes) => Boolean(tab(nodes, en['tab.inbox'])), 60_000);
 
-    // (a) RN's launcher shortcuts are the package's manifest shortcuts (RN's App Actions ids live in the same XML; the gate checks them).
-    // The package's own section: from its "Package:" line to the next package's or launcher's line at the same depth.
-    const dumpLines = sh('dumpsys shortcut').split('\n');
-    const start = dumpLines.findIndex((line) => line.trim().startsWith(`Package: ${PKG} `) || line.trim() === `Package: ${PKG}`);
-    const depth = start < 0 ? 0 : dumpLines[start].search(/\S/);
-    const end = dumpLines.findIndex((line, index) => index > start && line.search(/\S/) === depth && /^\s*(Package|Launcher): /.test(line));
-    const ids = start < 0 ? [] : [...dumpLines.slice(start, end < 0 ? undefined : end).join('\n').matchAll(/ShortcutInfo \{id=([^,]+),/g)].map(([, id]) => id);
-    check(['add_task_inbox', 'open_focus', 'open_calendar'].every((id) => ids.includes(id)), `(a) dumpsys shortcut lists RN's shortcuts: ${JSON.stringify(ids)}`);
+    // (a) RN's launcher shortcuts are the package's manifest shortcuts, on RN's component name (the alias). Android 16
+    // hides shortcut ids in its dumps, so each is known by its label's resource name; the App Actions ids in the same XML
+    // carry no intent, so Android publishes none of them (the gate checks them). The phone's RN development app, when
+    // installed, publishes the same three from the same XML.
+    const manifestShortcuts = (pkg) => sh(`cmd shortcut get-shortcuts ${pkg}`).split('ShortcutInfo {').slice(1)
+        .filter((entry) => /flags=0x[0-9a-f]+ \[[^\]]*Man/.test(entry))
+        .map((entry) => ({ label: /shortLabel=[^\n]*\[(\w+)\]/.exec(entry)?.[1], activity: /activity=ComponentInfo\{([^}]+)\}/.exec(entry)?.[1] }));
+    let shortcuts = [];
+    for (let attempt = 0; attempt < 20 && shortcuts.length < 3; attempt += 1) {
+        shortcuts = manifestShortcuts(PKG);
+        if (shortcuts.length < 3) await sleep(1000);
+    }
+    const labels = shortcuts.map((entry) => entry.label).sort();
+    check(JSON.stringify(labels) === JSON.stringify(['shortcut_add_task_short', 'shortcut_open_calendar_short', 'shortcut_open_focus_short'])
+        && shortcuts.every((entry) => entry.activity === `${PKG}/${PKG}.MainActivity`), `(a) RN's launcher shortcuts on RN's component name: ${JSON.stringify(shortcuts)}`);
+    if (sh('pm list packages tech.dongdongbh.mindwtr.dev').split('\n').includes('package:tech.dongdongbh.mindwtr.dev')) {
+        const rn = manifestShortcuts('tech.dongdongbh.mindwtr.dev').map((entry) => entry.label).sort();
+        check(JSON.stringify(rn) === JSON.stringify(labels), `(a) the same shortcuts as the phone's RN development app: ${JSON.stringify(rn)}`);
+    }
 
     // (b) A text share opens the popup with the text; Save stores it once.
     const capturesBefore = captures();
     let nodes = await send(`-a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '${titles.shared}'`, popup(titles.shared), 'the popup with the shared text');
+    // Add another is a remembered preference (as in RN); with it on, Save keeps the popup open for the next capture.
+    if (switchOn(nodes, en['quickAdd.addAnother'])) {
+        nodes = await tapExpecting(withDescription(nodes, en['quickAdd.addAnother']), (current) => !switchOn(current, en['quickAdd.addAnother']), 'Add another off');
+    }
     await tapExpecting(button(nodes, en['common.save']) ?? fail('no Save on the popup'), (current) => !tagged(current, 'quick-capture'), 'the share to save');
     await waitFor('the capture command', () => captures() === capturesBefore + 1, 15_000);
     let stored = core();
