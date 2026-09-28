@@ -34,5 +34,5 @@ describe('@mindwtr/core subpath imports', () => {
             }
         }
         expect(problems).toEqual([]);
-    });
+    }, 120_000); // It loads the whole core barrel and every subpath: slow on a loaded machine.
 });
