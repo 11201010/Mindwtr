@@ -527,13 +527,12 @@ export function createCaptureModalDraft(params: CaptureModalParams, initialProps
     };
 }
 
-type CopilotSettings = { aiEnabled: boolean; timeEstimatesEnabled: boolean };
-const asksCopilot = (settings: CopilotSettings, title: string) => shouldRequestCaptureModalCopilot({
-    aiEnabled: settings.aiEnabled, keyRequired: false, hasKey: true, title,
-});
+/** What decides whether the screen asks the AI, and what an answer may add. */
+export type CaptureModalCopilotSettings = { aiEnabled: boolean; keyRequired: boolean; hasKey: boolean; timeEstimatesEnabled: boolean };
+const asksCopilot = (settings: CaptureModalCopilotSettings, title: string) => shouldRequestCaptureModalCopilot({ ...settings, title });
 
 /** Apply one edit. Null for an edit the screen cannot make (a part it does not show). */
-export function applyCaptureModalEdit(draft: CaptureModalDraft, edit: CaptureModalEdit, settings: CopilotSettings): CaptureModalDraft | null {
+export function applyCaptureModalEdit(draft: CaptureModalDraft, edit: CaptureModalEdit, settings: CaptureModalCopilotSettings): CaptureModalDraft | null {
     switch (edit.type) {
         case 'setText':
             return {
@@ -576,7 +575,7 @@ export type CaptureModalView = {
     /** Shown while the entry brought a description or the field holds one. */
     description: { label: string; placeholder: string; value: string } | null;
     copilot: {
-        /** What the screen asks the AI now (with a key, when the provider needs one); send the answer as setSuggestion. */
+        /** What the screen asks the AI now (null without a key the provider needs); send the answer as setSuggestion. */
         request: { title: string; contexts: string[]; tags: string[] } | null;
         suggested: {
             label: string;
@@ -605,10 +604,17 @@ export function buildCaptureModalView(draft: CaptureModalDraft, context: {
     /** The text's parse (as buildCaptureModalRequest takes it); ignored while the text is blank. */
     parsed: QuickAddResult;
     formatDate: DateFormatter;
+    /** Whether the provider needs an API key (isAIKeyRequired), and whether the host holds one. */
+    aiKey: { required: boolean; available: boolean };
 }): CaptureModalView {
     const { t, settings } = context;
     const flags = resolveFeatureFlags(settings);
-    const copilotSettings = { aiEnabled: settings.ai?.enabled === true, timeEstimatesEnabled: flags.timeEstimates };
+    const copilotSettings = {
+        aiEnabled: settings.ai?.enabled === true,
+        keyRequired: context.aiKey.required,
+        hasKey: context.aiKey.available,
+        timeEstimatesEnabled: flags.timeEstimates,
+    };
     const title = draft.text.trim();
     const parts = getCaptureModalCopilotParts(draft.suggestion, draft.applied, flags.timeEstimates);
     const attachments = context.initialProps.attachments ?? [];

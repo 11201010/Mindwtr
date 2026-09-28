@@ -158,7 +158,7 @@ function withoutSharedFiles(observation: Observation): Observation {
 async function replay(scenario: Scenario): Promise<Observation[]> {
     let refuse = false;
     vi.setSystemTime(new Date(fixture.now));
-    const { host, log } = await openReplayHost(fixture.settings[scenario.settings], () => refuse);
+    const { host, log } = await openReplayHost(withLocalAIEndpoint(fixture.settings[scenario.settings]), () => refuse);
     const { params } = scenario;
     const opened = value(host.openCaptureModal({ params }));
     let draft: CaptureModalDraft = opened.draft;
@@ -262,6 +262,14 @@ async function replay(scenario: Scenario): Promise<Observation[]> {
     }
     return observations;
 }
+
+/**
+ * The AI at a local OpenAI-compatible endpoint, which needs no key. The fixture's React
+ * Native screen held a key for its provider; this host keeps no AI key until pass AI1.
+ */
+const withLocalAIEndpoint = (settings: AppSettings): AppSettings => (
+    settings.ai?.enabled ? { ...settings, ai: { ...settings.ai, baseUrl: 'http://127.0.0.1:11434/v1' } } : settings
+);
 
 /** A capture link naming a note, a tag and a project no project carries. */
 const linkParams: CaptureModalParams = {
@@ -472,8 +480,22 @@ describe('native host contract: the capture confirmation screen', () => {
         expect(invalid.map((result) => (result.ok ? 'ok' : result.error.code))).toEqual(Array(5).fill('INVALID_INPUT'));
     });
 
+    // Review should-fix 4: React Native asks the AI only with a key, or with a provider that needs none.
+    it('asks the AI as React Native does: never for a provider that needs a key this host does not hold', async () => {
+        const params = { initialValue: 'Call%20the%20bank' };
+        const keyed = await openScreenHost({ data, record: {}, log: [] });
+        const opened = value(keyed.openCaptureModal({ params }));
+        expect(opened.view.copilot.request).toBeNull();
+        const answered = value(keyed.editCaptureModal({ params, draft: opened.draft, edit: { type: 'setSuggestion', title: 'Call the bank', suggestion: { tags: ['#finance'] } } }));
+        expect(answered.draft.suggestion).toBeNull();
+
+        // An OpenAI-compatible endpoint needs no key (React Native's isAIKeyRequired, now core's).
+        const local = await openScreenHost({ data: { ...data, settings: withLocalAIEndpoint(data.settings) }, record: {}, log: [] });
+        expect(value(local.openCaptureModal({ params })).view.copilot.request).toMatchObject({ title: 'Call the bank' });
+    });
+
     it('drops an AI answer for a title the field no longer holds', async () => {
-        const host = await openScreenHost({ data, record: {}, log: [] });
+        const host = await openScreenHost({ data: { ...data, settings: withLocalAIEndpoint(data.settings) }, record: {}, log: [] });
         const params = { initialValue: 'Call%20the%20bank' };
         const { draft, view } = value(host.openCaptureModal({ params }));
         expect(view.copilot.request).toMatchObject({ title: 'Call the bank', contexts: ['@computer', '@home office', '@phone'], tags: ['#finance', '#work'] });

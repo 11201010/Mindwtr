@@ -26,8 +26,9 @@
  * - A failed save: set `failed` in the draft; the card shows the failure until
  *   the next save starts (clear it when submitting).
  * - The AI: `view.copilot.request` is what React Native asks the AI now; the
- *   answer goes back as a setSuggestion edit. No bridge asks yet (pass AI1),
- *   so the chips stay hidden, as in React Native with the AI off.
+ *   answer goes back as a setSuggestion edit. This host keeps no AI key yet
+ *   (pass AI1), so a provider that needs one is never asked, as in React Native
+ *   with no key; an OpenAI-compatible endpoint needs none.
  *
  * Shared files (initialProps.attachments) are left out: this host has no
  * managed attachments folder until the attachments pass (A2).
@@ -66,6 +67,7 @@ import {
     type CaptureModalParams,
     type CaptureModalView,
 } from './capture-modal-model';
+import { isAIKeyRequired } from './ai-config';
 import { resolveDefaultNewTaskAreaId } from './area-utils';
 import type { DateFormatter } from './date';
 import type { TranslateFn } from './i18n';
@@ -255,9 +257,20 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
         return projects;
     };
     const projectGone = () => fail('STALE_REVISION', 'The project this capture created is gone');
+    const copilotSettings = () => {
+        const { settings } = useTaskStore.getState();
+        return {
+            aiEnabled: settings.ai?.enabled === true,
+            keyRequired: isAIKeyRequired(settings),
+            // ponytail: this host keeps no AI key until pass AI1, so a provider that needs one is never asked.
+            hasKey: false,
+            timeEstimatesEnabled: resolveFeatureFlags(settings).timeEstimates,
+        };
+    };
     const view = (params: CaptureModalParams, draft: CaptureModalDraft): NativeCaptureModalView => {
         const state = useTaskStore.getState();
         const now = new Date();
+        const ai = copilotSettings();
         return {
             ...buildCaptureModalView(draft, {
                 t: deps.t(),
@@ -268,6 +281,7 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
                 initialProps: presetOf(params),
                 parsed: parse(draft.text, state.projects),
                 formatDate: deps.formatDate(),
+                aiKey: { required: ai.keyRequired, available: ai.hasKey },
             }),
             version: NATIVE_HOST_CONTRACT_VERSION,
             revision: deps.revision(now),
@@ -317,11 +331,7 @@ export function createCaptureModalMethods(deps: CaptureModalDeps) {
             const read = readScreen(input);
             if (!read.ok) return read;
             if (!isEdit(input.edit)) return fail('INVALID_INPUT', 'edit is not a valid capture screen edit');
-            const settings = useTaskStore.getState().settings;
-            const draft = applyCaptureModalEdit(read.value.draft, input.edit, {
-                aiEnabled: settings.ai?.enabled === true,
-                timeEstimatesEnabled: resolveFeatureFlags(settings).timeEstimates,
-            });
+            const draft = applyCaptureModalEdit(read.value.draft, input.edit, copilotSettings());
             if (!draft) return fail('INVALID_INPUT', 'edit names a copilot part the screen does not show');
             return { ok: true, value: { draft, view: view(read.value.params, draft) } };
         },
