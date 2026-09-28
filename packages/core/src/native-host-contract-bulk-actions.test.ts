@@ -419,8 +419,10 @@ describe('native host contract: selection mode', () => {
             expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: undo! }))).toMatchObject({ changed: true });
             log.length = 0;
             // The Undo's replay finds the task back; the delete's replay would trash it again, so it runs before its Undo.
-            for (const action of actions.slice(0, 3)) {
-                expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }))).toEqual({ changed: false, toast: null });
+            // The move answers mobile's toast for it; a tag or organize change with nothing to write shows none.
+            const moved = { tone: 'success', title: 'Done', message: '1 task', undo: null };
+            for (const [index, action] of actions.slice(0, 3).entries()) {
+                expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }))).toEqual({ changed: false, toast: index === 0 ? moved : null });
             }
             expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: actions[4] }))).toEqual({ changed: false, toast: null });
             expect(log).toEqual([]);
@@ -510,15 +512,28 @@ describe('native host contract: selection mode', () => {
             ['editTaskTokens (a tag add) under Select all', (host: Host): NativeBulkAction => ({ type: 'editTaskTokens', field: 'tags', mode: 'add', values: ['urgent'], selectAll: selectAll(host) })],
             ['organize under Select all', (host: Host): NativeBulkAction => ({ type: 'organize', draft: { tags: 'later' }, selectAll: selectAll(host) })],
             ['trashTasks under Select all', (host: Host): NativeBulkAction => ({ type: 'trashTasks', selectAll: selectAll(host) })],
-        ] as const)('%s: a replay of a request that landed answers changed: false and writes nothing', async (_name, build) => {
+        ] as const)('%s: a replay of a request that landed answers changed: false and writes nothing', async (name, build) => {
             freezeClock();
             const { host, log } = await open();
             const input = { requestId: requestId(), list: 'inbox' as const, action: build(host) };
             expect(value(await host.runBulkAction(input))).toMatchObject({ changed: true });
             log.length = 0;
             const { result, wrote } = await replayAfterRestart((restarted) => restarted.runBulkAction(input));
-            expect(result).toEqual({ ok: true, value: { changed: false, toast: null } });
+            // Explicit rows all moved already: mobile's toast for the move. Select all's rows left the Inbox: none.
+            const toast = name === 'moveTasks' ? { tone: 'success', title: 'Done', message: '2 tasks', undo: null } : null;
+            expect(result).toEqual({ ok: true, value: { changed: false, toast } });
             expect(wrote).toBe(false);
+            expect(log).toEqual([]);
+        });
+
+        it('moveTasks: every selected row there already writes nothing and answers mobile\'s toast for the move', async () => {
+            freezeClock();
+            const { host, log } = await open();
+            const action = withRevisions(host, 'inbox', { type: 'moveTasks', taskIds: ['i-call', 'i-milk'], status: 'next' });
+            await useTaskStore.getState().batchMoveTasks(['i-call', 'i-milk'], 'next');
+            log.length = 0;
+            expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action })))
+                .toEqual({ changed: false, toast: { tone: 'success', title: 'Done', message: '2 tasks', undo: null } });
             expect(log).toEqual([]);
         });
 

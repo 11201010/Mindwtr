@@ -2,7 +2,8 @@ import type { NativeHostResult } from './native-host-contract';
 import { SqliteAdapter, type SqliteAdapterOptions, type SqliteClient } from './sqlite-adapter';
 import { getPersistenceStatus, getSaveSnapshotGeneration, useTaskStore } from './store';
 import type { StoreActionResult } from './store-types';
-import type { AppData, Task } from './types';
+import { isSelectableProjectForTaskAssignment } from './project-utils';
+import type { AppData, Project, Task } from './types';
 import { deterministicHash128, generateDeterministicUUID } from './uuid';
 
 /**
@@ -160,6 +161,27 @@ export const revisionsToken = (entries: readonly string[]): string => `${entries
  * derived from the request UUID and the row's `role`: a retry finds that row by it.
  */
 export const requestRowId = (requestId: string, role: string): string => generateDeterministicUUID(`${requestId.toLowerCase()}:${role}`);
+
+/**
+ * The addProject a request hands to a core flow that may make a project. The project takes
+ * `idOf(title)` (requestRowId, or the request UUID for a main row), and that ID is looked up
+ * first: a retry after a failed later write takes the project the first try made, renamed
+ * since or not, and never makes a second one. One deleted or archived since sets `stale` and
+ * writes nothing; the request then answers STALE_REVISION.
+ */
+export const requestProjects = (idOf: (title: string) => string) => {
+    const made = { stale: false };
+    const addProject = async (title: string, color: string, props?: Partial<Project>): Promise<Project | null> => {
+        const id = idOf(title);
+        const state = useTaskStore.getState();
+        const project = state._allProjects.find((entry) => entry.id === id);
+        if (!project) return state.addProject(title, color, { ...props, id });
+        if (isSelectableProjectForTaskAssignment(project)) return project;
+        made.stale = true;
+        return null;
+    };
+    return { addProject, made };
+};
 
 // Durable receipts: the native host only (loadNativeRequestReceipts turns them on).
 type StoredReceipt = { payload: string; reply: unknown; savedAt: string };

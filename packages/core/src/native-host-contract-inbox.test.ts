@@ -26,6 +26,7 @@ import { noopStorage } from './storage';
 import { replayAfterRestart } from './screen-parity.replay';
 import { createTaskSimilarityIndex } from './task-similarity';
 import { generateUUID } from './uuid';
+import { requestRowId } from './native-request-receipts';
 
 const fixture = loadProcessInboxFixture();
 const scenario = (name: string) => fixture.scenarios.find((entry) => entry.name.startsWith(name))!;
@@ -321,6 +322,68 @@ describe('native host contract: Process Inbox', () => {
             expect(retried.value.view?.draft.projectId).toBe(garden?.id);
         }
     }, 30_000);
+
+    it('names a converted project from the request: a retry after its task write failed uses it, renamed since, and refuses it deleted', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('make it a project with extra actions'));
+        const seeded = new Set(useTaskStore.getState()._allProjects.map((project) => project.id));
+        const made = () => useTaskStore.getState()._allProjects.filter((project) => !seeded.has(project.id)).map((project) => [project.id, project.title, Boolean(project.deletedAt)]);
+        const started = host.startInboxProcessing();
+        if (!started.ok || !started.value.view) throw new Error('No session');
+        const sessionId = started.value.sessionId!;
+        let view = started.value.view;
+        const choose = async (label: string) => {
+            const choice = view.choices.find((entry) => entry.label === label)!;
+            const result = await host.commitInboxProcessingStep({ sessionId, taskId: view.taskId, step: view.step, decision: { choice: choice.id }, requestId: generateUUID() });
+            if (!result.ok || !result.value.view) throw new Error('No next step');
+            view = result.value.view;
+        };
+        for (const key of ['inbox.yes', 'inbox.takesLonger', 'inbox.illDoIt', 'process.moreThanOneStepYes']) await choose(t(key));
+        const edited = host.getInboxProcessingStep({ sessionId, taskId: view.taskId, step: view.step, edit: { type: 'set', field: 'nextAction', value: 'Book flights' } });
+        if (!edited.ok) throw new Error(edited.error.message);
+        view = edited.value;
+        const convert = { sessionId, taskId: view.taskId, step: view.step, decision: { choice: 'createProject' }, requestId: generateUUID() };
+        const projectId = requestRowId(convert.requestId, 'project');
+        // The project lands; the task's move into it fails.
+        const updateTask = useTaskStore.getState().updateTask;
+        useTaskStore.setState({ updateTask: async () => ({ success: false, error: 'Task store refused' }) });
+        expect(await host.commitInboxProcessingStep(convert)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        useTaskStore.setState({ updateTask });
+        const [[landed]] = made();
+        // Another device renames it before the retry.
+        await useTaskStore.getState().updateProject(landed as string, { title: 'Renamed' });
+        expect(await host.commitInboxProcessingStep(convert)).toMatchObject({ ok: true });
+        expect(made()).toEqual([[projectId, 'Renamed', false]]);
+        expect(useTaskStore.getState()._tasksById.get(convert.taskId)?.projectId).toBe(projectId);
+    });
+
+    it('never makes a converted project again after it was deleted: the retry is STALE_REVISION', async () => {
+        freezeClock();
+        const { host } = await openHost(scenario('make it a project with extra actions'));
+        const started = host.startInboxProcessing();
+        if (!started.ok || !started.value.view) throw new Error('No session');
+        const sessionId = started.value.sessionId!;
+        let view = started.value.view;
+        for (const key of ['inbox.yes', 'inbox.takesLonger', 'inbox.illDoIt', 'process.moreThanOneStepYes']) {
+            const choice = view.choices.find((entry) => entry.label === t(key))!;
+            const result = await host.commitInboxProcessingStep({ sessionId, taskId: view.taskId, step: view.step, decision: { choice: choice.id }, requestId: generateUUID() });
+            if (!result.ok || !result.value.view) throw new Error('No next step');
+            view = result.value.view;
+        }
+        const edited = host.getInboxProcessingStep({ sessionId, taskId: view.taskId, step: view.step, edit: { type: 'set', field: 'nextAction', value: 'Book flights' } });
+        if (!edited.ok) throw new Error(edited.error.message);
+        const convert = { sessionId, taskId: view.taskId, step: view.step, decision: { choice: 'createProject' }, requestId: generateUUID() };
+        const updateTask = useTaskStore.getState().updateTask;
+        useTaskStore.setState({ updateTask: async () => ({ success: false, error: 'Task store refused' }) });
+        expect(await host.commitInboxProcessingStep(convert)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+        useTaskStore.setState({ updateTask });
+        const seeded = new Set(fixture.projects.map((project) => project.id));
+        await useTaskStore.getState().deleteProject(useTaskStore.getState()._allProjects.find((project) => !seeded.has(project.id))!.id);
+        const before = useTaskStore.getState()._allProjects;
+        expect(await host.commitInboxProcessingStep(convert)).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(useTaskStore.getState()._allProjects).toBe(before);
+        expect(useTaskStore.getState()._tasksById.get(convert.taskId)?.projectId).toBeUndefined();
+    });
 
     it('refuses a fifth session while four sessions each wait for a save, and frees them once one saves', async () => {
         freezeClock();

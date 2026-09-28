@@ -750,8 +750,11 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     case 'moveTasks': {
                         if (!getBulkMoveStatusOptions(screen.status).includes(action.status)) return fail('INVALID_INPUT', 'This list does not offer that status');
                         // Mobile moves every selected row; only the rows not there yet are compared.
+                        const move: TaskListBulkWrite = { kind: 'move', taskIds, status: action.status };
                         const moving = taskIds.filter((id) => state._tasksById.get(id)?.status !== action.status);
-                        return run(moving.length > 0 ? { kind: 'move', taskIds, status: action.status } : null, moving);
+                        // Every row there already: nothing to write, and the toast mobile shows for the move.
+                        if (moving.length === 0) return { ok: true, value: { changed: false, toast: taskIds.length > 0 ? toToast(move, t) : null } };
+                        return run(move, moving);
                     }
                     case 'editTaskTokens': {
                         if (action.field !== 'tags' || (action.mode !== 'add' && action.mode !== 'remove')

@@ -15,11 +15,11 @@
  * the import cycle between the two files is safe.
  */
 import { serializeBackupData } from './backup-transfer';
-import { applyCapturedProject, resolveCaptureAreaQuery, resolveCaptureProjectQuery, type CaptureTaskPlan, type CaptureTransactionActions } from './capture';
+import { applyCapturedProject, resolveCaptureAreaQuery, resolveCaptureProjectQuery, type CaptureTaskPlan } from './capture';
 import { safeParseDate, type DateFormatter } from './date';
 import type { TranslateFn } from './i18n';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
-import { createNativeRequestReceipts, requestRowId } from './native-request-receipts';
+import { createNativeRequestReceipts, requestProjects, requestRowId } from './native-request-receipts';
 import { buildQuickAddParseOptions, type QuickAddParseOptions } from './quick-add';
 import {
     applyQuickCaptureEdit,
@@ -323,26 +323,8 @@ const sameTokens = (left: readonly string[] | undefined, right: readonly string[
  */
 const captureProjectId = (requestId: string, title: string) => requestRowId(requestId, `project:${title.trim().toLowerCase()}`);
 
-/**
- * The addProject a capture hands to quick-capture-model. A project it makes takes
- * captureProjectId, and that id is checked first: a replay after the task write
- * failed takes the project the first run made, renamed since or not, and never
- * makes a second one. One deleted or archived since sets `stale` and writes
- * nothing; the capture then answers STALE_REVISION.
- */
-const captureProjects = (requestId: string) => {
-    const made = { stale: false };
-    const addProject: CaptureTransactionActions['addProject'] = async (title, color, props) => {
-        const id = captureProjectId(requestId, title);
-        const state = useTaskStore.getState();
-        const project = state._allProjects.find((entry) => entry.id === id);
-        if (!project) return state.addProject(title, color, { ...props, id });
-        if (isSelectableProjectForTaskAssignment(project)) return project;
-        made.stale = true;
-        return null;
-    };
-    return { addProject, made };
-};
+/** The addProject a capture hands to quick-capture-model: its projects take captureProjectId (requestProjects). */
+const captureProjects = (requestId: string) => requestProjects((title) => captureProjectId(requestId, title));
 const projectGone = () => fail('STALE_REVISION', 'The project this capture created is gone');
 
 /**

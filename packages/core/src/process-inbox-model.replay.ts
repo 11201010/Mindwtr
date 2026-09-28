@@ -160,7 +160,11 @@ export async function seedProcessInboxStore(
             return result;
         },
         addProject: async (title, color, initialProps) => {
-            log.push(['addProject', ...encodeArgs([title, color, initialProps])]);
+            // The contract names the new project from its request (an `id` prop); React Native lets the
+            // store draw one, so the log leaves that id out, as the harness records the call.
+            const { id: _id, ...rest } = initialProps ?? {};
+            const shown = initialProps && 'id' in initialProps ? (Object.keys(rest).length > 0 ? rest : undefined) : initialProps;
+            log.push(['addProject', ...encodeArgs([title, color, shown])]);
             const created = await real.addProject(title, color, initialProps);
             if (created) createdIds.set(created.id, `<created:${title}>`);
             return created;

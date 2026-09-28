@@ -173,6 +173,8 @@ import {
     isRevisions,
     refuseStaleProjects,
     refuseStaleTasks,
+    requestProjects,
+    requestRowId,
     revisionOf,
     revisionsToken,
     runStoreWrite,
@@ -3011,16 +3013,22 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
         && typeof input.requestId === 'string' && CAPTURE_ID_PATTERN.test(input.requestId)
     );
 
-    /** Commit a destination, then open the next task or end the session. */
+    /**
+     * Commit a destination, then open the next task or end the session. A project the commit
+     * makes (Create project) takes an ID from `requestId`: a retry after a failed later write
+     * takes it, renamed since or not; one deleted since is STALE_REVISION.
+     */
     const commitKind = async (
         entry: InboxProcessingEntry,
         task: Task,
         kind: Parameters<typeof commitProcessInboxDecision>[0],
         committed: Parameters<typeof formatProcessInboxCommitMessage>[1] | null,
+        requestId: string,
     ) => {
         const { state, plan, queue, parseTitle } = context();
         const t = deps.t();
         const title = entry.draft.title.trim() || task.title;
+        const projects = requestProjects(() => requestRowId(requestId, 'project'));
         const outcome = await commitProcessInboxDecision(kind, {
             task,
             draft: entry.draft,
@@ -3035,10 +3043,11 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                 updateTask: (id, updates) => useTaskStore.getState().updateTask(id, updates),
                 deleteTask: (id) => useTaskStore.getState().deleteTask(id),
                 addTask: (taskTitle, props) => useTaskStore.getState().addTask(taskTitle, props),
-                addProject: (projectTitle, color, props) => useTaskStore.getState().addProject(projectTitle, color, props),
+                addProject: projects.addProject,
             },
             t,
         });
+        if (projects.made.stale) return fail('STALE_REVISION', 'The project this request created is gone');
         entry.draft = outcome.draft;
         if (!outcome.ok) {
             if (outcome.reason === 'write-failed' || outcome.reason === 'project-create-failed' || outcome.reason === null) {
@@ -3158,11 +3167,14 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                     if (submit.type === 'none') return { ok: true, value: { notice: null, toast: null, wrote: false } };
                     let projectId = submit.type === 'select' ? submit.projectId : null;
                     if (submit.type === 'create') {
+                        // The request's only row: named by the request UUID (requestProjects).
+                        const projects = requestProjects(() => input.requestId.toLowerCase());
                         try {
-                            projectId = (await useTaskStore.getState().addProject(submit.title, submit.color, submit.props))?.id ?? null;
+                            projectId = (await projects.addProject(submit.title, submit.color, submit.props))?.id ?? null;
                         } catch (error) {
                             return writeFailure(error instanceof Error ? error.message : String(error));
                         }
+                        if (projects.made.stale) return fail('STALE_REVISION', 'The project this request created is gone');
                         if (!projectId) return writeFailure(useTaskStore.getState().error ?? undefined);
                     }
                     entry.draft = applyProcessInboxDraftEdit(entry.draft, { type: 'selectProject', value: projectId }, plan);
@@ -3183,7 +3195,7 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                     entry.draft = outcome.draft;
                     return { ok: true, value: { notice: null, toast: null, wrote: false } };
                 }
-                return commitKind(entry, task, outcome.kind, outcome.committed);
+                return commitKind(entry, task, outcome.kind, outcome.committed, input.requestId);
             });
         },
 
@@ -3204,7 +3216,7 @@ function createInboxProcessingMethods(deps: InboxProcessingDeps) {
                 const step = resolveProcessInboxStep(entry.answers, entry.mode, context().plan);
                 const checked = current({ ...input, step });
                 if (!checked.ok) return checked;
-                return commitKind(entry, checked.value.task, 'skip', null);
+                return commitKind(entry, checked.value.task, 'skip', null, input.requestId);
             });
         },
 
@@ -3964,7 +3976,8 @@ function createListViewMethods(deps: ListViewDeps) {
                         // Target state first: tasks already there are not compared, and none left writes nothing.
                         // Mobile's call still moves every selected task.
                         const moving = action.taskIds.filter((id) => liveTask(id)?.status !== action.status);
-                        if (moving.length === 0) return { ok: true, value: { changed: false, toast: null } };
+                        // Every task there already: nothing to write, and mobile's toast for the move.
+                        if (moving.length === 0) return { ok: true, value: { changed: false, toast: doneToast(action.taskIds.length, t) } };
                         const refused = refuseStaleTasks(moving, action.taskRevisions);
                         if (refused) return refused;
                         const written = await write(() => store.batchMoveTasks(action.taskIds, action.status));

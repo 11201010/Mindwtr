@@ -734,13 +734,26 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
     it.each([
         ['setTaskStatus', (view: NativeContextsView): NativeContextsAction => ({ type: 'setTaskStatus', taskId: 'c-call', status: 'done', taskRevision: contextsRow(view, 'c-call') })],
         ['moveTasks', (view: NativeContextsView): NativeContextsAction => ({ type: 'moveTasks', taskIds: ['c-call', 'c-email'], status: 'someday', taskRevisions: view.taskRevisions })],
-    ] as const)('Contexts %s: a replay after a restart of a request that landed answers changed: false', async (_name, request) => {
+    ] as const)('Contexts %s: a replay after a restart of a request that landed answers changed: false', async (name, request) => {
         const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
         const view = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
         const input = { requestId: generateUUID(), action: request(view) };
         expect(await host.runContextsAction(input)).toMatchObject({ ok: true, value: { changed: true } });
         recorder.log.length = 0;
-        expect(await replayAfterRestart((current) => current.runContextsAction(input))).toEqual({ result: landed, wrote: false });
+        // A bulk move answers mobile's toast for it; one task's status change shows none.
+        const toast = name === 'moveTasks' ? { tone: 'success', title: 'Done', message: '2 tasks', undo: null } : null;
+        expect(await replayAfterRestart((current) => current.runContextsAction(input))).toEqual({ result: { ok: true, value: { changed: false, toast } }, wrote: false });
+        expect(recorder.log).toEqual([]);
+    });
+
+    it('Contexts moveTasks: every selected row there already writes nothing and answers mobile\'s Done toast', async () => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const view = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
+        await store().batchMoveTasks(['c-call', 'c-email'], 'someday');
+        recorder.log.length = 0;
+        const action = { type: 'moveTasks' as const, taskIds: ['c-call', 'c-email'], status: 'someday' as const, taskRevisions: view.taskRevisions };
+        expect(await host.runContextsAction({ requestId: generateUUID(), action }))
+            .toEqual({ ok: true, value: { changed: false, toast: { tone: 'success', title: 'Done', message: '2 tasks', undo: null } } });
         expect(recorder.log).toEqual([]);
     });
 
