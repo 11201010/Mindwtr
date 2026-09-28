@@ -608,6 +608,7 @@
     "compactSectionsForPurgedProjects",
     "compareAreasByOrder",
     "compareProjectsByOrder",
+    "compareProjectsByPickerOrder",
     "comparePromptVersions",
     "compareSomedayTasks",
     "compareTasksByProjectOrder",

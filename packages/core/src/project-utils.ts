@@ -285,6 +285,10 @@ export type ProjectChoiceState = {
     canCreate: boolean;
 };
 
+/** The mobile project pickers' order: each project's `order` (0 when unset); ties keep the order they came in. */
+export const compareProjectsByPickerOrder = (a: Project, b: Project): number =>
+    (Number.isFinite(a.order) ? a.order : 0) - (Number.isFinite(b.order) ? b.order : 0);
+
 export function getProjectChoiceState(
     browseProjects: readonly Project[],
     query: string,

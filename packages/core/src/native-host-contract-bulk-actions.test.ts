@@ -281,6 +281,20 @@ describe('native host contract: selection mode', () => {
             expect(filtered).toMatchObject({ selectedIds: ['r-wifi'], selectedCount: 1 });
         });
 
+        it('the project picker lists projects in the mobile picker order (by order, not by title)', async () => {
+            freezeClock();
+            const { host } = await open();
+            await useTaskStore.getState().updateProject('p-launch', { order: -10 });
+            await useTaskStore.getState().updateProject('p-home', { order: 10 });
+            const ids = (query?: string) => value(host.getBulkActions({
+                list: 'inbox', taskIds: ['i-call'], organize: {}, picker: { kind: 'project', ...(query === undefined ? {} : { query }) },
+            })).picker!.items.map((item) => item.value).filter((id) => id === 'p-launch' || id === 'p-home');
+            // Title order would put Home first; mobile's TaskEditProjectPicker sorts by `order`.
+            expect(ids()).toEqual(['p-launch', 'p-home']);
+            // A search keeps that order ("h" is in both titles).
+            expect(ids('h')).toEqual(['p-launch', 'p-home']);
+        });
+
         it('the organize pickers lead with Keep and None, and search the rest', async () => {
             freezeClock();
             const { host } = await open();

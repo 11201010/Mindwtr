@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { getProjectChoiceState, tFallback, type Project } from '@mindwtr/core';
+import { compareProjectsByPickerOrder, getProjectChoiceState, tFallback, type Project } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { styles } from './task-edit-modal.styles';
 import { logError } from '../../lib/app-log';
@@ -8,12 +8,6 @@ import { useAndroidKeyboardInset } from '../../lib/use-android-keyboard-inset';
 
 type ProjectPickerThemeColors = Pick<ThemeColors, 'border' | 'cardBg' | 'inputBg' | 'secondaryText' | 'text' | 'tint'> & {
     danger?: ThemeColors['danger'];
-};
-
-const byOrder = (a: Project, b: Project) => {
-    const orderA = Number.isFinite(a.order) ? a.order : 0;
-    const orderB = Number.isFinite(b.order) ? b.order : 0;
-    return orderA - orderB;
 };
 
 type ProjectPickerLeadingOption = {
@@ -78,9 +72,9 @@ export function TaskEditProjectPicker({
     const normalizedProjectQuery = projectQuery.trim().toLowerCase();
     const { filteredProjects, exactMatch, canCreate } = useMemo(
         () => getProjectChoiceState(
-            [...projects].sort(byOrder),
+            [...projects].sort(compareProjectsByPickerOrder),
             projectQuery,
-            [...(allProjects ?? projects)].sort(byOrder),
+            [...(allProjects ?? projects)].sort(compareProjectsByPickerOrder),
         ),
         [allProjects, projectQuery, projects],
     );

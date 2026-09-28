@@ -63,7 +63,7 @@ import {
 } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { updateRangeSelection } from './range-selection';
-import { getProjectChoiceState } from './project-utils';
+import { compareProjectsByPickerOrder, getProjectChoiceState } from './project-utils';
 import { useTaskStore } from './store';
 import {
     applyBulkOrganizeDraftEdit,
@@ -209,8 +209,6 @@ const TEXT_LIMITS: Record<BulkOrganizeTextField, number> = {
 const DRAFT_KEYS = new Set(Object.keys(EMPTY_BULK_ORGANIZE_DRAFT));
 const PARAM_ONLY_KEYS = ['filterEdit', 'offset', 'limit', 'revision'];
 
-// The mobile pickers' order: by `order`, before their exact-match check.
-const byOrder = (a: Project, b: Project) => (Number.isFinite(a.order) ? a.order : 0) - (Number.isFinite(b.order) ? b.order : 0);
 /**
  * The option a picker search names exactly, as mobile's pickers match it: a project
  * by its trimmed title, case-insensitive (getProjectChoiceState); an area by its name
@@ -220,7 +218,7 @@ const exactDestination = (kind: 'project' | 'area', query: string): Project | Ar
     const state = useTaskStore.getState();
     if (kind === 'project') {
         const options = getBulkOrganizeProjectOptions(state.projects);
-        return getProjectChoiceState([...options].sort(byOrder), query, [...state.projects].sort(byOrder)).exactMatch;
+        return getProjectChoiceState([...options].sort(compareProjectsByPickerOrder), query, [...state.projects].sort(compareProjectsByPickerOrder)).exactMatch;
     }
     const normalized = query.trim().toLowerCase();
     return normalized ? getBulkOrganizeAreaOptions(state.areas).find((area) => area.name.toLowerCase() === normalized) : undefined;
@@ -497,7 +495,8 @@ export function createBulkActionMethods(deps: BulkActionDeps) {
                     const current = isProject ? draft.projectChoice : draft.areaChoice;
                     const set = (value: string): BulkOrganizeDraftEdit => ({ type: isProject ? 'setProject' : 'setArea', value });
                     const options = isProject
-                        ? getBulkOrganizeProjectOptions(state.projects).map((project) => ({ id: project.id, label: project.title }))
+                        // In mobile's picker order (TaskEditProjectPicker sorts core's title-ordered options by `order`).
+                        ? [...getBulkOrganizeProjectOptions(state.projects)].sort(compareProjectsByPickerOrder).map((project) => ({ id: project.id, label: project.title }))
                         : getBulkOrganizeAreaOptions(state.areas).map((area) => ({ id: area.id, label: area.name }));
                     // Keep and None stay whatever the search; the options narrow.
                     items = [
