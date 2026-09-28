@@ -314,7 +314,7 @@ const unavailable = bootFailure;
 const nativeScreen = () => waitFor('the native screen', (nodes) => Number.isFinite(header(nodes)) || unavailable(nodes) !== undefined, 60_000);
 const autoCleanSwitch = (nodes) => nodes.find((node) => node.class === 'android.widget.Switch' && node['content-desc'] === AUTO_CLEAN_LABEL);
 const nativeGuardLog = () => device.logs(pid(), TAG).split('\n').find((line) => line.includes(GUARD)) ?? '';
-// The JS host's log `extra` is a JSON string, so its quotes arrive escaped.
+// The JS host's log `context` is a JSON string, so its quotes arrive escaped.
 const importLines = () => device.logs(pid(), TAG).replace(/\\/g, '').split('\n').filter((line) => line.includes(IMPORT));
 const importLine = (label, fields) => {
     const lines = importLines();
