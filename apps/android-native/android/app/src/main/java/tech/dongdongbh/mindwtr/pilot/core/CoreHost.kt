@@ -1,5 +1,8 @@
 package tech.dongdongbh.mindwtr.pilot.core
 
+import android.icu.text.Collator
+import android.icu.text.RuleBasedCollator
+import android.icu.util.ULocale
 import android.util.Log
 import com.whl.quickjs.android.QuickJSLoader
 import com.whl.quickjs.wrapper.JSCallFunction
@@ -45,6 +48,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     private var context: QuickJSContext? = null
     private var sqlite: SqliteBridge? = null
     private val functions = HashMap<String, JSFunction>()
+    /** ICU collators by "sensitivity:numeric", made and used on the engine thread only. */
+    private val collators = HashMap<String, Collator>()
     private var hostObject: JSObject? = null
     @Volatile private var engineThread: Thread? = null
     private val executor = Executors.newSingleThreadExecutor { task ->
@@ -93,6 +98,25 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
                 LegacyRnStoreGuard.commitRnState(checkNotNull(rnDataDir) { "No React Native state in this build" },
                     change.getBoolean("clearJsonAhead"), change.getBoolean("setReconciled"))
                 null
+            })
+            // QuickJS has no Intl: the host's Intl.Collator and localeCompare sort by these ICU collation keys, from the device
+            // locale's collator as Hermes uses on Android, so titles order as in RN ("éclair" before "Zoo"). The key's bytes
+            // become chars 1-255 (the trailing 0 dropped), so comparing two keys as strings compares them as ICU does.
+            bridge.setProperty("collationKey", guarded { args ->
+                val options = args[1] as String
+                val collator = collators.getOrPut(options) {
+                    val (sensitivity, numeric) = options.split(':')
+                    Collator.getInstance(ULocale.getDefault()).apply {
+                        strength = when (sensitivity) { "base", "case" -> Collator.PRIMARY; "accent" -> Collator.SECONDARY; else -> Collator.TERTIARY }
+                        (this as? RuleBasedCollator)?.let { rules ->
+                            rules.isCaseLevel = sensitivity == "case"
+                            rules.numericCollation = numeric == "1"
+                        }
+                        freeze()
+                    }
+                }
+                val bytes = collator.getCollationKey(args[0] as String).toByteArray()
+                String(CharArray(bytes.size - 1) { (bytes[it].toInt() and 0xff).toChar() })
             })
             // A diagnostic line must never fail the caller: coerce and swallow.
             bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })

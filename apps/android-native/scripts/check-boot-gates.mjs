@@ -16,6 +16,25 @@ for (const text of ['mailto:alex@example.com', 'tel:+1-555-0100', 'MAILTO:bea@ex
     const parts = (url) => [url.protocol, url.pathname, url.search, url.hash, url.host, String(url)];
     assert.deepEqual(parts(new consoleState.URL(text)), parts(new URL(text)), text);
 }
+// QuickJS has no Intl: the polyfill's Collator and localeCompare sort by the host's ICU collation keys (one bridge call per
+// text and options), so titles order as in RN; without the bridge they fall back to a plain comparison.
+{
+    const polyfills = readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8');
+    const calls = [];
+    // A stand-in for Android's keys: accents and case folded first, as ICU's primary level does.
+    const fold = (text) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+    const bridge = { log() {}, collationKey(text, options) { calls.push(`${options}|${text}`); return fold(text) + (options.startsWith('base:') ? '' : `\u0001${text}`); } };
+    const withKeys = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: bridge });
+    vm.runInContext(polyfills, withKeys);
+    assert.deepEqual([...vm.runInContext("['Zoo', 'éclair', 'apple'].sort(new Intl.Collator().compare)", withKeys)], ['apple', 'éclair', 'Zoo']);
+    assert.equal(vm.runInContext("'éclair'.localeCompare('Zoo')", withKeys), -1, 'localeCompare uses the ICU keys');
+    assert.equal(vm.runInContext("'ÉCLAIR'.localeCompare('eclair', undefined, { sensitivity: 'base' })", withKeys), 0);
+    assert.equal(new Set(calls).size, calls.length, 'one key per text and options');
+    assert.equal(vm.runInContext("Object.keys(String.prototype).includes('localeCompare')", withKeys), false);
+    const noKeys = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: { log() {} } });
+    vm.runInContext(polyfills, noKeys);
+    assert.deepEqual([...vm.runInContext("['b', 'a', 'C'].sort(new Intl.Collator().compare)", noKeys)], ['C', 'a', 'b'], 'the fallback without the bridge');
+}
 const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
@@ -305,7 +324,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 7);
+assert.equal(bridgeCallbacks.length, 8, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey and log: each guarded');
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
 assert.match(coreHost, /setProperty\("log", guarded \{ args -> runCatching \{/);
 assert.match(coreHost, /try \{ work\(args\) \} catch \(error: Throwable\) \{ NATIVE_ERROR \+/);

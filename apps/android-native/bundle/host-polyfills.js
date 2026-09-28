@@ -325,22 +325,45 @@
     // --- Intl ---------------------------------------------------------------
     // QuickJS has no Intl at all, and `packages/core/src/task-utils.ts` builds
     // three Intl.Collator objects while the bundle is being evaluated, so the
-    // bundle does not even load without this. It is a fallback, not ICU:
-    // ordering of non-ASCII text can differ from a real ICU collator. The
-    // report records that as a parity risk.
+    // bundle does not even load without this. The Android host gives ICU
+    // collation keys (`__mindwtrNative.collationKey`, the device locale's
+    // collator, as Hermes uses), so titles sort as in RN; without that bridge
+    // the plain comparison below is a fallback, not ICU.
     if (typeof global.Intl !== 'object' || !global.Intl) {
         var WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         var MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June',
             'July', 'August', 'September', 'October', 'November', 'December'];
         var pad2 = function (value) { return (value < 10 ? '0' : '') + value; };
 
+        // One key per text and options, kept until 20000 are held (a sort compares the same titles many times).
+        var collationKeys = Object.create(null);
+        var collationKeyCount = 0;
+        var collationKey = function (native, text, options) {
+            var id = options + '|' + text;
+            var key = collationKeys[id];
+            if (key === undefined) {
+                if (collationKeyCount >= 20000) { collationKeys = Object.create(null); collationKeyCount = 0; }
+                key = String(native.collationKey(text, options));
+                collationKeys[id] = key;
+                collationKeyCount += 1;
+            }
+            return key;
+        };
         var Collator = function Collator(_locales, options) {
             mark('Intl.Collator');
             var numeric = !!(options && options.numeric);
             var base = !!(options && options.sensitivity === 'base');
+            var sensitivity = (options && options.sensitivity) || 'variant';
+            var icuOptions = sensitivity + ':' + (numeric ? '1' : '0');
             this.compare = function (a, b) {
                 var left = String(a);
                 var right = String(b);
+                var native = global.__mindwtrNative;
+                if (native && typeof native.collationKey === 'function') {
+                    var leftKey = collationKey(native, left, icuOptions);
+                    var rightKey = collationKey(native, right, icuOptions);
+                    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+                }
                 if (base) { left = left.toLowerCase(); right = right.toLowerCase(); }
                 if (numeric) {
                     var leftParts = left.match(/(\d+|\D+)/g) || [];
@@ -363,6 +386,11 @@
             };
         };
         Collator.prototype.resolvedOptions = function () { return { locale: 'en' }; };
+        // Hermes's localeCompare is its Intl.Collator; QuickJS's compares code points.
+        Object.defineProperty(String.prototype, 'localeCompare', {
+            value: function localeCompare(that, locales, options) { return new Collator(locales, options).compare(String(this), String(that)); },
+            writable: true, configurable: true, enumerable: false,
+        });
 
         var DateTimeFormat = function DateTimeFormat(locales, options) {
             mark('Intl.DateTimeFormat');
