@@ -14,7 +14,7 @@ import { normalizeTaskStatus } from './task-status';
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import { logInfo, logWarn } from './logger';
-import { normalizeSavedFilter, normalizeSavedFilters } from './saved-filters';
+import { keepSavedFilters } from './saved-filters';
 import { sleep } from './async-utils';
 import { TASK_SQLITE_COLUMNS, TASK_SQLITE_MIGRATION_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
 import {
@@ -1011,20 +1011,15 @@ export class SqliteAdapter {
         };
     }
 
+    // The table copy as stored: a NOT NULL column saved empty was missing
+    // (see the saved-filters upsert), so it stays missing here.
     private mapSavedFilterRow(row: Record<string, unknown>): SavedFilter | null {
-        return normalizeSavedFilter({
-            id: row.id,
-            name: row.name,
-            icon: row.icon,
-            view: row.view,
-            criteria: fromJson<unknown>(row.criteria, {}),
-            sortBy: row.sortBy,
-            sortOrder: row.sortOrder,
-            groupBy: row.groupBy,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-            deletedAt: row.deletedAt,
-        });
+        const filter: Record<string, unknown> = { id: row.id };
+        for (const column of ['name', 'icon', 'view', 'criteria', 'sortBy', 'sortOrder', 'groupBy', 'createdAt', 'updatedAt', 'deletedAt']) {
+            if (column === 'criteria') filter.criteria = fromJson<unknown>(row.criteria, {});
+            else if (typeof row[column] === 'string' && row[column]) filter[column] = row[column];
+        }
+        return keepSavedFilters([filter])[0] ?? null;
     }
 
     async getData(): Promise<AppData> {
@@ -1076,7 +1071,7 @@ export class SqliteAdapter {
         if (!Array.isArray(settings.savedFilters) && savedFiltersFromTable.length > 0) {
             settings.savedFilters = savedFiltersFromTable;
         } else if (Array.isArray(settings.savedFilters)) {
-            settings.savedFilters = normalizeSavedFilters(settings.savedFilters);
+            settings.savedFilters = keepSavedFilters(settings.savedFilters);
         }
 
         // A read is the deletion baseline for this adapter. Retain exact row
@@ -1518,7 +1513,10 @@ export class SqliteAdapter {
             await syncIds('people', people.map((person) => person.id));
 
             const rawSavedFilters = data.settings?.savedFilters;
-            const savedFilters = normalizeSavedFilters(rawSavedFilters);
+            const savedFilters = keepSavedFilters(rawSavedFilters);
+            // The settings list keeps each filter as written; this table copy
+            // holds only its own columns, and a NOT NULL one it lacks is empty.
+            const textOr = <T>(value: unknown, fallback: T) => (typeof value === 'string' ? value : fallback);
             saveStep = 'saved-filters';
             await upsertBatch(
                 'saved_filters',
@@ -1537,16 +1535,16 @@ export class SqliteAdapter {
                 ],
                 savedFilters.map((filter) => [
                     filter.id,
-                    filter.name,
-                    filter.icon ?? null,
-                    filter.view,
-                    toJson(filter.criteria),
-                    filter.sortBy ?? null,
-                    filter.sortOrder ?? null,
-                    filter.groupBy ?? null,
-                    filter.createdAt,
-                    filter.updatedAt,
-                    filter.deletedAt ?? null,
+                    textOr(filter.name, ''),
+                    textOr(filter.icon, null),
+                    textOr(filter.view, ''),
+                    toJson(filter.criteria ?? {}),
+                    textOr(filter.sortBy, null),
+                    textOr(filter.sortOrder, null),
+                    textOr(filter.groupBy, null),
+                    textOr(filter.createdAt, ''),
+                    textOr(filter.updatedAt, ''),
+                    textOr(filter.deletedAt, null),
                 ]),
                 `name=excluded.name,
                  icon=excluded.icon,

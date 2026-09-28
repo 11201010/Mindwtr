@@ -5,6 +5,9 @@ import {
     restoreDeviceLocalAiSettings,
     sanitizeMergedSettingsForSync,
 } from './sync-merge-settings';
+import { selectFocusSavedFilters } from './focus-controls';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
+import { sanitizeAppDataForRemote } from './sync-helpers';
 import type { AppData, SettingsSyncGroup } from './types';
 
 type Settings = AppData['settings'];
@@ -457,6 +460,74 @@ describe('mergeSettingsForSync > savedFilters', () => {
         );
 
         expect(merged.savedFilters?.map((filter) => filter.id)).toEqual(['filter-1']);
+    });
+
+    // A newer app's filter (a view, a field and a sort this build does not
+    // know), an undated filter, and a user order that is not createdAt order.
+    const newer = {
+        id: 'filter-newer', name: 'Calendar lane', view: 'calendar', color: '#ff0000', sortBy: 'somethingNew',
+        criteria: { contexts: ['@desk'] }, createdAt: NEWER, updatedAt: NEWER,
+    };
+    const undated = { id: 'filter-undated', name: 'Calls', view: 'focus', criteria: { contexts: ['@calls'] } };
+    const older = { id: 'filter-older', name: 'Desk', view: 'focus', criteria: { contexts: ['@desk'] }, createdAt: OLDER, updatedAt: OLDER };
+    const stored = [newer, undated, older] as unknown as NonNullable<Settings['savedFilters']>;
+    const settingsWith = (savedFilters: unknown[], at: string): Settings => stamp(
+        { savedFilters: savedFilters as NonNullable<Settings['savedFilters']>, syncPreferences: { savedFilters: true } },
+        'savedFilters',
+        at,
+    );
+
+    it('keeps every filter as stored when the peer did not change them', () => {
+        const merged = mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith(stored, OLDER));
+
+        expect(merged.savedFilters).toEqual(stored);
+        expect(selectFocusSavedFilters(merged.savedFilters).map((filter) => filter.id)).toEqual(['filter-undated', 'filter-older']);
+    });
+
+    it('changes only the filter the peer changed, in place', () => {
+        const edited = { ...older, name: 'Desk (edited)', updatedAt: NEWER };
+        const expected = [newer, undated, edited];
+
+        expect(mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith([newer, undated, edited], NEWER)).savedFilters)
+            .toEqual(expected);
+        expect(mergeSettingsForSync(settingsWith([newer, undated, edited], NEWER), settingsWith(stored, OLDER)).savedFilters)
+            .toEqual(expected);
+    });
+
+    it('settles on one order: the remote copy\'s, unless this device changed its filters later', () => {
+        const reordered = [older, newer, undated];
+
+        const tie = mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith(reordered, OLDER));
+        expect(tie.savedFilters).toEqual(reordered);
+        expect(mergeSettingsForSync(tie, settingsWith(reordered, OLDER)).savedFilters).toEqual(reordered);
+
+        expect(mergeSettingsForSync(settingsWith(stored, NEWER), settingsWith(reordered, OLDER)).savedFilters).toEqual(stored);
+        // Entries only the other side holds join at the end, in that side's order.
+        expect(mergeSettingsForSync(settingsWith([older], NEWER), settingsWith([newer, undated], OLDER)).savedFilters)
+            .toEqual([older, newer, undated]);
+    });
+
+    it('logs the merge with counts only', () => {
+        const logs: LogPayload[] = [];
+        setLogger((payload) => { logs.push(payload); });
+        try {
+            mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith([older], NEWER));
+        } finally {
+            setLogger(consoleLogger);
+        }
+
+        expect(logs.filter((entry) => entry.message === 'Saved filters merged as stored').map((entry) => entry.context)).toEqual([
+            { releaseCheck: 'v1.3.3/saved-filters-kept-as-stored', count: 3, hiddenCount: 1, order: 'remote' },
+        ]);
+        expect(JSON.stringify(logs)).not.toMatch(/Calendar lane|filter-newer/);
+    });
+
+    it('sends every filter as stored in the sync payload', () => {
+        const data: AppData = {
+            tasks: [], projects: [], sections: [], areas: [], people: [], settings: settingsWith(stored, OLDER),
+        };
+
+        expect(sanitizeAppDataForRemote(data).settings.savedFilters).toEqual(stored);
     });
 });
 

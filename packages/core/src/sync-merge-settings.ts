@@ -25,7 +25,7 @@ import {
 } from './settings-options';
 import { isNonEmptyString, isObjectRecord, isValidTimestamp } from './sync-normalization';
 import { MAX_FOCUS_TASK_LIMIT, MIN_FOCUS_TASK_LIMIT, normalizeFocusTaskLimit } from './focus-utils';
-import { normalizeSavedFilters } from './saved-filters';
+import { keepSavedFilters, normalizeSavedFilters } from './saved-filters';
 import { chooseDeterministicWinner } from './sync-signatures';
 import { DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS } from './sync-types';
 import { normalizeExternalCalendarColor } from './external-calendar-colors';
@@ -103,30 +103,49 @@ const chooseSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter
     return incomingWins ? incomingFilter : localFilter;
 };
 
+/**
+ * Merge saved filters by id. A filter on both sides is the copy
+ * chooseSavedFilter picks, kept whole (fields this build does not know
+ * included). The list keeps the remote copy's order unless this device
+ * changed its saved filters later (a newer group timestamp); filters only the
+ * other side holds join at the end. Every device so settles on one order, and
+ * a merge never reorders filters it did not change.
+ */
 const mergeSavedFiltersById = (
     localValue: AppData['settings']['savedFilters'],
     incomingValue: AppData['settings']['savedFilters'],
-    incomingWins: boolean
+    incomingWins: boolean,
+    localNewer: boolean
 ): AppData['settings']['savedFilters'] => {
-    const localFilters = normalizeSavedFilters(localValue);
-    const incomingFilters = normalizeSavedFilters(incomingValue);
+    const localFilters = keepSavedFilters(localValue);
+    const incomingFilters = keepSavedFilters(incomingValue);
+    const localById = new Map(localFilters.map((filter) => [filter.id, filter]));
     const incomingById = new Map(incomingFilters.map((filter) => [filter.id, filter]));
     const mergedById = new Map<string, SavedFilter>();
 
-    for (const localFilter of localFilters) {
-        const incomingFilter = incomingById.get(localFilter.id);
-        mergedById.set(
-            localFilter.id,
-            incomingFilter ? chooseSavedFilter(localFilter, incomingFilter, incomingWins) : localFilter
-        );
-    }
-    for (const incomingFilter of incomingFilters) {
-        if (!mergedById.has(incomingFilter.id)) {
-            mergedById.set(incomingFilter.id, incomingFilter);
-        }
+    for (const { id } of localNewer ? [...localFilters, ...incomingFilters] : [...incomingFilters, ...localFilters]) {
+        if (mergedById.has(id)) continue;
+        const localFilter = localById.get(id);
+        const incomingFilter = incomingById.get(id);
+        mergedById.set(id, localFilter && incomingFilter
+            ? chooseSavedFilter(localFilter, incomingFilter, incomingWins)
+            : (localFilter ?? incomingFilter) as SavedFilter);
     }
 
-    return normalizeSavedFilters(Array.from(mergedById.values()));
+    const merged = Array.from(mergedById.values());
+    if (localFilters.length > 0 && incomingFilters.length > 0 && localValue !== incomingValue) {
+        logInfo('Saved filters merged as stored', {
+            scope: 'saved-filters',
+            category: 'sync',
+            context: {
+                releaseCheck: 'v1.3.3/saved-filters-kept-as-stored',
+                count: merged.length,
+                hiddenCount: merged.length - normalizeSavedFilters(merged).length,
+                order: localNewer ? 'local' : 'remote',
+            },
+        });
+    }
+    return merged;
 };
 
 const sanitizeAiForSync = (
@@ -817,7 +836,7 @@ export const sanitizeMergedSettingsForSync = (
     next.externalCalendars = sanitizeExternalCalendars(next.externalCalendars, localSettings.externalCalendars);
     next.ai = sanitizeAiSettings(next.ai, localSettings.ai);
     if (next.savedFilters !== undefined) {
-        next.savedFilters = normalizeSavedFilters(next.savedFilters);
+        next.savedFilters = keepSavedFilters(next.savedFilters);
     }
 
     return next;
@@ -996,7 +1015,7 @@ export const mergeSettingsForSync = (
         localValue: T,
         incomingValue: T,
         apply: (value: T, incomingWins: boolean) => void,
-        mergeValues?: (localValue: T, incomingValue: T, incomingWins: boolean) => T
+        mergeValues?: (localValue: T, incomingValue: T, incomingWins: boolean, localNewer: boolean) => T
     ) => {
         const localAt = localSettings.syncPreferencesUpdatedAt?.[key];
         const incomingAt = incomingSettings.syncPreferencesUpdatedAt?.[key];
@@ -1004,7 +1023,7 @@ export const mergeSettingsForSync = (
         const incomingWins = localOptedOut ? false : isIncomingNewer(localAt, incomingAt);
         const effectiveIncomingValue = localOptedOut ? localValue : incomingValue;
         const resolvedValue = mergeValues
-            ? mergeValues(localValue, effectiveIncomingValue, incomingWins)
+            ? mergeValues(localValue, effectiveIncomingValue, incomingWins, isIncomingNewer(incomingAt, localAt))
             : (incomingWins ? effectiveIncomingValue : localValue);
         apply(cloneSettingValue(resolvedValue), incomingWins);
         const winnerAt = incomingWins ? incomingAt : localAt;
@@ -1136,9 +1155,9 @@ export const mergeSettingsForSync = (
         localSettings.savedFilters,
         incomingSettings.savedFilters,
         (value) => {
-            merged.savedFilters = normalizeSavedFilters(value);
+            merged.savedFilters = keepSavedFilters(value);
         },
-        (localValue, incomingValue, incomingWins) => mergeSavedFiltersById(localValue, incomingValue, incomingWins)
+        mergeSavedFiltersById
     );
 
     mergeGroup(

@@ -4,6 +4,7 @@ import {
     applyFilter,
     createTaskFilterPredicate,
     hasActiveFilterCriteria,
+    keepSavedFilters,
     markSavedFilterDeleted,
     normalizeFilterCriteria,
     normalizeSavedFilters,
@@ -330,7 +331,7 @@ describe('saved filters', () => {
         }
     });
 
-    it('normalizes saved filter payloads for settings sync and storage', () => {
+    it('reads the known fields of a stored saved filter for screens', () => {
         const filters = normalizeSavedFilters([
             {
                 id: 'filter-1',
@@ -443,5 +444,24 @@ describe('saved filters', () => {
         ]);
         expect(filters[0]).toBe(newer);
         expect(stored).toEqual(before);
+    });
+
+    it('keeps stored entries as written and reads only the ones this build can show', () => {
+        const newer = {
+            id: 'filter-newer', name: 'Calendar lane', view: 'calendar', color: '#ff0000', sortBy: 'somethingNew',
+            criteria: { contexts: ['@desk'] }, createdAt: '2026-05-05T00:00:00.000Z', updatedAt: '2026-05-05T00:00:00.000Z',
+        };
+        const undated = { id: 'filter-undated', name: 'Calls', view: 'focus', sortBy: 'somethingNew', criteria: {} };
+        const stored = [newer, { name: 'No id' }, undated, { ...undated, name: 'Calls again' }, 'not a filter'];
+
+        const kept = keepSavedFilters(stored);
+        // Only the id-less entries go; a repeated id keeps its last copy at the first place.
+        expect(kept).toEqual([newer, { ...undated, name: 'Calls again' }]);
+        expect(kept[0]).toBe(newer);
+
+        // Screens: the newer app's view is hidden, an unknown sort is dropped, no timestamp is invented.
+        expect(normalizeSavedFilters(stored)).toEqual([
+            { id: 'filter-undated', name: 'Calls again', view: 'focus', criteria: {}, createdAt: '', updatedAt: '' },
+        ]);
     });
 });

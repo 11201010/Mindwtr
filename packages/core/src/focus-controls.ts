@@ -38,7 +38,7 @@ import {
     type ListFilterState,
 } from './list-filter-state';
 import { buildAdvancedFilterCriteriaChips, removeAdvancedFilterCriteriaChip } from './saved-filter-labels';
-import { hasActiveFilterCriteria, markSavedFilterDeleted, SAVED_FILTER_NO_PROJECT_ID } from './saved-filters';
+import { hasActiveFilterCriteria, markSavedFilterDeleted, normalizeSavedFilters, SAVED_FILTER_NO_PROJECT_ID } from './saved-filters';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
 import { getTaskMetadataFilterVisibility, type TaskMetadataFilterVisibility } from './task-metadata-filter-visibility';
@@ -104,9 +104,12 @@ export function getFocusGroupByLabel(groupBy: FocusGroupBy, t: Translate): strin
     }
 }
 
-/** The saved filters Focus offers: its own, not deleted, in stored order. */
+/**
+ * The saved filters Focus offers: its own, not deleted, in stored order, read
+ * through normalizeSavedFilters (a view this build does not know is hidden).
+ */
 export function selectFocusSavedFilters(savedFilters: readonly SavedFilter[] | undefined): SavedFilter[] {
-    return (savedFilters ?? []).filter((filter) => filter.view === 'focus' && !filter.deletedAt);
+    return normalizeSavedFilters(savedFilters).filter((filter) => filter.view === 'focus' && !filter.deletedAt);
 }
 
 /**

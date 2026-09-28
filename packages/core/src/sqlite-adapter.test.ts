@@ -20,6 +20,7 @@ import type {
     SyncRunStoreBridge,
 } from './sync-run-ports';
 import { areSyncPayloadsEqual } from './sync-helpers';
+import { selectFocusSavedFilters } from './focus-controls';
 import { computeRemoteSyncDocumentFingerprint, toRemoteSyncDocument } from './sync-document';
 import { restoreSectionFromProjectArchive, restoreTaskFromProjectArchive } from './store-helpers';
 import { ENTITY_FOREIGN_KEY_CHILDREN, purgeExpiredTombstones } from './sync-tombstones';
@@ -3154,5 +3155,64 @@ describeSqlite('SqliteAdapter omission never deletes a live row', () => {
         await adapter.saveData(afterStale);
         expect(await adapter.getData()).toEqual(afterStale);
         expect(keptLiveLogs()).toHaveLength(1);
+    });
+});
+
+describeSqlite('SqliteAdapter keeps saved filters as stored', () => {
+    // A newer app's filter (a view, a field and a sort this build does not
+    // know), an undated filter, and a user order that is not createdAt order.
+    const newer = {
+        id: 'filter-newer', name: 'Calendar lane', view: 'calendar', color: '#ff0000', sortBy: 'somethingNew',
+        criteria: { contexts: ['@desk'] }, createdAt: '2026-09-02T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z',
+    };
+    const undated = { id: 'filter-undated', name: 'Calls', view: 'focus', criteria: { contexts: ['@calls'] } };
+    const older = {
+        id: 'filter-older', name: 'Desk', view: 'focus', criteria: { contexts: ['@desk'] },
+        createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const stored = [newer, undated, older] as unknown as NonNullable<AppData['settings']['savedFilters']>;
+    const doc = (savedFilters: AppData['settings']['savedFilters']): AppData => ({
+        tasks: [], projects: [], sections: [], areas: [], people: [], settings: { savedFilters },
+    });
+    let db: Database;
+
+    beforeEach(() => {
+        if (!RuntimeDatabase) throw new Error('No compatible sqlite runtime available for tests');
+        db = new RuntimeDatabase(':memory:');
+    });
+
+    afterEach(() => {
+        db.close();
+    });
+
+    it('saves and loads every field, unknown view and value, and the stored order', async () => {
+        const adapter = new SqliteAdapter(createClient(db));
+        await adapter.saveData(doc(stored));
+
+        const first = await adapter.getData();
+        expect(first.settings.savedFilters).toEqual(stored);
+        expect(selectFocusSavedFilters(first.settings.savedFilters).map((filter) => filter.id))
+            .toEqual(['filter-undated', 'filter-older']);
+
+        // A filter with no createdAt loads twice with identical bytes.
+        const second = await new SqliteAdapter(createClient(db)).getData();
+        expect(JSON.stringify(second.settings.savedFilters)).toBe(JSON.stringify(first.settings.savedFilters));
+
+        await adapter.saveData(first);
+        const storedSettings = JSON.parse(getSql<{ data: string }>(db, 'SELECT data FROM settings WHERE id = 1')!.data);
+        expect(storedSettings.savedFilters).toEqual(stored);
+        expect((await adapter.getData()).settings.savedFilters).toEqual(stored);
+    });
+
+    it('reads the table copy back without inventing timestamps when the settings carry no list', async () => {
+        await new SqliteAdapter(createClient(db)).saveData(doc(stored));
+        const settingsRow = JSON.parse(getSql<{ data: string }>(db, 'SELECT data FROM settings WHERE id = 1')!.data);
+        delete settingsRow.savedFilters;
+        runSql(db, 'UPDATE settings SET data = ? WHERE id = 1', [JSON.stringify(settingsRow)]);
+
+        const loaded = (await new SqliteAdapter(createClient(db)).getData()).settings.savedFilters;
+        expect(loaded?.find((filter) => filter.id === 'filter-undated')).toEqual(undated);
+        expect(loaded?.find((filter) => filter.id === 'filter-newer')).toMatchObject({ view: 'calendar', sortBy: 'somethingNew' });
+        expect(selectFocusSavedFilters(loaded).map((filter) => filter.id)).toEqual(['filter-undated', 'filter-older']);
     });
 });

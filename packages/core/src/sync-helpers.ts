@@ -1,5 +1,5 @@
 import type { AppData, Attachment } from './types';
-import { normalizeSavedFilters } from './saved-filters';
+import { keepSavedFilters } from './saved-filters';
 import { getGtdSyncSnapshot, isSettingsSyncGroupEnabled } from './settings-options';
 import { normalizeRevision } from './sync-revision';
 import { isNonEmptyString } from './sync-normalization';
@@ -235,7 +235,7 @@ const sanitizeSettingsForRemote = (settings: AppData['settings']): AppData['sett
     }
 
     if (prefs.savedFilters === true) {
-        next.savedFilters = normalizeSavedFilters(settings.savedFilters);
+        next.savedFilters = keepSavedFilters(settings.savedFilters);
     }
 
     if (prefs.externalCalendars === true) {

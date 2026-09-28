@@ -1,5 +1,6 @@
 import {
     applyFilter,
+    normalizeSavedFilters,
     sortTasksBy,
     sortTasksBySavedPreference,
     type AppData,
@@ -54,10 +55,14 @@ export interface WidgetListContext {
     tr: Record<string, string>;
 }
 
+// The saved filters this build can apply, not deleted: a newer app's view is left out.
+const liveSavedFilters = (data: AppData): SavedFilter[] => (
+    normalizeSavedFilters(data.settings?.savedFilters).filter((filter) => !filter.deletedAt)
+);
+
 /** Saved filters the configuration screen offers, in the order the app lists them. */
 export function buildWidgetSavedFilterOptions(data: AppData): { id: string; name: string }[] {
-    return (data.settings?.savedFilters ?? [])
-        .filter((filter) => !filter.deletedAt)
+    return liveSavedFilters(data)
         .slice(0, WIDGET_SAVED_FILTER_OPTION_CAP)
         .map((filter) => ({ id: filter.id, name: filter.name }));
 }
@@ -107,6 +112,6 @@ export function buildWidgetTaskList(listId: string, context: WidgetListContext):
     }
     if (!listId.startsWith(WIDGET_SAVED_FILTER_LIST_PREFIX)) return null;
     const filterId = listId.slice(WIDGET_SAVED_FILTER_LIST_PREFIX.length);
-    const filter = (data.settings?.savedFilters ?? []).find((candidate) => candidate.id === filterId && !candidate.deletedAt);
+    const filter = liveSavedFilters(data).find((candidate) => candidate.id === filterId);
     return filter ? buildSavedFilterList(filter, context) : null;
 }
