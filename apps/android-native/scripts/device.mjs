@@ -73,14 +73,17 @@ export const box = (node) => node.bounds.match(/\d+/g).map(Number);
  */
 export const mainList = (nodes) => nodes.filter((node) => node.scrollable === 'true' && node.class !== 'android.widget.HorizontalScrollView')
     .sort((a, b) => (box(b)[3] - box(b)[1]) - (box(a)[3] - box(a)[1]))[0];
-// A Compose button's label is a child node; the enabled state is on the clickable node around it.
+// A Compose button's label is a child node; the enabled state is on the clickable node around it. That node is the
+// button's touch area, widened to 48dp but clipped where it would overlap a neighbour's (the editor's Close beside the
+// Focus star), so it may not hold the whole label: it holds the label's center.
 export const button = (nodes, label) => {
     const labelNode = nodes.find((node) => node.text === label || node['content-desc'] === label);
     if (!labelNode) return undefined;
     const [x1, y1, x2, y2] = box(labelNode);
+    const [cx, cy] = [(x1 + x2) / 2, (y1 + y2) / 2];
     return nodes.filter((node) => node.clickable === 'true').filter((node) => {
         const [left, top, right, bottom] = box(node);
-        return left <= x1 && top <= y1 && right >= x2 && bottom >= y2;
+        return left <= cx && top <= cy && right >= cx && bottom >= cy;
     }).sort((a, b) => {
         const area = (node) => { const [l, t, r, bt] = box(node); return (r - l) * (bt - t); };
         return area(a) - area(b);
