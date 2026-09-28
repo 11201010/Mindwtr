@@ -279,8 +279,9 @@ export function formatCaptureModalCopilotApplied(
  * A capture link's `project` param is a best-effort fallback, not a typed
  * +Project token: with no project parsed from the text, a project with that id
  * or title (any case) is used when it takes tasks, skipped when it does not,
- * and created when none matches. The description field leads; a /note: token
- * in the text follows it; applied copilot parts are added.
+ * and created when none matches. The description field, which starts with the
+ * entry's description, is the saved description; a /note: token in the text
+ * follows it. Applied copilot parts are added.
  */
 export function buildCaptureModalRequest(input: {
     /** parseQuickAdd(text, projects, now, areas, the screen's parse options). */
@@ -298,7 +299,8 @@ export function buildCaptureModalRequest(input: {
     timeEstimatesEnabled: boolean;
 }): { input: CaptureAssemblyInput; options: CaptureTransactionOptions } {
     const { parsed, copilot } = input;
-    const surfaceProps: Partial<Task> = { ...input.initialProps };
+    // The description field shows the entry's description and owns it: what it holds is saved.
+    const { description: _shown, ...surfaceProps } = input.initialProps;
     let fallbackProjectTitleToCreate: string | undefined;
     if (!parsed.props.projectId && !parsed.projectTitle && input.projectParam) {
         const ref = input.projectParam.toLowerCase();
