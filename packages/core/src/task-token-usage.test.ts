@@ -75,6 +75,16 @@ describe('task token usage', () => {
         ]);
     });
 
+    it('offers hierarchy ancestors only when requested for filtering', () => {
+        const tasks = [buildTask({ contexts: ['@tools/excavator/deep', '@tools/chainsaw'] })];
+        expect(getUsedTaskTokens(tasks, (task) => task.contexts, { prefix: '@' })).toEqual([
+            '@tools/chainsaw', '@tools/excavator/deep',
+        ]);
+        expect(getUsedTaskTokens(tasks, (task) => task.contexts, { prefix: '@', includeAncestors: true })).toEqual([
+            '@tools', '@tools/chainsaw', '@tools/excavator', '@tools/excavator/deep',
+        ]);
+    });
+
     it('sorts frequent tokens by count then recency', () => {
         const tasks = [
             buildTask({ id: '1', tags: ['#deep'], updatedAt: '2026-03-01T00:00:00.000Z' }),

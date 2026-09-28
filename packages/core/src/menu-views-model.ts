@@ -265,7 +265,7 @@ export function buildSomedayFilterOptions(input: {
     const tokens = getUsedTaskTokens([...input.tasks], (task) => [
         ...(task.contexts ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'contexts')),
         ...(task.tags ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'tags')),
-    ]);
+    ], { includeAncestors: true });
     const projects = projectFilterOptions(input.tasks, input.projects, input.t);
     return {
         tokens,
@@ -543,7 +543,7 @@ export function buildStatusListFilterOptions(input: {
         return {
             // Reference tags may be stored without a leading #; only the options are normalized.
             tokens: withTokens
-                ? getUsedTaskTokens([...input.tasks], (task) => (task.tags ?? []).map((tag) => normalizeBulkTaskTokenInput(tag, 'tags')))
+                ? getUsedTaskTokens([...input.tasks], (task) => (task.tags ?? []).map((tag) => normalizeBulkTaskTokenInput(tag, 'tags')), { includeAncestors: true })
                 : [],
             projects,
             timeEstimates: TIME_ESTIMATE_OPTIONS,
@@ -554,7 +554,7 @@ export function buildStatusListFilterOptions(input: {
     }
     const features = resolveFeatureFlags(input.settings);
     return {
-        tokens: withTokens ? getUsedTaskTokens([...input.tasks], (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]) : [],
+        tokens: withTokens ? getUsedTaskTokens([...input.tasks], (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true }) : [],
         projects: null,
         timeEstimates: TIME_ESTIMATE_OPTIONS,
         visibility: getTaskMetadataFilterVisibility(input.tasks, {

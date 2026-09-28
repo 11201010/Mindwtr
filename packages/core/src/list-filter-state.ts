@@ -129,21 +129,22 @@ export function resolveListFilterState(
     input: ListFilterState,
     options: {
         visibility: TaskMetadataFilterVisibility;
+        /** Offered tokens from older callers; explicit selections remain clearable when absent. */
         retainTokens?: readonly string[];
         retainProjects?: readonly string[];
         getProjectLabel?: (projectId: string) => string | undefined;
         t: (key: string) => string;
     },
 ): ResolvedListFilter {
-    const { visibility, retainTokens, retainProjects, getProjectLabel, t } = options;
+    const { visibility, retainProjects, getProjectLabel, t } = options;
     const state: ListFilterState = {
         ...input,
         priorities: visibility.priority ? input.priorities : [],
         energyLevels: visibility.energyLevel ? input.energyLevels : [],
         timeEstimates: visibility.timeEstimate ? input.timeEstimates : [],
         location: !visibility.location && input.location.trim() ? '' : input.location,
-        tokens: retainTokens ? input.tokens.filter((token) => retainTokens.includes(token)) : input.tokens,
-        excludedTokens: retainTokens ? input.excludedTokens.filter((token) => retainTokens.includes(token)) : input.excludedTokens,
+        tokens: input.tokens,
+        excludedTokens: input.excludedTokens,
         projects: retainProjects ? input.projects.filter((projectId) => retainProjects.includes(projectId)) : input.projects,
     };
     const currentCriteria = criteriaFromSelections({

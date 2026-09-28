@@ -610,7 +610,7 @@ function TaskListComponent({
   const tokenFilterOptions = useMemo(() => {
     if (!filtersVisible) return Array.from(new Set([...selections.tokens, ...selections.excludedTokens]));
     return statusListFilterOptions?.tokens
-      ?? getUsedTaskTokens(filterableTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]);
+      ?? getUsedTaskTokens(filterableTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true });
   }, [filterableTasks, filtersVisible, selections.tokens, selections.excludedTokens, statusListFilterOptions]);
   const archivedReferenceFilterActive = statusFilter === 'reference' && includeArchivedReferenceProjects;
   // Inbox, Reference and Done: the header's chips and counts and the empty state, as core summarizes them.

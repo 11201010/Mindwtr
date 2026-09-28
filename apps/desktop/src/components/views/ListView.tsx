@@ -21,6 +21,7 @@ import { buildProjectOrderMap,
     parseQuickAdd,
     getDefaultTaskAreaMode,
     getPersonOptionNames,
+    getUsedTaskTokens,
     resolveDefaultNewTaskAreaId,
     formatQuickAddHelp,
     resolveFeatureFlags,
@@ -365,6 +366,13 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         // not occur in this view visible so they can still be removed here.
         return Array.from(new Set([...offered, ...selectedTokens, ...excludedTokens])).sort();
     }, [allContexts, allTags, excludedTokens, isReferenceView, listFilterableTasks, selectedTokens]);
+    const filterTokens = useMemo(() => Array.from(new Set([
+        ...getUsedTaskTokens(listFilterableTasks, (task) => isReferenceView
+            ? task.tags
+            : [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true }),
+        ...selectedTokens,
+        ...excludedTokens,
+    ])).sort(), [excludedTokens, isReferenceView, listFilterableTasks, selectedTokens]);
     const personOptionNames = useMemo(
         () => getPersonOptionNames(people, tasks),
         [people, tasks],
@@ -1421,7 +1429,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                 setSelectedWaitingPerson('');
                                 setIncludeArchivedReferenceProjects(false);
                             }}
-                            allTokens={allTokens}
+                            allTokens={filterTokens}
                             selectedTokens={selectedTokens}
                             excludedTokens={excludedTokens}
                             tokenCounts={tokenCounts}

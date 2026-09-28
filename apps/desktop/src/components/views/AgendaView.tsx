@@ -462,7 +462,7 @@ export function AgendaView() {
         const active = baseActiveTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' }));
         return {
             activeTasks: active,
-            allTokens: getUsedTaskTokens(active, (task) => [...(task.contexts || []), ...(task.tags || [])]),
+            allTokens: getUsedTaskTokens(active, (task) => [...(task.contexts || []), ...(task.tags || [])], { includeAncestors: true }),
         };
     }, [baseActiveTasks, localDayKey, futureStartTick]);
     const priorityOptions: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];

@@ -62,10 +62,10 @@ describe('Focus controls', () => {
 
     it('offers the context and tag chips of the tasks Focus can show, sorted and unique', () => {
         expect(getFocusFilterTokens([
-            { contexts: ['@work', '@home', ''], tags: ['#deep'] },
-            { contexts: ['@work/calls', '@home'], tags: ['#deep', '#ops'] },
+            { contexts: ['@home', ''], tags: ['#deep'] },
+            { contexts: ['@work/calls', '@home'], tags: ['#deep', '#ops/night'] },
             { contexts: [], tags: [] },
-        ] as never)).toEqual(['@home', '@work', '@work/calls', '#deep', '#ops']);
+        ] as never)).toEqual(['@home', '@work', '@work/calls', '#deep', '#ops', '#ops/night']);
     });
 
     it('offers and honours priority sort and grouping only while Priorities is on', () => {

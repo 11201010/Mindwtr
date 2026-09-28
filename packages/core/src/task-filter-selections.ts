@@ -23,7 +23,7 @@ import type {
 /**
  * Filter selections shared by desktop and mobile picker surfaces. Criteria
  * live in filter-criteria; this hook owns the picker state around them — the
- * tri-state token cycle, visibility pruning, chips, and saved-filter binding.
+ * tri-state token cycle, metadata visibility, chips, and saved-filter binding.
  */
 
 export type TaskFilterView = 'focus' | 'list';
@@ -45,7 +45,7 @@ export type TaskFilterSelectionsOptions = {
   visibility: TaskMetadataFilterVisibility;
   /** Saved filters for this view, already filtered to non-deleted ones. */
   savedFilters?: SavedFilter[];
-  /** Token chips currently offered; selections outside the list are dropped. */
+  /** Offered tokens from older callers; explicit selections remain clearable when absent. */
   retainTokens?: string[];
   /** Project ids currently offered; selections outside the list are dropped. */
   retainProjects?: string[];
@@ -116,7 +116,6 @@ export function useTaskFilterSelections({
   t,
   visibility,
   savedFilters,
-  retainTokens,
   retainProjects,
   getProjectLabel,
   onClear,
@@ -161,17 +160,6 @@ export function useTaskFilterSelections({
   useEffect(() => {
     if (!visibility.location) setLocationQuery((current) => (current.trim() ? '' : current));
   }, [locationQuery, visibility.location]);
-  useEffect(() => {
-    if (!retainTokens) return;
-    setTokenSelection((current) => {
-      const offered = (token: string) => retainTokens.includes(token);
-      const included = stableFilter(current.included, offered);
-      const excluded = stableFilter(current.excluded, offered);
-      return included === current.included && excluded === current.excluded
-        ? current
-        : { included, excluded };
-    });
-  }, [retainTokens, tokenSelection]);
   useEffect(() => {
     if (!retainProjects) return;
     setProjects((current) => stableFilter(current, (projectId) => retainProjects.includes(projectId)));

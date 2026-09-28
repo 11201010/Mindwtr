@@ -12,6 +12,7 @@ export type TaskTokenUsage = {
 
 type TaskTokenOptions = {
     prefix?: string;
+    includeAncestors?: boolean;
 };
 
 const normalizeToken = (value: string | null | undefined): string => String(value || '').trim();
@@ -85,7 +86,14 @@ export const getUsedTaskTokens = (
         if (task.deletedAt) return;
         (selector(task) ?? []).forEach((rawToken) => {
             const token = normalizeToken(rawToken);
-            if (token && matchesPrefix(token, options?.prefix)) tokens.add(token);
+            if (token && matchesPrefix(token, options?.prefix)) {
+                tokens.add(token);
+                if (options?.includeAncestors) {
+                    for (let index = token.indexOf('/'); index !== -1; index = token.indexOf('/', index + 1)) {
+                        tokens.add(token.slice(0, index));
+                    }
+                }
+            }
         });
     });
     return Array.from(tokens).sort((a, b) => baseTextCollator.compare(a, b));

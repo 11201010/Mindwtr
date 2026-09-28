@@ -104,6 +104,48 @@ describe('ContextsView', () => {
         expect(getByText('Plan launch')).toBeInTheDocument();
     });
 
+    it('offers parent filters and keeps a selected parent with zero matches', () => {
+        const tasks = [
+            makeTask('excavator', { title: 'Excavator', contexts: ['@tools/excavator'] }),
+            makeTask('chainsaw', { title: 'Chainsaw', contexts: ['@tools/chainsaw'] }),
+            makeTask('home', { title: 'Home', contexts: ['@home'] }),
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        const view = renderContextsView();
+        fireEvent.click(view.getByRole('button', { name: '@tools (2)' }));
+        expect(view.getByText('Excavator')).toBeInTheDocument();
+        expect(view.getByText('Chainsaw')).toBeInTheDocument();
+        const completed = tasks.map((entry) => entry.id === 'excavator' ? { ...entry, status: 'done' as const } : entry);
+        act(() => useTaskStore.setState({ tasks: completed, _allTasks: completed }));
+        expect(view.getByRole('button', { name: '@tools (1)' })).toHaveAttribute('aria-pressed', 'true');
+        expect(view.queryByText('Excavator')).not.toBeInTheDocument();
+        expect(view.getByText('Chainsaw')).toBeInTheDocument();
+        const empty = completed.map((entry) => entry.id === 'chainsaw' ? { ...entry, status: 'done' as const } : entry);
+        act(() => useTaskStore.setState({ tasks: empty, _allTasks: empty }));
+        expect(view.getByRole('button', { name: '@tools (0)' })).toHaveAttribute('aria-pressed', 'true');
+        expect(view.queryByRole('button', { name: '@tools/chainsaw (0)' })).not.toBeInTheDocument();
+        expect(view.queryByText('Home')).not.toBeInTheDocument();
+        expect(view.getByRole('button', { name: 'Remove filter @tools' })).toBeInTheDocument();
+        fireEvent.click(view.getByRole('button', { name: 'Remove filter @tools' }));
+        expect(view.getByText('Home')).toBeInTheDocument();
+    });
+
+    it('keeps imported raw labels in their original context and tag sections', () => {
+        const tasks = [
+            makeTask('raw-context', { title: 'Office task', contexts: ['office/deep'] }),
+            makeTask('raw-tag', { title: 'Work task', tags: ['work/blue'] }),
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        const view = renderContextsView();
+        expect(view.getByRole('button', { name: 'Contexts (2)' })).toBeInTheDocument();
+        expect(view.getByRole('button', { name: 'Tags (2)' })).toBeInTheDocument();
+        fireEvent.click(view.getByRole('button', { name: 'office (1)' }));
+        expect(view.getByText('Office task')).toBeInTheDocument();
+        expect(view.queryByText('Work task')).not.toBeInTheDocument();
+        fireEvent.click(view.getByRole('button', { name: 'work (1)' }));
+        expect(view.queryByText('Office task')).not.toBeInTheDocument();
+    });
+
     it('combines context and tag tokens with All or Any without duplicate rows', () => {
         const tasks = [
             makeTask('alice', { title: 'Alice only', contexts: ['@alice'] }),

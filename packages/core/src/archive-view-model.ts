@@ -105,7 +105,7 @@ export function getArchiveTokenFilterOptions(
     { tokens, excludedTokens }: { tokens: string[]; excludedTokens: string[] },
 ): string[] {
     if (!sheetOpen) return Array.from(new Set([...tokens, ...excludedTokens]));
-    return getUsedTaskTokens(tasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]);
+    return getUsedTaskTokens(tasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true });
 }
 
 /** The list rows: always the grouped row shape, with no headings when ungrouped. */

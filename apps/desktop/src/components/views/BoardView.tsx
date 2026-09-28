@@ -348,7 +348,7 @@ export function BoardView() {
         [sortedTasks, visibility]
     );
     const allTokens = React.useMemo(
-        () => getUsedTaskTokens(areaFilteredTasks, (task) => [...(task.contexts || []), ...(task.tags || [])]),
+        () => getUsedTaskTokens(areaFilteredTasks, (task) => [...(task.contexts || []), ...(task.tags || [])], { includeAncestors: true }),
         [areaFilteredTasks]
     );
     const criteriaFilteredTasks = React.useMemo(() => {

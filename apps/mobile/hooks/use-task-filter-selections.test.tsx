@@ -224,7 +224,7 @@ describe('useTaskFilterSelections', () => {
     expect(handle.current.criteria.locations).toBeUndefined();
   });
 
-  it('drops selections whose chip the view stopped offering', () => {
+  it('keeps selections clearable when the view stops offering their tokens', () => {
     const { handle, rerender } = renderSelections({ view: 'focus', retainTokens: ['@desk', '@phone'] });
 
     act(() => {
@@ -238,10 +238,11 @@ describe('useTaskFilterSelections', () => {
     rerender({ view: 'focus', retainTokens: ['@desk'] });
 
     expect(handle.current.tokens).toEqual(['@desk']);
-    expect(handle.current.excludedTokens).toEqual([]);
+    expect(handle.current.excludedTokens).toEqual(['@phone']);
+    expect(handle.current.chips.some((chip) => chip.label === '@phone')).toBe(true);
   });
 
-  it('drops what an applied saved filter selects in a hidden section or for a chip the view does not offer', () => {
+  it('keeps an applied saved filter token while pruning hidden metadata and projects', () => {
     const savedFilter: SavedFilter = {
       id: 'filter-urgent',
       name: 'Urgent',
@@ -264,7 +265,7 @@ describe('useTaskFilterSelections', () => {
     act(() => handle.current.applySaved(savedFilter));
     expect(handle.current.activeSavedFilterId).toBe('filter-urgent');
     expect(handle.current).toMatchObject({
-      tokens: ['@desk'],
+      tokens: ['@desk', '@gone'],
       projects: ['project-1'],
       priorities: [],
       energyLevels: [],

@@ -238,7 +238,14 @@ export function ArchiveView() {
     const { allTokens, tokenCounts } = useMemo(() => {
         const counts: Record<string, number> = {};
         for (const task of archivedBaseTasks) {
-            for (const token of new Set([...(task.contexts ?? []), ...(task.tags ?? [])])) {
+            const matched = new Set<string>();
+            for (const token of [...(task.contexts ?? []), ...(task.tags ?? [])]) {
+                matched.add(token);
+                for (let index = token.indexOf('/'); index !== -1; index = token.indexOf('/', index + 1)) {
+                    matched.add(token.slice(0, index));
+                }
+            }
+            for (const token of matched) {
                 counts[token] = (counts[token] ?? 0) + 1;
             }
         }

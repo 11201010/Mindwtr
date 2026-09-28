@@ -123,6 +123,27 @@ vi.mock('react-native', async (importOriginal) => {
 });
 
 describe('ContextsView', () => {
+  it('keeps a parent chip selected when its last child task completes', async () => {
+    storeState.tasks = [
+      { ...makeTask('tool', 'Excavator'), contexts: ['@tools/excavator'] },
+      { ...makeTask('other', 'Home'), contexts: ['@home'] },
+    ];
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<ContextsView />); });
+    const chips = () => tree.root.findAllByType(ScrollView).find((node) => node.props.horizontal)!.findAllByType(Pressable);
+    const parent = chips().find((node) => node.props.accessibilityLabel === '@tools (1)');
+    expect(parent).toBeDefined();
+    await act(async () => { parent!.props.onPress(); });
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')).toHaveLength(1);
+    storeState.tasks = storeState.tasks.map((entry) => entry.id === 'tool' ? { ...entry, status: 'done' } : entry);
+    await act(async () => { tree.update(<ContextsView />); });
+    expect(chips().find((node) => node.props.accessibilityLabel === '@tools (0)')?.props.accessibilityState.selected).toBe(true);
+    expect(chips().some((node) => node.props.accessibilityLabel === '@tools/excavator (0)')).toBe(false);
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')).toHaveLength(0);
+    await act(async () => { chips().find((node) => node.props.accessibilityLabel === '@tools (0)')!.props.onPress(); });
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')).toHaveLength(1);
+  });
+
   it('keeps All, No context, contexts and tags in one scrollable filter row', async () => {
     storeState.tasks = [
       { ...makeTask('work', 'Work'), contexts: ['@work'], tags: ['#admin'] },

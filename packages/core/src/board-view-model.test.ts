@@ -3,6 +3,7 @@ import {
     applyBoardFilterEdit,
     BOARD_CARD_SWIPES,
     EMPTY_BOARD_FILTER_STATE,
+    getBoardFilterOptions,
     getBoardCard,
     getBoardFilterSummary,
     planBoardDrop,
@@ -56,6 +57,15 @@ describe('Board view model', () => {
     it('runs only the action on the opened swipe side', () => {
         expect(BOARD_CARD_SWIPES.left.actions).toEqual(['duplicate']);
         expect(BOARD_CARD_SWIPES.right.actions).toEqual(['trash']);
+    });
+
+    it('offers parent filter choices without assigning parent labels to tasks', () => {
+        const task = { id: 'tool', status: 'next', contexts: ['@tools/excavator'], tags: ['#gear/heavy'] } as Task;
+        const options = getBoardFilterOptions({
+            tasks: [task], projects: [], areaFilter: { mode: 'all' }, areaById: new Map(), badges: new Map(), t,
+        });
+        expect(options.tokens).toEqual(['@tools', '@tools/excavator', '#gear', '#gear/heavy']);
+        expect(task.contexts).toEqual(['@tools/excavator']);
     });
 
     it('toggles a due-date preset: sets it, replaces another, clears itself', () => {

@@ -145,6 +145,50 @@ describe('contexts view filters', () => {
         }
     });
 
+    it('offers active ancestors and keeps a selected parent clearable after its branch empties', () => {
+        const excavator = task({ id: 'excavator', contexts: ['@tools/excavator/deep', '@tools/excavator'] });
+        const chainsaw = task({ id: 'chainsaw', contexts: ['@tools/chainsaw'], tags: ['#gear/saw'] });
+        const done = task({ id: 'done', status: 'done', contexts: ['@old/branch'] });
+        const index = buildContextsTokenIndex([excavator, chainsaw, done]);
+        expect(index.contextTokens).toEqual(['@tools', '@tools/chainsaw', '@tools/excavator', '@tools/excavator/deep']);
+        expect(index.tagTokens).toEqual(['#gear', '#gear/saw']);
+        expect(getContextsTokenCount(index, '@tools')).toBe(2);
+        expect(getContextsTokenCount(index, '@tools/excavator')).toBe(1);
+        expect(buildContextsViewModel({ index, settings: {}, selectedTokens: ['@tools'], matchMode: 'all', searchQuery: '' }).tasks)
+            .toHaveLength(2);
+
+        const remaining = buildContextsTokenIndex([task({ ...excavator, status: 'done' }), chainsaw, done]);
+        expect(remaining.contextTokens).toContain('@tools');
+        expect(getContextsTokenCount(remaining, '@tools')).toBe(1);
+
+        const empty = buildContextsViewModel({
+            index: buildContextsTokenIndex([task({ ...chainsaw, status: 'done' }), task({ id: 'other', contexts: ['@home'] })]),
+            settings: {}, selectedTokens: ['@tools'], matchMode: 'all', searchQuery: '',
+        });
+        expect(empty.tokenChips).toContainEqual({ token: '@tools', kind: 'contexts', count: 0, selected: true });
+        expect(empty.tasks).toEqual([]);
+        expect(empty.tokenChips.some(({ token }) => token === '@tools/chainsaw')).toBe(false);
+        expect(buildContextsViewModel({
+            index: buildContextsTokenIndex([]), settings: {}, selectedTokens: ['@tools'], matchMode: 'all', searchQuery: '',
+        }).hasTokens).toBe(true);
+    });
+
+    it('keeps raw imported labels in their original filter section', () => {
+        const index = buildContextsTokenIndex([
+            task({ id: 'legacy-context', contexts: ['office/deep'], tags: [] }),
+            task({ id: 'legacy-tag', contexts: [], tags: ['work/blue'] }),
+        ]);
+        expect(index.contextTokens).toEqual(['office', 'office/deep']);
+        expect(index.tagTokens).toEqual(['work', 'work/blue']);
+        const model = buildContextsViewModel({ index, settings: {}, selectedTokens: ['work'], matchMode: 'all', searchQuery: '' });
+        expect(model.tokenChips).toContainEqual({ token: 'work', kind: 'tags', count: 1, selected: true });
+        expect(model.tasks.map((entry) => entry.id)).toEqual(['legacy-tag']);
+        const stale = buildContextsViewModel({
+            index: buildContextsTokenIndex([]), settings: {}, selectedTokens: ['work'], matchMode: 'all', searchQuery: '',
+        });
+        expect(stale.tokenChips).toContainEqual(expect.objectContaining({ token: 'work', count: 0, selected: true }));
+    });
+
     // ponytail: one wall-clock bound on a busy machine; the growth it guards against was 17 s at 5,000 tasks.
     it('derives Contexts for 5,000 tasks with distinct tokens within the search/filter/sort budget', () => {
         const tasks = Array.from({ length: 5000 }, (_, index) => task({
@@ -159,7 +203,7 @@ describe('contexts view filters', () => {
             const index = buildContextsTokenIndex(tasks);
             for (const selectedTokens of [[], ['#tag-42'], ['#area-3', '@place-7']]) {
                 const model = buildContextsViewModel({ index, settings: {}, selectedTokens, matchMode: 'any', searchQuery: '' });
-                expect(model.tokenChips.length).toBe(15000);
+                expect(model.tokenChips.length).toBe(20050);
             }
             best = Math.min(best, performance.now() - started);
         }

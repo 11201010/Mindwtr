@@ -81,11 +81,14 @@ export function useListViewOptimizations(
                         return true;
                     })
                     .forEach((task) => {
-                        const tokens = new Set(
-                            statusFilter === 'reference'
-                                ? task.tags
-                                : [...(task.contexts || []), ...(task.tags || [])],
-                        );
+                        const tokens = new Set(statusFilter === 'reference'
+                            ? task.tags
+                            : [...(task.contexts || []), ...(task.tags || [])]);
+                        for (const token of [...tokens]) {
+                            for (let index = token.indexOf('/'); index !== -1; index = token.indexOf('/', index + 1)) {
+                                tokens.add(token.slice(0, index));
+                            }
+                        }
                         tokens.forEach((token) => {
                             counts[token] = (counts[token] || 0) + 1;
                         });

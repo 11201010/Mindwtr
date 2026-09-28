@@ -5,7 +5,7 @@ import type { StoreActionResult, TaskStore } from './store-types';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { isTaskFinished } from './task-status';
 import { getFrequentTaskTokens, getUsedTaskTokens } from './task-token-usage';
-import { sortTasksBy } from './task-utils';
+import { baseTextCollator, sortTasksBy } from './task-utils';
 import type { AppSettings, Task, TaskSortBy, TaskStatus } from './types';
 
 /**
@@ -34,14 +34,23 @@ const matchesSearch = (token: string, query: string): boolean => {
 export const buildContextsViewFilterSections = ({
     contextTokens,
     searchQuery,
+    selectedTokens = [],
     tagTokens,
 }: {
     contextTokens: string[];
     searchQuery: string;
+    selectedTokens?: string[];
     tagTokens: string[];
 }): ContextsViewFilterSection[] => {
-    const contexts = contextTokens.filter((token) => matchesSearch(token, searchQuery));
-    const tags = tagTokens.filter((token) => matchesSearch(token, searchQuery));
+    const choices = (tokens: string[], selected: string[]) => Array.from(new Set([
+        ...tokens.filter((token) => matchesSearch(token, searchQuery)),
+        ...selected,
+    ])).sort((a, b) => baseTextCollator.compare(a, b));
+    const selectedLabels = selectedTokens.filter((token) => token !== CONTEXTS_NO_CONTEXT_TOKEN);
+    const contexts = choices(contextTokens, selectedLabels.filter((token) =>
+        token.startsWith('@') || (!token.startsWith('#') && !tagTokens.includes(token))));
+    const tags = choices(tagTokens, selectedLabels.filter((token) =>
+        token.startsWith('#') || (!token.startsWith('@') && tagTokens.includes(token))));
     return [
         ...(contexts.length > 0 ? [{ kind: 'contexts' as const, tokens: contexts }] : []),
         ...(tags.length > 0 ? [{ kind: 'tags' as const, tokens: tags }] : []),
@@ -97,8 +106,8 @@ export type ContextsTokenIndex = {
     tokenCounts: Map<string, number>;
 };
 
-export function buildContextsTokenIndex(visibleTasks: Task[]): ContextsTokenIndex {
-    const activeTasks = visibleTasks.filter((task) => !isTaskFinished(task));
+export function buildContextsTokenIndex(visibleTasks: Task[], { includeFinished = false }: { includeFinished?: boolean } = {}): ContextsTokenIndex {
+    const activeTasks = includeFinished ? visibleTasks : visibleTasks.filter((task) => !isTaskFinished(task));
     const tokenCounts = new Map<string, number>();
     const matched = new Set<string>();
     for (const task of activeTasks) {
@@ -114,8 +123,8 @@ export function buildContextsTokenIndex(visibleTasks: Task[]): ContextsTokenInde
     }
     return {
         activeTasks,
-        contextTokens: getUsedTaskTokens(activeTasks, (task) => task.contexts, { prefix: '@' }),
-        tagTokens: getUsedTaskTokens(activeTasks, (task) => task.tags, { prefix: '#' }),
+        contextTokens: getUsedTaskTokens(activeTasks, (task) => task.contexts, { includeAncestors: true }),
+        tagTokens: getUsedTaskTokens(activeTasks, (task) => task.tags, { includeAncestors: true }),
         untokenedTasks: activeTasks.filter((task) => !taskHasContextOrTag(task)),
         tokenCounts,
     };
@@ -159,7 +168,7 @@ export function buildContextsViewModel({
     searchQuery: string;
 }): ContextsViewModel {
     const { activeTasks, contextTokens, tagTokens } = index;
-    const filterSections = buildContextsViewFilterSections({ contextTokens, searchQuery, tagTokens });
+    const filterSections = buildContextsViewFilterSections({ contextTokens, searchQuery, selectedTokens, tagTokens });
     const noContextSelected = selectedTokens.includes(CONTEXTS_NO_CONTEXT_TOKEN);
     const filtered = noContextSelected
         ? index.untokenedTasks
@@ -169,7 +178,7 @@ export function buildContextsViewModel({
     const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
     return {
         activeTasks,
-        hasTokens: contextTokens.length + tagTokens.length > 0,
+        hasTokens: filterSections.length > 0 || contextTokens.length + tagTokens.length > 0,
         filterSections,
         noContextSelected,
         allCount: activeTasks.length,

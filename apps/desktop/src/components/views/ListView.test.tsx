@@ -1416,6 +1416,32 @@ describe('ListView', () => {
     expect(useUiStore.getState().listFilters.criteria).not.toHaveProperty('excludedContexts');
   });
 
+  it('offers a parent context filter and keeps it clearable after its task completes', async () => {
+    const tasks = [
+      makeTask('tool', { title: 'Tool task', contexts: ['@tools/excavator'] }),
+      makeTask('home', { title: 'Home task', contexts: ['@home'] }),
+    ];
+    useTaskStore.setState({ _allTasks: tasks, lastDataChangeAt: 1 });
+    const view = renderListView();
+    act(() => useUiStore.getState().setListFilters({ open: true }));
+    const panel = () => within(document.getElementById('list-filters-panel') as HTMLElement);
+    fireEvent.click(panel().getByRole('button', { name: 'Contexts & tags' }));
+    fireEvent.click(panel().getByRole('button', { name: /^@tools(?:\s|$)/ }));
+    expect(view.getByText('Tool task')).toBeInTheDocument();
+    expect(view.queryByText('Home task')).not.toBeInTheDocument();
+
+    act(() => useTaskStore.setState({
+      _allTasks: tasks.map((task) => task.id === 'tool' ? { ...task, status: 'done' as const } : task),
+      lastDataChangeAt: 2,
+    }));
+    expect(panel().getByRole('button', { name: /^@tools(?:\s|$)/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(view.queryByText('Home task')).not.toBeInTheDocument();
+    fireEvent.click(panel().getByRole('button', { name: /^@tools(?:\s|$)/ }));
+    fireEvent.click(panel().getByRole('button', { name: /^@tools(?:\s|$)/ }));
+    expect(useUiStore.getState().listFilters.criteria).not.toHaveProperty('contexts');
+    expect(view.getByText('Home task')).toBeInTheDocument();
+  });
+
   it('selects and clears all visible tasks from the shared list toolbar', async () => {
     useTaskStore.setState({
       _allTasks: [

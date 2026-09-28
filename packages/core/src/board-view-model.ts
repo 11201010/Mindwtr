@@ -230,7 +230,7 @@ export function getBoardFilterOptions(input: {
         tokens: getUsedTaskTokens(input.tasks, (task) => [
             ...(task.contexts ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'contexts')),
             ...(task.tags ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'tags')),
-        ]),
+        ], { includeAncestors: true }),
         projects,
         getProjectLabel: (projectId: string) => (
             projectId === SAVED_FILTER_NO_PROJECT_ID ? noProject : input.badges.get(projectId)?.title

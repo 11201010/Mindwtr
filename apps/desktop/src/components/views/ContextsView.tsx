@@ -8,6 +8,9 @@ import {
     TaskStatus,
     getFrequentTaskTokens,
     getUsedTaskTokens,
+    buildContextsTokenIndex,
+    buildContextsViewFilterSections,
+    getContextsTokenCount,
     collectBulkTaskTokens,
     compareAreasByOrder,
     tFallback,
@@ -54,12 +57,6 @@ type BulkTokenPickerState = {
     field: 'tags' | 'contexts';
     action: 'add' | 'remove';
 } | null;
-
-// Module scope so the memos below can depend on them: as render-body closures
-// they were a fresh identity every render and would have defeated every memo.
-const matchesSelected = (task: Task, context: string) => {
-    return taskMatchesContextOrTagSelection(task, [context]);
-};
 
 const hasContext = (task: Task) => (task.contexts?.length || 0) > 0 || (task.tags?.length || 0) > 0;
 
@@ -183,27 +180,16 @@ export function ContextsView() {
             : baseTasks;
     }, [activeTasks, hasExplicitStatusFilter, selectedStatusSet]);
 
-    // Extract unique context and tag tokens separately for the selector sidebar.
-    const allContextTokens = useMemo(
-        () => Array.from(new Set(scopedTasks.flatMap(t => t.contexts || []))).sort(),
-        [scopedTasks],
-    );
-    const allTagTokens = useMemo(
-        () => Array.from(new Set(scopedTasks.flatMap(t => t.tags || []))).sort(),
-        [scopedTasks],
-    );
+    const tokenIndex = useMemo(() => buildContextsTokenIndex(scopedTasks, { includeFinished: true }), [scopedTasks]);
+    const filterSections = useMemo(() => buildContextsViewFilterSections({
+        contextTokens: tokenIndex.contextTokens,
+        tagTokens: tokenIndex.tagTokens,
+        selectedTokens: selectedContexts,
+        searchQuery: '',
+    }), [tokenIndex, selectedContexts]);
+    const allContextTokens = filterSections.find((section) => section.kind === 'contexts')?.tokens ?? [];
+    const allTagTokens = filterSections.find((section) => section.kind === 'tags')?.tokens ?? [];
     const allTokens = useMemo(() => [...allContextTokens, ...allTagTokens], [allContextTokens, allTagTokens]);
-
-    useEffect(() => {
-        // Keep persisted context selections through the empty startup frame; reset only after active tasks expose tokens.
-        if (allTokens.length === 0) return;
-        if (noContextSelected) return;
-        if (selectedContexts.every((token) => allTokens.includes(token))) return;
-        setPersistedViewState((current) => ({
-            ...current,
-            selectedContexts: current.selectedContexts.filter((token) => allTokens.includes(token)),
-        }));
-    }, [allTokens, noContextSelected, selectedContexts, setPersistedViewState]);
 
     const contextFilteredTasks = useMemo(() => {
         if (noContextSelected) return scopedTasks.filter((t) => !hasContext(t));
@@ -421,7 +407,7 @@ export function ContextsView() {
     const allTokensLabel = `${contextsLabel} & ${tagsLabel}`;
 
     const renderTokenRow = (token: string, marker: '@' | '#') => {
-        const taskCount = scopedTasks.filter(t => matchesSelected(t, token)).length;
+        const taskCount = getContextsTokenCount(tokenIndex, token);
         return (
             <button
                 key={token}

@@ -5,6 +5,7 @@ import { shallow,
     Task,
     Project,
     generateUUID,
+    getUsedTaskTokens,
     SavedSearch,
     SearchProjectResult,
     SearchResults,
@@ -24,7 +25,7 @@ import { shallow,
     taskMatchesAreaFilterSelection,
     projectMatchesAreaFilterSelection, tFallback,
     createSearchHighlighter,
-    type DerivedState, } from '@mindwtr/core';
+    } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
 import { getUrgencyColor } from './Task/TaskItemDisplay';
@@ -56,15 +57,6 @@ export type OpenGlobalSearchDetail = {
 };
 
 export const resolveGlobalSearchTaskView = resolveTaskNavigationView;
-
-// Closed search renders nothing (see the isOpen guard below); reading
-// getDerivedState() unconditionally forced the full derived-state rebuild
-// (12ms at 5k tasks) on every task write for this invisible overlay
-// (PERF-01). Only allContexts/allTags are used while closed is skipped.
-const EMPTY_SEARCH_DERIVED: Pick<DerivedState, 'allContexts' | 'allTags'> = Object.freeze({
-    allContexts: [],
-    allTags: [],
-});
 
 export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: GlobalSearchProps) {
     const dialogTitleId = useId();
@@ -100,7 +92,7 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     const inputRef = useRef<HTMLInputElement>(null);
     const resultsRef = useRef<HTMLDivElement>(null);
     const isOpenRef = useRef(false);
-    const { _allTasks, _tasksById, projects, areas, settings, updateSettings, setHighlightTask, getDerivedState } = useTaskStore(
+    const { _allTasks, _tasksById, projects, areas, settings, updateSettings, setHighlightTask } = useTaskStore(
         (state) => ({
             _allTasks: state._allTasks,
             _tasksById: state._tasksById,
@@ -109,11 +101,9 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
             settings: state.settings,
             updateSettings: state.updateSettings,
             setHighlightTask: state.setHighlightTask,
-            getDerivedState: state.getDerivedState,
         }),
         shallow
     );
-    const { allContexts, allTags } = isOpen ? getDerivedState() : EMPTY_SEARCH_DERIVED;
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     // Search results are SearchTaskResult rows, which deliberately carry no
@@ -238,8 +228,30 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     }, [debouncedQuery, shouldUseFts]);
 
     const allTokens = useMemo(() => {
-        return Array.from(new Set([...allContexts, ...allTags])).sort();
-    }, [allContexts, allTags]);
+        if (!isOpen) return selectedTokens;
+        if (scope === 'projects') return selectedTokens;
+        // Use the search pipeline's status, area, and visibility rules; keep
+        // token choices independent of the title query and current token picks.
+        const eligible = computeGlobalSearchResults({
+            query: '', tasks: _allTasks, projects, areas,
+            includeCompleted, includeReference, hideFutureTasks,
+            selectedStatuses, selectedArea, selectedTokens: [], locationQuery,
+            duePreset, scope: scope === 'all' ? 'tasks' : scope,
+            weekStart: normalizeWeekStartSetting(settings?.weekStart),
+            limit: Number.POSITIVE_INFINITY,
+        });
+        const eligibleIds = new Set(eligible.results.flatMap((result) =>
+            result.type === 'task' ? [result.item.id] : []));
+        const eligibleTasks = _allTasks.filter((task) => eligibleIds.has(task.id));
+        return Array.from(new Set([
+            ...getUsedTaskTokens(eligibleTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true }),
+            ...selectedTokens,
+        ])).sort();
+    }, [
+        _allTasks, projects, areas, isOpen, includeCompleted, includeReference,
+        hideFutureTasks, selectedStatuses, selectedArea, locationQuery, duePreset,
+        scope, settings?.weekStart, selectedTokens, futureStartDayKey, futureStartRevealTick,
+    ]);
     const includeCompletedLabel = t('search.includeCompleted');
     const includeCompletedText = includeCompletedLabel === 'search.includeCompleted'
         ? 'Include Done and Archived tasks'

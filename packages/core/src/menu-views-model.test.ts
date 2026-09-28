@@ -8,7 +8,7 @@ import {
     seedMenuViewsStore,
 } from './menu-views-model.replay';
 import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState } from './list-filter-state';
-import { buildSomedayViewModel, buildWaitingViewModel } from './menu-views-model';
+import { buildSomedayFilterOptions, buildSomedayViewModel, buildWaitingViewModel } from './menu-views-model';
 import { buildMoreMenuModel, resolveMobileQuickAccessView } from './more-menu-model';
 import { createNativeHostContract } from './native-host-contract';
 import {
@@ -80,6 +80,12 @@ describe('list views parity with the frozen React Native fixture', () => {
 describe('list view models', () => {
     const t = (key: string) => key;
 
+    it('offers a parent token in Someday when only its child is assigned', () => {
+        const item = { id: 'tool', status: 'someday', contexts: ['@tools/excavator'], tags: [] } as Task;
+        expect(buildSomedayFilterOptions({ tasks: [item], projects: [], settings: {}, t }).tokens)
+            .toEqual(['@tools', '@tools/excavator']);
+    });
+
     it('shows all waiting tasks immediately when the chosen person disappears', () => {
         const task = { id: 'waiting', title: 'Waiting', status: 'waiting', assignedTo: 'Bob' } as Task;
         const model = buildWaitingViewModel({ tasks: [task], projects: [], resolvedAreaFilter: { mode: 'all' }, areaById: new Map(), person: 'Alice', t });
@@ -93,7 +99,7 @@ describe('list view models', () => {
         expect(menu.primary.map((item) => item.id)).toEqual(['waiting', 'someday', 'review', 'reference', 'contexts', 'projects']);
     });
 
-    it('cycles a token through included, excluded and neutral, and prunes what the view stops offering', () => {
+    it('cycles a token through included, excluded and neutral, and retains a missing selection', () => {
         const included = applyListFilterEdit(EMPTY_LIST_FILTER_STATE, { type: 'toggleToken', value: '#a' });
         const excluded = applyListFilterEdit(included, { type: 'toggleToken', value: '#a' });
         expect([included.tokens, excluded.excludedTokens]).toEqual([['#a'], ['#a']]);
@@ -102,9 +108,9 @@ describe('list view models', () => {
             { ...EMPTY_LIST_FILTER_STATE, tokens: ['#gone'], priorities: ['high'] },
             { visibility: { energyLevel: false, location: false, priority: false, timeEstimate: false }, retainTokens: ['#a'], t },
         );
-        expect(resolved.state.tokens).toEqual([]);
+        expect(resolved.state.tokens).toEqual(['#gone']);
         expect(resolved.state.priorities).toEqual([]);
-        expect(resolved.activeCount).toBe(0);
+        expect(resolved.activeCount).toBe(1);
     });
 
     it('uses the Search title rather than its input placeholder in the active chip', () => {

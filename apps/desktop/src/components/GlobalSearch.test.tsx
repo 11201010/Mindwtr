@@ -325,6 +325,35 @@ describe('GlobalSearch', () => {
         expect(screen.queryByText('Type to search')).not.toBeInTheDocument();
     });
 
+    it('offers parent tokens only for tasks eligible under current search visibility', async () => {
+        useTaskStore.setState({
+            _allTasks: [
+                { ...tasks[0], id: 'done-tool', title: 'Done tool', status: 'done', contexts: ['@tools/excavator'], areaId: 'area-work' },
+                { ...tasks[0], id: 'active-gear', title: 'Active gear', contexts: ['@gear/hammer'], areaId: 'area-work' },
+                { ...tasks[1], id: 'home-task', title: 'Home task', contexts: ['@home'] },
+            ],
+        });
+        render(<LanguageProvider><GlobalSearch onNavigate={vi.fn()} /></LanguageProvider>);
+        await act(async () => {
+            window.dispatchEvent(new Event('mindwtr:open-search'));
+            await vi.advanceTimersByTimeAsync(50);
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+        expect(screen.queryByRole('button', { name: '@tools' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '@gear' })).toBeInTheDocument();
+
+        fireEvent.change(screen.getByRole('combobox', { name: 'Area' }), { target: { value: 'area-home' } });
+        expect(screen.queryByRole('button', { name: '@gear' })).not.toBeInTheDocument();
+        fireEvent.change(screen.getByRole('combobox', { name: 'Area' }), { target: { value: 'all' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Include Done and Archived tasks', pressed: false }));
+        expect(screen.getByRole('button', { name: '@tools' })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: '@tools' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Include Done and Archived tasks', pressed: true }));
+        expect(screen.getAllByRole('button', { name: '@tools' })).toHaveLength(2);
+        fireEvent.click(screen.getAllByRole('button', { name: '@tools' })[0]);
+        expect(screen.queryByRole('button', { name: '@tools' })).not.toBeInTheDocument();
+    });
+
     it('uses localized presentation labels for filter sections, options, and chips', async () => {
         render(
             <LanguageProvider>

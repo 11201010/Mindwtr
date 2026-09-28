@@ -114,7 +114,7 @@ export function selectFocusSavedFilters(savedFilters: readonly SavedFilter[] | u
  * now (visible, actionable, started by the minute).
  */
 export function getFocusFilterTokens(activeTasks: Task[]): string[] {
-    return getUsedTaskTokens(activeTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])]);
+    return getUsedTaskTokens(activeTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true });
 }
 
 /**
