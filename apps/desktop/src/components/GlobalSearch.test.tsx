@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AREA_FILTER_ALL, buildEntityMap, safeFormatDate, useTaskStore, type Area, type Task } from '@mindwtr/core';
+import { AREA_FILTER_ALL, buildEntityMap, safeFormatDate, useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
 import { LanguageProvider } from '../contexts/language-context';
 import { useUiStore } from '../store/ui-store';
 import { GlobalSearch } from './GlobalSearch';
+import { registerTaskEditExitRequest } from './Task/task-edit-session';
 // Not re-exported from the core barrel; see focused-count-selector.test.ts
 // for why the relative path (not a re-export) is used here.
 import { beginNotifyProfile, endNotifyProfile } from '../../../../packages/core/src/store-notify-profiler';
@@ -301,6 +302,69 @@ describe('GlobalSearch', () => {
             'info',
         );
         expect(onNavigate).toHaveBeenCalledWith('next', 'task-home');
+    });
+
+    it('waits for the edit-exit decision before selecting a search project', async () => {
+        const onNavigate = vi.fn();
+        const destination: Project = {
+            id: 'project-b',
+            title: 'Project Beta',
+            status: 'active',
+            color: '#2563eb',
+            order: 1,
+            tagIds: [],
+            createdAt: now,
+            updatedAt: now,
+        };
+        let pendingSelection: (() => void) | undefined;
+        const release = registerTaskEditExitRequest((action) => {
+            pendingSelection = action;
+        });
+        useTaskStore.setState({ _allProjects: [destination], settings: {} });
+        useUiStore.setState({ projectView: { selectedProjectId: 'project-a' } });
+        render(<LanguageProvider><GlobalSearch onNavigate={onNavigate} /></LanguageProvider>);
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:open-search', { detail: { query: 'Project Beta' } }));
+            await vi.advanceTimersByTimeAsync(250);
+        });
+        fireEvent.click(screen.getByText((_, element) => element?.textContent === 'Project Beta').closest('button')!);
+
+        expect(pendingSelection).toBeTypeOf('function');
+        expect(useUiStore.getState().projectView.selectedProjectId).toBe('project-a');
+        expect(onNavigate).not.toHaveBeenCalled();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+        await act(async () => pendingSelection!());
+
+        expect(useUiStore.getState().projectView.selectedProjectId).toBe('project-b');
+        expect(onNavigate).toHaveBeenCalledWith('projects', 'project-b');
+        release();
+    });
+
+    it('keeps task navigation unchanged when save is rejected or the user stays', async () => {
+        const onNavigate = vi.fn();
+        const destination = { ...tasks[0], id: 'project-task', title: 'Project task', projectId: 'project-b' };
+        let pendingSelection: (() => void) | undefined;
+        const release = registerTaskEditExitRequest((action) => {
+            pendingSelection = action;
+        });
+        useTaskStore.setState({ _allTasks: [destination], settings: {} });
+        useUiStore.setState({ projectView: { selectedProjectId: 'project-a' } });
+        render(<LanguageProvider><GlobalSearch onNavigate={onNavigate} /></LanguageProvider>);
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:open-search', { detail: { query: 'Project task' } }));
+            await vi.advanceTimersByTimeAsync(250);
+        });
+        fireEvent.click(screen.getByText((_, element) => element?.textContent === 'Project task').closest('button')!);
+
+        expect(pendingSelection).toBeTypeOf('function');
+        expect(useUiStore.getState().projectView.selectedProjectId).toBe('project-a');
+        expect(useTaskStore.getState().highlightTaskId).toBeNull();
+        expect(onNavigate).not.toHaveBeenCalled();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        release();
     });
 
     it('shows Done and Archived tasks when only status filters are selected', async () => {

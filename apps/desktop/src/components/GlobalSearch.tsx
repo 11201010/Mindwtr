@@ -40,6 +40,7 @@ import {
 } from '@mindwtr/core/global-search-filter';
 import { resolveTaskNavigationView } from '../lib/task-navigation';
 import { useFutureStartRevealTick, useLocalDayKey } from '../hooks/useLocalDayKey';
+import { runAfterTaskEditExit } from './Task/task-edit-session';
 
 interface GlobalSearchProps {
     onNavigate: (view: string, itemId?: string) => void;
@@ -405,35 +406,39 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     };
 
     const handleSelect = (result: { type: 'project'; item: SearchProjectResult } | { type: 'task'; item: SearchTaskResult }) => {
+        // Close before the task editor opens its own Save/Discard/Stay dialog;
+        // both dialogs portal to the same z-50 layer and trap focus.
         setIsOpen(false);
-        const shouldSwitchToAllAreas = isAreaFilterSelectionActive(activeAreaFilter) && (
-            result.type === 'project'
-                ? !projectMatchesAreaFilterSelection(result.item as Project, activeAreaFilter, areaById)
-                : !taskMatchesAreaFilterSelection(result.item as Task, activeAreaFilter, projectMap, areaById)
-        );
-        if (shouldSwitchToAllAreas) {
-            void updateSettings({ filters: { ...(settings?.filters ?? {}), ...areaFilterSelectionToFilters({ included: [], excluded: [] }) } })
-                .catch(() => showToast(t('search.areaFilterFailed'), 'error'));
-            showToast(t('search.switchedToAllAreas'), 'info');
-        }
-        if (result.type === 'project') {
-            setProjectView({ selectedProjectId: result.item.id });
-            onNavigate('projects', result.item.id);
-        } else {
-            // Map task status to appropriate view
-            const task = result.item;
-            setHighlightTask(task.id);
-            // A finished task is invisible in its project — the workspace never
-            // lists archived tasks and hides done ones unless the project has
-            // them switched on — so it goes to Done/Archived, which do reveal it.
-            if (task.projectId && !isTaskFinished(task as Task)) {
-                setProjectView({ selectedProjectId: task.projectId });
-                onNavigate('projects', task.id);
-                return;
+        runAfterTaskEditExit(() => {
+            const shouldSwitchToAllAreas = isAreaFilterSelectionActive(activeAreaFilter) && (
+                result.type === 'project'
+                    ? !projectMatchesAreaFilterSelection(result.item as Project, activeAreaFilter, areaById)
+                    : !taskMatchesAreaFilterSelection(result.item as Task, activeAreaFilter, projectMap, areaById)
+            );
+            if (shouldSwitchToAllAreas) {
+                void updateSettings({ filters: { ...(settings?.filters ?? {}), ...areaFilterSelectionToFilters({ included: [], excluded: [] }) } })
+                    .catch(() => showToast(t('search.areaFilterFailed'), 'error'));
+                showToast(t('search.switchedToAllAreas'), 'info');
             }
-            const targetView = resolveGlobalSearchTaskView(task as Task);
-            onNavigate(targetView, task.id);
-        }
+            if (result.type === 'project') {
+                setProjectView({ selectedProjectId: result.item.id });
+                onNavigate('projects', result.item.id);
+            } else {
+                // Map task status to appropriate view
+                const task = result.item;
+                setHighlightTask(task.id);
+                // A finished task is invisible in its project — the workspace never
+                // lists archived tasks and hides done ones unless the project has
+                // them switched on — so it goes to Done/Archived, which do reveal it.
+                if (task.projectId && !isTaskFinished(task as Task)) {
+                    setProjectView({ selectedProjectId: task.projectId });
+                    onNavigate('projects', task.id);
+                    return;
+                }
+                const targetView = resolveGlobalSearchTaskView(task as Task);
+                onNavigate(targetView, task.id);
+            }
+        });
     };
 
     if (!isOpen) return null;
