@@ -1,6 +1,6 @@
 package tech.dongdongbh.mindwtr.pilot
 
-import android.app.Application
+import android.app.Activity
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -332,9 +332,12 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** Data's Debug logging switch: core's edit, with a new request UUID. */
     fun data(edit: JSONObject) = menu.command("dataSetting", JSONObject().put("edit", edit))
 
+    /** Data's made log file, waiting for the Data screen to open the share sheet from its activity (a rotation keeps it). */
+    var logToShare by mutableStateOf<String?>(null); private set
+
     /**
-     * Data's Share log (RN's handleShareLog): core makes the log file, then Android's share sheet offers it through the
-     * FileProvider; nothing leaves the phone until the user picks a target. No file, or no share sheet, shows RN's toast.
+     * Data's Share log (RN's handleShareLog): core makes the log file, then the Data screen opens the share sheet with it
+     * (openShareSheet). No file shows RN's toast.
      */
     fun shareLog() {
         val words = page?.view?.optJSONObject("diagnostics") ?: return
@@ -342,23 +345,30 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
             val reply = runtime.logShare()
             val path = if (reply.isNull("path")) null else reply.getString("path")
             shell.ui {
-                val title = words.getString("toastTitle")
-                if (path == null) {
-                    shell.showToast(title, words.getString("logMissing"), "warning")
-                    return@ui
-                }
-                try {
-                    val app = shell.getApplication<Application>()
-                    val uri = FileProvider.getUriForFile(app, "${app.packageName}.diagnostics", File(path))
-                    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    send.clipData = ClipData.newRawUri(null, uri)
-                    app.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                } catch (failure: Exception) {
-                    Log.w(CoreHost.TAG, "Share log failed", failure)
-                    shell.showToast(title, words.getString("shareUnavailable"), "warning")
-                }
+                if (path == null) shell.showToast(words.getString("toastTitle"), words.getString("logMissing"), "warning")
+                else logToShare = path
             }
+        }
+    }
+
+    /**
+     * The share sheet for the made log file, from [activity], as RN's expo-sharing opens it: a chooser over ACTION_SEND
+     * text/plain with the FileProvider link and its read grant. Nothing leaves the phone until the user picks a target. No share
+     * sheet shows RN's toast.
+     */
+    fun openShareSheet(activity: Activity) {
+        val path = logToShare ?: return
+        logToShare = null
+        val words = page?.view?.optJSONObject("diagnostics") ?: return
+        try {
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.diagnostics", File(path))
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            send.clipData = ClipData.newRawUri(null, uri)
+            activity.startActivity(Intent.createChooser(send, null))
+        } catch (failure: Exception) {
+            Log.w(CoreHost.TAG, "Share log failed", failure)
+            shell.showToast(words.getString("toastTitle"), words.getString("shareUnavailable"), "warning")
         }
     }
 

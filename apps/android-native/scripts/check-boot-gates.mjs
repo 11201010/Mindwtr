@@ -2306,10 +2306,13 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.deepEqual(paths.match(/<[\w-]+-path [^>]*>/g), ['<files-path name="logs" path="logs/" />']);
     const settingsModelKt = source('SettingsModel.kt');
     const share = code(settingsModelKt.slice(settingsModelKt.indexOf('fun shareLog()'), settingsModelKt.indexOf('fun clearLog()')));
-    assert.match(share, /FileProvider\.getUriForFile\(app, "\$\{app\.packageName\}\.diagnostics", File\(path\)\)/);
+    assert.match(share, /FileProvider\.getUriForFile\(activity, "\$\{activity\.packageName\}\.diagnostics", File\(path\)\)/);
     assert.match(share, /Intent\(Intent\.ACTION_SEND\)\.setType\("text\/plain"\)\.putExtra\(Intent\.EXTRA_STREAM, uri\)\s+\.addFlags\(Intent\.FLAG_GRANT_READ_URI_PERMISSION\)/);
     assert.equal(share.match(/startActivity\(/g).length, 1);
-    assert.match(share, /app\.startActivity\(Intent\.createChooser\(send, null\)/, 'the share sheet only: the user picks where it goes');
+    assert.match(share, /activity\.startActivity\(Intent\.createChooser\(send, null\)\)/, 'the share sheet from the activity, as RN\'s expo-sharing: the user picks where it goes');
+    assert.doesNotMatch(share, /FLAG_ACTIVITY_NEW_TASK|getApplication/, 'never a new task from the application context');
+    // The made file waits as screen state; the Data screen opens the sheet from its own activity, so a rotation keeps it.
+    assert.match(share, /logToShare = path/);
     for (const word of ['logMissing', 'shareUnavailable']) assert.match(share, new RegExp(`words\\.getString\\("${word}"\\)`), `RN's ${word} toast, core's words`);
     assert.match(settingsModelKt, /fun data\(edit: JSONObject\) = menu\.command\("dataSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
     // The Data screen draws core's view: the switch sends core's edit; Share and Clear show only when core sends them.
@@ -2328,6 +2331,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(switchColors, /on && systemDark -> rgb\("#80CBC4"\); on -> rgb\("#008577"\); systemDark -> rgb\("#BDBDBD"\); else -> rgb\("#F1F1F1"\)/);
     assert.match(captureUi, /val track = colors\?\.first \?: \(if \(on\) theme\.tintTrack else c\.border\)\.let \{ it\.copy\(alpha = it\.alpha \* 0\.3f\) \}/, 'explicit colors draw a solid track; the default keeps its look');
     assert.match(data, /diagnostics\.optJSONObject\("shareLog"\)\?\.let/);
+    assert.match(data, /val activity = LocalActivity\.current\s+LaunchedEffect\(settings\.logToShare\) \{ if \(settings\.logToShare != null\) activity\?\.let\(settings::openShareSheet\) \}/);
     assert.match(data, /diagnostics\.optJSONObject\("clearLog"\)\?\.let/);
     assert.doesNotMatch(data, /\bt\(|"settings\./, 'every word is the view\'s');
 }

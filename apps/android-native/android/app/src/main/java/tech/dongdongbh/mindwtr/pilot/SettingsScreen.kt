@@ -2,6 +2,7 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -331,6 +332,8 @@ private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.m
         // RN always draws this row's top border (it follows the Encryption block). Its switch has RN's own colors.
         val debug = diagnostics.getJSONObject("debugLogging")
         ToggleRow(model, debug, true, colors = theme.diagnosticsSwitch(debug.getBoolean("value"), isSystemInDarkTheme())) { settings.data(it) }
+        val activity = LocalActivity.current
+        LaunchedEffect(settings.logToShare) { if (settings.logToShare != null) activity?.let(settings::openShareSheet) }
         diagnostics.optJSONObject("shareLog")?.let { share ->
             ActionRow(share.getString("label"), share.getString("description"), c.tint, idle, "settings-share-log") { settings.shareLog() }
         }
