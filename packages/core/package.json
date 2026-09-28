@@ -37,7 +37,8 @@
     "./sync-secret-storage": "./src/sync-secret-storage.ts",
     "./dropbox-auth-tokens": "./src/dropbox-auth-tokens.ts",
     "./mobile-sync-utils": "./src/mobile-sync-utils.ts",
-    "./mobile-sync-service": "./src/mobile-sync-service.ts"
+    "./mobile-sync-service": "./src/mobile-sync-service.ts",
+    "./mobile-background-sync": "./src/mobile-background-sync.ts"
   },
   "sideEffects": false,
   "type": "module",
