@@ -1259,12 +1259,6 @@ function RootLayoutContentInner() {
                 animation: 'slide_from_bottom'
               }}
             />
-            <Stack.Screen
-              name="check-focus"
-              options={{
-                headerShown: false,
-              }}
-            />
           </Stack>
           <MobileOnboardingFlow
             busy={mobileOnboardingBusy}

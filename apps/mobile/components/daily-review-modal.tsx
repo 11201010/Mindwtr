@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, Modal, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
 import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session-storage';
-import { router } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Calendar as CalendarIcon, Clock, Sparkles, Star, CheckCircle2, Play, ChevronDown, ChevronUp } from 'lucide-react-native';
@@ -602,10 +601,6 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                         onProjectNavigate={handleNavigateToProject}
                         onContextNavigate={handleNavigateToToken}
                         onTagNavigate={handleNavigateToToken}
-                        onFocusMode={(taskId) => {
-                            closeTask();
-                            router.push(`/check-focus?id=${taskId}`);
-                        }}
                     />
                 </ErrorBoundary>
             </SafeAreaView>

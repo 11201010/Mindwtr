@@ -151,7 +151,6 @@ interface TaskEditModalProps {
     onClose: () => void;
     /** Return the store write's result (e.g. `updateTask(...)`) so a failed save can be reported. */
     onSave: (taskId: string, updates: Partial<Task>) => unknown;
-    onFocusMode?: (taskId: string) => void;
     defaultTab?: 'task' | 'view';
     /** Normal per-screen default used only when the device preference is Automatic. */
     automaticDefaultTab?: 'task' | 'view';
@@ -167,7 +166,6 @@ function TaskEditModalInner({
     task,
     onClose,
     onSave,
-    onFocusMode,
     defaultTab,
     onProjectNavigate,
     onContextNavigate,
@@ -1415,7 +1413,7 @@ function TaskEditModalInner({
 const areTaskEditModalPropsEqual = (prev: TaskEditModalProps, next: TaskEditModalProps): boolean => (
     prev.visible === next.visible && prev.task === next.task && prev.onClose === next.onClose && prev.onSave === next.onSave
     && prev.readOnly === next.readOnly
-    && prev.onFocusMode === next.onFocusMode && prev.defaultTab === next.defaultTab
+    && prev.defaultTab === next.defaultTab
     && prev.automaticDefaultTab === next.automaticDefaultTab
     && prev.onProjectNavigate === next.onProjectNavigate && prev.onContextNavigate === next.onContextNavigate && prev.onTagNavigate === next.onTagNavigate
 );

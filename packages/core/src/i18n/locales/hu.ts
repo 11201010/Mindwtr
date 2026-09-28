@@ -269,7 +269,6 @@ export const huOverrides: Record<string, string> = {
     'taskEdit.shoppingListPrompt': 'Bevásárlólista?',
     'taskEdit.openChecklistMode': 'Ellenőrzőlista mód megnyitása',
     'taskEdit.addItem': 'Elem hozzáadása',
-    'taskEdit.noChecklistItems': 'Nincsenek ellenőrzőlista-elemek',
     'taskEdit.resetChecklist': 'Ellenőrzőlista visszaállítása',
     'task.convertToReference': 'Átalakítás Referenciává',
     'task.convertToSection': 'Átalakítás szakasszá',

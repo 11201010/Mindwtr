@@ -66,6 +66,23 @@ import java.util.UUID
 
 /** Core windows a cue list's captures by NATIVE_HOST_MAX_WINDOW. */
 private const val WINDOW = 100
+/** How many times a view whose later window went stale is read again from its first window before core's failure shows. */
+private const val STALE_READS = 3
+
+/**
+ * A view read window by window under its first window's revision ([read]): when a later window went stale (the view changed), the
+ * partial view is dropped and the whole view is read again from offset 0, at most [STALE_READS] times; then core's failure shows.
+ */
+private fun <T> wholeView(read: () -> T): T {
+    repeat(STALE_READS - 1) {
+        try {
+            return read()
+        } catch (failure: Exception) {
+            if (failure.message?.startsWith("STALE_REVISION") != true) throw failure
+        }
+    }
+    return read()
+}
 
 class MindSweepModel(private val menu: MenuModel, private val file: File) {
     private val shell get() = menu.shell

@@ -88,9 +88,6 @@ async function replay(scenario: Fixture['scenarios'][number], driver: Driver, lo
             editor = [false, null, 'view'];
         } else if (kind === 'editorClose') {
             editor = [false, editor[1], 'view'];
-        } else if (kind === 'editorFocus') {
-            editor = [false, editor[1], 'view'];
-            navigation.push(['push', `/check-focus?id=${action[1]}`]);
         } else {
             throw new Error(`Unknown action ${kind}`);
         }

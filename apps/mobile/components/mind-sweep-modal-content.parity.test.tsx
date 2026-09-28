@@ -219,10 +219,8 @@ function captureProvenance() {
   const allowed = new Set([
     'apps/mobile/components/mind-sweep-modal-content.parity.test.tsx',
     'apps/mobile/app/(drawer)/saved-search/saved-search.parity.test.tsx',
-    'apps/mobile/app/check-focus.parity.test.tsx',
     'packages/core/src/mind-sweep-parity.fixtures.json',
     'packages/core/src/saved-search-parity.fixtures.json',
-    'packages/core/src/focus-checklist-parity.fixtures.json',
   ]);
   const changed = git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean)
     .map((line) => line.slice(3).replace(/^"|"$/g, '')).filter((path) => !allowed.has(path));
@@ -230,7 +228,7 @@ function captureProvenance() {
   return {
     command: 'cd apps/mobile && MINDWTR_CAPTURE_MIND_SWEEP=1 MINDWTR_CAPTURE_MIND_SWEEP_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run components/mind-sweep-modal-content.parity.test.tsx',
     capturedAt: head,
-    sourceState: 'Every file under apps/ and packages/ was at HEAD except the Mind Sweep, saved search and Focus checklist parity harnesses and their fixtures.',
+    sourceState: 'Every file under apps/ and packages/ was at HEAD except the Mind Sweep and saved search parity harnesses and their fixtures.',
     rendering: 'react-test-renderer over the apps/mobile react-native shim (host elements by name). The filled button color is a marker, so `selected` is true only for a scope chip drawn in the tint. Strings are English. addTask records its title and props; `failAdd` makes the next addTask resolve { success: false } (refuse) or throw.',
   };
 }

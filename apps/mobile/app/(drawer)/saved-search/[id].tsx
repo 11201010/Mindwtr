@@ -200,10 +200,6 @@ export default function SavedSearchScreen() {
         onProjectNavigate={openProjectScreen}
         onContextNavigate={openContextsScreen}
         onTagNavigate={openContextsScreen}
-        onFocusMode={(taskId) => {
-          setIsModalVisible(false);
-          router.push(`/check-focus?id=${taskId}`);
-        }}
       />
     </View>
   );

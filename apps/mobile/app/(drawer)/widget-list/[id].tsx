@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, Text, View } from 'react-native';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { shallow, useTaskStore, type Task, type TaskStatus } from '@mindwtr/core';
 import { SwipeableTaskItem, type TaskRowActions } from '@/components/swipeable-task-item';
 import { TaskEditModal } from '@/components/task-edit-modal';
@@ -94,10 +94,6 @@ export default function WidgetListScreen() {
         onProjectNavigate={openProjectScreen}
         onContextNavigate={openContextsScreen}
         onTagNavigate={openContextsScreen}
-        onFocusMode={(taskId) => {
-          setEditingTask(null);
-          router.push(`/check-focus?id=${taskId}`);
-        }}
       />
     </View>
   );

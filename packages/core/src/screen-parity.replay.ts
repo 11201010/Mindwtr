@@ -1,5 +1,5 @@
 /**
- * Test support only (imported by the Mind Sweep, saved search and Focus checklist
+ * Test support only (imported by the Mind Sweep and saved search
  * tests; not exported). Loads a frozen React Native screen fixture, seeds the store
  * as the mobile harness does, records the store calls the harness records, and opens
  * a native host over that store.

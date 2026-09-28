@@ -272,7 +272,6 @@ export const daOverrides: Record<string, string> = {
     'taskEdit.shoppingListPrompt': 'Indkøbsliste?',
     'taskEdit.openChecklistMode': 'Åbn Tjeklistetilstand',
     'taskEdit.addItem': 'Tilføj vare',
-    'taskEdit.noChecklistItems': 'Ingen tjeklistepunkter',
     'taskEdit.resetChecklist': 'Nulstil tjekliste',
     'task.convertToReference': 'Konverter til reference',
     'task.convertToSection': 'Konverter til sektion',

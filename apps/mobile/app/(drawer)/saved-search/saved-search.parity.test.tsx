@@ -135,8 +135,7 @@ type Action =
   | ['row', string, 'edit' | 'remove']
   | ['row', string, 'status', Task['status']]
   | ['editorSave', string, Record<string, unknown>]
-  | ['editorClose']
-  | ['editorFocus', string];
+  | ['editorClose'];
 type Scenario = { name: string; settings: string; id: string; canGoBack?: boolean; actions: Action[] };
 
 export const scenarios: Scenario[] = [
@@ -172,7 +171,7 @@ export const scenarios: Scenario[] = [
       ['row', 't-milk', 'edit'],
       ['editorClose'],
       ['row', 't-print', 'edit'],
-      ['editorFocus', 't-print'],
+      ['editorClose'],
       ['row', 't-milk', 'status', 'done'],
       ['row', 't-seeds', 'remove'],
     ],
@@ -284,10 +283,6 @@ async function perform(root: ReactTestInstance, action: Action) {
     await act(async () => { editor.props.onClose(); });
     return;
   }
-  if (kind === 'editorFocus') {
-    await act(async () => { editor.props.onFocusMode(action[1]); });
-    return;
-  }
   throw new Error(`Unknown action ${kind}`);
 }
 
@@ -321,10 +316,8 @@ function captureProvenance() {
   const allowed = new Set([
     'apps/mobile/components/mind-sweep-modal-content.parity.test.tsx',
     'apps/mobile/app/(drawer)/saved-search/saved-search.parity.test.tsx',
-    'apps/mobile/app/check-focus.parity.test.tsx',
     'packages/core/src/mind-sweep-parity.fixtures.json',
     'packages/core/src/saved-search-parity.fixtures.json',
-    'packages/core/src/focus-checklist-parity.fixtures.json',
   ]);
   const changed = git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean)
     .map((line) => line.slice(3).replace(/^"|"$/g, '')).filter((path) => !allowed.has(path));
@@ -332,7 +325,7 @@ function captureProvenance() {
   return {
     command: 'cd apps/mobile && MINDWTR_CAPTURE_SAVED_SEARCH=1 MINDWTR_CAPTURE_SAVED_SEARCH_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run \'app/(drawer)/saved-search/saved-search.parity.test.tsx\'',
     capturedAt: head,
-    sourceState: 'Every file under apps/ and packages/ was at HEAD except the Mind Sweep, saved search and Focus checklist parity harnesses and their fixtures.',
+    sourceState: 'Every file under apps/ and packages/ was at HEAD except the Mind Sweep and saved search parity harnesses and their fixtures.',
     rendering: 'react-test-renderer over the apps/mobile react-native shim (host elements by name). The rows (SwipeableTaskItem) and the editor (TaskEditModal) are stand-ins that record their props; a row action calls the screen\'s row actions directly. The area filter is the real useMobileAreaFilter over the real store. Strings are English.',
   };
 }

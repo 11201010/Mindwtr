@@ -3,7 +3,17 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_SAVED_SEARCH=1 MINDWTR_CAPTURE_SAVED_SEARCH_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run 'app/(drawer)/saved-search/saved-search.parity.test.tsx'",
   "capturedAt": "0b859c1b729cd204bd3a8282be56d9ea300cd06d",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except the Mind Sweep, saved search and Focus checklist parity harnesses and their fixtures.",
-  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). The rows (SwipeableTaskItem) and the editor (TaskEditModal) are stand-ins that record their props; a row action calls the screen's row actions directly. The area filter is the real useMobileAreaFilter over the real store. Strings are English."
+  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). The rows (SwipeableTaskItem) and the editor (TaskEditModal) are stand-ins that record their props; a row action calls the screen's row actions directly. The area filter is the real useMobileAreaFilter over the real store. Strings are English.",
+  "recaptured": [
+   {
+    "base": "99362d0a3",
+    "change": "The Focus checklist page (the check-focus route) was removed, with the editor's onFocusMode prop that opened it (task rm-focus-checklist-20260928-07). The editor never called onFocusMode, so the step that called it by hand became a close.",
+    "command": "cd apps/mobile && TZ=UTC bunx vitest run 'app/(drawer)/saved-search/saved-search.parity.test.tsx', with the removal in place; only the scenario step and the observation below were replaced by hand, and every other observation matched the frozen one",
+    "observations": [
+     "row actions and the editor: step 6 ['editorFocus', 't-print'] became ['editorClose']; observation 6 navigation [['push', '/check-focus?id=t-print']] became []"
+    ]
+   }
+  ]
  },
  "timeZone": "UTC",
  "now": "2026-09-27T14:00:00.000Z",
@@ -400,8 +410,7 @@
      "edit"
     ],
     [
-     "editorFocus",
-     "t-print"
+     "editorClose"
     ],
     [
      "row",
@@ -1440,12 +1449,7 @@
      "view"
     ],
     "alerts": [],
-    "navigation": [
-     [
-      "push",
-      "/check-focus?id=t-print"
-     ]
-    ],
+    "navigation": [],
     "writes": []
    },
    {

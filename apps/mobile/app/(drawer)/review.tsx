@@ -724,10 +724,6 @@ export default function ReviewScreen() {
         onProjectNavigate={openProjectScreen}
         onContextNavigate={openContextsScreen}
         onTagNavigate={openContextsScreen}
-        onFocusMode={(taskId) => {
-          setIsModalVisible(false);
-          router.push(`/check-focus?id=${taskId}`);
-        }}
       />
 
       <ReviewModal

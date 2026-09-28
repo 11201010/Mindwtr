@@ -1,18 +1,14 @@
-// Mind Sweep, saved search, Focus checklist page, Focus picker search and Bulk organize create check for the isolated native
-// Android development app.
+// Mind Sweep, saved search, Focus picker search and Bulk organize create check for the isolated native Android development app.
 //
 //   node apps/android-native/scripts/check-sweep-saved-device.mjs <adb-serial> [apk]
 //
-// Installs the debug APK with `install -r` (existing development data stays). A saved search and a task with a checklist are needed,
+// Installs the debug APK with `install -r` (existing development data stays). A saved search and a task with two contexts are needed,
 // which the app cannot make, so the script stops the app once and, through core's own store on a host copy of the database, adds
-// this run's Next task (75 + run id + 1: two open checklist items and two contexts) and a saved search for the run id, first in the
-// list (named 75 + run id + 0). Then it checks against core's own views on copies: (a) Mind Sweep adds two captures (75…2, 75…3)
-// once each, as Inbox tasks under their request UUIDs; the second under an injected failed commit stores nothing and its exact
-// retry stores it once; (b) rotation and process death keep the sweep's step and captures; (c) the saved search opens from the More
-// sheet with core's rows, and its Delete, after core's question, deletes it once; (d) the Focus checklist page (RN's check-focus
-// route, opened by the debug launch extra) ticks an item and adds one, each one write; closing the page with two edits outstanding
-// still writes both; process death with one edit at core and one waiting writes both, once each; a checklist edit whose save failed
-// is written once after process death; (e) Focus's contexts picker search finds core's match only; (f) Bulk organize creates an
+// this run's Next task (75 + run id + 1: two contexts) and a saved search for the run id, first in the list (named 75 + run id + 0).
+// Then it checks against core's own views on copies: (a) Mind Sweep adds two captures (75…2, 75…3) once each, as Inbox tasks under
+// their request UUIDs; the second under an injected failed commit stores nothing and its exact retry stores it once; (b) rotation and
+// process death keep the sweep's step and captures; (c) the saved search opens from the More sheet with core's rows, and its Delete,
+// after core's question, deletes it once; (d) Focus's contexts picker search finds core's match only; (e) Bulk organize creates an
 // area (75…4) from its picker and Apply stores it on the selected task in one write. An injected failure left owed when the check
 // stops is settled on exit through the app's Try again (MINDWTR_CHECK_THROW_AFTER_INJECT=1 stops it there on purpose, to prove
 // that cleanup), and a cleanup that cannot settle it says so. It changes no setting; it touches only the development package (it refuses any other APK), never launches over another app,
@@ -42,8 +38,6 @@ if (apkPackage !== PKG) {
     process.exit(2);
 }
 const ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
-// FocusChecklist.kt's FOCUS_CHECKLIST_EXTRA: a debug build opens the checklist page for this task.
-const CHECKLIST_EXTRA = 'focusChecklistTaskId';
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
 const STAGED = '/data/local/tmp/mindwtr-native-dev-sweep.db';
@@ -56,7 +50,7 @@ const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
 const names = {
     query: `75${run}`, search: `75${run}0`, task: `75${run}1`, captures: [`75${run}2`, `75${run}3`], area: `75${run}4`,
-    items: [`75${run}7`, `75${run}8`], context: `@75${run}5`, other: `@${run}6`,
+    context: `@75${run}5`, other: `@${run}6`,
 };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
@@ -100,8 +94,7 @@ const core = (mode, db = pullDatabase()) => JSON.parse(execFileSync('bun', ['-e'
     const live = (items) => items.filter((item) => !item.deletedAt);
     let out;
     if (process.env.CHECK_MODE === 'inject') {
-        const result = await store().addTask(names.task, { status: 'next', contexts: [names.context, names.other],
-            checklist: names.items.map((title) => ({ id: crypto.randomUUID(), title, isCompleted: false })) });
+        const result = await store().addTask(names.task, { status: 'next', contexts: [names.context, names.other] });
         if (!result.success || !result.id) throw new Error('addTask failed: ' + result.error);
         const search = { id: crypto.randomUUID(), name: names.search, query: names.query };
         await store().updateSettings({ savedSearches: [search, ...(store().settings.savedSearches ?? [])] });
@@ -110,8 +103,7 @@ const core = (mode, db = pullDatabase()) => JSON.parse(execFileSync('bun', ['-e'
         out = { id: result.id, search: search.id };
     } else {
         const tasks = Object.fromEntries([names.task, ...names.captures].map((title) => [title, live(store()._allTasks).filter((task) => task.title === title)
-            .map((task) => ({ id: task.id, status: task.status, rev: task.rev ?? null, areaId: task.areaId ?? null,
-                checklist: (task.checklist ?? []).map((item) => [item.title, item.isCompleted]) }))]));
+            .map((task) => ({ id: task.id, status: task.status, rev: task.rev ?? null, areaId: task.areaId ?? null }))]));
         const searchId = process.env.CHECK_SEARCH;
         const view = value(host.getSavedSearchView({ id: searchId }));
         const focus = value(host.getFocus({ limit: 50, controls: {} }));
@@ -161,12 +153,6 @@ const hideKeyboard = async () => {
     sh('input keyevent KEYCODE_BACK');
     await waitFor('the keyboard to close', () => !/mInputShown=true/.test(sh('dumpsys input_method')), 5_000);
 };
-const back = async (done) => {
-    await hideKeyboard();
-    requireAppFront();
-    sh('input keyevent KEYCODE_BACK');
-    return waitFor('Back', done, 15_000);
-};
 /** Types [text] into the field [node] (its end focused first) and waits until the field tagged [tag] reads it. */
 const typeInto = async (node, tag, text) => {
     await device.focusAtEnd(node ?? fail(`no field ${tag}`));
@@ -206,22 +192,6 @@ const sweepAdd = async (title, expected, description) => {
     return tapExpecting(tagged(add, 'mind-sweep-add'), expected, description);
 };
 
-/**
- * HOME, the process killed, the debug properties cleared (a delayed or failing command must not run again that way), the app
- * launched again, and [done] awaited: the check's process death.
- */
-const dieAndRelaunch = async (done, description) => {
-    const processId = pid();
-    requireAppFront();
-    sh('input keyevent KEYCODE_HOME');
-    await waitFor('home screen', () => front().includes(`${home}/`), 10_000);
-    await sleep(1000);
-    runAs(`kill -9 ${processId}`);
-    await waitFor('process death', () => pid() !== processId, 10_000);
-    for (const name of PROPS) setProp(name, '');
-    device.launch(ACTIVITY);
-    return waitFor(description, done, 60_000);
-};
 /** The request a dead process or a failed save left on disk (MenuModel's create path). */
 const pendingOnDisk = () => sh(`run-as ${PKG} ls no_backup/menu 2>/dev/null || true`).split(/\s+/).includes('pending');
 /** An injected failure whose exact retry is still owed: named while it is, so cleanup can settle it. */
@@ -301,7 +271,7 @@ try {
     device.launch(ACTIVITY);
     await waitFor('the Inbox', onInbox, 60_000);
     let seen = core('views');
-    check(seen.tasks[names.task].length === 1 && seen.searches === 1, `core stores ${names.task} (Next, two open items) and the saved search ${names.search}`);
+    check(seen.tasks[names.task].length === 1 && seen.searches === 1, `core stores ${names.task} (Next, two contexts) and the saved search ${names.search}`);
 
     // (a) Mind Sweep from the Inbox: Start, then two captures; the second under a failed commit, stored once by its exact retry.
     let nodes = await device.settle(await device.toTop());
@@ -353,70 +323,7 @@ try {
     await waitFor('the delete', () => commands('savedSearchDelete') === deletes + 1, 10_000);
     check(core('views').searches === 0, '(c) Delete, after core\'s question, deleted the saved search in one write');
 
-    // (d) The Focus checklist page (RN's check-focus route): a tick and an added item, each one write.
-    requireAppFront();
-    sh(`am start -W -f 0x10008000 -n ${ACTIVITY} --es ${CHECKLIST_EXTRA} ${injected.id}`);
-    const box0 = (current) => withDescription(current, names.items[0]);
-    nodes = await waitFor('the checklist page', (current) => Boolean(tagged(current, 'focus-checklist')) && hasText(current, names.task) && Boolean(box0(current)), 60_000);
-    let before = core('views').tasks[names.task][0];
-    let edits = commands('focusChecklistEdit');
-    await tapExpecting(box0(nodes), (current) => box0(current)?.checked === 'true', 'the tick');
-    await waitFor('the tick\'s write', () => commands('focusChecklistEdit') === edits + 1, 10_000);
-    let after = core('views').tasks[names.task][0];
-    check(after.rev === before.rev + 1 && JSON.stringify(after.checklist) === JSON.stringify([[names.items[0], true], [names.items[1], false]]),
-        `(d) the tick is one write (rev ${before.rev} → ${after.rev})`);
-    const inputs = (current) => current.filter((node) => (node['resource-id'] ?? '').endsWith('focus-checklist-item-input'));
-    nodes = await tapExpecting(tagged(await screen(), 'focus-checklist-add') ?? fail('no Add Item'), (current) => inputs(current).length === 3, 'the added item');
-    await waitFor('the add\'s write', () => commands('focusChecklistEdit') === edits + 2, 10_000);
-    before = after;
-    after = core('views').tasks[names.task][0];
-    check(after.rev === before.rev + 1 && after.checklist.length === 3 && JSON.stringify(after.checklist[2]) === JSON.stringify(['', false]),
-        `(d) Add Item is one write: a third, empty open item (rev ${after.rev})`);
-    const box1 = (current) => withDescription(current, names.items[1]);
-    const ticks = (current) => [box0(current)?.checked, box1(current)?.checked];
-    const stored = (rev) => (current) => current.rev === rev;
-    const onPage = (current) => Boolean(tagged(current, 'focus-checklist')) && Boolean(box0(current)) && Boolean(box1(current));
-    // Closing the page with two edits outstanding: the first held at core (delay_before_ms), the second waiting; both are written.
-    setProp('delay_before_ms', '2500');
-    before = after;
-    edits = commands('focusChecklistEdit');
-    nodes = await tapExpecting(box1(await screen()), (current) => box1(current)?.checked === 'true', 'the second item ticked');
-    nodes = await tapExpecting(box0(nodes), (current) => box0(current)?.checked === 'false', 'the first item opened');
-    await back((current) => !tagged(current, 'focus-checklist') && Boolean(tab(current, en['tab.menu'])));
-    setProp('delay_before_ms', '');
-    await waitFor('both writes after the page closed', () => commands('focusChecklistEdit') === edits + 2, 20_000);
-    after = core('views').tasks[names.task][0];
-    check(stored(before.rev + 2)(after) && JSON.stringify(after.checklist.slice(0, 2)) === JSON.stringify([[names.items[0], false], [names.items[1], true]]),
-        `(d) closing the page with two edits outstanding wrote both, once each (rev ${after.rev})`);
-    // Process death with one edit held at core and one waiting: both are written after the restart, once each.
-    requireAppFront();
-    sh(`am start -W -f 0x10008000 -n ${ACTIVITY} --es ${CHECKLIST_EXTRA} ${injected.id}`);
-    nodes = await waitFor('the checklist page again', (current) => onPage(current) && JSON.stringify(ticks(current)) === '["false","true"]', 60_000);
-    setProp('delay_before_ms', '12000');
-    before = after;
-    nodes = await tapExpecting(box0(nodes), (current) => box0(current)?.checked === 'true', 'the first item ticked');
-    await tapExpecting(box1(nodes), (current) => box1(current)?.checked === 'false', 'the second item opened');
-    check(pendingOnDisk(), '(d) the edit held at core is on disk before it runs');
-    await dieAndRelaunch((current) => onPage(current), 'the checklist page after process death');
-    await waitFor('both edits written after the restart', () => stored(before.rev + 2)(core('views').tasks[names.task][0]), 30_000);
-    after = core('views').tasks[names.task][0];
-    check(JSON.stringify(after.checklist.slice(0, 2)) === JSON.stringify([[names.items[0], true], [names.items[1], false]]) && !pendingOnDisk(),
-        `(d) process death with one edit at core and one waiting: both written once each after the restart (rev ${after.rev})`);
-    // A checklist edit whose save failed keeps its exact retry across process death: written once after the restart.
-    nodes = await waitFor('the page as core stores it', (current) => onPage(current) && JSON.stringify(ticks(current)) === '["true","false"]', 30_000);
-    setProp('fail_commit', '1');
-    owed = 'the injected failed checklist edit';
-    before = after;
-    nodes = await tapExpecting(box0(nodes), (current) => Boolean(owedRetry(current)), 'the injected failure');
-    check(stored(before.rev)(core('views').tasks[names.task][0]) && pendingOnDisk(), '(d) the failed save stored nothing; its exact request is on disk');
-    await dieAndRelaunch((current) => onPage(current), 'the checklist page after process death');
-    await waitFor('the owed edit written after the restart', () => stored(before.rev + 1)(core('views').tasks[names.task][0]), 30_000);
-    after = core('views').tasks[names.task][0];
-    check(after.checklist[0][1] === false && !pendingOnDisk(), `(d) the owed edit is written once after process death (rev ${after.rev})`);
-    owed = null;
-    await back((current) => !tagged(current, 'focus-checklist') && Boolean(tab(current, en['tab.menu'])));
-
-    // (e) Focus's contexts picker: its search finds core's match only.
+    // (d) Focus's contexts picker: its search finds core's match only.
     seen = core('views');
     check(JSON.stringify(seen.tokens) === JSON.stringify([names.context]), `core's Focus contexts matching ${names.query}: ${names.context}`);
     nodes = await tapExpecting(tab(await screen(), en['tab.next']) ?? fail('no Focus tab'), (current) => tabSelected(current, en['tab.next']), 'Focus');
@@ -428,12 +335,12 @@ try {
     requireAppFront();
     sh(`input text '${names.query}'`);
     nodes = await waitFor(`core's match ${names.context}`, (current) => Boolean(withDescription(current, names.context)) && !withDescription(current, names.other), 15_000);
-    check(true, `(e) the picker's search shows core's match ${names.context}, not ${names.other}`);
+    check(true, `(d) the picker's search shows core's match ${names.context}, not ${names.other}`);
     await hideKeyboard();
     nodes = await tapExpecting(button(await screen(), en['common.back']) ?? fail('no Back'), (current) => Boolean(withDescription(current, `${en['filters.contexts']}: ${all}`)), 'the sheet');
     await tapExpecting(button(nodes, en['common.done']) ?? fail('no Done'), (current) => !focusSheet(current), 'the sheet to close');
 
-    // (f) Bulk organize on the first capture: its area picker creates this run's area, and Apply stores it in one write.
+    // (e) Bulk organize on the first capture: its area picker creates this run's area, and Apply stores it in one write.
     nodes = await tapExpecting(tab(await screen(), en['tab.inbox']), onInbox, 'the Inbox tab');
     nodes = await device.reveal(names.captures[0], 60);
     await device.settle(nodes);
@@ -454,14 +361,14 @@ try {
     await waitFor('the create', () => commands('bulkCreate') === creates + 1, 10_000);
     seen = core('views');
     const [areaId] = seen.areas;
-    before = seen.tasks[names.captures[0]][0];
-    check(seen.areas.length === 1 && before.areaId === null, `(f) the picker created the area ${names.area} once; no task changed yet`);
+    const before = seen.tasks[names.captures[0]][0];
+    check(seen.areas.length === 1 && before.areaId === null, `(e) the picker created the area ${names.area} once; no task changed yet`);
     const applies = commands('bulkAction');
     await tapExpecting(withDescription(nodes, en['bulk.applyToSelected']) ?? fail('no Apply'), (current) => Number.isNaN(selectedCount(current)), 'Apply');
     await waitFor('the organize write', () => commands('bulkAction') === applies + 1, 10_000);
-    after = core('views').tasks[names.captures[0]][0];
-    check(after.areaId === areaId && after.rev === before.rev + 1, `(f) Apply stored the new area on ${names.captures[0]} in one write`);
-    console.log('Mind Sweep, saved search, Focus checklist and Bulk organize device check passed');
+    const after = core('views').tasks[names.captures[0]][0];
+    check(after.areaId === areaId && after.rev === before.rev + 1, `(e) Apply stored the new area on ${names.captures[0]} in one write`);
+    console.log('Mind Sweep, saved search, Focus picker search and Bulk organize device check passed');
 } catch (error) {
     evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);

@@ -714,10 +714,6 @@ export default function SearchScreen() {
                 onProjectNavigate={openProjectScreen}
                 onContextNavigate={openContextsScreen}
                 onTagNavigate={openContextsScreen}
-                onFocusMode={(taskId) => {
-                    setEditingTaskId(null);
-                    router.push(`/check-focus?id=${taskId}`);
-                }}
             />
             {/* This route is presented modally, so a root-level alert never
                 reaches the screen on iOS (#940). */}

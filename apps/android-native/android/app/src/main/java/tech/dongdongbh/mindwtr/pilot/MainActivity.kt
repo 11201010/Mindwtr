@@ -100,8 +100,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         model.attach()
-        // A debug build opens RN's check-focus page for a device check's task (RN reaches that route only by its link); release builds never read it.
-        if (BuildConfig.DEBUG && savedInstanceState == null) intent.getStringExtra(FOCUS_CHECKLIST_EXTRA)?.let(model.menu::openFocusChecklist)
         setContent {
             // Core resolves RN's theme during the boot; until it ends, RN's default follows the system.
             MindwtrTheme(if (model.loading) null else ThemeChoice.current) { with(model) {

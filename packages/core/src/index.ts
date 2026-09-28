@@ -196,7 +196,6 @@ export * from './tasknotes-export';
 export * from './mind-sweep';
 export * from './mind-sweep-view-model';
 export * from './saved-search-view-model';
-export * from './focus-checklist-model';
 export * from './focus-star';
 export * from './focus-grouping';
 export * from './focus-sections';

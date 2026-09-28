@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { View, FlatList, Text, RefreshControl, Modal, Pressable, Switch, TouchableOpacity, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
-import { router, useNavigation } from 'expo-router';
+import { useNavigation } from 'expo-router';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical } from 'lucide-react-native';
 import DraggableFlatList, { type DragEndParams, type RenderItemParams } from 'react-native-draggable-flatlist';
 import {
@@ -1923,11 +1923,6 @@ function TaskListComponent({
           onProjectNavigate={projectId ? undefined : openProjectScreen}
           onContextNavigate={openContextsScreen}
           onTagNavigate={openContextsScreen}
-          onFocusMode={(taskId) => {
-            clearTaskListActivitySession();
-            setIsModalVisible(false);
-            router.push(`/check-focus?id=${taskId}`);
-          }}
         />
       </ErrorBoundary>
     </View>
