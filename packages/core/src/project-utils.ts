@@ -78,11 +78,15 @@ export type ProjectSequenceTaskCue = 'available' | 'later';
 
 /**
  * The "available next" / "later in sequence" cue on a sequential project's
- * Next tasks. The available task is the one getSequentialFirstTaskIds picks
- * (the rule the Next list and Review use: manual order within section order,
- * and a waiting step holds its slot), so the cue never depends on the order
- * the caller lists the tasks in. Pass the project's sections so section order
- * ranks as it does there.
+ * Next tasks: the task's turn in the sequence. The available task is the one
+ * getSequentialFirstTaskIds picks (the Next list's rule, also used by Review:
+ * manual order within section order, and a waiting step holds its slot), so
+ * the cue never depends on the order the caller lists the tasks in. Pass the
+ * project's sections so section order ranks as it does there.
+ *
+ * Focus is different on purpose: getFocusSequentialFirstTaskIds lets a task
+ * due today or starred take the project's Focus slot out of turn, so Focus
+ * may show a task this cue marks "later".
  */
 export function getSequentialProjectTaskCues(
     project: Pick<Project, 'id' | 'isSequential' | 'sequentialScope'> | null | undefined,

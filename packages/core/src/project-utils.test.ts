@@ -16,7 +16,7 @@ import {
     shouldPromptForProjectNextAction,
 } from './project-utils';
 import { archiveSectionForProjectArchive } from './store-helpers';
-import { getSequentialFirstTaskIds, isSequentialChainStatus } from './task-utils';
+import { getFocusSequentialFirstTaskIds, getSequentialFirstTaskIds, isSequentialChainStatus } from './task-utils';
 import type { Project, Section, Task } from './types';
 
 describe('project-utils', () => {
@@ -328,7 +328,7 @@ describe('project-utils', () => {
             expect(cues.get('final-second')).toBe('later');
         });
 
-        it('marks as available exactly the task getSequentialFirstTaskIds picks', () => {
+        it('marks as available exactly the task the Next list picks (getSequentialFirstTaskIds)', () => {
             const projectTasks = [
                 step('inbox-early', { status: 'inbox', order: 0 }),
                 step('z-next', { sectionId: 'final', order: 1 }),
@@ -347,6 +347,20 @@ describe('project-utils', () => {
 
             expect(available).toEqual([...firstTaskIds]);
             expect(available).toEqual(['m-next']);
+        });
+
+        it('keeps a due-today Next task behind Waiting "later" although Focus shows it by its own slot rule', () => {
+            const now = new Date('2026-04-05T12:00:00.000Z');
+            const projectTasks = [
+                step('waiting-first', { status: 'waiting', order: 1 }),
+                step('due-next', { order: 2, dueDate: '2026-04-05' }),
+            ];
+
+            const cues = getSequentialProjectTaskCues(project, projectTasks, sections);
+            const focusFirstTaskIds = getFocusSequentialFirstTaskIds(projectTasks, new Set([project.id]), { now, sections });
+
+            expect(cues.get('due-next')).toBe('later');
+            expect([...focusFirstTaskIds]).toEqual(['due-next']);
         });
     });
 
