@@ -167,9 +167,9 @@ if not workspace_block_is_canonical:
 
 lines = updated.splitlines()
 
-# Flathub rejects this custom single-instance D-Bus name in finish-args, so the
-# updater must scrub any previously injected entries instead of re-adding them.
+# Remove rejected direct D-Bus permissions, including legacy generated entries.
 blocked_finish_args = {
+    '--talk-name=org.freedesktop.secrets',
     '--talk-name=org.tech_dongdongbh_mindwtr.SingleInstance',
     '--own-name=org.tech_dongdongbh_mindwtr.SingleInstance',
 }
@@ -253,7 +253,6 @@ def ensure_finish_arg(value: str, after=None) -> None:
 
 ensure_finish_arg('--socket=pulseaudio', after='--socket=wayland')
 ensure_finish_arg('--talk-name=org.freedesktop.Notifications', after='--share=network')
-ensure_finish_arg('--talk-name=org.freedesktop.secrets', after='--talk-name=org.freedesktop.Notifications')
 ensure_finish_arg('--talk-name=org.kde.StatusNotifierWatcher', after='--talk-name=org.freedesktop.Notifications')
 ensure_finish_arg('--talk-name=org.gnome.evolution.dataserver.Calendar8', after='--talk-name=org.kde.StatusNotifierWatcher')
 ensure_finish_arg('--talk-name=org.gnome.evolution.dataserver.Sources5', after='--talk-name=org.gnome.evolution.dataserver.Calendar8')

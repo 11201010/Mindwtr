@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -60,7 +60,7 @@ test("updates an unpatched Flathub manifest fixture", () => {
   expect(updated).not.toContain("org.tech_dongdongbh_mindwtr.SingleInstance");
   expect(updated).toContain("- --socket=pulseaudio");
   expect(updated).toContain("- --talk-name=org.freedesktop.Notifications");
-  expect(updated).toContain("- --talk-name=org.freedesktop.secrets");
+  expect(updated).not.toContain("- --talk-name=org.freedesktop.secrets");
   expect(updated).toContain("- VITE_ANALYTICS_HEARTBEAT_URL=https://analytics.fixture/");
   expect(updated).toContain("- VITE_ANALYTICS_RELEASE_VERSION=1.2.5");
   expect(updated).toContain("- VITE_DROPBOX_APP_KEY=fixture-key");
@@ -87,6 +87,18 @@ test("is idempotent after the workspace repair block has been patched", () => {
 
   expect(second.status, second.stderr).toBe(0);
   expect(readFileSync(manifest, "utf8")).toBe(once);
+});
+
+test("removes the rejected host keyring permission from an existing manifest", () => {
+  const { manifest, result } = runFixture("unpatched.yml");
+  expect(result.status, result.stderr).toBe(0);
+  writeFileSync(manifest, readFileSync(manifest, "utf8").replace("finish-args:", "finish-args:\n  - --talk-name=org.freedesktop.secrets"));
+  const updated = spawnSync("bash", [script, commit, manifest.replace(/\/[^/]+$/, ""), "."], {
+    cwd: resolve("."), encoding: "utf8",
+    env: { ...process.env, MINDWTR_FLATHUB_MANIFEST_ONLY: "1" },
+  });
+  expect(updated.status, updated.stderr).toBe(0);
+  expect(readFileSync(manifest, "utf8")).not.toContain("org.freedesktop.secrets");
 });
 
 test("fails closed when the generator repair block drifts", () => {

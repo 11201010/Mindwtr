@@ -48,6 +48,8 @@ mod install;
 mod system_fonts;
 mod linux_calendar;
 mod linux_notification;
+#[cfg(target_os = "linux")]
+mod portal_secrets;
 mod local_api;
 mod logging;
 mod macos_widget;

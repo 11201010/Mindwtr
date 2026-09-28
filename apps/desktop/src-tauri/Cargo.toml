@@ -98,6 +98,8 @@ reqwest = { version = "0.12", default-features = false, features = ["native-tls"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = "0.11"
+# Portal-backed encrypted storage for Flatpak; 0.5 supports our Rust toolchain.
+oo7 = { version = "0.5", default-features = false, features = ["tokio", "native_crypto"] }
 libloading = "0.8"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 webkit2gtk = "2"

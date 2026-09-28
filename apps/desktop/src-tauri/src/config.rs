@@ -2031,6 +2031,14 @@ pub(crate) fn get_keyring_secret(
     if !keyring_enabled() {
         return Ok(None);
     }
+    #[cfg(target_os = "linux")]
+    if crate::install::is_flatpak() {
+        return crate::portal_secrets::get(
+            &get_secrets_path(app).with_file_name("portal-secrets.keyring"),
+            &keyring_service(app),
+            key,
+        );
+    }
     let entry = keyring_entry(app, key)?;
     match entry.get_password() {
         Ok(value) => Ok(Some(value)),
@@ -2046,6 +2054,15 @@ pub(crate) fn set_keyring_secret(
 ) -> Result<(), String> {
     if !keyring_enabled() {
         return Err("Portable mode stores secrets in secrets.toml".to_string());
+    }
+    #[cfg(target_os = "linux")]
+    if crate::install::is_flatpak() {
+        return crate::portal_secrets::set(
+            &get_secrets_path(app).with_file_name("portal-secrets.keyring"),
+            &keyring_service(app),
+            key,
+            value,
+        );
     }
     let entry = keyring_entry(app, key)?;
     match value {
