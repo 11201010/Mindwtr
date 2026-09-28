@@ -1,5 +1,37 @@
 # Plans index
 
+## Release review from v1.3.0 — September 28, 2026
+
+Planned at `285b922ab` after four comprehensive fixes. Astra reviews only shipping
+React Native/desktop/core/cloud/MCP/automation/release surfaces; native mobile
+migration is excluded. Selection is automatic under review-improve-loop. Sol
+implements bounded code changes; root integrates one commit per finding.
+
+| Plan | Finding | Priority | Effort | Dependencies | Status |
+| --- | --- | --- | --- | --- | --- |
+| [132](132-editor-focus-draft-recurrence.md) | Editor Focus ignores draft recurrence | P2 | S | None | TODO |
+| [133](133-shared-token-grouping.md) | Four duplicate context/tag grouping loops | P3 | S | None | TODO |
+| [134](134-image-size-exception-rationale.md) | Stale image-size exception rationale | P3 | S | None | TODO |
+
+132 reuses the existing draft serializer;133 is the sole selected architecture
+candidate (Worth exploring, selected because two shipping adapters repeat the
+same domain decisions). It must delete duplicate loops in the existing module.
+No Strong architecture candidate or measured performance regression was found.
+134 corrects documentation only; it does not remove the dependency vulnerability.
+
+Deferred: image-size now has patched 2.x releases, but the Expo54-pinned Metro
+0.83.3 asset reader uses the old filename interface. Replacing it or overriding
+the Metro family needs Android/iOS asset-bundling validation in a separate
+maintenance change. Existing build-time-only exceptions and topology checks
+remain unchanged. Rust quick-xml/rkyv exceptions remain as previously recorded;
+the fresh configured audits passed and rkyv is inactive in the locked feature graph.
+
+Rejected: whole calendar/sync adapter rewrites, new task-row caches, all-axis
+registries, speculative product direction, size-only module splits, and reopening
+settled snapshot/CRDT/MCP/native-migration decisions without new evidence.
+No public-doc change selected. Audit sampling and host tests do not prove device,
+background, signing or production backend behavior.
+
 ## Review loop from v1.3.0 — September 22, 2026
 
 Planned against `59d0e575e` (public docs `89ac579b`). GPT-6 Astra reviewed all nine improve categories; GPT-5.6 Sol implements the selected findings. Automatic selection under review-improve-loop includes all three high-confidence actionable plans. The comprehensive fixes are separate commits; their evidence is in the local task report. Existing plan128 is an unrelated native experiment and is preserved.
