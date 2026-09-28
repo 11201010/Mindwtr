@@ -109,4 +109,9 @@ describe('sync settings model', () => {
     it('redacts a short secret only as a whole word', () => {
         expect(redactSyncText('pin abc, not abcdef or xabc; (abc)', ['abc'])).toBe('pin [redacted], not abcdef or xabc; ([redacted])');
     });
+
+    it('finds a short secret\'s word boundaries in any script', () => {
+        expect(redactSyncText('ça va, garçon: a on façade', ['a', 'on'])).toBe('ça va, garçon: [redacted] [redacted] façade');
+        expect(redactSyncText('naïve a ü a', ['a'])).toBe('naïve [redacted] ü [redacted]');
+    });
 });

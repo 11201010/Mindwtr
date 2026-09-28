@@ -1239,3 +1239,28 @@ describe('native host contract: Settings › Sync verification pass', () => {
         expect(dev.state.storage.get(WEBDAV_URL_KEY)).toBe('https://b.example.com');
     });
 });
+
+// ---------------------------------------------------------------------------
+// Final pass: the redaction set holds every credential the transport knows.
+
+describe('native host contract: Settings › Sync redaction set', () => {
+    it('7: keeps stored and refreshed Dropbox tokens out of a failure toast', async () => {
+        const { contract } = await start({
+            dropboxAppKey: 'app-key', dropboxConnected: true,
+            storage: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'dropbox' },
+            queues: { dropboxTest: [{ error: 'HTTP 401 unauthorized' }, { error: 'server echoed refreshed-access, stored-access and stored-refresh' }] },
+        });
+        const tested = value(await contract.testSyncConnection({}));
+        expect(tested.toasts.map((toast) => toast.message)).toEqual(['server echoed [redacted], [redacted] and [redacted]']);
+    });
+
+    it('8: keeps an unsaved draft URL\'s password out of a Test failure toast', async () => {
+        const { contract } = await start({
+            storage: { [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com', [WEBDAV_USERNAME_KEY]: 'alice' },
+            secrets: { [WEBDAV_PASSWORD_KEY]: 'hunter22' },
+            queues: { probe: [{ error: 'login alice/draft-pw refused' }] },
+        });
+        const tested = value(await contract.testSyncConnection({ webdav: { ...webdavFields, url: 'https://alice:draft-pw@dav.example.com' } }));
+        expect(tested.toasts.map((toast) => toast.message)).toEqual(['login alice/[redacted] refused']);
+    });
+});

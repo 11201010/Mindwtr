@@ -330,20 +330,36 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         }
     };
 
+    // Every credential this visit has seen: typed passwords and tokens, a URL's password
+    // (a draft's too), and Dropbox tokens read, refreshed or signed in.
+    const known = new Set<string>();
+    const remember = (...secrets: (string | null | undefined)[]) => {
+        for (const secret of secrets) if (secret) known.add(secret);
+    };
+    const rememberUrl = (url: string | null | undefined) => remember(url ? urlPassword(url) : null);
+    const rememberTokens = (tokens: DropboxAuthTokens | null | undefined) => remember(tokens?.accessToken, tokens?.refreshToken);
+    /** The stored Dropbox tokens join the set; a refresh may have replaced them. */
+    const rememberStoredDropboxTokens = async () => {
+        try {
+            rememberTokens(await host.dropbox.getStoredTokens());
+        } catch {
+            // Unreadable tokens cannot be echoed by this visit either.
+        }
+    };
+
     /**
      * The one redaction for every text that leaves the transport (toasts, errors, log
      * lines; the screen's status and history use it too): the log sanitizer, no URL
-     * credentials, and none of the configured secrets.
+     * credentials, and none of the credentials this visit knows.
      */
-    const redact = (text: string, extra: (string | null | undefined)[] = []) => redactSyncText(text, [
+    const redact = (text: string) => redactSyncText(text, [
         state.webdavPassword,
         state.cloudToken,
         urlPassword(state.webdavUrl),
         urlPassword(state.cloudUrl),
         stagedDropboxCredentials?.tokens.accessToken,
         stagedDropboxCredentials?.tokens.refreshToken,
-        ...extra,
-        ...extra.map((entry) => (entry ? urlPassword(entry) : null)),
+        ...known,
     ]);
 
     /** An error for the log callback, its name and message redacted. */
@@ -380,9 +396,11 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             );
             stagedCredentials.tokens = resolution.tokens;
             accessToken = resolution.accessToken;
+            rememberTokens(resolution.tokens);
         } else {
             accessToken = await host.dropbox.getValidAccessToken(p.dropboxAppKey);
         }
+        remember(accessToken);
         try {
             await host.dropbox.testAccess(accessToken);
         } catch (error) {
@@ -396,9 +414,11 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 );
                 stagedCredentials.tokens = resolution.tokens;
                 accessToken = resolution.accessToken;
+                rememberTokens(resolution.tokens);
             } else {
                 accessToken = await host.dropbox.forceRefreshAccessToken(p.dropboxAppKey);
             }
+            remember(accessToken);
             await host.dropbox.testAccess(accessToken);
         }
     };
@@ -573,6 +593,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             try {
                 const connected = await host.dropbox.isConnected();
                 if (!cancelled) set({ dropboxConnected: connected });
+                if (connected) await rememberStoredDropboxTokens();
             } catch {
                 if (!cancelled) set({ dropboxConnected: false });
             }
@@ -783,6 +804,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 tone: 'success',
             });
         } catch (error) {
+            await rememberStoredDropboxTokens();
             p.showSettingsErrorToast(p.tr('settings.syncMobile.disconnectFailed'), redact(core.formatError(error)), 5200);
         } finally {
             set({ dropboxBusy: false });
@@ -817,6 +839,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     5200
                 );
             } else {
+                await rememberStoredDropboxTokens();
                 p.showSettingsErrorToast(p.tr('settings.syncMobile.connectionFailed'), redact(core.formatError(error)), 5200);
             }
         } finally {
@@ -895,7 +918,11 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 clearConfigCache: () => host.clearSyncConfigCache(),
                 clearDropboxTokens: () => host.dropbox.clearTokens(),
                 deleteSecret: (key) => host.secrets.delete(key),
-                getDropboxTokens: () => host.dropbox.getStoredTokens(),
+                getDropboxTokens: async () => {
+                    const tokens = await host.dropbox.getStoredTokens();
+                    rememberTokens(tokens);
+                    return tokens;
+                },
                 getIncompleteSyncEncryptionTransition: () => host.encryption.getIncompleteTransition(),
                 getSecret: (key) => host.secrets.get(key),
                 multiGet: (keys) => host.storage.multiGet(keys),
@@ -941,6 +968,10 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
      */
     const runSync = async (p: SyncSettingsTransportParams, options?: SyncSettingsActionOptions, flags: { insecureWarned?: boolean } = {}) => {
         const { t, tr, showToast, showSettingsWarning, showSettingsErrorToast } = p;
+        remember(options?.webdav?.password, options?.cloud?.token);
+        rememberUrl(options?.webdav?.url);
+        rememberUrl(options?.cloud?.url);
+        const dropboxInPlay = (options?.cloudProvider ?? state.cloudProvider) === 'dropbox';
         const {
             syncBackend, cloudAllowInsecureHttp, cloudToken, cloudUrl, cloudProvider, syncPath, syncPathBookmark,
             webdavAllowInsecureHttp, webdavPassword, webdavUrl, webdavUsername,
@@ -1350,11 +1381,12 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 );
                 return;
             }
+            if (dropboxInPlay) await rememberStoredDropboxTokens();
             showSettingsErrorToast(
                 tr('settings.syncMobile.error'),
                 core.isSyncEncryptionRemoteVersionUnavailableError(error)
                     ? tr('settings.syncEncryptionErrorBackendIncompatible')
-                    : redact(p.getSyncFailureToastMessage(error), [options?.webdav?.password, options?.cloud?.token]),
+                    : redact(p.getSyncFailureToastMessage(error)),
             );
         } finally {
             set({ isSyncing: false });
@@ -1382,6 +1414,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         set({ dropboxBusy: true });
         try {
             const tokens = await host.dropbox.authorize(p.dropboxAppKey);
+            rememberTokens(tokens);
             stagedDropboxCredentials = { tokens };
             hasPendingSyncConfiguration = true;
             set({ cloudProvider: 'dropbox' });
@@ -1406,6 +1439,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     6000
                 );
             } else {
+                await rememberStoredDropboxTokens();
                 p.showSettingsErrorToast(p.tr('settings.syncMobile.connectionFailed'), redact(core.formatError(error)), 5200);
             }
         } finally {
@@ -1428,6 +1462,9 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             url: state.webdavUrl,
             username: state.webdavUsername,
         };
+        remember(effectiveWebdav.password, effectiveCloud.token);
+        rememberUrl(effectiveWebdav.url);
+        rememberUrl(effectiveCloud.url);
         try {
             if (backend === 'webdav') {
                 const trimmedWebDavUrl = effectiveWebdav.url.trim();
@@ -1484,13 +1521,14 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             if (effectiveCloudProvider === 'dropbox' && core.isDropboxUnauthorizedError(error)) {
                 set({ dropboxConnected: false });
             }
+            if (effectiveCloudProvider === 'dropbox') await rememberStoredDropboxTokens();
             p.showSettingsErrorToast(
                 p.tr('settings.syncMobile.connectionFailed'),
                 effectiveCloudProvider === 'dropbox' && core.isDropboxUnauthorizedError(error)
                     ? p.tr('settings.syncMobile.dropboxTokenIsInvalidOrRevokedPleaseTapConnectDropbox')
                     : backend === 'webdav' && core.isSyncEncryptionRemoteVersionUnavailableError(error)
                         ? p.tr('settings.syncEncryptionErrorBackendIncompatible')
-                    : redact(core.formatError(error), [effectiveWebdav.password, effectiveCloud.token]),
+                    : redact(core.formatError(error)),
                 5200
             );
         } finally {

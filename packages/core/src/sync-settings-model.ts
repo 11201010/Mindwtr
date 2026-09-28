@@ -54,7 +54,8 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
  * Text shown anywhere but a form's own URL field (a status, the history, a toast, a
  * log line): the log sanitizer's redactions, no credentials in a URL, and none of
  * `secrets` (the configured password and token). A secret shorter than 4 characters
- * is redacted only as a whole word, never inside a longer one.
+ * is redacted only as a whole word (letters, marks and digits of any script), never
+ * inside a longer one.
  */
 export const redactSyncText = (text: string, secrets: readonly (string | null | undefined)[] = []): string => {
     let result = sanitizeLogMessage(text).replace(URL_USERINFO_PATTERN, '$1');
@@ -62,7 +63,7 @@ export const redactSyncText = (text: string, secrets: readonly (string | null | 
         if (!secret) continue;
         result = secret.length >= 4
             ? result.split(secret).join('[redacted]')
-            : result.replace(new RegExp(`(^|[^A-Za-z0-9])${escapeRegExp(secret)}(?=$|[^A-Za-z0-9])`, 'g'), '$1[redacted]');
+            : result.replace(new RegExp(`(^|[^\\p{L}\\p{M}\\p{N}])${escapeRegExp(secret)}(?=$|[^\\p{L}\\p{M}\\p{N}])`, 'gu'), '$1[redacted]');
     }
     return result;
 };
