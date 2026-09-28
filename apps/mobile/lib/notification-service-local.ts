@@ -98,6 +98,7 @@ type NativeEmitterSubscription = {
 const POMODORO_ALERT_DELIVERY_RELEASE_CHECK = 'v1.3.0/pomodoro-alert-delivery';
 const DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK = 'v1.3.1/daily-digest-independent';
 const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.3/reminder-withdrawn-clears-tray';
+const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.3/denied-resume-cleanup';
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -1022,28 +1023,32 @@ export async function rescheduleLocalAlarmsAsExact(): Promise<void> {
     .then(async () => {
       await loadAlarmMapIfNeeded();
       // Remade at once, so what an alarm delivered stays, unless its reminder was
-      // withdrawn since the last cycle: judged now, before the map forgets it.
+      // withdrawn since the last cycle. The texts load first; the tasks are read
+      // after that await, and every alarm is judged and cancelled in the same turn,
+      // so a change that lands meanwhile is never judged from an older state.
+      const translations = await loadReminderTranslations(hasActiveMobileNotificationFeature(useTaskStore.getState().settings));
       const { settings, tasks, projects } = useTaskStore.getState();
       const plan = planReminderAlarms({
         settings,
         tasks,
         projects,
         now: new Date(),
-        translations: await loadReminderTranslations(hasActiveMobileNotificationFeature(settings)),
+        translations,
         maxOneShotReminders: getMaxPendingOneShotReminderAlarms(Platform.OS),
         alarms: alarmMap,
       });
       const port = toReminderAlarmPort(api);
-      for (const key of Array.from(alarmMap.keys())) {
-        await cancelReminderAlarm(alarmMap, key, port, getReminderAlarmCancelReason(plan, key));
-      }
+      const keys = Array.from(alarmMap.keys());
+      await Promise.all(keys.map((key) => cancelReminderAlarm(alarmMap, key, port, getReminderAlarmCancelReason(plan, key))));
       await runRescheduleCycle(api);
     })
     .catch((error) => logNotificationError('Failed to rebuild alarms as exact', error));
   await rescheduleQueue;
 }
 
-export async function stopLocalMobileNotifications(): Promise<void> {
+// `permissionDenied`: the OS denies notifications, so the cleanup is the one a
+// denied start runs (the Pomodoro alarm and the whole tray go too).
+export async function stopLocalMobileNotifications(options: { permissionDenied?: boolean } = {}): Promise<void> {
   logNotificationInfo('Stop requested');
   clearRescheduleTimer();
   clearNotificationEventRescheduleTimer();
@@ -1059,10 +1064,13 @@ export async function stopLocalMobileNotifications(): Promise<void> {
   notificationOpenHandler = null;
 
   const api = await loadAlarmApi();
-  await clearScheduledAlarms(api, { cancelPomodoro: false });
+  await clearScheduledAlarms(api, { cancelPomodoro: options.permissionDenied === true });
   resetRuntimeState();
   started = false;
   logNotificationInfo('Service stopped');
+  if (options.permissionDenied) {
+    logNotificationInfo('Denied-permission cleanup ran on stop', { releaseCheck: DENIED_RESUME_CLEANUP_RELEASE_CHECK });
+  }
 }
 
 export async function getLocalNotificationPermissionStatus(): Promise<NotificationPermissionResult> {

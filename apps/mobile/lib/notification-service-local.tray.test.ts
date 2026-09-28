@@ -18,12 +18,21 @@ const harness = vi.hoisted(() => ({
   tray: new Set<number>(),
   nextId: 1,
   failRemovals: false,
+  /** Runs once on the next storage read other than the alarm map's (the stored language). */
+  onRead: null as null | (() => void),
   logs: [] as [string, Record<string, unknown> | undefined][],
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
-    getItem: async (key: string) => harness.storage.get(key) ?? null,
+    getItem: async (key: string) => {
+      if (key !== 'mindwtr:local:alarms:v1' && harness.onRead) {
+        const change = harness.onRead;
+        harness.onRead = null;
+        change();
+      }
+      return harness.storage.get(key) ?? null;
+    },
     setItem: async (key: string, value: string) => { harness.storage.set(key, value); },
     removeItem: async (key: string) => { harness.storage.delete(key); },
   },
@@ -130,6 +139,7 @@ describe.each(['android', 'ios'])('delivered reminders on %s', (platform) => {
     harness.logs.length = 0;
     harness.nextId = 1;
     harness.failRemovals = false;
+    harness.onRead = null;
     harness.state = { settings: {}, tasks: [], projects: [] };
     __localNotificationTestUtils.resetForTests();
   });
@@ -232,6 +242,20 @@ describe.each(['android', 'ios'])('delivered reminders on %s', (platform) => {
     const delivered = fire('task:t');
     harness.state.tasks = [task({ dueDate: '2026-09-28T10:05:00.000Z', status: 'done' })];
     await rescheduleLocalAlarmsAsExact();
+    expect(harness.tray.has(delivered)).toBe(false);
+  });
+
+  it('removes a delivered reminder whose task is completed while the exact rebuild loads its texts', async () => {
+    harness.state.tasks = [task({ dueDate: '2026-09-28T10:05:00.000Z' })];
+    await cycle();
+    at('2026-09-28T10:05:05.000Z');
+    const delivered = fire('task:t');
+    // The task is completed while the rebuild awaits the stored language.
+    harness.onRead = () => {
+      harness.state = { ...harness.state, tasks: [task({ dueDate: '2026-09-28T10:05:00.000Z', status: 'done' })] };
+    };
+    await rescheduleLocalAlarmsAsExact();
+    expect(harness.onRead).toBeNull();
     expect(harness.tray.has(delivered)).toBe(false);
   });
 

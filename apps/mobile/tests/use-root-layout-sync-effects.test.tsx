@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useRootLayoutSyncEffects } from '@/hooks/root-layout/use-root-layout-sync-effects';
+import { getNotificationPermissionStatus, stopMobileNotifications } from '@/lib/notification-service';
 
 const {
   abortMobileSync,
@@ -686,6 +687,35 @@ describe('useRootLayoutSyncEffects', () => {
     await act(async () => {
       tree.unmount();
     });
+    vi.useRealTimers();
+  });
+
+  it('runs the denied-permission cleanup when Android notification permission is found denied on resume', async () => {
+    vi.useFakeTimers();
+    hasActiveMobileNotificationFeature.mockReturnValue(true);
+    vi.mocked(getNotificationPermissionStatus).mockResolvedValue({ granted: false, canAskAgain: false });
+    vi.mocked(stopMobileNotifications).mockClear();
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<TestHarness />);
+      await flushMicrotasks();
+    });
+    const listener = Array.from(appStateListeners)[0];
+    await act(async () => {
+      listener('background');
+      await flushMicrotasks();
+      listener('active');
+      await flushMicrotasks();
+      await flushMicrotasks();
+    });
+
+    expect(stopMobileNotifications).toHaveBeenCalledTimes(1);
+    expect(stopMobileNotifications).toHaveBeenCalledWith({ permissionDenied: true });
+
+    await act(async () => {
+      tree.unmount();
+    });
+    vi.mocked(getNotificationPermissionStatus).mockResolvedValue({ granted: true, canAskAgain: true });
     vi.useRealTimers();
   });
 

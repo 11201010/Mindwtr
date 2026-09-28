@@ -53,9 +53,9 @@ export async function rescheduleMobileAlarmsAsExact(): Promise<void> {
   await rescheduleLocalAlarmsAsExact();
 }
 
-export async function stopMobileNotifications(): Promise<void> {
+export async function stopMobileNotifications(options?: { permissionDenied?: boolean }): Promise<void> {
   if (isSandboxMode()) return;
-  await stopLocalMobileNotifications();
+  await stopLocalMobileNotifications(options);
 }
 
 export async function sendMobileImmediateNotification(

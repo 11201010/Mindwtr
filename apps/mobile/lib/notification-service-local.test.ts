@@ -1312,6 +1312,29 @@ describe('notification-service-local', () => {
     },
   );
 
+  it('runs the denied-permission cleanup when the service stops because permission was denied on resume', async () => {
+    const storage = installPomodoroStorage(JSON.stringify({
+      id: 41,
+      fireAtMs: Date.now() + 60_000,
+    }));
+    mockAlarmGetScheduledAlarms.mockResolvedValue([
+      { id: 41, data: 'kind==>pomodoro;;' },
+      { id: 42, data: { kind: 'pomodoro' } },
+    ]);
+
+    await stopLocalMobileNotifications({ permissionDenied: true });
+
+    expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(41);
+    expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(42);
+    expect(storage.getPomodoro()).toBeNull();
+    expect(mockAlarmRemoveAllFiredNotifications).toHaveBeenCalledTimes(1);
+    expect(mockRestorePersistentCaptureNotification).toHaveBeenCalledTimes(1);
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      '[Local Notifications] Denied-permission cleanup ran on stop',
+      expect.objectContaining({ extra: { releaseCheck: 'v1.3.3/denied-resume-cleanup' } }),
+    );
+  });
+
   it('does not cancel an active pomodoro when the task-reminder service stops', async () => {
     const current = JSON.stringify({ id: 41, fireAtMs: Date.now() + 60_000 });
     const storage = installPomodoroStorage(current);
