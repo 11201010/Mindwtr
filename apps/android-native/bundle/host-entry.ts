@@ -16,6 +16,15 @@ import {
     type SqliteClient,
     useTaskStore,
     flushPendingSave,
+    webdavDeleteFile,
+    webdavGetFile,
+    webdavGetJson,
+    webdavGetSyncDocument,
+    webdavHeadFile,
+    cloudHeadJson,
+    webdavMakeDirectory,
+    webdavPutFile,
+    webdavPutJson,
 } from '@mindwtr/core';
 
 type NativeBridge = {
@@ -88,14 +97,15 @@ class ValidatedSqliteAdapter extends SqliteAdapter {
     }
 }
 
-type Pending = { done: boolean; value?: unknown; error?: string };
+type Pending = { done: boolean; value?: unknown; error?: string; controller: AbortController };
 const pending = new Map<number, Pending>();
 let nextId = 1;
-const submit = (work: () => Promise<unknown>): string => {
+/** Runs [work] as one host operation; [work]'s signal fires if the operation outlives its deadline (MindwtrHost.cancel). */
+const submit = (work: (signal: AbortSignal) => Promise<unknown>): string => {
     const id = nextId++;
-    const slot: Pending = { done: false };
+    const slot: Pending = { done: false, controller: new AbortController() };
     pending.set(id, slot);
-    void work().then(
+    void work(slot.controller.signal).then(
         (value) => { slot.value = value; },
         (error) => { slot.error = error instanceof Error ? error.message : String(error); },
     ).finally(() => { slot.done = true; });
@@ -186,6 +196,106 @@ const logLegacyImport = (plan: ReturnType<typeof planLegacyJsonImport>, rnState:
 const requireSaved = () => {
     const failure = useTaskStore.getState().persistenceFailure;
     if (failure) throw new Error(`SAVE_FAILED: ${failure.message}`);
+};
+
+/** host-polyfills.js's secret calls (SecretStore.kt). */
+type HostSecrets = {
+    getSecret(key: string): Promise<string | null>;
+    setSecret(key: string, value: string): Promise<void>;
+    deleteSecret(key: string): Promise<void>;
+};
+
+/**
+ * Debug builds only (CoreHost.netCheck): check-net-device.mjs's server at http://127.0.0.1:<port> (adb reverse). Core's
+ * WebDAV calls (PUT, GET, HEAD, bytes both ways, MKCOL answered 409 then PROPFIND, a refused and a followed redirect,
+ * DELETE, five damaged bodies), an abort, core's timeout, AbortSignal.timeout, and a secret round trip, each step's outcome
+ * in the answer.
+ * It touches no task data.
+ */
+const runNetCheck = async (port: string) => {
+    if (!/^\d{4,5}$/.test(port)) throw new Error('INVALID_INPUT: net check port');
+    const base = `http://127.0.0.1:${port}`;
+    const steps: Record<string, { ok: boolean; value?: unknown; name?: string; error?: string; ms: number }> = {};
+    const step = async (name: string, work: () => Promise<unknown>) => {
+        const started = Date.now();
+        try {
+            steps[name] = { ok: true, value: await work(), ms: Date.now() - started };
+        } catch (error) {
+            steps[name] = {
+                ok: false,
+                name: error instanceof Error ? error.name : typeof error,
+                error: error instanceof Error ? error.message : String(error),
+                ms: Date.now() - started,
+            };
+        }
+    };
+    const doc = { check: 'net', text: 'Grüße ✓ 😀' };
+    await step('put', async () => (await webdavPutJson(`${base}/dav/data.json`, doc)).etag);
+    await step('get', () => webdavGetJson(`${base}/dav/data.json`));
+    await step('head', async () => (await webdavHeadFile(`${base}/dav/data.json`)).contentLength);
+    await step('putBytes', () => webdavPutFile(`${base}/dav/bytes.bin`, Uint8Array.from({ length: 256 }, (_, i) => i), 'application/octet-stream'));
+    await step('getBytes', async () => new Uint8Array(await webdavGetFile(`${base}/dav/bytes.bin`)).every((value, i) => value === i));
+    await step('mkcol', () => webdavMakeDirectory(`${base}/dav/folder`));
+    await step('redirectPut', () => webdavPutJson(`${base}/dav/redirect.json`, doc));
+    await step('redirectGet', () => webdavGetJson(`${base}/dav/moved.json`));
+    await step('delete', () => webdavDeleteFile(`${base}/dav/data.json`));
+    // A HEAD answered with `Content-Encoding: gzip` has no body to decode (cloud's HEAD lets OkHttp ask for gzip).
+    await step('headGzipDav', async () => (await webdavHeadFile(`${base}/gz/data.json`)).etag);
+    await step('headGzipCloud', async () => (await cloudHeadJson(`${base}/gz/data.json`)).etag);
+    // Truncation: a body cut short, reset mid-chunk, over the size limit (declared or streamed), or a broken gzip stream.
+    // Core's sync document read must throw: an empty or partial body would read as a missing remote, which sync writes over.
+    // A body that is not UTF-8 must throw too, not read as other text (E2 alone once read as a space, so an empty body).
+    for (const cut of ['half', 'reset', 'oversize', 'stream', 'gzip', 'utf8']) await step(`cut-${cut}`, () => webdavGetSyncDocument(`${base}/cut/${cut}.json`));
+    await step('abort', () => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 500);
+        return webdavGetJson(`${base}/slow/abort`, { signal: controller.signal });
+    });
+    // An abort after the headers arrived, while the body is still coming: the host must still cancel the request.
+    await step('abortBody', () => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 500);
+        return webdavGetJson(`${base}/slow/body`, { signal: controller.signal });
+    });
+    await step('timeout', () => webdavGetJson(`${base}/slow/timeout`, { timeoutMs: 1500 }));
+    await step('signalTimeout', () => fetch(`${base}/slow/signal`, { signal: AbortSignal.timeout(1000) }));
+    const secrets = globalThis.__mindwtrSecrets as HostSecrets;
+    const key = 'mindwtr_native_net_check';
+    await step('secretSet', () => secrets.setSecret(key, doc.text));
+    await step('secretGet', () => secrets.getSecret(key));
+    // The server reads the app's SecureStore file (adb run-as) while the secret is saved, then answers.
+    await step('secretStored', async () => (await fetch(`${base}/secret-stored`)).json());
+    await step('secretDelete', () => secrets.deleteSecret(key));
+    await step('secretGone', () => secrets.getSecret(key));
+    return steps;
+};
+
+/**
+ * Debug builds only (CoreHost.netCheck): an operation that outlives its deadline. A GET the server never answers, sent
+ * without the operation's signal so only the host's cancel stops it; then a write, which the host must refuse while the
+ * operation drains. In `stuck` mode it also waits on a timer longer than the drain, so the host must stop instead.
+ * The outcome is logged here: the host reports only that the operation timed out.
+ */
+const runNetDeadline = async (port: string, mode: string, signal: AbortSignal) => {
+    if (!/^\d{4,5}$/.test(port) || !['drain', 'stuck'].includes(mode)) throw new Error('INVALID_INPUT: net deadline');
+    const base = `http://127.0.0.1:${port}`;
+    const events: string[] = [];
+    signal.addEventListener('abort', () => events.push('signal'));
+    try {
+        await fetch(`${base}/slow/deadline-${mode}`);
+        events.push('answered');
+    } catch (error) {
+        events.push(`fetch:${(error as Error).name}`);
+    }
+    if (mode === 'stuck') await new Promise((done) => setTimeout(done, 15_000));
+    try {
+        await fetch(`${base}/dav/after-${mode}.json`, { method: 'PUT', body: '{}' });
+        events.push('written');
+    } catch (error) {
+        events.push(`write:${(error as Error).name}`);
+    }
+    native().log(`Native Android net deadline ${mode} events=${JSON.stringify(events)}`);
+    return events;
 };
 
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
@@ -549,6 +659,23 @@ globalThis.MindwtrHost = {
             if (!read) throw new Error(`INVALID_INPUT: no menu read ${name}`);
             return unwrap(read(JSON.parse(json) as never));
         });
+    },
+    /** Debug builds only: runNetCheck against check-net-device.mjs's server on `port`. */
+    netCheck(port: string): string {
+        return submit(async () => runNetCheck(port));
+    },
+    /** Debug builds only: runNetDeadline, which CoreHost runs past a short deadline. */
+    netDeadline(port: string, mode: string): string {
+        return submit(async (signal) => runNetDeadline(port, mode, signal));
+    },
+    /**
+     * CoreHost's deadline for operation `idText` passed: every open fetch rejects and new host calls are refused (until
+     * CoreHost resumes them), and the operation's signal fires, so it can drain before the host reports the failure.
+     */
+    cancel(idText: string): null {
+        (globalThis.__cancelHostCalls as (message: string) => void)('The host operation timed out');
+        pending.get(Number(idText))?.controller.abort(Object.assign(new Error('The host operation timed out'), { name: 'AbortError' }));
+        return null;
     },
     /** `name` is one of MENU_COMMANDS; `json` is that command's input. Its request or capture UUID makes a retry exact. */
     menuCommand(name: string, json: string): string {

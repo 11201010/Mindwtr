@@ -35,6 +35,213 @@ for (const text of ['mailto:alex@example.com', 'tel:+1-555-0100', 'MAILTO:bea@ex
     vm.runInContext(polyfills, noKeys);
     assert.deepEqual([...vm.runInContext("['b', 'a', 'C'].sort(new Intl.Collator().compare)", noKeys)], ['C', 'a', 'b'], 'the fallback without the bridge');
 }
+// fetch and the secret calls (HostIo.kt): the polyfill hands each call to the bridge and settles it only when the pump
+// takes the host's answer (ioNext), as timers fire. A stand-in bridge answers here.
+{
+    const sent = [];
+    // The host's queue: each answer's JSON, and its body apart (ioBody), as HostIo keeps them.
+    const answers = [];
+    let taken = '';
+    const aborted = [];
+    const store = new Map();
+    let clock = 0;
+    let ids = 0;
+    let nextCalls = 0;
+    const bridge = {
+        log() {},
+        nowMs: () => clock,
+        netFetch(json) {
+            const request = JSON.parse(json);
+            if (request.url.startsWith('ftp:')) return '!MindwtrNativeError:Expected URL scheme \'http\' or \'https\'';
+            sent.push(request);
+            return String(++ids);
+        },
+        netAbort(id) { aborted.push(id); return null; },
+        secretCall(json) {
+            const { op, key, value } = JSON.parse(json);
+            if (!/^[\w.-]+$/.test(key)) return '!MindwtrNativeError:Invalid secret key';
+            const id = String(++ids);
+            if (op === 'set') store.set(key, value);
+            if (op === 'delete') store.delete(key);
+            answers.push({ json: JSON.stringify({ id, value: op === 'get' ? store.get(key) ?? null : null }) });
+            return id;
+        },
+        ioNext() {
+            nextCalls += 1;
+            const next = answers.shift();
+            taken = next?.body ?? '';
+            return next?.json ?? '';
+        },
+        ioBody() { return taken; },
+    };
+    const net = vm.createContext({ console: { info() {} }, Intl: undefined, __mindwtrNative: bridge });
+    vm.runInContext(readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8'), net);
+    const run = (code) => vm.runInContext(code, net);
+    const answer = ({ base64, ...fields }) => answers.push(base64 === undefined
+        ? { json: JSON.stringify(fields) } : { json: JSON.stringify({ ...fields, body: true }), body: base64 });
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    const failure = async (promise) => promise.then(() => assert.fail('expected a rejection'), (error) => ({ name: error.name, message: error.message }));
+    const text = 'Grüße ✓ 😀';
+
+    let settled = false;
+    const get = run("fetch('https://dav.example/data.json', { headers: { 'Accept-Encoding': 'identity', Depth: '0' } })").then((res) => { settled = true; return res; });
+    assert.deepEqual(sent.at(-1), { url: 'https://dav.example/data.json', method: 'GET', redirect: 'follow', headers: [['accept-encoding', 'identity'], ['depth', '0']] });
+    answer({ id: '1', status: 207, statusText: 'Multi-Status', url: 'https://dav.example/data.json', redirected: false,
+        headers: [['ETag', '"v1"'], ['X-A', '1'], ['x-a', '2']], base64: Buffer.from(JSON.stringify({ text })).toString('base64') });
+    await new Promise((done) => setImmediate(done));
+    assert.equal(settled, false, 'an answer settles only in the pump');
+    assert.equal(net.__pumpTimers(), 1);
+    const res = await get;
+    assert.deepEqual([res.status, res.statusText, res.ok, res.body, res.headers.get('etag'), res.headers.get('X-A')], [207, 'Multi-Status', true, null, '"v1"', '1, 2']);
+    assert.deepEqual(plain(await res.clone().json()), { text });
+    assert.equal(await res.text(), JSON.stringify({ text }));
+    assert.equal(res.bodyUsed, true);
+
+    // Request bodies: text as text (RN's default type when none is set), bytes as base64, a form as its text.
+    const bytes = Uint8Array.from({ length: 256 }, (_, i) => i);
+    net.bytes = bytes;
+    const bodies = run("[fetch('https://dav.example/a', { method: 'put', body: 'Grüße' }),"
+        + " fetch('https://dav.example/b', { method: 'PUT', body: new Uint8Array(bytes), redirect: 'error', headers: [['Content-Type', 'application/octet-stream']] }),"
+        + " fetch('https://dav.example/c', { method: 'POST', body: new URLSearchParams('?a=1&b=%C3%BC') }),"
+        + " fetch('https://dav.example/d', { method: 'PROPFIND', body: new Uint8Array(bytes).buffer })]");
+    assert.deepEqual(sent.slice(-4).map(({ method, text: body, base64, headers, redirect }) => [method, body ?? base64, headers, redirect]), [
+        ['PUT', 'Grüße', [['content-type', 'text/plain;charset=UTF-8']], 'follow'],
+        ['PUT', Buffer.from(bytes).toString('base64'), [['content-type', 'application/octet-stream']], 'error'],
+        ['POST', 'a=1&b=%C3%BC', [['content-type', 'application/x-www-form-urlencoded;charset=UTF-8']], 'follow'],
+        ['PROPFIND', Buffer.from(bytes).toString('base64'), [], 'follow'],
+    ]);
+    // The answers: every byte back from base64, a failed request as RN's TypeError, the host's own refusal as it is.
+    answer({ id: '3', status: 200, statusText: 'OK', url: 'https://dav.example/final', redirected: true, headers: [], base64: Buffer.from(bytes).toString('base64') });
+    answer({ id: '2', error: 'Network request failed: Failed to connect to dav.example/10.0.0.1:443' });
+    answer({ id: '4', error: 'fetch failed: unexpected redirect' });
+    answer({ id: '5', status: 404, statusText: '', url: 'https://dav.example/d', redirected: false, headers: [], base64: '' });
+    assert.equal(net.__pumpTimers(), 4);
+    const [a, b, c, d] = await Promise.allSettled(bodies);
+    assert.deepEqual([a.status, a.reason.name, a.reason.message], ['rejected', 'TypeError', 'Network request failed: Failed to connect to dav.example/10.0.0.1:443']);
+    assert.deepEqual([b.value.url, b.value.redirected, Buffer.from(await b.value.arrayBuffer()).equals(Buffer.from(bytes))], ['https://dav.example/final', true, true]);
+    assert.deepEqual([c.reason.name, c.reason.message], ['TypeError', 'fetch failed: unexpected redirect']);
+    assert.deepEqual([d.value.status, d.value.ok, await d.value.text()], [404, false, '']);
+    // A body is whole or the fetch rejects, never a short or empty body: core reads an unreadable sync document as a
+    // missing remote and writes local data over it. HostIo answers a body cut short, a reset mid-body, an oversized body
+    // and a broken gzip stream as errors; an answer whose body is not whole base64 is refused here.
+    const whole = (base64) => ({ status: 200, statusText: 'OK', url: 'https://dav.example/data.json', redirected: false, headers: [], base64 });
+    const cases = [
+        ...['Network request failed: unexpected end of stream on http://127.0.0.1:18765/...', 'Network request failed: Connection reset',
+            'Response exceeds the 104857600 byte download limit', 'Network request failed: gzip finished without exhausting source'].map((error) => [{ error }, error]),
+        ...[undefined, 'eyJ0ZXh0Ijo', 'ey*0', 'e=J0', 'eyJ0ZX\u00e90', 'eyJ0\n'].map((base64) => [whole(base64), 'Network request failed: the host sent an unreadable body']),
+    ];
+    const cut = run(`[${cases.map((_, i) => `fetch('https://dav.example/cut/${i}')`).join(', ')}]`);
+    cases.forEach(([fields], i) => answer({ id: String(ids - cases.length + i + 1), ...fields }));
+    assert.equal(net.__pumpTimers(), cases.length);
+    const outcomes = await Promise.allSettled(cut);
+    outcomes.forEach((outcome, i) => {
+        assert.equal(outcome.status, 'rejected', `case ${i} rejects`);
+        assert.deepEqual([outcome.reason.name, outcome.reason.message], ['TypeError', cases[i][1]], `case ${i}`);
+    });
+    // Whole base64 with its padding reads back exactly, the empty body included.
+    const padded = run("['', 'QQ==', 'QUI=', 'QUJD'].map((_, i) => fetch('https://dav.example/pad/' + i))");
+    ['', 'QQ==', 'QUI=', 'QUJD'].forEach((base64, i) => answer({ id: String(ids - 3 + i), ...whole(base64) }));
+    net.__pumpTimers();
+    assert.deepEqual(await Promise.all((await Promise.all(padded)).map((res) => res.text())), ['', 'A', 'AB', 'ABC']);
+    // Refused before the bridge: a GET body, a method outside the list, a bad header; the host's own refusal is a TypeError too.
+    const before = sent.length;
+    for (const [code, message] of [
+        ["fetch('https://dav.example', { body: 'x' })", /GET\/HEAD method cannot have body/], ["fetch('https://dav.example', { method: 'TRACE' })", /Unsupported method: TRACE/],
+        ["fetch('https://dav.example', { headers: { 'Bad Name': 'x' } })", /Invalid header name/], ["fetch('ftp://dav.example')", /Expected URL scheme/],
+    ]) {
+        const error = await failure(run(code));
+        assert.equal(error.name, 'TypeError', code);
+        assert.match(error.message, message);
+    }
+    assert.equal(sent.length, before, 'a refused request never reaches the host');
+
+    // Abort: the promise rejects at once with the signal's reason, the host cancels the call, and its late answer is dropped.
+    const aborting = run("const controller = new AbortController(); globalThis.aborting = fetch('https://dav.example/slow', { signal: controller.signal }); controller.abort(); aborting");
+    assert.deepEqual(await failure(aborting), { name: 'AbortError', message: 'This operation was aborted' });
+    assert.deepEqual(aborted, [String(ids)]);
+    const reasoned = run("const withReason = new AbortController(); const call = fetch('https://dav.example/slow', { signal: withReason.signal }); withReason.abort(new Error('Sync cancelled')); call");
+    assert.equal((await failure(reasoned)).message, 'Sync cancelled');
+    assert.deepEqual(await failure(run("fetch('https://dav.example', { signal: AbortSignal.abort() })")), { name: 'AbortError', message: 'This operation was aborted' });
+    // AbortSignal.timeout fires on the host's timers: a TimeoutError once the clock passes it.
+    const timed = run("fetch('https://dav.example/slow', { signal: AbortSignal.timeout(1000) })");
+    clock = 999;
+    net.__pumpTimers();
+    clock = 1000;
+    net.__pumpTimers();
+    assert.deepEqual(await failure(timed), { name: 'TimeoutError', message: 'The operation timed out.' });
+    assert.equal(aborted.length, 3);
+    for (const id of aborted) answer({ id, error: 'Request cancelled' });
+    assert.equal(net.__pumpTimers(), 0, 'a cancelled call\'s late answer settles nothing');
+    const asked = nextCalls;
+    net.__pumpTimers();
+    assert.equal(nextCalls, asked, 'the pump asks the host only while a call is open');
+
+    // Secrets: each call settles in the pump; a bad key is the host's refusal; a value must be a string.
+    const secrets = net.__mindwtrSecrets;
+    const saved = secrets.setSecret('mindwtr_webdav_password', text);
+    net.__pumpTimers();
+    assert.equal(await saved, undefined);
+    const read = secrets.getSecret('mindwtr_webdav_password');
+    net.__pumpTimers();
+    assert.equal(await read, text);
+    const removed = secrets.deleteSecret('mindwtr_webdav_password');
+    net.__pumpTimers();
+    await removed;
+    const gone = secrets.getSecret('mindwtr_webdav_password');
+    net.__pumpTimers();
+    assert.equal(await gone, null);
+    assert.deepEqual(await failure(secrets.getSecret('@mindwtr_webdav_password')), { name: 'TypeError', message: 'Invalid secret key' });
+    assert.deepEqual(await failure(secrets.setSecret('mindwtr_cloud_token', 42)), { name: 'TypeError', message: 'A secret value must be a string' });
+    assert.equal(answers.length, 0);
+
+    // Review 1: text is fatal UTF-8. Core reads every response through `new TextDecoder()`: a malformed body throws, never
+    // decodes to other text (E2 alone once read as U+2000, a space, so a body trimmed to empty read as a missing remote).
+    // `fatal: false` gives the platform's replacement text, compared with Node's decoder.
+    const malformed = [[0xe2], [0x20, 0xc0, 0xa0, 0x20], [0x80], [0xc1, 0xbf], [0xe0, 0x80, 0x80], [0xed, 0xa0, 0x80], [0xf0, 0x80, 0x80, 0x80],
+        [0xf4, 0x90, 0x80, 0x80], [0xf5, 0x80], [0xff], [0xe2, 0x82], [0x61, 0xe2, 0x28, 0xa1], [0xf0, 0x9f, 0x98]];
+    net.cases = malformed.map((bytes) => new Uint8Array(bytes));
+    for (const [i, bytes] of malformed.entries()) {
+        assert.throws(() => run(`new TextDecoder().decode(cases[${i}])`), (error) => error.name === 'TypeError' && error.message === 'The encoded data was not valid for encoding utf-8', `fatal ${bytes}`);
+        assert.equal(run(`new TextDecoder('utf-8', { fatal: false }).decode(cases[${i}])`), new TextDecoder().decode(Uint8Array.from(bytes)), `replacement ${bytes}`);
+    }
+    // Well-formed text, and 300 random byte strings without `fatal`, decode exactly as the platform decodes them.
+    const random = Array.from({ length: 300 }, (_, i) => Uint8Array.from({ length: 1 + (i % 40) }, (_, j) => (i * 131 + j * 89 + ((i * j) % 7) * 37) & 0xff));
+    net.random = random.map((bytes) => new Uint8Array(bytes));
+    random.forEach((bytes, i) => assert.equal(run(`new TextDecoder('utf-8', { fatal: false }).decode(random[${i}])`), new TextDecoder().decode(bytes), `random ${i}`));
+    const wellFormed = ['', 'plain', text, '\u0000\u007f\u0080\u07ff\u0800\uffff', '\u{10000}\u{10ffff}', 'a\u00e9\u4e2d\u{1f600}z'];
+    net.wellFormed = wellFormed.map((value) => new TextEncoder().encode(value));
+    wellFormed.forEach((value, i) => assert.equal(run(`new TextDecoder().decode(wellFormed[${i}])`), value));
+    assert.equal(run('new TextDecoder().decode(new Uint8Array([0x78, 0x61, 0x62, 0x63, 0x78]).subarray(1, 4))'), 'abc', 'a view decodes from its offset');
+    // The encoder writes a lone surrogate as U+FFFD, as the platform does, so the fatal decoder reads back what it wrote.
+    for (const value of ['\ud800', 'a\udc00b', '\ud83d', '\udfff\ud800', '\ud83d\ude00']) {
+        net.value = value;
+        assert.deepEqual([...run('new TextEncoder().encode(value)')], [...new TextEncoder().encode(value)], JSON.stringify(value));
+        assert.equal(run('new TextDecoder().decode(new TextEncoder().encode(value))'), new TextDecoder().decode(new TextEncoder().encode(value)));
+    }
+    // Response.text() and json() reject a body that is not UTF-8; arrayBuffer() stays byte-exact.
+    const loose = run("fetch('https://dav.example/utf8')");
+    answer({ id: String(ids), status: 200, statusText: 'OK', url: 'https://dav.example/utf8', redirected: false, headers: [], base64: Buffer.from([0x20, 0xe2, 0x20]).toString('base64') });
+    net.__pumpTimers();
+    const looseResponse = await loose;
+    assert.deepEqual([...new Uint8Array(await looseResponse.clone().arrayBuffer())], [0x20, 0xe2, 0x20]);
+    assert.deepEqual(await failure(looseResponse.clone().text()), { name: 'TypeError', message: 'The encoded data was not valid for encoding utf-8' });
+    assert.deepEqual(await failure(looseResponse.json()), { name: 'TypeError', message: 'The encoded data was not valid for encoding utf-8' });
+
+    // Review 2: the host's deadline passed. Every open fetch rejects with an AbortError and is cancelled at the host, and a
+    // new fetch or secret call is refused (it never reaches the host) until the host resumes calls.
+    const open = run("fetch('https://dav.example/slow')");
+    const openId = String(ids);
+    net.__cancelHostCalls('The host operation timed out');
+    assert.deepEqual(await failure(open), { name: 'AbortError', message: 'The host operation timed out' });
+    assert.equal(aborted.at(-1), openId);
+    const refusedFrom = sent.length;
+    assert.deepEqual(await failure(run("fetch('https://dav.example/after', { method: 'PUT', body: '{}' })")), { name: 'AbortError', message: 'The host operation timed out' });
+    assert.deepEqual(await failure(secrets.setSecret('mindwtr_cloud_token', 'x')), { name: 'AbortError', message: 'The host operation timed out' });
+    assert.equal(sent.length, refusedFrom, 'no call reaches the host while the operation drains');
+    net.__resumeHostCalls();
+    run("fetch('https://dav.example/later')");
+    assert.equal(sent.at(-1).url, 'https://dav.example/later', 'calls reach the host again once it resumes them');
+}
 const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
@@ -228,7 +435,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)/);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
@@ -326,8 +533,98 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 8, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey and log: each guarded');
+assert.equal(bridgeCallbacks.length, 13, 'the SQL calls, nowMs, randomBytes, rnStateCommit, collationKey, log, and the fetch and secret calls: each guarded');
 for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\w+", guarded \{/);
+// fetch and the secrets (HostIo.kt, SecretStore.kt): started on the engine thread, run off it, answered only through the pump.
+{
+    const core = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
+    const hostIo = core('HostIo.kt');
+    const secretStore = core('SecretStore.kt');
+    for (const [name, call] of [['netFetch', 'args -> io.fetch(args[0] as String)'], ['netAbort', 'args -> io.abort(args[0] as String); null'],
+        ['secretCall', 'args -> io.secret(args[0] as String)'], ['ioNext', '_ -> io.next()'], ['ioBody', '_ -> io.body()']]) {
+        assert(bridgeCallbacks.includes(`bridge.setProperty("${name}", guarded { ${call} })`), `${name} starts or takes a call and nothing else`);
+    }
+    assert.doesNotMatch(hostIo + secretStore, /quickjs|JSFunction|JSObject|JSCallFunction/i, 'no host call touches the engine');
+    assert.match(hostIo, /calls\[id\] = call\s+call\.enqueue\(object : Callback \{/, 'a request runs on OkHttp\'s dispatcher');
+    assert.doesNotMatch(hostIo, /\.execute\(\)|runBlocking|Thread\.sleep/);
+    // Nothing throws on OkHttp's thread, and (review 3) a call stays cancellable until its body is read: it leaves [calls]
+    // only after the read, on a failure, or on an abort, so an abort or close after the headers still cancels it.
+    assert.match(hostIo, /override fun onResponse\(call: Call, response: Response\) \{[^{}]*?try \{\s*answers\.add\(runCatching \{ response\.use \{ read\(id, it, redirect\) \} \}\.getOrElse \{ failure\(id, call, it\) \}\)\s*\} finally \{\s*calls\.remove\(id\)\s*\}/);
+    assert.equal(hostIo.match(/calls\.remove\(id\)/g).length, 3);
+    assert.match(hostIo, /fun close\(\) \{\s*calls\.values\.forEach \{ it\.cancel\(\) \}/);
+    assert.match(hostIo, /secretThread\.execute \{\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
+    assert.equal(hostIo.match(/answers\.add\(/g).length, 3, 'the answer queue is the only way back');
+    // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
+    assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
+    assert.match(hostIo, /fun body\(\): String = \(taken \?: ""\)\.also \{ taken = null \}/);
+    // The whole body or a throw: the declared length and the running size are refused past the limit, and nothing in the
+    // read catches a failure (a cut, a reset, a broken gzip stream) into a short body.
+    const read = hostIo.slice(hostIo.indexOf('private fun read('), hostIo.indexOf('private fun failure('));
+    assert.match(read, /if \(body\.contentLength\(\) > maxResponseBytes\) throw Refused\(tooLarge\)/);
+    assert.match(read, /while \(source\.read\(bytes, 64 \* 1024L\) != -1L\) \{\s*if \(bytes\.size > maxResponseBytes\) throw Refused\(tooLarge\)\s*\}/);
+    assert.doesNotMatch(read, /catch|runCatching|getOrNull|getOrDefault|getOrElse|\?: ""|orEmpty/, 'HostIo.read swallows no IOException');
+    // The only places HostIo catches: each turns the failure into the call's error answer, so fetch rejects.
+    assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
+    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true]);
+    // Review 5: the ceiling is core's largest limit (a sync document), bounded by a fifth of the heap; core applies its
+    // smaller limits itself. The lower limit the net check uses exists only in a debug build (debugProperty is "" in release).
+    const coreHttp = readFileSync(resolve(app, '../../packages/core/src/http-utils.ts'), 'utf8');
+    const product = (text) => text.replace(/[L_]/g, '').split('*').reduce((total, part) => total * Number(part.trim()), 1);
+    assert.equal(product(/const val MAX_SYNC_DOCUMENT_BYTES = ([^\n]+)/.exec(hostIo)[1]), product(/export const MAX_SYNC_DOCUMENT_BYTES = ([^;]+);/.exec(coreHttp)[1]));
+    assert.match(hostIo, /private val ceiling = minOf\(MAX_SYNC_DOCUMENT_BYTES, Runtime\.getRuntime\(\)\.maxMemory\(\) \/ 5\)/);
+    assert.match(hostIo, /private val maxResponseBytes = debugProperty\("net_max_bytes"\)\.toLongOrNull\(\)\?\.takeIf \{ it > 0 \}\?\.let \{ minOf\(it, ceiling\) \} \?: ceiling/);
+    assert.match(hostIo, /Log\.i\(CoreHost\.TAG, "Native Android fetch limit bytes=\$maxResponseBytes ceiling=\$ceiling heap=/);
+    // Review 4: a response without a body keeps its gzip label and is never decoded (cloud's HEAD failed on it).
+    assert.match(read, /val bodiless = response\.request\.method == "HEAD" \|\| response\.code == 204 \|\| response\.code == 304 \|\| body\.contentLength\(\) == 0L/);
+    assert.match(read, /val gzip = !bodiless && response\.header\("Content-Encoding"\)\.equals\("gzip", ignoreCase = true\)\s+val source = if \(gzip\) GzipSource/);
+    // A network failure's text never carries core's invalid-JSON phrases (retry-utils.ts), which sync reads as a missing
+    // remote and writes over: the host's list is core's, and a matching detail is replaced by the exception's name.
+    const coreRetry = readFileSync(resolve(app, '../../packages/core/src/retry-utils.ts'), 'utf8');
+    const corePhrases = [...coreRetry.slice(coreRetry.indexOf('export const isWebdavInvalidJsonError'), coreRetry.indexOf('export const isRetryableWebdavReadError')).matchAll(/normalized\.includes\('([^']+)'\)/g)].map((m) => m[1]);
+    assert.deepEqual([.../INVALID_JSON_PHRASES = listOf\(([\s\S]*?)\)\n/.exec(hostIo)[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]), corePhrases);
+    assert.match(hostIo, /detail\.isNotEmpty\(\) && INVALID_JSON_PHRASES\.none \{ detail\.lowercase\(\)\.contains\(it\) \}\s*\} \?: error\.javaClass\.simpleName/);
+    // Review 2: an operation's deadline is the longest core timeout it wraps (core's storage and request timeouts for a
+    // contract call; HostIo's request ceiling plus that for one that sends requests). Past it the operation is cancelled
+    // (JS cancel: its signal, its fetches) and drained; one that does not end stops the host, so it never resumes.
+    const coreStorage = readFileSync(resolve(app, '../../packages/core/src/store-settings.ts'), 'utf8');
+    const deadline = product(/const val OPERATION_DEADLINE_MS = ([^\n]+)/.exec(coreHost)[1]);
+    assert(deadline >= product(/export const DEFAULT_TIMEOUT_MS = ([^;]+);/.exec(coreHttp)[1]) && deadline >= product(/const STORAGE_TIMEOUT_MS = ([^;]+);/.exec(coreStorage)[1]));
+    assert.match(coreHost, /const val NETWORK_DEADLINE_MS = HostIo\.CALL_TIMEOUT_MS \+ OPERATION_DEADLINE_MS/);
+    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = OPERATION_DEADLINE_MS\): JSONObject = onEngine \{\s*stopped\?\.let \{ throw IllegalStateException\(it\) \}/);
+    assert.match(coreHost, /val answer = pumpUntil\(id, deadlineMs\) \?: run \{[^}]*?call\("cancel", id\)\s*if \(pumpUntil\(id, DRAIN_MS\) == null\) \{[^}]*?stopped = reason[^}]*?closeOnEngine\(\)\s*throw IllegalStateException\(reason\)\s*\}\s*checkNotNull\(context\)\.globalObject\.getJSFunction\("__resumeHostCalls"\)\.call\(\)\s*throw IllegalStateException\("Core \$method timed out"\)/);
+    assert.equal(coreHost.match(/pumpUntil\(/g).length, 3, 'callAsync pumps only through pumpUntil');
+    assert.match(coreHost, /callAsync\("netCheck", port, deadlineMs = NETWORK_DEADLINE_MS\)/);
+    assert.match(hostIo, /response\.use \{ read\(id, it, redirect\) \}/);
+    // RN's connect timeout (#1150).
+    const rnClient = readFileSync(resolve(app, '../mobile/modules/sync-file-lock/android/src/main/java/tech/dongdongbh/mindwtr/syncfilelock/SyncHttpClientPackage.kt'), 'utf8');
+    assert.equal(/CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(hostIo)[1], /CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(rnClient)[1]);
+    assert.match(hostIo, /\.connectTimeout\(CONNECT_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/);
+    assert.match(coreHost, /if \(io\.busy\(\)\) io\.await\(if \(delay < 0\) 25L else minOf\(delay, 25L\)\)\s+else if \(delay > 0\) Thread\.sleep\(minOf\(delay, 25L\)\)/);
+    assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)\.also \{ netCheck\(\) \}/);
+    assert.match(coreHost, /val port = debugFault\("net_check"\)\.ifEmpty \{ return \}/, 'the net check is debug-only');
+    // RN's network security config (cleartext as RN allows it, user CAs trusted), and the INTERNET permission.
+    const rnConfig = /NETWORK_SECURITY_CONFIG_XML = `([\s\S]*?)`;/.exec(readFileSync(resolve(app, '../mobile/plugins/android-network-security-config.js'), 'utf8'))[1];
+    assert.equal(readFileSync(resolve(app, 'android/app/src/main/res/xml/network_security_config.xml'), 'utf8'), rnConfig);
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    assert.match(manifest, /<uses-permission android:name="android\.permission\.INTERNET" \/>/);
+    assert.match(manifest, /<application\s+android:networkSecurityConfig="@xml\/network_security_config"/);
+    // expo-secure-store's own names, read from RN's copy: the file, the entry, the key alias, the item's fields.
+    const expo = (name) => readFileSync(resolve(app, '../../node_modules/expo-secure-store/android/src/main/java/expo/modules/securestore', name), 'utf8');
+    const expoSource = expo('SecureStoreModule.kt') + expo('encryptors/AESEncryptor.kt') + expo('AuthenticationHelper.kt');
+    for (const pin of ['SHARED_PREFERENCES_NAME = "SecureStore"', 'DEFAULT_KEYSTORE_ALIAS = "key_v1"', 'return "$keychainService-$key"',
+        'UNAUTHENTICATED_KEYSTORE_SUFFIX = "keystoreUnauthenticated"', 'AES_CIPHER = "AES/GCM/NoPadding"', 'return "$AES_CIPHER:$baseAlias"',
+        'return "${getKeyStoreAlias(options)}:$suffix"', 'AES_KEY_SIZE_BITS = 256', 'NAME = "aes"', 'CIPHERTEXT_PROPERTY = "ct"', 'IV_PROPERTY = "iv"',
+        'GCM_AUTHENTICATION_TAG_LENGTH_PROPERTY = "tlen"', 'SCHEME_PROPERTY = "scheme"', 'USES_KEYSTORE_SUFFIX_PROPERTY = "usesKeystoreSuffix"',
+        'KEYSTORE_ALIAS_PROPERTY = "keystoreAlias"', 'REQUIRE_AUTHENTICATION_PROPERTY = "requireAuthentication"', 'MIN_GCM_AUTHENTICATION_TAG_LENGTH = 96']) {
+        assert(expoSource.includes(pin), `expo-secure-store still has ${pin}`);
+    }
+    for (const pin of ['getSharedPreferences("SecureStore", Context.MODE_PRIVATE)', 'SERVICE = "key_v1"', 'entry(key: String) = "$SERVICE-$key"',
+        'ALIAS = "$CIPHER:$SERVICE:keystoreUnauthenticated"', 'LEGACY_ALIAS = "$CIPHER:$SERVICE"', 'CIPHER = "AES/GCM/NoPadding"', '.setKeySize(256)',
+        '.put("ct", ', '.put("iv", ', '.put("tlen", spec.tLen)', '.put("scheme", "aes")', '.put("usesKeystoreSuffix", true)', '.put("keystoreAlias", SERVICE)',
+        '.put("requireAuthentication", false)', 'check(tagBits >= 96)', 'Regex("^[\\\\w.-]+$")']) {
+        assert(secretStore.includes(pin), `SecretStore has RN's ${pin}`);
+    }
+}
 assert.match(coreHost, /setProperty\("log", guarded \{ args -> runCatching \{/);
 assert.match(coreHost, /try \{ work\(args\) \} catch \(error: Throwable\) \{ NATIVE_ERROR \+/);
 // Fault hooks exist only behind BuildConfig.DEBUG.
@@ -1610,6 +1907,8 @@ export function legacyImportMismatch(merged, saved) { return JSON.stringify(merg
 export function splitSqlStatements(sql) { return [sql]; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); }
+// The debug net check's WebDAV calls: bundled, never run here.
+export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
 export function createNativeHostContract() {
   return {
     async activate() {
@@ -1753,6 +2052,8 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
         createCount: 0, completeCount: 0, persistenceFailure: null, captureInputs: [],
         snapshotResult: { ok: true, value: { fileName: 'data.2026-09-24T10-00-00.000.snapshot.json', contents: '{}' } }, editorInputs: [], updateInputs: [], focusInputs: [],
+        // host-polyfills.js gives QuickJS these; the harness runs host-entry alone.
+        AbortController, setTimeout,
         languageInputs: [], projectInputs: [], settings: undefined, newInputs: [], menuInputs: [],
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
@@ -2138,6 +2439,41 @@ const brokenBoot = await poll(brokenStorage, brokenStorage.MindwtrHost.boot());
 assert.equal(brokenBoot.ok, false);
 assert.match(brokenBoot.error, /disk I\/O error/);
 assert.equal(brokenStorage.activationCount, 0);
+// Review 2: MindwtrHost.cancel, as CoreHost calls it past a deadline, cancels the host's calls and fires the operation's
+// signal, so the operation ends at once (here runNetDeadline in "drain" mode): its fetch rejects and its write is refused.
+{
+    const deadlineState = makeState(0);
+    const fetches = [];
+    deadlineState.__mindwtrNative.log = (line) => fetches.push(line);
+    deadlineState.fetch = (url, init) => new Promise((_, reject) => {
+        const refuse = () => reject(Object.assign(new Error(deadlineState.cancelled), { name: 'AbortError' }));
+        fetches.push(`${init?.method ?? 'GET'} ${url}`);
+        if (deadlineState.cancelled) refuse(); else deadlineState.cancelFetch = refuse;
+    });
+    deadlineState.__cancelHostCalls = (message) => { deadlineState.cancelled = message; deadlineState.cancelFetch(); };
+    const id = deadlineState.MindwtrHost.netDeadline('18765', 'drain');
+    await new Promise((resolveTick) => setImmediate(resolveTick));
+    assert.equal(deadlineState.MindwtrHost.poll(id), null, 'the operation waits on its unanswered request');
+    assert.equal(deadlineState.MindwtrHost.cancel(id), null);
+    const drained = await poll(deadlineState, id);
+    assert.deepEqual(drained, { ok: true, value: ['signal', 'fetch:AbortError', 'write:AbortError'] });
+    assert.deepEqual(fetches, ['GET http://127.0.0.1:18765/slow/deadline-drain', 'PUT http://127.0.0.1:18765/dav/after-drain.json',
+        'Native Android net deadline drain events=["signal","fetch:AbortError","write:AbortError"]']);
+    assert.equal(deadlineState.cancelled, 'The host operation timed out');
+}
+// Review 6: check-net-device.mjs cleans up once, whether it ends, is interrupted (Ctrl-C) or is terminated, and a signal
+// exits with 128 + its number. A failing step (the phone gone) does not stop the steps after it.
+{
+    const { spawnSync } = await import('node:child_process');
+    const script = (ending) => `import { cleanupOnExit } from ${JSON.stringify(resolve(app, 'scripts/check-net-device.mjs'))};
+        const cleanup = cleanupOnExit([() => console.log('props'), () => { throw new Error('phone gone'); }, () => console.log('reverse')]);
+        setTimeout(() => {}, 10000);
+        ${ending}`;
+    for (const [ending, status] of [["process.kill(process.pid, 'SIGINT');", 130], ["process.kill(process.pid, 'SIGTERM');", 143], ['cleanup(); cleanup(); process.exit(0);', 0]]) {
+        const child = spawnSync(process.execPath, ['--input-type=module', '-e', script(ending)], { encoding: 'utf8', timeout: 20_000 });
+        assert.deepEqual([child.status, child.stdout], [status, 'props\nreverse\n'], ending);
+    }
+}
 console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
 console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
 console.log('Editor: core\'s model and suggestions in, saveTaskDraft out through perform with an exact retry, changed fields only, no Kotlin date parsing');

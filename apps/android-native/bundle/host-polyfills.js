@@ -43,10 +43,59 @@
         global.clearInterval = function (id) { timers.delete(id); };
     }
 
-    /** Runs every timer already due. Returns how many ran. */
+    // --- host calls ---------------------------------------------------------
+    // fetch and the secret calls run in the Android host, off the engine thread
+    // (HostIo.kt). Each call's answer waits in the host's queue until the pump
+    // below takes it (`ioNext`), so a promise settles where a timer fires.
+    var NATIVE_ERROR = '!MindwtrNativeError:';
+    var hostCall = function (value) {
+        if (typeof value === 'string' && value.indexOf(NATIVE_ERROR) === 0) throw new TypeError(value.slice(NATIVE_ERROR.length));
+        return value;
+    };
+    // Each open call's `settle` (its answer) and, for a fetch, `cancel` (a rejection with the reason, and the host's cancel).
+    var ioPending = new Map();
+    // Calls started and not yet answered, cancelled ones included: the pump asks the host only while one is open.
+    var ioOpen = 0;
+    var startIo = function (id, settle, cancel) {
+        ioOpen += 1;
+        ioPending.set(String(id), { settle: settle, cancel: cancel });
+        return String(id);
+    };
+    var pumpIo = function () {
+        var settled = 0;
+        while (ioOpen > 0) {
+            var text;
+            try { text = hostCall(native().ioNext()); } catch (error) { global.__hostLog('host call error: ' + error); break; }
+            if (!text) break;
+            ioOpen -= 1;
+            var answer = JSON.parse(text);
+            // The body comes apart from its answer, so no copy of it is wrapped in JSON.
+            if (answer.body) answer.base64 = hostCall(native().ioBody());
+            var entry = ioPending.get(answer.id);
+            ioPending.delete(answer.id);
+            // A cancelled call's late answer has no promise left to settle.
+            if (!entry) continue;
+            try { entry.settle(answer); } catch (error) { global.__hostLog('host call error: ' + error); }
+            settled += 1;
+        }
+        return settled;
+    };
+    // The host's deadline passed (CoreHost.callAsync): every open fetch rejects with an AbortError and is cancelled, and a
+    // new fetch or secret call is refused until __resumeHostCalls, so the timed-out operation drains without any IO.
+    var refusing = null;
+    var refuseIfCancelled = function () {
+        if (refusing !== null) throw namedError('AbortError', refusing);
+    };
+    global.__cancelHostCalls = function (message) {
+        refusing = String(message);
+        ioPending.forEach(function (entry) { if (entry.cancel) entry.cancel(namedError('AbortError', refusing)); });
+    };
+    global.__resumeHostCalls = function () { refusing = null; };
+
+    /** Settles every host call already answered, then runs every timer already due. Returns how many of both. */
     global.__pumpTimers = function () {
+        var ran = pumpIo();
         var now = global.__nowMs();
-        var ran = 0;
         var due = [];
         timers.forEach(function (timer, id) { if (timer.at <= now) due.push([id, timer]); });
         due.sort(function (a, b) { return a[1].at - b[1].at; });
@@ -104,6 +153,7 @@
     }
 
     // --- text encoding ------------------------------------------------------
+    // UTF-8 only. A lone surrogate encodes as U+FFFD, as the platform's does.
     if (typeof global.TextEncoder !== 'function') {
         global.TextEncoder = function TextEncoder() { };
         global.TextEncoder.prototype.encode = function (input) {
@@ -112,11 +162,13 @@
             var bytes = [];
             for (var i = 0; i < text.length; i += 1) {
                 var code = text.charCodeAt(i);
-                if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
-                    var low = text.charCodeAt(i + 1);
-                    if (low >= 0xdc00 && low <= 0xdfff) {
+                if (code >= 0xd800 && code <= 0xdfff) {
+                    var low = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+                    if (code <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) {
                         code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
                         i += 1;
+                    } else {
+                        code = 0xfffd;
                     }
                 }
                 if (code < 0x80) bytes.push(code);
@@ -127,28 +179,78 @@
             return new Uint8Array(bytes);
         };
     }
+    // The platform's UTF-8 decoder, with one difference on purpose: a decoder made without options is fatal (malformed
+    // UTF-8 throws a TypeError). Core reads every response as text through `new TextDecoder()`, and a body that decoded
+    // to replacement or wrong characters (E2 alone once read as U+2000, a space) could trim to empty and read as a
+    // missing remote document, which sync writes over. `{ fatal: false }` replaces each malformed sequence with U+FFFD.
     if (typeof global.TextDecoder !== 'function') {
-        global.TextDecoder = function TextDecoder() { };
+        global.TextDecoder = function TextDecoder(_label, options) {
+            this.encoding = 'utf-8';
+            this.fatal = !(options && options.fatal === false);
+        };
         global.TextDecoder.prototype.decode = function (input) {
             mark('TextDecoder');
             if (!input) return '';
-            var bytes = input instanceof Uint8Array ? input : new Uint8Array(input.buffer || input);
-            var out = '';
-            for (var i = 0; i < bytes.length;) {
-                var byte = bytes[i++];
-                var code;
-                if (byte < 0x80) code = byte;
-                else if (byte < 0xe0) code = ((byte & 0x1f) << 6) | (bytes[i++] & 0x3f);
-                else if (byte < 0xf0) code = ((byte & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f);
-                else code = ((byte & 0x07) << 18) | ((bytes[i++] & 0x3f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f);
-                if (code > 0xffff) {
-                    code -= 0x10000;
-                    out += String.fromCharCode(0xd800 + (code >> 10), 0xdc00 + (code & 0x3ff));
+            var bytes = ArrayBuffer.isView(input) ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength) : new Uint8Array(input);
+            var fatal = this.fatal;
+            var parts = [];
+            var units = [];
+            var needed = 0;
+            var seen = 0;
+            var code = 0;
+            var lower = 0x80;
+            var upper = 0xbf;
+            var malformed = function () {
+                if (fatal) throw new TypeError('The encoded data was not valid for encoding utf-8');
+                units.push(0xfffd);
+            };
+            for (var i = 0; i < bytes.length; i += 1) {
+                var byte = bytes[i];
+                if (needed === 0) {
+                    if (byte <= 0x7f) {
+                        units.push(byte);
+                    } else if (byte >= 0xc2 && byte <= 0xdf) {
+                        needed = 1;
+                        code = byte & 0x1f;
+                    } else if (byte >= 0xe0 && byte <= 0xef) {
+                        if (byte === 0xe0) lower = 0xa0;
+                        if (byte === 0xed) upper = 0x9f;
+                        needed = 2;
+                        code = byte & 0x0f;
+                    } else if (byte >= 0xf0 && byte <= 0xf4) {
+                        if (byte === 0xf0) lower = 0x90;
+                        if (byte === 0xf4) upper = 0x8f;
+                        needed = 3;
+                        code = byte & 0x07;
+                    } else {
+                        malformed();
+                    }
+                } else if (byte < lower || byte > upper) {
+                    // The sequence ends here; this byte starts over (the platform's maximal-subpart rule).
+                    needed = seen = code = 0;
+                    lower = 0x80;
+                    upper = 0xbf;
+                    malformed();
+                    i -= 1;
                 } else {
-                    out += String.fromCharCode(code);
+                    lower = 0x80;
+                    upper = 0xbf;
+                    code = (code << 6) | (byte & 0x3f);
+                    seen += 1;
+                    if (seen === needed) {
+                        if (code > 0xffff) units.push(0xd800 + ((code - 0x10000) >> 10), 0xdc00 + ((code - 0x10000) & 0x3ff));
+                        else units.push(code);
+                        needed = seen = code = 0;
+                    }
+                }
+                if (units.length >= 8192) {
+                    parts.push(String.fromCharCode.apply(null, units));
+                    units = [];
                 }
             }
-            return out;
+            if (needed !== 0) malformed();
+            parts.push(String.fromCharCode.apply(null, units));
+            return parts.join('');
         };
     }
 
@@ -189,29 +291,59 @@
         };
     }
 
-    // --- AbortController ----------------------------------------------------
+    // --- AbortController and AbortSignal ------------------------------------
+    // What core and fetch use: abort with a reason (an AbortError without one),
+    // AbortSignal.abort and AbortSignal.timeout (a TimeoutError, on the host's
+    // timers), throwIfAborted, onabort, and abort listeners, each run once.
+    var namedError = function (name, message) {
+        var error = new Error(message);
+        error.name = name;
+        return error;
+    };
     if (typeof global.AbortController !== 'function') {
+        var AbortSignal = function AbortSignal() { throw new TypeError('Illegal constructor'); };
+        var createSignal = function () {
+            var signal = Object.create(AbortSignal.prototype);
+            signal.aborted = false;
+            signal.reason = undefined;
+            signal.onabort = null;
+            signal._listeners = [];
+            return signal;
+        };
+        var abortSignal = function (signal, reason) {
+            if (signal.aborted) return;
+            signal.aborted = true;
+            signal.reason = reason === undefined ? namedError('AbortError', 'This operation was aborted') : reason;
+            var listeners = signal._listeners;
+            signal._listeners = [];
+            var event = { type: 'abort', target: signal };
+            if (typeof signal.onabort === 'function') listeners.unshift(signal.onabort);
+            listeners.forEach(function (fn) { try { fn.call(signal, event); } catch (e) { } });
+        };
+        AbortSignal.prototype.addEventListener = function (type, fn) {
+            if (type === 'abort' && typeof fn === 'function' && !this.aborted && this._listeners.indexOf(fn) < 0) this._listeners.push(fn);
+        };
+        AbortSignal.prototype.removeEventListener = function (type, fn) {
+            var at = this._listeners.indexOf(fn);
+            if (type === 'abort' && at >= 0) this._listeners.splice(at, 1);
+        };
+        AbortSignal.prototype.throwIfAborted = function () { if (this.aborted) throw this.reason; };
+        AbortSignal.abort = function (reason) {
+            var signal = createSignal();
+            abortSignal(signal, reason);
+            return signal;
+        };
+        AbortSignal.timeout = function (ms) {
+            var signal = createSignal();
+            global.setTimeout(function () { abortSignal(signal, namedError('TimeoutError', 'The operation timed out.')); }, ms);
+            return signal;
+        };
+        global.AbortSignal = AbortSignal;
         global.AbortController = function AbortController() {
             mark('AbortController');
-            var listeners = [];
-            this.signal = {
-                aborted: false,
-                reason: undefined,
-                addEventListener: function (_type, fn) { listeners.push(fn); },
-                removeEventListener: function (_type, fn) {
-                    var at = listeners.indexOf(fn);
-                    if (at >= 0) listeners.splice(at, 1);
-                },
-                throwIfAborted: function () { if (this.aborted) throw this.reason; },
-            };
-            var signal = this.signal;
-            this.abort = function (reason) {
-                if (signal.aborted) return;
-                signal.aborted = true;
-                signal.reason = reason || new Error('Aborted');
-                listeners.slice().forEach(function (fn) { try { fn({ type: 'abort' }); } catch (e) { } });
-            };
+            this.signal = createSignal();
         };
+        global.AbortController.prototype.abort = function (reason) { abortSignal(this.signal, reason); };
     }
 
     // --- URL ----------------------------------------------------------------
@@ -308,6 +440,253 @@
             }).join('&');
         };
     }
+
+    // --- fetch --------------------------------------------------------------
+    // RN's fetch as the Android host gives it (HostIo.kt, on OkHttp as RN's):
+    // Headers, Request, Response with no stream body (core then reads through
+    // arrayBuffer(), as from RN's background-safe fetch), and fetch itself. A
+    // body crosses the bridge as text or base64 bytes; the answer's body comes
+    // back as base64 and is decoded on first read.
+    var BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    var base64Codes = null;
+    var toBase64 = function (bytes) {
+        var parts = [];
+        var chunk = '';
+        for (var i = 0; i < bytes.length; i += 3) {
+            var n = (bytes[i] << 16) | ((i + 1 < bytes.length ? bytes[i + 1] : 0) << 8) | (i + 2 < bytes.length ? bytes[i + 2] : 0);
+            chunk += BASE64.charAt((n >> 18) & 63) + BASE64.charAt((n >> 12) & 63)
+                + (i + 1 < bytes.length ? BASE64.charAt((n >> 6) & 63) : '=') + (i + 2 < bytes.length ? BASE64.charAt(n & 63) : '=');
+            if (chunk.length >= 8192) { parts.push(chunk); chunk = ''; }
+        }
+        parts.push(chunk);
+        return parts.join('');
+    };
+    // Strict: text that is not whole base64 throws, so a damaged answer can never read as a shorter body.
+    var fromBase64 = function (text) {
+        var unreadable = function () { return new TypeError('Network request failed: the host sent an unreadable body'); };
+        if (typeof text !== 'string' || text.length % 4 !== 0) throw unreadable();
+        if (!base64Codes) {
+            base64Codes = new Uint8Array(128).fill(255);
+            for (var c = 0; c < 64; c += 1) base64Codes[BASE64.charCodeAt(c)] = c;
+            base64Codes[61] = 0;
+        }
+        var padding = text.charAt(text.length - 1) === '=' ? (text.charAt(text.length - 2) === '=' ? 2 : 1) : 0;
+        var firstPad = text.indexOf('=');
+        if (firstPad >= 0 && firstPad < text.length - padding) throw unreadable();
+        var bytes = new Uint8Array((text.length / 4) * 3 - padding);
+        for (var i = 0, j = 0; i < text.length; i += 4) {
+            var a = text.charCodeAt(i);
+            var b = text.charCodeAt(i + 1);
+            var d = text.charCodeAt(i + 2);
+            var e = text.charCodeAt(i + 3);
+            if ((a | b | d | e) > 127) throw unreadable();
+            a = base64Codes[a];
+            b = base64Codes[b];
+            d = base64Codes[d];
+            e = base64Codes[e];
+            if ((a | b | d | e) > 63) throw unreadable();
+            var n = (a << 18) | (b << 12) | (d << 6) | e;
+            bytes[j++] = (n >> 16) & 255;
+            if (j < bytes.length) bytes[j++] = (n >> 8) & 255;
+            if (j < bytes.length) bytes[j++] = n & 255;
+        }
+        return bytes;
+    };
+    var bytesOf = function (body) {
+        if (body instanceof ArrayBuffer) return new Uint8Array(body);
+        if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+        throw new TypeError('Unsupported body: text, URLSearchParams, ArrayBuffer or a typed array only');
+    };
+
+    var HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+    var headerName = function (name) {
+        var text = String(name);
+        if (!HEADER_NAME.test(text)) throw new TypeError('Invalid header name: ' + text);
+        return text.toLowerCase();
+    };
+    var headerValue = function (value) {
+        var text = String(value).replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, '');
+        if (/[\0\r\n]/.test(text)) throw new TypeError('Invalid header value');
+        return text;
+    };
+    if (typeof global.Headers !== 'function') {
+        global.Headers = function Headers(init) {
+            var self = this;
+            this._map = new Map();
+            if (init instanceof global.Headers) {
+                init.forEach(function (value, name) { self.append(name, value); });
+            } else if (Array.isArray(init)) {
+                init.forEach(function (pair) {
+                    if (!pair || pair.length !== 2) throw new TypeError('A header needs a name and a value');
+                    self.append(pair[0], pair[1]);
+                });
+            } else if (init && typeof init === 'object') {
+                Object.keys(init).forEach(function (name) { self.append(name, init[name]); });
+            }
+        };
+        var headersProto = global.Headers.prototype;
+        headersProto.append = function (name, value) {
+            var key = headerName(name);
+            var text = headerValue(value);
+            var current = this._map.get(key);
+            this._map.set(key, current === undefined ? text : current + ', ' + text);
+        };
+        headersProto.set = function (name, value) { this._map.set(headerName(name), headerValue(value)); };
+        headersProto.get = function (name) {
+            var value = this._map.get(headerName(name));
+            return value === undefined ? null : value;
+        };
+        headersProto.has = function (name) { return this._map.has(headerName(name)); };
+        headersProto.delete = function (name) { this._map.delete(headerName(name)); };
+        // Names in order, as the platform's Headers iterates.
+        headersProto._pairs = function () {
+            var pairs = [];
+            this._map.forEach(function (value, name) { pairs.push([name, value]); });
+            return pairs.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
+        };
+        headersProto.forEach = function (fn, thisArg) {
+            var self = this;
+            this._pairs().forEach(function (pair) { fn.call(thisArg, pair[1], pair[0], self); });
+        };
+        headersProto.entries = function () { return this._pairs()[Symbol.iterator](); };
+        headersProto.keys = function () { return this._pairs().map(function (pair) { return pair[0]; })[Symbol.iterator](); };
+        headersProto.values = function () { return this._pairs().map(function (pair) { return pair[1]; })[Symbol.iterator](); };
+        headersProto[Symbol.iterator] = headersProto.entries;
+    }
+
+    // WebDAV's methods and the usual ones. Upper-cased, as RN's background-safe fetch sends them.
+    var METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'PROPFIND', 'MKCOL', 'MOVE', 'COPY'];
+    if (typeof global.Request !== 'function') {
+        global.Request = function Request(input, init) {
+            var options = init || {};
+            var source = input instanceof global.Request ? input : null;
+            this.url = source ? source.url : String(input);
+            this.method = String(options.method || (source ? source.method : 'GET')).toUpperCase();
+            if (METHODS.indexOf(this.method) < 0) throw new TypeError('Unsupported method: ' + this.method);
+            this.headers = new global.Headers(options.headers || (source ? source.headers : undefined));
+            this.signal = options.signal || (source ? source.signal : null) || new global.AbortController().signal;
+            this.redirect = options.redirect || (source ? source.redirect : 'follow');
+            var body = options.body !== undefined ? options.body : (source ? source._body : null);
+            if (body != null && (this.method === 'GET' || this.method === 'HEAD')) {
+                throw new TypeError('Request with GET/HEAD method cannot have body.');
+            }
+            this._body = body == null ? null : body;
+        };
+    }
+
+    if (typeof global.Response !== 'function') {
+        global.Response = function Response(body, init) {
+            var options = init || {};
+            this.status = options.status === undefined ? 200 : options.status;
+            this.statusText = options.statusText === undefined ? '' : String(options.statusText);
+            this.ok = this.status >= 200 && this.status < 300;
+            this.headers = new global.Headers(options.headers);
+            this.url = '';
+            this.redirected = false;
+            this.type = 'default';
+            this.body = null;
+            this.bodyUsed = false;
+            this._bytes = body == null ? new Uint8Array(0) : typeof body === 'string' ? new global.TextEncoder().encode(body) : bytesOf(body).slice();
+        };
+        var readBody = function (response) {
+            response.bodyUsed = true;
+            return response._bytes;
+        };
+        var responseProto = global.Response.prototype;
+        responseProto.arrayBuffer = function () {
+            var bytes = readBody(this);
+            return Promise.resolve(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+        };
+        responseProto.bytes = function () { return Promise.resolve(readBody(this).slice()); };
+        // Fatal: a body that is not UTF-8 rejects rather than reading as other text.
+        responseProto.text = function () {
+            var response = this;
+            return new Promise(function (resolve) { resolve(new global.TextDecoder('utf-8', { fatal: true }).decode(readBody(response))); });
+        };
+        responseProto.json = function () { return this.text().then(function (text) { return JSON.parse(text); }); };
+        responseProto.clone = function () {
+            var copy = new global.Response(null, { status: this.status, statusText: this.statusText, headers: this.headers });
+            copy.url = this.url;
+            copy.redirected = this.redirected;
+            copy.type = this.type;
+            copy._bytes = this._bytes;
+            return copy;
+        };
+    }
+
+    if (typeof global.fetch !== 'function') {
+        global.fetch = function (input, init) {
+            mark('fetch');
+            return new Promise(function (resolve, reject) {
+                var request = new global.Request(input, init);
+                var signal = request.signal;
+                if (signal.aborted) throw signal.reason;
+                refuseIfCancelled();
+                var payload = { url: request.url, method: request.method, redirect: request.redirect };
+                var body = request._body;
+                if (typeof body === 'string' || body instanceof global.URLSearchParams) {
+                    if (!request.headers.has('content-type')) {
+                        request.headers.set('content-type', typeof body === 'string'
+                            ? 'text/plain;charset=UTF-8' : 'application/x-www-form-urlencoded;charset=UTF-8');
+                    }
+                    payload.text = typeof body === 'string' ? body : body.toString().replace(/^\?/, '');
+                } else if (body !== null) {
+                    payload.base64 = toBase64(bytesOf(body));
+                }
+                payload.headers = [];
+                request.headers.forEach(function (value, name) { payload.headers.push([name, value]); });
+                // The host answers with the whole body or an error (a body cut short, reset, oversized or undecodable is
+                // an error, HostIo.read): fetch then rejects. It never resolves with a partial or empty body, which core
+                // would read as a missing remote document and write over.
+                var cancel = function (reason) {
+                    signal.removeEventListener('abort', onAbort);
+                    ioPending.delete(id);
+                    try { native().netAbort(id); } catch (_error) { /* its late answer is dropped either way */ }
+                    reject(reason);
+                };
+                var onAbort = function () { cancel(signal.reason); };
+                var id = startIo(hostCall(native().netFetch(JSON.stringify(payload))), function (answer) {
+                    signal.removeEventListener('abort', onAbort);
+                    try {
+                        if (answer.error !== undefined) throw new TypeError(answer.error);
+                        var response = new global.Response(null, { status: answer.status, statusText: answer.statusText, headers: answer.headers });
+                        response.url = answer.url;
+                        response.redirected = answer.redirected;
+                        response.type = 'basic';
+                        response._bytes = fromBase64(answer.base64);
+                        resolve(response);
+                    } catch (error) {
+                        reject(error);
+                    }
+                }, cancel);
+                signal.addEventListener('abort', onAbort);
+            });
+        };
+    }
+
+    // --- secrets ------------------------------------------------------------
+    // The host's secure storage (SecretStore.kt: RN's expo-secure-store items in
+    // the Android Keystore, under RN's key names), for the credentials core's
+    // sync and AI settings keep. Each call runs off the engine thread.
+    var secretCall = function (op, key, value) {
+        return new Promise(function (resolve, reject) {
+            refuseIfCancelled();
+            startIo(hostCall(native().secretCall(JSON.stringify({ op: op, key: String(key), value: value }))), function (answer) {
+                if (answer.error !== undefined) reject(new Error(answer.error));
+                else resolve(op === 'get' ? answer.value : undefined);
+            });
+        });
+    };
+    global.__mindwtrSecrets = {
+        /** The value saved under [key], or null. */
+        getSecret: function (key) { mark('secrets'); return secretCall('get', key); },
+        setSecret: function (key, value) {
+            mark('secrets');
+            if (typeof value !== 'string') return Promise.reject(new TypeError('A secret value must be a string'));
+            return secretCall('set', key, value);
+        },
+        deleteSecret: function (key) { mark('secrets'); return secretCall('delete', key); },
+    };
 
     // --- localStorage -------------------------------------------------------
     // In-memory only. The core stores the chosen language here; the experiment

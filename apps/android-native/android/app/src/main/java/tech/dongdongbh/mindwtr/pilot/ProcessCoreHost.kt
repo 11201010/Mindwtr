@@ -3,6 +3,7 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import android.util.Log
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import java.io.File
 import java.util.Locale
@@ -87,7 +88,7 @@ internal object ProcessCoreHost {
         } else {
             null
         }
-        val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir })
+        val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app))
         try {
             runtime.start(app.assets.open("core-host.js").bufferedReader().use { it.readText() }, legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, legacy?.language)

@@ -23,12 +23,23 @@ import java.util.concurrent.Future
  * QuickJS and SQLite share one worker thread; Compose never enters either runtime.
  * [rnDataDir] is set only when [databaseFile] is the React Native app's database:
  * then the JS host may apply RN's AsyncStorage change after it imported RN's backup.
+ * [io] runs the JS host's fetch and secret calls off this thread; their answers come back in [callAsync]'s pump loop.
  */
-class CoreHost(private val databaseFile: File, private val rnDataDir: File? = null) {
+class CoreHost(private val databaseFile: File, private val rnDataDir: File? = null, private val io: HostIo) {
     companion object {
         const val TAG = "MindwtrNativeDev"
         /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
         private const val NATIVE_ERROR = "!MindwtrNativeError:"
+
+        /**
+         * An operation's deadline: the longest core timeout it can wrap. A contract read or command waits at most on core's
+         * storage (STORAGE_TIMEOUT_MS, 15 s), inside core's request timeout (DEFAULT_TIMEOUT_MS, 30 s).
+         */
+        const val OPERATION_DEADLINE_MS = 30_000L
+        /** An operation that sends requests: HostIo's ceiling for one request, plus core's 30 s for the work around it. */
+        const val NETWORK_DEADLINE_MS = HostIo.CALL_TIMEOUT_MS + OPERATION_DEADLINE_MS
+        /** How long a timed-out operation may take to end once cancelled, before the host stops for good. */
+        const val DRAIN_MS = 10_000L
 
         /**
          * A Kotlin exception must not cross the QuickJS JNI boundary: the
@@ -48,6 +59,8 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
     private var context: QuickJSContext? = null
     private var sqlite: SqliteBridge? = null
     private val functions = HashMap<String, JSFunction>()
+    /** Set when an operation outlived its deadline and its drain. The engine is gone, so that operation never resumes. */
+    @Volatile private var stopped: String? = null
     /** ICU collators by "sensitivity:numeric", made and used on the engine thread only. */
     private val collators = HashMap<String, Collator>()
     private var hostObject: JSObject? = null
@@ -120,9 +133,16 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
             })
             // A diagnostic line must never fail the caller: coerce and swallow.
             bridge.setProperty("log", guarded { args -> runCatching { Log.i(TAG, args.getOrNull(0).toString()) }; null })
+            // fetch and the secret calls (host-polyfills.js): each only starts here; HostIo runs it off this thread and
+            // queues its answer, and the polyfill settles it when the pump loop below takes that answer with ioNext.
+            bridge.setProperty("netFetch", guarded { args -> io.fetch(args[0] as String) })
+            bridge.setProperty("netAbort", guarded { args -> io.abort(args[0] as String); null })
+            bridge.setProperty("secretCall", guarded { args -> io.secret(args[0] as String) })
+            bridge.setProperty("ioNext", guarded { _ -> io.next() })
+            bridge.setProperty("ioBody", guarded { _ -> io.body() })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
-            callAsync("boot", legacyState, legacyBackup)
+            callAsync("boot", legacyState, legacyBackup).also { netCheck() }
         } catch (error: Throwable) {
             closeOnEngine()
             throw error
@@ -279,12 +299,29 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
      */
     private fun debugFault(name: String): String = debugProperty(name)
 
+    /**
+     * Debug builds only: with `debug.mindwtr.native.net_check=<port>`, core's WebDAV calls and the secret calls run against
+     * check-net-device.mjs's server on 127.0.0.1:<port> (adb reverse) once, after boot, and log their outcomes.
+     */
+    private fun netCheck() {
+        val port = debugFault("net_check").ifEmpty { return }
+        runCatching { callAsync("netCheck", port, deadlineMs = NETWORK_DEADLINE_MS) }
+            .onSuccess { Log.i(TAG, "Native Android net check $it") }
+            .onFailure { Log.w(TAG, "Native Android net check failed", it) }
+        // Operations past a short deadline: "drain" ends once cancelled; "stuck" cannot, so the host stops and this boot fails.
+        for (mode in listOf("drain", "stuck")) {
+            runCatching { callAsync("netDeadline", port, mode, deadlineMs = 1_500L) }
+                .onFailure { Log.i(TAG, "Native Android net deadline $mode: ${it.message}") }
+        }
+    }
+
     private fun debugDelay(name: String) {
         val ms = debugFault(name).toLongOrNull() ?: return
         if (ms > 0) Thread.sleep(minOf(ms, 60_000L))
     }
 
-    private fun callAsync(method: String, vararg args: Any?): JSONObject = onEngine {
+    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = OPERATION_DEADLINE_MS): JSONObject = onEngine {
+        stopped?.let { throw IllegalStateException(it) }
         val command = method in setOf("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "resetChecklist", "taskFocus", "projectFocus",
             "createProject", "setAreaFilter", "saveSearch", "inboxCommit", "inboxSkip", "menuCommand")
         if (command) {
@@ -292,28 +329,47 @@ class CoreHost(private val databaseFile: File, private val rnDataDir: File? = nu
             debugDelay("delay_before_ms")
         }
         val id = call(method, *args) as String
+        val answer = pumpUntil(id, deadlineMs) ?: run {
+            // Past its deadline: its signal fires, its fetches reject and new host calls are refused, so it ends now, before
+            // the failure is reported. One that still has not ended stops the host: no JS runs again, so it never resumes.
+            call("cancel", id)
+            if (pumpUntil(id, DRAIN_MS) == null) {
+                val reason = "Core host stopped: $method did not end after its deadline"
+                stopped = reason
+                Log.e(TAG, reason)
+                closeOnEngine()
+                throw IllegalStateException(reason)
+            }
+            checkNotNull(context).globalObject.getJSFunction("__resumeHostCalls").call()
+            throw IllegalStateException("Core $method timed out")
+        }
+        val result = JSONObject(answer)
+        if (command) debugDelay("delay_after_ms")
+        if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
+        result.getJSONObject("value")
+    }
+
+    /** Pumps timers and host call answers until operation [id] answers (its JSON), or null once [ms] have passed. */
+    private fun pumpUntil(id: String, ms: Long): String? {
         val engine = checkNotNull(context)
         val pump = engine.globalObject.getJSFunction("__pumpTimers")
         val nextDelay = engine.globalObject.getJSFunction("__nextTimerDelay")
-        val deadline = System.currentTimeMillis() + 30_000
+        val deadline = System.currentTimeMillis() + ms
         while (System.currentTimeMillis() < deadline) {
             pump.call()
-            val answer = call("poll", id) as String?
-            if (answer != null) {
-                val result = JSONObject(answer)
-                if (command) debugDelay("delay_after_ms")
-                if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
-                return@onEngine result.getJSONObject("value")
-            }
+            (call("poll", id) as String?)?.let { return it }
             val delay = (nextDelay.call() as? Number)?.toLong() ?: 1L
-            if (delay > 0) Thread.sleep(minOf(delay, 25L))
+            // An open fetch or secret call wakes the loop as soon as its answer is queued.
+            if (io.busy()) io.await(if (delay < 0) 25L else minOf(delay, 25L))
+            else if (delay > 0) Thread.sleep(minOf(delay, 25L))
         }
-        throw IllegalStateException("Core $method timed out")
+        return null
     }
 
     private fun closeOnEngine() {
         functions.clear()
         hostObject = null
+        io.close()
         try {
             sqlite?.close()
         } finally {
