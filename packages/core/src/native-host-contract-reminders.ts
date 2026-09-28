@@ -8,6 +8,8 @@
  *   stored alarm map (the `alarms` string this method returned last time, or null). Apply
  *   it in this order: store `writeAhead` when it is not null, cancel each `cancel` id, make
  *   each `schedule` alarm (an alarm made under a held id replaces it), then store `alarms`.
+ *   A cancel whose `reason` is `withdrawn`, and a schedule `replacing` a withdrawn alarm,
+ *   first removes the notification that alarm delivered; an `expired` one keeps it.
  *   A stop anywhere in between is safe: the next plan, from whichever string was stored,
  *   makes each pending alarm again under the same id and cancels the ones no longer
  *   requested, so no alarm is made twice or left behind. Plan again after `topUpDelayMs`,
@@ -33,10 +35,12 @@ import { logWarn } from './logger';
 import {
     buildReminderAlarmDetails,
     buildReminderSnooze,
+    getReminderAlarmCancelReason,
     MAX_PENDING_ONE_SHOT_REMINDER_ALARMS,
     planReminderAlarms,
     readReminderAlarmMap,
     writeReminderAlarmMap,
+    type ReminderAlarmCancelReason,
     type ReminderAlarmEntry,
     type ReminderAlarmPlan,
 } from './mobile-reminder-alarms';
@@ -61,11 +65,14 @@ export type NativeReminderAlarm = {
     repeat: 'once' | 'daily' | 'weekly';
     /** What the notification shows and carries (React Native's alarm details: title, message, channel, buttons, data). */
     details: Record<string, unknown>;
+    /** The held alarm this one replaces goes for this reason; null when none is held. */
+    replacing: ReminderAlarmCancelReason | null;
 };
 
 export type NativeReminderAlarmPlan = {
     mode: ReminderAlarmPlan['mode'];
-    cancel: { key: string; id: number }[];
+    /** `withdrawn`: remove what the alarm delivered too. `expired`: keep it. */
+    cancel: { key: string; id: number; reason: ReminderAlarmCancelReason }[];
     schedule: NativeReminderAlarm[];
     /** Store before applying: the held alarms plus each alarm about to be made, marked pending. Null when nothing is made. */
     writeAhead: string | null;
@@ -154,7 +161,8 @@ export function createReminderMethods(deps: ReminderDeps) {
             for (const key of plan.schedule) {
                 const request = requests.get(key);
                 if (!request) continue;
-                const id = held.get(key)?.id ?? allocateAlarmId(key, taken, REMINDER_ID_BASE);
+                const heldEntry = held.get(key);
+                const id = heldEntry?.id ?? allocateAlarmId(key, taken, REMINDER_ID_BASE);
                 taken.add(id);
                 const fireAt = new Date(request.config.fireAt);
                 fireAt.setMilliseconds(0);
@@ -164,6 +172,7 @@ export function createReminderMethods(deps: ReminderDeps) {
                     fireAtMs: fireAt.getTime(),
                     repeat: request.config.repeatInterval ?? 'once',
                     details: buildReminderAlarmDetails(key, request.config),
+                    replacing: heldEntry ? getReminderAlarmCancelReason(plan, key) : null,
                 });
                 next.set(key, { id, signature: request.signature });
                 writeAhead.set(key, { id, signature: request.signature, pending: true });
@@ -171,7 +180,7 @@ export function createReminderMethods(deps: ReminderDeps) {
             const cancel = plan.cancel.flatMap((key) => {
                 const entry = held.get(key);
                 next.delete(key);
-                return entry ? [{ key, id: entry.id }] : [];
+                return entry ? [{ key, id: entry.id, reason: getReminderAlarmCancelReason(plan, key) }] : [];
             });
             return {
                 ok: true,
@@ -212,7 +221,7 @@ export function createReminderMethods(deps: ReminderDeps) {
             const key = `snooze:${input.requestId.toLowerCase()}`;
             const snooze = buildReminderSnooze(input.details, input.requestedAt, key);
             if (!snooze) return fail('INVALID_INPUT', 'This reminder has no Snooze');
-            return { ok: true, value: { ...snooze, id: allocateAlarmId(key, new Set(), SNOOZE_ID_BASE), repeat: 'once' } };
+            return { ok: true, value: { ...snooze, id: allocateAlarmId(key, new Set(), SNOOZE_ID_BASE), repeat: 'once', replacing: null } };
         },
 
         /** What a notification tap, or one of its buttons, opens or does. */

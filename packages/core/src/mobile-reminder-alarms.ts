@@ -9,6 +9,10 @@
  *   signature is unchanged is left alone, a changed one is cancelled and made again, and a
  *   key no longer requested is cancelled. An entry marked `pending` was about to be made
  *   when the app stopped: it is never taken as current.
+ * - An alarm that goes is `withdrawn` or `expired`. Withdrawn (the task or project is done,
+ *   gone or moved, or its reminders are off): what it delivered is removed too. Expired (its
+ *   time only passed, or the same reminder is remade): what it delivered stays, so a cycle
+ *   5 s after a reminder fires never clears it from the tray.
  * - One-shot task and project reminders are capped per platform (Android 200, iOS 60),
  *   soonest first. A cycle runs again 5 s after the soonest fires, so the window tops up.
  * - Snooze is a new alarm outside the map, 10 minutes after the tap, so a cycle never
@@ -21,10 +25,13 @@
  */
 import {
     buildReminderSchedule,
+    getProjectReviewReminderIntent,
+    getTaskReminderPlan,
     hasActiveMobileNotificationFeature,
     type ReminderScheduleDiagnostics,
     type ReminderScheduleRequest,
 } from './schedule-utils';
+import { isTaskActionable } from './task-status';
 import type { AppLanguage, NotificationSettings, Project, Task } from './types';
 
 export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
@@ -63,6 +70,13 @@ export type ReminderAlarmConfig = {
 export type ReminderAlarmEntry = { id: number; signature?: string; pending?: true };
 
 export type ReminderAlarmRequest = { key: string; config: ReminderAlarmConfig; signature: string };
+
+/**
+ * Why a held alarm goes. `withdrawn`: what it announced no longer holds, so its delivered
+ * notification goes too. `expired`: what it announced held when it fired, so a delivered
+ * notification stays.
+ */
+export type ReminderAlarmCancelReason = 'withdrawn' | 'expired';
 
 export const getMaxPendingOneShotReminderAlarms = (platform: string): number => (
     platform === 'ios' ? MAX_PENDING_ONE_SHOT_REMINDER_ALARMS.ios : MAX_PENDING_ONE_SHOT_REMINDER_ALARMS.android
@@ -193,6 +207,8 @@ export type ReminderAlarmPlan = {
     schedule: string[];
     /** Held keys that are not requested. */
     cancel: string[];
+    /** Why each held alarm that goes (cancelled, or remade because it changed) goes. */
+    reasons: Record<string, ReminderAlarmCancelReason>;
     topUpDelayMs: number | null;
 } & (
     | { mode: 'active'; diagnostics: ReminderScheduleDiagnostics }
@@ -213,6 +229,56 @@ const toReminderAlarmRequest = (request: ReminderScheduleRequest): ReminderAlarm
     return { key: request.key, config, signature: buildReminderAlarmSignature(config) };
 };
 
+/** The time a held one-shot alarm was made for, from its signature; null when it cannot be read. */
+function getSignedFireAtMs(entry: ReminderAlarmEntry): number | null {
+    if (!entry.signature) return null;
+    try {
+        const fireAt = (JSON.parse(entry.signature) as { fireAt?: unknown }).fireAt;
+        const fireAtMs = typeof fireAt === 'string' ? Date.parse(fireAt) : Number.NaN;
+        return Number.isFinite(fireAtMs) ? fireAtMs : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Why the held alarm under `key` goes, while reminders are on. A digest that is still requested
+ * only moved; one that is not was turned off. A task or project reminder expired when its task or
+ * project would still give the same key at the same moment, judged just before that moment;
+ * otherwise it was withdrawn. An alarm whose moment cannot be read is taken as expired.
+ */
+function getActiveCancelReason(
+    key: string,
+    entry: ReminderAlarmEntry,
+    requested: boolean,
+    context: { diagnostics: ReminderScheduleDiagnostics; tasks: Map<string, Task>; projects: Map<string, Project> },
+): ReminderAlarmCancelReason {
+    if (key.startsWith('digest:')) return requested ? 'expired' : 'withdrawn';
+    const { diagnostics } = context;
+    if (key.startsWith('task:')) {
+        const task = context.tasks.get(key.slice('task:'.length).replace(/:r\d+$/, ''));
+        if (!diagnostics.taskRemindersEnabled || !task || task.deletedAt || !isTaskActionable(task)) return 'withdrawn';
+        const firedAtMs = getSignedFireAtMs(entry);
+        if (firedAtMs === null) return 'expired';
+        const plan = getTaskReminderPlan(task, new Date(firedAtMs - 1), {
+            includeStartTime: diagnostics.includeStartTime,
+            includeDueDate: diagnostics.includeDueDate,
+            includeReviewAt: diagnostics.includeReviewAt,
+        });
+        return [plan.next, ...plan.repeats].some((intent) => intent?.key === key && intent.scheduledAt.getTime() === firedAtMs)
+            ? 'expired'
+            : 'withdrawn';
+    }
+    if (key.startsWith('project:')) {
+        const project = context.projects.get(key.slice('project:'.length));
+        if (!diagnostics.includeReviewAt || !project) return 'withdrawn';
+        const firedAtMs = getSignedFireAtMs(entry);
+        if (firedAtMs === null) return 'expired';
+        return getProjectReviewReminderIntent(project, new Date(firedAtMs - 1))?.scheduledAt.getTime() === firedAtMs ? 'expired' : 'withdrawn';
+    }
+    return 'withdrawn';
+}
+
 /** Pure: the alarms the device should hold for this store, against the alarms it holds. */
 export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarmPlan {
     const held = Array.from(input.alarms.keys());
@@ -224,6 +290,7 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
             keep: [],
             schedule: [],
             cancel: held,
+            reasons: Object.fromEntries(held.map((key) => [key, 'withdrawn' as const])),
             topUpDelayMs: null,
             diagnostics: null,
         };
@@ -245,16 +312,43 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
         requested.add(request.key);
         (isReminderAlarmCurrent(input.alarms.get(request.key), request.signature) ? keep : schedule).push(request.key);
     }
+    const cancel = held.filter((key) => !requested.has(key));
+    const context = {
+        diagnostics,
+        tasks: new Map(input.tasks.map((task) => [task.id, task])),
+        projects: new Map(input.projects.map((project) => [project.id, project])),
+    };
+    const reasons: Record<string, ReminderAlarmCancelReason> = {};
+    for (const key of [...schedule, ...cancel]) {
+        const entry = input.alarms.get(key);
+        if (entry) reasons[key] = getActiveCancelReason(key, entry, requested.has(key), context);
+    }
     return {
         mode: 'active',
         recurring,
         oneShot,
         keep,
         schedule,
-        cancel: held.filter((key) => !requested.has(key)),
+        cancel,
+        reasons,
         topUpDelayMs: getOneShotTopUpDelayMs(oneShot.map((request) => request.config.fireAt.getTime()), input.now.getTime()),
         diagnostics,
     };
+}
+
+/**
+ * The plan's reason for the alarm under `key`. One the plan did not hold (made late by an
+ * aborted cycle) expires, unless every alarm is going.
+ */
+export const getReminderAlarmCancelReason = (plan: ReminderAlarmPlan, key: string): ReminderAlarmCancelReason => (
+    plan.reasons[key] ?? (plan.mode === 'active' ? 'expired' : 'withdrawn')
+);
+
+/** How many held alarms the plan withdraws and lets expire, for the diagnostics line. */
+export function countReminderAlarmCancelReasons(plan: ReminderAlarmPlan): Record<ReminderAlarmCancelReason, number> {
+    const counts = { withdrawn: 0, expired: 0 };
+    for (const reason of Object.values(plan.reasons)) counts[reason] += 1;
+    return counts;
 }
 
 /** React Native's alarm library, and the service's log. */
@@ -274,14 +368,26 @@ const toAlarmFireDate = (port: ReminderAlarmPort, date: Date): string => {
     return port.parseDate(next);
 };
 
-/** Cancels the alarm held under `key` and removes its delivered notification; false when none is held. */
+/**
+ * Cancels the alarm held under `key`; false when none is held. A withdrawn alarm's delivered
+ * notification goes first: Android's library finds it through the alarm's row, which
+ * deleteAlarm deletes. An expired alarm's delivered notification stays.
+ */
 export async function cancelReminderAlarm(
     alarms: Map<string, ReminderAlarmEntry>,
     key: string,
     port: ReminderAlarmPort,
+    reason: ReminderAlarmCancelReason,
 ): Promise<boolean> {
     const entry = alarms.get(key);
     if (!entry) return false;
+    if (reason === 'withdrawn') {
+        try {
+            port.removeFiredNotification(entry.id);
+        } catch {
+            // Safe to ignore if notification has not fired.
+        }
+    }
     try {
         port.deleteAlarm(entry.id);
     } catch (error) {
@@ -291,11 +397,6 @@ export async function cancelReminderAlarm(
         port.deleteRepeatingAlarm(entry.id);
     } catch {
         // Safe to ignore when alarm is one-shot.
-    }
-    try {
-        port.removeFiredNotification(entry.id);
-    } catch {
-        // Safe to ignore if notification has not fired.
     }
     alarms.delete(key);
     port.logInfo('Alarm canceled', { alarmKey: key, alarmId: entry.id });
@@ -310,11 +411,12 @@ async function scheduleReminderAlarm(
     alarms: Map<string, ReminderAlarmEntry>,
     request: ReminderAlarmRequest,
     port: ReminderAlarmPort,
+    plan: ReminderAlarmPlan,
 ): Promise<void> {
     const { key, config, signature } = request;
     if (isReminderAlarmCurrent(alarms.get(key), signature)) return;
 
-    await cancelReminderAlarm(alarms, key, port);
+    await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
 
     const baseFireAt = new Date(config.fireAt);
     baseFireAt.setMilliseconds(0);
@@ -364,12 +466,12 @@ async function scheduleReminderAlarm(
 
 async function scheduleReminderAlarmBatches(
     alarms: Map<string, ReminderAlarmEntry>,
-    requests: ReminderAlarmRequest[],
+    plan: ReminderAlarmPlan,
     port: ReminderAlarmPort,
 ): Promise<void> {
-    for (let index = 0; index < requests.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
-        const batch = requests.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE);
-        await Promise.all(batch.map((request) => scheduleReminderAlarm(alarms, request, port)));
+    for (let index = 0; index < plan.oneShot.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
+        const batch = plan.oneShot.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE);
+        await Promise.all(batch.map((request) => scheduleReminderAlarm(alarms, request, port, plan)));
     }
 }
 
@@ -384,9 +486,9 @@ export async function scheduleReminderAlarms(
     port: ReminderAlarmPort,
 ): Promise<void> {
     for (const request of plan.recurring) {
-        await scheduleReminderAlarm(alarms, request, port);
+        await scheduleReminderAlarm(alarms, request, port, plan);
     }
-    await scheduleReminderAlarmBatches(alarms, plan.oneShot, port);
+    await scheduleReminderAlarmBatches(alarms, plan, port);
 }
 
 /** Cancels every held alarm the plan does not request, as `alarms` stands now. */
@@ -398,7 +500,7 @@ export async function cancelUnrequestedReminderAlarms(
     const requested = new Set([...plan.recurring, ...plan.oneShot].map((request) => request.key));
     for (const key of Array.from(alarms.keys())) {
         if (requested.has(key)) continue;
-        await cancelReminderAlarm(alarms, key, port);
+        await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
     }
 }
 

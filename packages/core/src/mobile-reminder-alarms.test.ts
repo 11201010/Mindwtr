@@ -6,6 +6,7 @@ import {
     buildReminderSnooze,
     cancelReminderAlarm,
     cancelUnrequestedReminderAlarms,
+    countReminderAlarmCancelReasons,
     getMaxPendingOneShotReminderAlarms,
     isPomodoroAlarmScheduleSuperseded,
     isPomodoroAlarmUnchanged,
@@ -95,7 +96,7 @@ describe('mobile reminder alarms', () => {
                 const timers: number[] = [];
                 let error: string | null = null;
                 if (cycle.trigger === 'exact') {
-                    for (const key of Array.from(alarms.keys())) await cancelReminderAlarm(alarms, key, port);
+                    for (const key of Array.from(alarms.keys())) await cancelReminderAlarm(alarms, key, port, 'expired');
                 }
                 const plan = planReminderAlarms({
                     settings: cycle.settings,
@@ -115,6 +116,11 @@ describe('mobile reminder alarms', () => {
                 } catch (caught) {
                     error = caught instanceof Error ? caught.message : String(caught);
                 }
+                const counts = countReminderAlarmCancelReasons(plan);
+                const reasonLines = error === null
+                    ? (['withdrawn', 'expired'] as const).filter((reason) => counts[reason] > 0)
+                        .map((reason) => ({ releaseCheck: 'v1.3.3/reminder-withdrawn-clears-tray', reason, count: counts[reason] }))
+                    : [];
                 const saved = writeReminderAlarmMap(alarms);
                 const saves = saved === lastSaved ? [] : [saved];
                 lastSaved = saved;
@@ -132,6 +138,10 @@ describe('mobile reminder alarms', () => {
                     saves: observed.calls.filter(([kind, key]) => kind === 'setItem' && key === ALARM_MAP_KEY).map((call) => call[2]),
                 });
                 expect({ where, timers }).toEqual({ where, timers: observed.calls.filter(([kind]) => kind === 'setTimeout').map((call) => call[1]) });
+                expect({ where, reasonLines }).toEqual({
+                    where,
+                    reasonLines: observed.calls.filter(([kind, message]) => kind === 'logInfo' && message === '[Local Notifications] Reminder alarms cancelled').map((call) => call[2]),
+                });
             }
         }
     });
@@ -170,6 +180,54 @@ describe('mobile reminder alarms', () => {
             ['task:gone', { id: 4, signature: 'x' }],
         ]);
         expect(plan({ tasks, alarms })).toMatchObject({ keep: ['task:same'], schedule: ['task:moved', 'task:pending'], cancel: ['task:gone'] });
+    });
+
+    it('withdraws an alarm whose reminder no longer holds and lets one whose time only passed expire', () => {
+        const due = '2026-09-28T09:00:00.000Z';
+        const fired = (tasks: Task[], fields: Partial<ReminderAlarmPlanInput> = {}) => {
+            const before = planReminderAlarms({
+                settings: {}, tasks, projects: [], now: new Date('2026-09-28T08:00:00.000Z'), translations: english, maxOneShotReminders: 200, alarms: new Map(),
+            });
+            const alarms = new Map(before.oneShot.map((request, index): [string, ReminderAlarmEntry] => [request.key, { id: index + 1, signature: request.signature }]));
+            return (after: Task[], settings: NotificationSettings = {}) => plan({ tasks: after, alarms, settings, ...fields }).reasons;
+        };
+        const live = task('a', { dueDate: due });
+        const after = fired([live]);
+        expect(after([live])).toEqual({ 'task:a': 'expired' });
+        expect(after([{ ...live, status: 'done' }])).toEqual({ 'task:a': 'withdrawn' });
+        expect(after([])).toEqual({ 'task:a': 'withdrawn' });
+        expect(after([{ ...live, dueDate: '2026-09-28T09:30:00.000Z' }])).toEqual({ 'task:a': 'withdrawn' });
+        expect(after([{ ...live, dueDate: '2026-09-28' }])).toEqual({ 'task:a': 'withdrawn' });
+        expect(after([live], { dueDateNotificationsEnabled: false })).toEqual({ 'task:a': 'withdrawn' });
+        expect(after([live], { notificationsEnabled: false, weeklyReviewEnabled: true })).toEqual({ 'task:a': 'withdrawn' });
+        // The start reminder fired; the same key moves on to the due reminder.
+        const both = task('b', { startTime: due, dueDate: '2026-09-28T12:00:00.000Z' });
+        expect(fired([both])([both])).toEqual({ 'task:b': 'expired' });
+        // A project review whose project was archived.
+        const project: Project = { id: 'p', title: 'P', status: 'active', color: '#000', order: 0, tagIds: [], reviewAt: due, createdAt: '', updatedAt: '' };
+        const alarms = new Map<string, ReminderAlarmEntry>([['project:p', { id: 9, signature: JSON.stringify({ fireAt: due }) }], ['legacy', { id: 8 }]]);
+        expect(plan({ alarms, projects: [project] }).reasons).toEqual({ 'project:p': 'expired', legacy: 'withdrawn' });
+        expect(plan({ alarms, projects: [{ ...project, status: 'archived' }] }).reasons).toEqual({ 'project:p': 'withdrawn', legacy: 'withdrawn' });
+        expect(plan({ alarms, permissionGranted: false }).reasons).toEqual({ 'project:p': 'withdrawn', legacy: 'withdrawn' });
+    });
+
+    it('lets a remade digest expire and withdraws a digest turned off', () => {
+        const settings = { notificationsEnabled: false, dailyDigestMorningEnabled: true, dailyDigestEveningEnabled: true };
+        const first = plan({ settings });
+        const alarms = new Map(first.recurring.map((request, index): [string, ReminderAlarmEntry] => [request.key, { id: index + 1, signature: request.signature }]));
+        expect(plan({ alarms, settings: { ...settings, dailyDigestMorningTime: '10:00', dailyDigestEveningEnabled: false } }).reasons)
+            .toEqual({ 'digest:morning': 'expired', 'digest:evening': 'withdrawn' });
+    });
+
+    it('removes a withdrawn alarm\'s delivered notification before deleting its row, and never an expired one\'s', async () => {
+        const { port, calls } = recordingPort([], { next: 1 });
+        const alarms = new Map<string, ReminderAlarmEntry>([['a', { id: 1 }], ['b', { id: 2 }]]);
+        await cancelReminderAlarm(alarms, 'a', port, 'withdrawn');
+        await cancelReminderAlarm(alarms, 'b', port, 'expired');
+        expect(calls.filter(([kind]) => kind !== 'logInfo')).toEqual([
+            ['removeFiredNotification', 1], ['deleteAlarm', 1], ['deleteRepeatingAlarm', 1],
+            ['deleteAlarm', 2], ['deleteRepeatingAlarm', 2],
+        ]);
     });
 
     it('caps one-shots soonest first and tops up 5 s after the soonest fires', () => {

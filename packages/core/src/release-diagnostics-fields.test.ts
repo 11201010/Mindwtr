@@ -64,6 +64,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // project-lifecycle-sync reuses releaseCheck and count below.
     // sync-signature-pruning reuses releaseCheck, elapsedMs, and count below.
     // pomodoro-alert-delivery reuses releaseCheck, reason, outcome, and count below.
+    // reminder-withdrawn-clears-tray reuses releaseCheck, reason, and count below.
     // daily-digest-independent proves the explicit daily switches reconcile with task reminders off.
     'taskRemindersEnabled', 'morningDigestEnabled', 'eveningDigestEnabled',
     // settings-lazy-resources (desktop SettingsView)

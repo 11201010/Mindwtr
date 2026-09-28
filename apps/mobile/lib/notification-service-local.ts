@@ -16,6 +16,7 @@ import {
   buildPomodoroAlarmDetails,
   cancelReminderAlarm,
   cancelUnrequestedReminderAlarms,
+  countReminderAlarmCancelReasons,
   getMaxPendingOneShotReminderAlarms,
   isExplicitPomodoroAlarmCancellation,
   isPomodoroAlarmDue,
@@ -39,6 +40,7 @@ import {
   type PomodoroAlarmCancellation,
   type PomodoroAlarmEntry,
   type ReminderAlarmEntry,
+  type ReminderAlarmPlan,
   type ReminderAlarmPort,
 } from '@mindwtr/core/mobile-reminder-alarms';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -94,6 +96,7 @@ type NativeEmitterSubscription = {
 // (mobile-reminder-alarms.ts); this file binds them to the alarm library.
 const POMODORO_ALERT_DELIVERY_RELEASE_CHECK = 'v1.3.0/pomodoro-alert-delivery';
 const DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK = 'v1.3.1/daily-digest-independent';
+const REMINDER_CANCEL_RELEASE_CHECK = 'v1.3.3/reminder-withdrawn-clears-tray';
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -252,9 +255,11 @@ async function clearScheduledAlarms(
   if (api) {
     for (const entry of alarmMap.values()) {
       try {
+        // Withdrawn: remove the delivered notification first, while Android's
+        // library can still find it through the alarm's row.
+        api.removeFiredNotification(entry.id);
         api.deleteAlarm(entry.id);
         api.deleteRepeatingAlarm(entry.id);
-        api.removeFiredNotification(entry.id);
       } catch (error) {
         logNotificationError('Failed to cancel local alarm', error);
       }
@@ -448,6 +453,20 @@ async function countPendingNativeAlarms(api: AlarmNotificationsApi): Promise<num
   }
 }
 
+// Tester proof of the withdrawn-or-expired rule: a withdrawn alarm's delivered
+// notification was removed, an expired one's was kept.
+function logCancelReasons(plan: ReminderAlarmPlan): void {
+  const counts = countReminderAlarmCancelReasons(plan);
+  for (const reason of ['withdrawn', 'expired'] as const) {
+    if (counts[reason] === 0) continue;
+    logNotificationInfo('Reminder alarms cancelled', {
+      releaseCheck: REMINDER_CANCEL_RELEASE_CHECK,
+      reason,
+      count: counts[reason],
+    });
+  }
+}
+
 function scheduleOneShotTopUp(api: AlarmNotificationsApi, delayMs: number | null): void {
   clearOneShotTopUpTimer();
   if (delayMs === null) return;
@@ -505,6 +524,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
     clearOneShotTopUpTimer();
     await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
     await saveAlarmMap();
+    logCancelReasons(plan);
     logNotificationInfo('Reschedule cycle complete', {
       activeFeature,
       scheduledAlarmCount: alarmMap.size,
@@ -547,6 +567,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
       });
     }
   }
+  logCancelReasons(plan);
   logNotificationInfo('Reschedule cycle complete', {
     activeFeature,
     scheduledAlarmCount: alarmMap.size,
@@ -1001,7 +1022,8 @@ export async function rescheduleLocalAlarmsAsExact(): Promise<void> {
       await loadAlarmMapIfNeeded();
       const port = toReminderAlarmPort(api);
       for (const key of Array.from(alarmMap.keys())) {
-        await cancelReminderAlarm(alarmMap, key, port);
+        // Remade at once: what the alarm delivered stays.
+        await cancelReminderAlarm(alarmMap, key, port, 'expired');
       }
       await runRescheduleCycle(api);
     })

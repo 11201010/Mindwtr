@@ -107,7 +107,7 @@ describe('native host contract: reminders', () => {
         expect(plan.schedule.map((alarm) => alarm.key)).not.toContain('task:t-date-only');
         for (const [index, alarm] of plan.schedule.entries()) {
             const { config, key } = requests[index];
-            expect(alarm).toMatchObject({ fireAtMs: config.fireAt.getTime(), repeat: config.repeatInterval ?? 'once', details: buildReminderAlarmDetails(key, config) });
+            expect(alarm).toMatchObject({ fireAtMs: config.fireAt.getTime(), repeat: config.repeatInterval ?? 'once', details: buildReminderAlarmDetails(key, config), replacing: null });
         }
         expect(plan.schedule.find((alarm) => alarm.key === 'task:t-rent')?.details).toMatchObject({
             channel: 'mindwtr_reminders_v2', has_complete_action: true, snooze_interval: 10, data: { taskId: 't-rent', kind: 'task-reminder' },
@@ -129,7 +129,7 @@ describe('native host contract: reminders', () => {
 
         // Stopped after storing writeAhead: a new host plans the same alarms under the same ids.
         const replay = value(await (await openHost()).planReminderAlarms({ storedAlarms: first.writeAhead, permissionGranted: true }));
-        expect(replay.schedule).toEqual(first.schedule);
+        expect(replay.schedule).toEqual(first.schedule.map((alarm) => ({ ...alarm, replacing: 'expired' })));
         expect(replay.cancel).toEqual([]);
         expect(replay.alarms).toBe(first.alarms);
 
@@ -142,9 +142,21 @@ describe('native host contract: reminders', () => {
         await flushPendingSave();
         const afterDone = value(await (await openHost()).planReminderAlarms({ storedAlarms: first.writeAhead, permissionGranted: true }));
         const rentId = first.schedule.find((alarm) => alarm.key === 'task:t-rent')!.id;
-        expect(afterDone.cancel).toEqual([{ key: 'task:t-rent', id: rentId }]);
+        expect(afterDone.cancel).toEqual([{ key: 'task:t-rent', id: rentId, reason: 'withdrawn' }]);
         expect(afterDone.schedule.map((alarm) => alarm.key)).not.toContain('task:t-rent');
         expect(readReminderAlarmMap(afterDone.alarms).has('task:t-rent')).toBe(false);
+    });
+
+    it('lets an alarm whose time passed expire, keeping what it delivered', async () => {
+        freezeClock();
+        await seed();
+        const host = await openHost();
+        const first = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true }));
+        vi.setSystemTime(new Date('2026-09-28T11:00:05.000Z'));
+        const later = value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true }));
+        const held = (key: string) => first.schedule.find((alarm) => alarm.key === key)!.id;
+        expect(later.cancel).toEqual(expect.arrayContaining([{ key: 'task:t-rent', id: held('task:t-rent'), reason: 'expired' }]));
+        expect(later.cancel.every((entry) => entry.reason === 'expired')).toBe(true);
     });
 
     it('keeps an alarm\'s id when it changes, and gives a new key an id no held alarm has', async () => {
@@ -156,6 +168,8 @@ describe('native host contract: reminders', () => {
         await useTaskStore.getState().updateTask('t-date-only', { dueDate: '2026-09-28T14:00:00.000Z' });
         const next = value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: true }));
         expect(next.schedule.map((alarm) => alarm.key)).toEqual(['task:t-rent', 'task:t-date-only']);
+        // The rent reminder moved: whatever it delivered is withdrawn with it.
+        expect(next.schedule.map((alarm) => alarm.replacing)).toEqual(['withdrawn', null]);
         expect(next.schedule[0].id).toBe(first.schedule.find((alarm) => alarm.key === 'task:t-rent')!.id);
         expect(first.schedule.map((alarm) => alarm.id)).not.toContain(next.schedule[1].id);
         expect(next.cancel).toEqual([]);
@@ -166,7 +180,7 @@ describe('native host contract: reminders', () => {
         await seed();
         const host = await openHost();
         const first = value(await host.planReminderAlarms({ storedAlarms: null, permissionGranted: true }));
-        const everyAlarm = first.schedule.map(({ key, id }) => ({ key, id }));
+        const everyAlarm = first.schedule.map(({ key, id }) => ({ key, id, reason: 'withdrawn' }));
         expect(value(await host.planReminderAlarms({ storedAlarms: first.alarms, permissionGranted: false })))
             .toEqual({ mode: 'revoked', cancel: everyAlarm, schedule: [], writeAhead: null, alarms: '{}', topUpDelayMs: null, clearDelivered: true });
         await useTaskStore.getState().updateSettings({ notificationsEnabled: false, dailyDigestMorningEnabled: false, weeklyReviewEnabled: false });
@@ -241,6 +255,7 @@ describe('native host contract: reminders', () => {
             fireAtMs: Date.parse('2026-09-28T11:10:42.000Z'),
             repeat: 'once',
             details: { ...fired.details, schedule_type: 'once' },
+            replacing: null,
         });
         expect(snoozed.id).toBeGreaterThanOrEqual(2 ** 30);
         expect(value((await openHost()).snoozeReminder(input))).toEqual(snoozed);
