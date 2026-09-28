@@ -163,6 +163,19 @@ describe('diagnostics log', () => {
         expect(appending.state.text).toBe(`${'z'.repeat(MAX_LOG_FILE_BYTES)}${formatDiagnosticsLogLine(entry('second'))}`);
     });
 
+    it('writes a line once when the trim after its append fails', async () => {
+        // RN's app-log.ts caught that failure and wrote the line again through its legacy file (the same file on disk).
+        const primary = fakeFile();
+        const fallback = fakeFile({ path: 'legacy/logs/mindwtr.log', append: false });
+        const log = createDiagnosticsLog({ isEnabled: () => enabled, files: [primary.file, fallback.file] });
+        await log.append(entry('first'));
+        primary.state.text = `${'w'.repeat(MAX_LOG_FILE_BYTES)}\n`;
+        primary.file.write = async () => { throw new Error('write failed'); };
+        await expect(log.append(entry('once'))).resolves.toBe('files/logs/mindwtr.log');
+        expect(primary.state.text.split(formatDiagnosticsLogLine(entry('once'))).length - 1).toBe(1);
+        expect(fallback.state.text).toBeNull();
+    });
+
     it('hands every operation to the next file when one is unavailable or fails', async () => {
         const missing = fakeFile({ path: null });
         const broken = fakeFile();

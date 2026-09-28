@@ -169,7 +169,8 @@ export function createDiagnosticsLog(options: { isEnabled: () => boolean; files:
         await trimIfNeeded(file, false);
         if (file.append && await file.append(line)) {
             writes += 1;
-            await trimIfNeeded(file, true);
+            // The line is written: a failed trim must not hand it to the next file, which would write it again.
+            await trimIfNeeded(file, true).catch(() => undefined);
             return path;
         }
         // A failed read throws, so the line goes to the next file or is dropped: rewriting from '' would erase the log.
