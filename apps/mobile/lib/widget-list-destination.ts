@@ -1,24 +1,5 @@
-import type { AppData, Language } from '@mindwtr/core';
-import { createWidgetPayloadProjection } from './widget-data';
-import { getFocusWidgetFilter } from './focus-widget-filter';
+// The widget-list route's id check and list live in core
+// (widget-list-destination.ts), next to the widget payload builder.
+import { normalizeWidgetListDestinationId, resolveWidgetListDestination } from '@mindwtr/core/widget-list-destination';
 
-/** Route parameters are untrusted. They select local data, never contain criteria. */
-export function normalizeWidgetListDestinationId(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 1024 || /[\u0000-\u001f\u007f]/.test(value)) return null;
-  if (value === 'next') return value;
-  for (const prefix of ['filter:', 'project:']) {
-    if (value.startsWith(prefix) && value.slice(prefix.length).trim().length > 0) return value;
-  }
-  return null;
-}
-
-export function resolveWidgetListDestination(data: AppData, language: Language, value: unknown) {
-  const id = normalizeWidgetListDestinationId(value);
-  if (!id) return null;
-  // Use the very same core-derived pools as the widget, but keep all live Task
-  // entities rather than the capped cached snapshot. Deleted filters fail closed.
-  return createWidgetPayloadProjection(data, language, {
-    listIds: [id],
-    focusFilter: getFocusWidgetFilter(),
-  }).getTaskList(id);
-}
+export { normalizeWidgetListDestinationId, resolveWidgetListDestination };

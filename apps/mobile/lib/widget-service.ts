@@ -1,14 +1,21 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getTranslator, isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
+import { getSystemDefaultLanguage, isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
 import * as ReactNativeWidgetKit from 'react-native-widgetkit';
 
 import * as AndroidWidget from '../modules/android-widget';
 import {
-    type AndroidTasksWidgetPayload,
-    buildAndroidQuickCaptureLabels,
-    buildAndroidTaskPeekLabels,
+    ANDROID_WIDGET_MAX_ITEMS,
+    androidWidgetProjectionOptions,
+    buildAndroidTasksWidgetPayload,
+    createPublishedWidgetProjection,
+    IOS_WIDGET_FAMILY_CACHE_ITEMS,
+    iosWidgetProjectionOptions,
+    isWidgetAudioCaptureEnabled,
+} from '@mindwtr/core/widget-payload';
+import { WIDGET_FIXED_LIST_IDS } from '@mindwtr/core/widget-lists';
+import {
     buildShortcutsSnapshot,
     createWidgetPayloadProjection,
     IOS_SHORTCUTS_SNAPSHOT_KEY,
@@ -28,7 +35,6 @@ import {
     type WidgetPayloadProjection,
     WIDGET_LANGUAGE_KEY,
 } from './widget-data';
-import { WIDGET_FIXED_LIST_IDS } from './widget-lists';
 import { focusWidgetFilterKey, getFocusWidgetFilter } from './focus-widget-filter';
 import { logError, logInfo, logWarn } from './app-log';
 import { getLocalDayKey } from '@/hooks/use-local-day-key';
@@ -48,17 +54,6 @@ type IosWidgetApi = {
     reloadAllTimelines?: () => void;
 };
 
-// The Swift view decides what fits from its actual geometry and Dynamic Type.
-// Each snapshot carries eight bounded refill rows beyond the old family caps,
-// so queued completions can disappear without waiting for the app to republish.
-const IOS_WIDGET_FAMILY_CACHE_ITEMS = {
-    default: 20,
-    small: 11,
-    medium: 13,
-    large: 20,
-    extraLarge: 32,
-} as const;
-
 async function getIosWidgetApi(): Promise<IosWidgetApi | null> {
     if (Platform.OS !== 'ios') return null;
     if (typeof ReactNativeWidgetKit.setItem === 'function') {
@@ -75,55 +70,28 @@ async function getIosWidgetApi(): Promise<IosWidgetApi | null> {
 
 async function resolvePayloadLanguage(data: AppData): Promise<Language> {
     const languageValue = await AsyncStorage.getItem(WIDGET_LANGUAGE_KEY);
-    return resolveWidgetLanguage(languageValue, data.settings?.language);
+    return resolveWidgetLanguage(languageValue, data.settings?.language, getSystemDefaultLanguage());
 }
 
-// Which lists the Android payload carries. The widget's own header chooser
-// switches lists with no app running, so it can only show a list the payload
-// already holds. Publish all five bounded GTD lists even before placement:
-// Compact needs Next Actions as its empty-today fallback, and a new Tasks
-// widget can switch to Inbox without an extra app opening (#1211). Saved
-// filter lists are still built only when a placed widget asks for them.
-function androidWidgetListIds(): string[] {
-    const selections = AndroidWidget.getWidgetListSelections();
-    return [...WIDGET_FIXED_LIST_IDS, ...selections];
-}
-
+// What each platform's payload carries is core's (widget-payload.ts); this
+// reads the inputs only the app has: the system colour scheme, the Focus
+// screen's current filter (#1173) and the lists placed Android widgets chose.
 function widgetPayloadOptions(): Omit<WidgetPayloadBuildOptions, 'maxItems'> {
-    return {
+    const input = {
         systemColorScheme: getSystemColorSchemeForWidget(),
-        // The widget's Focus list shows what the Focus screen shows, so it
-        // rides the screen's current filter and sort (#1173).
         focusFilter: getFocusWidgetFilter(),
-        // Fixed lists plus the saved-filter lists placed Android widgets need;
-        // folding them in here also puts them in the render fingerprint.
-        ...(Platform.OS === 'android' && AndroidWidget.isSupported() ? { listIds: androidWidgetListIds() } : {}),
-        // Edit Widget can switch lists while the app is not running. Carry the
-        // bounded chooser's lists in each family snapshot, not just Focus.
-        ...(Platform.OS === 'ios' ? {
-            listIds: WIDGET_FIXED_LIST_IDS,
-            includeSavedFilterLists: true,
-        } : {}),
     };
+    if (Platform.OS === 'android' && AndroidWidget.isSupported()) {
+        return androidWidgetProjectionOptions({ ...input, listSelections: AndroidWidget.getWidgetListSelections() });
+    }
+    if (Platform.OS === 'ios') return iosWidgetProjectionOptions(input);
+    return input;
 }
 
 function createPayloadProjectionFromData(data: AppData, language: Language): WidgetPayloadProjection {
-    const projection = createWidgetPayloadProjection(data, language, widgetPayloadOptions());
-    return {
-        getTaskList: projection.getTaskList,
-        build: (maxItems) => {
-            const payload = projection.build(maxItems);
-            return {
-                ...payload,
-                headerTitle: getTranslator(language)('focus.schedule'),
-            };
-        },
-    };
+    return createPublishedWidgetProjection(createWidgetPayloadProjection(data, language, widgetPayloadOptions()), language);
 }
 
-// The native widget's task list scrolls (RemoteViewsService), so the payload
-// carries a fixed slice instead of a per-widget-height budget.
-const ANDROID_WIDGET_MAX_ITEMS = 200;
 const ANDROID_WIDGET_RELEASE_CHECK = 'v1.3.0/android-native-widget';
 const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.3.0/android-widget-provider-compat';
 const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.3.0/widget-focus-today';
@@ -142,12 +110,7 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
     }
 
     try {
-        const payload: AndroidTasksWidgetPayload = {
-            ...rendered,
-            quickCapture: buildAndroidQuickCaptureLabels(language, audioEnabled),
-            taskPeek: buildAndroidTaskPeekLabels(language),
-            viewAllLabel: getTranslator(language)('widget.viewAllTasks'),
-        };
+        const payload = buildAndroidTasksWidgetPayload(rendered, language, audioEnabled);
         AndroidWidget.setPayload(JSON.stringify(payload));
         const refreshResult = AndroidWidget.updateWidgets();
         // Older installed native modules return only the compatibility count.
@@ -434,9 +397,9 @@ export async function updateMobileWidgetFromData(data: AppData): Promise<boolean
     const fingerprintPayload = projection.build(
         Platform.OS === 'android' ? ANDROID_WIDGET_MAX_ITEMS : WIDGET_FINGERPRINT_MAX_ITEMS,
     );
-    // Native capture reads only availability, never provider credentials or model paths.
-    // Include it in the fingerprint so a setting-only change refreshes the dialog.
-    const audioEnabled = data.settings.ai?.speechToText?.enabled === true;
+    // Include audio availability in the fingerprint so a setting-only change
+    // refreshes the dialog.
+    const audioEnabled = isWidgetAudioCaptureEnabled(data.settings);
     const nativeCaptureFingerprint = Platform.OS === 'android' ? `:audio=${audioEnabled}` : '';
     const widgetFingerprint = `${WIDGET_RENDER_SCHEMA_REVISION}:${WIDGET_RENDER_APP_VERSION}:${language}:${JSON.stringify(fingerprintPayload)}${nativeCaptureFingerprint}`;
     let widgetUpdated = true;

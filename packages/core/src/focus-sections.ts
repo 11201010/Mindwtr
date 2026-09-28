@@ -3,7 +3,7 @@
  * Focus, Today (schedule), Review Due, Next actions, Upcoming — shared by the
  * desktop Focus screen (`AgendaView.tsx`), the mobile Focus screen
  * (`app/(drawer)/(tabs)/focus.tsx`), the mobile widget payload
- * (`lib/widget-data.ts`), the Shortcuts snapshot and the macOS widget
+ * (`widget-payload.ts`), the Shortcuts snapshot and the macOS widget
  * (`focus-widget-selection.ts`). Three hand copies used to disagree about the
  * equal-time tiebreak; they no longer can.
  *

@@ -1,20 +1,12 @@
-import {
-    applyFilter,
-    normalizeSavedFilters,
-    sortTasksBy,
-    sortTasksBySavedPreference,
-    type AppData,
-    type SavedFilter,
-    type Task,
-    type FocusTaskLists,
-    type TaskSortBy,
-} from '@mindwtr/core';
-
-import { compareSomedayTasks, compareWaitingTasks } from './list-order';
+import type { FocusTaskLists } from './focus-sections';
+import { compareSomedayTasks, compareWaitingTasks } from './menu-views-model';
+import { applyFilter, normalizeSavedFilters } from './saved-filters';
+import { sortTasksBy, sortTasksBySavedPreference } from './task-utils';
+import type { AppData, SavedFilter, Task, TaskSortBy } from './types';
 
 // The lists a placed Tasks widget can show (#1173): Mindwtr's own GTD lists,
 // each in the order its screen uses, plus any saved filter. `focus` is the
-// sectioned Focus layout widget-data.ts already builds; the others are defined
+// sectioned Focus layout widget-payload.ts already builds; the others are defined
 // here, once. A single project is covered by a saved filter scoped to it.
 export const WIDGET_FIXED_LIST_IDS = ['focus', 'inbox', 'next', 'waiting', 'someday'] as const;
 export type WidgetFixedListId = (typeof WIDGET_FIXED_LIST_IDS)[number];

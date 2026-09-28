@@ -169,9 +169,9 @@ describe('i18n fallback idiom ratchet', () => {
         // One read is indistinguishable here from a legitimate one, so the fix for that
         // bug class is the getTranslator seam itself (92e5d9c28), not this predicate.
         //
-        // One call per file is therefore still allowed, and three files rely on it:
-        // language-context seeding its English map, widget-data building a payload, and
-        // notification-service holding a dictionary for two Record-typed helpers.
+        // One call per file is therefore still allowed, and two app files rely on it:
+        // language-context seeding its English map, and notification-service holding a
+        // dictionary for two Record-typed helpers (the widget payload builder moved to core).
         const violations: string[] = [];
         for (const { path, sourceFile } of collectSourceFiles()) {
             let calls = 0;
