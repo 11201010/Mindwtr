@@ -580,7 +580,8 @@ describe('Sync Logic', () => {
 
             const merged = mergeAppData(local, incoming);
 
-            expect(merged.settings.savedFilters).toEqual([localFilter, incomingFilter]);
+            // The remote copy's order (this device's filters are older), local-only filters at the end.
+            expect(merged.settings.savedFilters).toEqual([incomingFilter, localFilter]);
             expect(merged.settings.savedFilters).not.toBe(incoming.settings.savedFilters);
         });
 

@@ -5,7 +5,11 @@ import {
     restoreDeviceLocalAiSettings,
     sanitizeMergedSettingsForSync,
 } from './sync-merge-settings';
-import type { AppData, SettingsSyncGroup } from './types';
+import { selectFocusSavedFilters } from './focus-controls';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
+import { normalizeFilterCriteria } from './saved-filters';
+import { sanitizeAppDataForRemote } from './sync-helpers';
+import type { AppData, SavedFilter, SettingsSyncGroup } from './types';
 
 type Settings = AppData['settings'];
 
@@ -458,7 +462,178 @@ describe('mergeSettingsForSync > savedFilters', () => {
 
         expect(merged.savedFilters?.map((filter) => filter.id)).toEqual(['filter-1']);
     });
+
+    // A newer app's filter (a view, a field and a sort this build does not
+    // know), an undated filter, and a user order that is not createdAt order.
+    const newer = {
+        id: 'filter-newer', name: 'Calendar lane', view: 'calendar', color: '#ff0000', sortBy: 'somethingNew',
+        criteria: { contexts: ['@desk'] }, createdAt: NEWER, updatedAt: NEWER,
+    };
+    const undated = { id: 'filter-undated', name: 'Calls', view: 'focus', criteria: { contexts: ['@calls'] } };
+    const older = { id: 'filter-older', name: 'Desk', view: 'focus', criteria: { contexts: ['@desk'] }, createdAt: OLDER, updatedAt: OLDER };
+    const stored = [newer, undated, older] as unknown as NonNullable<Settings['savedFilters']>;
+    const settingsWith = (savedFilters: unknown[], at: string): Settings => stamp(
+        { savedFilters: savedFilters as NonNullable<Settings['savedFilters']>, syncPreferences: { savedFilters: true } },
+        'savedFilters',
+        at,
+    );
+
+    it('keeps every filter as stored when the peer did not change them', () => {
+        const merged = mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith(stored, OLDER));
+
+        expect(merged.savedFilters).toEqual(stored);
+        expect(selectFocusSavedFilters(merged.savedFilters).map((filter) => filter.id)).toEqual(['filter-undated', 'filter-older']);
+    });
+
+    it('changes only the filter the peer changed, in place', () => {
+        const edited = { ...older, name: 'Desk (edited)', updatedAt: NEWER };
+        const expected = [newer, undated, edited];
+
+        expect(mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith([newer, undated, edited], NEWER)).savedFilters)
+            .toEqual(expected);
+        expect(mergeSettingsForSync(settingsWith([newer, undated, edited], NEWER), settingsWith(stored, OLDER)).savedFilters)
+            .toEqual(expected);
+    });
+
+    it('settles on one order: the remote copy\'s, unless this device changed its filters later', () => {
+        const reordered = [older, newer, undated];
+
+        const tie = mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith(reordered, OLDER));
+        expect(tie.savedFilters).toEqual(reordered);
+        expect(mergeSettingsForSync(tie, settingsWith(reordered, OLDER)).savedFilters).toEqual(reordered);
+
+        expect(mergeSettingsForSync(settingsWith(stored, NEWER), settingsWith(reordered, OLDER)).savedFilters).toEqual(stored);
+        // Entries only the other side holds join at the end, in that side's order.
+        expect(mergeSettingsForSync(settingsWith([older], NEWER), settingsWith([newer, undated], OLDER)).savedFilters)
+            .toEqual([older, newer, undated]);
+    });
+
+    it('logs the merge with counts only', () => {
+        const logs: LogPayload[] = [];
+        setLogger((payload) => { logs.push(payload); });
+        try {
+            mergeSettingsForSync(settingsWith(stored, OLDER), settingsWith([older], NEWER));
+        } finally {
+            setLogger(consoleLogger);
+        }
+
+        expect(logs.filter((entry) => entry.message === 'Saved filters merged as stored').map((entry) => entry.context)).toEqual([
+            { releaseCheck: 'v1.3.3/saved-filters-kept-as-stored', count: 3, hiddenCount: 1, order: 'remote' },
+        ]);
+        expect(JSON.stringify(logs)).not.toMatch(/Calendar lane|filter-newer/);
+    });
+
+    it('sends every filter as stored in the sync payload', () => {
+        const data: AppData = {
+            tasks: [], projects: [], sections: [], areas: [], people: [], settings: settingsWith(stored, OLDER),
+        };
+
+        expect(sanitizeAppDataForRemote(data).settings.savedFilters).toEqual(stored);
+    });
+
+    it('keeps the full filter when a v1.3.2 peer publishes only its rewrite of it', () => {
+        const full = { ...newer, view: 'calendar', color: 'red' } as unknown as SavedFilter;
+        const plain = older as SavedFilter;
+        // The v1.3.2 peer holds its rewrite of the filter and makes an unrelated edit.
+        const editedOnOldPeer = { ...plain, name: 'Desk (edited on v1.3.2)', updatedAt: LATEST };
+        const oldPeerList = v132NormalizeSavedFilters([full, editedOnOldPeer]);
+        expect(oldPeerList.find((filter) => filter.id === full.id)).toMatchObject({ view: 'focus' });
+
+        const published = mergeSettingsForSync(settingsWith([full, plain], OLDER), settingsWith(oldPeerList, NEWER));
+
+        // The remote copy's order (v1.3.2 sorted it), the full filter, the old peer's edit.
+        expect(published.savedFilters).toEqual([editedOnOldPeer, full]);
+        expect(selectFocusSavedFilters(published.savedFilters).map((filter) => filter.id)).toEqual(['filter-older']);
+        // Both directions agree, and a second merge changes nothing.
+        expect(mergeSettingsForSync(settingsWith(oldPeerList, NEWER), settingsWith([full, plain], OLDER)).savedFilters)
+            .toEqual([editedOnOldPeer, full]);
+        expect(mergeSettingsForSync(published, published).savedFilters).toEqual(published.savedFilters);
+        // v1.3.2 compares documents after its own rewrite: what this build publishes
+        // reads as unchanged there, so the old peer does not upload again.
+        expect(v132NormalizeSavedFilters(published.savedFilters)).toEqual(oldPeerList);
+    });
+
+    it('lets a newer edit made on a v1.3.2 peer win by time (documented limit)', () => {
+        const full = { ...newer, view: 'calendar', color: 'red' } as unknown as SavedFilter;
+        const editedOnOldPeer = { ...v132NormalizeSavedFilters([full])[0]!, name: 'Renamed on v1.3.2', updatedAt: LATEST };
+
+        const merged = mergeSettingsForSync(settingsWith([full], OLDER), settingsWith([editedOnOldPeer], NEWER));
+
+        expect(merged.savedFilters).toEqual([editedOnOldPeer]);
+    });
+
+    it('converges on one copy when two peers hold different undated copies of a filter', () => {
+        const a = { id: 'f', name: 'A', view: 'focus', criteria: {} };
+        const b = { id: 'f', name: 'B', view: 'focus', criteria: {} };
+
+        // Same group timestamp: one deterministic winner, whichever side merges.
+        let peerA = settingsWith([a], OLDER);
+        let peerB = settingsWith([b], OLDER);
+        for (let round = 0; round < 3; round += 1) {
+            peerA = mergeSettingsForSync(peerA, peerB);
+            peerB = mergeSettingsForSync(peerB, peerA);
+        }
+        expect(peerA.savedFilters).toEqual(peerB.savedFilters);
+        expect(mergeSettingsForSync(settingsWith([a], OLDER), settingsWith([b], OLDER)).savedFilters)
+            .toEqual(mergeSettingsForSync(settingsWith([b], OLDER), settingsWith([a], OLDER)).savedFilters);
+
+        // A strictly newer group timestamp wins, from either side.
+        expect(mergeSettingsForSync(settingsWith([a], OLDER), settingsWith([b], NEWER)).savedFilters).toEqual([b]);
+        expect(mergeSettingsForSync(settingsWith([b], NEWER), settingsWith([a], OLDER)).savedFilters).toEqual([b]);
+    });
 });
+
+const LATEST = '2026-09-01T00:00:00.000Z';
+
+// v1.3.2's saved-filter normalizer, verbatim (packages/core/src/saved-filters.ts
+// at tag v1.3.2; normalizeFilterCriteria is unchanged since). Every v1.3.2 load,
+// save, merge and remote comparison ran its list through this.
+const V132_VIEWS = new Set(['focus', 'next', 'waiting', 'someday', 'contexts', 'all']);
+const V132_GROUP_BY = new Set(['none', 'context', 'project', 'area', 'energy', 'priority', 'person', 'tag']);
+const V132_SORT_FIELDS = new Set([
+    'default', 'due', 'start', 'review', 'title', 'created', 'created-desc', 'priority', 'energy', 'timeEstimate', 'project', 'updated',
+]);
+function v132NormalizeSavedFilter(value: unknown): SavedFilter | null {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.id !== 'string' || !record.id.trim()) return null;
+    if (typeof record.name !== 'string' || !record.name.trim()) return null;
+    const view = typeof record.view === 'string' && V132_VIEWS.has(record.view) ? record.view : 'focus';
+    const createdAt = typeof record.createdAt === 'string' && record.createdAt.trim() ? record.createdAt : new Date().toISOString();
+    const updatedAt = typeof record.updatedAt === 'string' && record.updatedAt.trim() ? record.updatedAt : createdAt;
+    const sortBy = typeof record.sortBy === 'string' && V132_SORT_FIELDS.has(record.sortBy) ? record.sortBy : undefined;
+    const sortOrder = record.sortOrder === 'asc' || record.sortOrder === 'desc' ? record.sortOrder : undefined;
+    const groupBy = typeof record.groupBy === 'string' && V132_GROUP_BY.has(record.groupBy) ? record.groupBy : undefined;
+    const icon = typeof record.icon === 'string' && record.icon.trim() ? record.icon.trim() : undefined;
+    const deletedAt = typeof record.deletedAt === 'string' && record.deletedAt.trim() ? record.deletedAt.trim() : undefined;
+    return {
+        id: record.id.trim(),
+        name: record.name.trim(),
+        ...(icon ? { icon } : {}),
+        view,
+        criteria: normalizeFilterCriteria(record.criteria),
+        ...(sortBy ? { sortBy } : {}),
+        ...(sortOrder ? { sortOrder } : {}),
+        ...(groupBy ? { groupBy } : {}),
+        createdAt,
+        updatedAt,
+        ...(deletedAt ? { deletedAt } : {}),
+    } as SavedFilter;
+}
+function v132NormalizeSavedFilters(value: unknown): SavedFilter[] {
+    if (!Array.isArray(value)) return [];
+    const byId = new Map<string, SavedFilter>();
+    for (const item of value) {
+        const normalized = v132NormalizeSavedFilter(item);
+        if (!normalized) continue;
+        byId.set(normalized.id, normalized);
+    }
+    return Array.from(byId.values()).sort((a, b) => {
+        const createdDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt);
+        if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+        return a.name.localeCompare(b.name);
+    });
+}
 
 describe('sanitizeMergedSettingsForSync', () => {
     it('is a no-op on an already merged document (round-trip)', () => {

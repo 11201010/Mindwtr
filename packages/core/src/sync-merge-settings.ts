@@ -24,8 +24,9 @@ import {
     type GtdSyncSnapshot,
 } from './settings-options';
 import { isNonEmptyString, isObjectRecord, isValidTimestamp } from './sync-normalization';
+import { isDeepJsonEqual } from './sync-helpers';
 import { MAX_FOCUS_TASK_LIMIT, MIN_FOCUS_TASK_LIMIT, normalizeFocusTaskLimit } from './focus-utils';
-import { normalizeSavedFilters } from './saved-filters';
+import { keepSavedFilters, normalizeSavedFilter, normalizeSavedFilters } from './saved-filters';
 import { chooseDeterministicWinner } from './sync-signatures';
 import { DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS } from './sync-types';
 import { normalizeExternalCalendarColor } from './external-calendar-colors';
@@ -74,7 +75,35 @@ const chooseDeletedSavedFilter = (localFilter: SavedFilter, incomingFilter: Save
     return chooseDeterministicWinner(localFilter, incomingFilter);
 };
 
-const chooseSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter, incomingWins: boolean): SavedFilter => {
+// v1.3.2's saved-filter reader, kept to recognize its copies (never to store
+// one): every v1.3.2 load, merge and upload rewrote each filter this way —
+// an unknown view became 'focus', unknown fields and values were dropped, a
+// missing createdAt became its load time (`inventedAt`) — and kept updatedAt.
+const legacySavedFilterProjection = (filter: SavedFilter, inventedAt: string | undefined): SavedFilter | null => {
+    const value = filter as unknown as Record<string, unknown>;
+    const legacy = {
+        ...value,
+        id: typeof value.id === 'string' ? value.id.trim() : value.id,
+        createdAt: typeof value.createdAt === 'string' && value.createdAt.trim() ? value.createdAt : inventedAt,
+    };
+    return normalizeSavedFilter(legacy) ?? normalizeSavedFilter({ ...legacy, view: 'focus' });
+};
+
+// Two copies tied on time: when one is only v1.3.2's rewrite of the other,
+// the other (the full copy) wins; otherwise one deterministic winner.
+const chooseTiedSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter): SavedFilter => {
+    const incomingIsLegacy = isDeepJsonEqual(legacySavedFilterProjection(localFilter, incomingFilter.createdAt), incomingFilter);
+    const localIsLegacy = isDeepJsonEqual(legacySavedFilterProjection(incomingFilter, localFilter.createdAt), localFilter);
+    if (incomingIsLegacy !== localIsLegacy) return incomingIsLegacy ? localFilter : incomingFilter;
+    return chooseDeterministicWinner(localFilter, incomingFilter);
+};
+
+const chooseSavedFilter = (
+    localFilter: SavedFilter,
+    incomingFilter: SavedFilter,
+    incomingWins: boolean,
+    localNewer: boolean,
+): SavedFilter => {
     const localDeleted = !!localFilter.deletedAt;
     const incomingDeleted = !!incomingFilter.deletedAt;
     if (localDeleted !== incomingDeleted) {
@@ -98,35 +127,58 @@ const chooseSavedFilter = (localFilter: SavedFilter, incomingFilter: SavedFilter
         const updatedAtDiff = incomingUpdatedAt - localUpdatedAt;
         if (updatedAtDiff > 0) return incomingFilter;
         if (updatedAtDiff < 0) return localFilter;
-        return chooseDeterministicWinner(localFilter, incomingFilter);
+        return chooseTiedSavedFilter(localFilter, incomingFilter);
     }
-    return incomingWins ? incomingFilter : localFilter;
+    // Neither copy has a time: a strictly newer group timestamp decides, then
+    // one deterministic winner, so both peers keep the same copy.
+    if (incomingWins) return incomingFilter;
+    if (localNewer) return localFilter;
+    return chooseTiedSavedFilter(localFilter, incomingFilter);
 };
 
+/**
+ * Merge saved filters by id. A filter on both sides is the copy
+ * chooseSavedFilter picks, kept whole (fields this build does not know
+ * included). The list keeps the remote copy's order unless this device
+ * changed its saved filters later (a newer group timestamp); filters only the
+ * other side holds join at the end. Every device so settles on one order, and
+ * a merge never reorders filters it did not change.
+ */
 const mergeSavedFiltersById = (
     localValue: AppData['settings']['savedFilters'],
     incomingValue: AppData['settings']['savedFilters'],
-    incomingWins: boolean
+    incomingWins: boolean,
+    localNewer: boolean
 ): AppData['settings']['savedFilters'] => {
-    const localFilters = normalizeSavedFilters(localValue);
-    const incomingFilters = normalizeSavedFilters(incomingValue);
+    const localFilters = keepSavedFilters(localValue);
+    const incomingFilters = keepSavedFilters(incomingValue);
+    const localById = new Map(localFilters.map((filter) => [filter.id, filter]));
     const incomingById = new Map(incomingFilters.map((filter) => [filter.id, filter]));
     const mergedById = new Map<string, SavedFilter>();
 
-    for (const localFilter of localFilters) {
-        const incomingFilter = incomingById.get(localFilter.id);
-        mergedById.set(
-            localFilter.id,
-            incomingFilter ? chooseSavedFilter(localFilter, incomingFilter, incomingWins) : localFilter
-        );
-    }
-    for (const incomingFilter of incomingFilters) {
-        if (!mergedById.has(incomingFilter.id)) {
-            mergedById.set(incomingFilter.id, incomingFilter);
-        }
+    for (const { id } of localNewer ? [...localFilters, ...incomingFilters] : [...incomingFilters, ...localFilters]) {
+        if (mergedById.has(id)) continue;
+        const localFilter = localById.get(id);
+        const incomingFilter = incomingById.get(id);
+        mergedById.set(id, localFilter && incomingFilter
+            ? chooseSavedFilter(localFilter, incomingFilter, incomingWins, localNewer)
+            : (localFilter ?? incomingFilter) as SavedFilter);
     }
 
-    return normalizeSavedFilters(Array.from(mergedById.values()));
+    const merged = Array.from(mergedById.values());
+    if (localFilters.length > 0 && incomingFilters.length > 0 && localValue !== incomingValue) {
+        logInfo('Saved filters merged as stored', {
+            scope: 'saved-filters',
+            category: 'sync',
+            context: {
+                releaseCheck: 'v1.3.3/saved-filters-kept-as-stored',
+                count: merged.length,
+                hiddenCount: merged.length - normalizeSavedFilters(merged).length,
+                order: localNewer ? 'local' : 'remote',
+            },
+        });
+    }
+    return merged;
 };
 
 const sanitizeAiForSync = (
@@ -817,7 +869,7 @@ export const sanitizeMergedSettingsForSync = (
     next.externalCalendars = sanitizeExternalCalendars(next.externalCalendars, localSettings.externalCalendars);
     next.ai = sanitizeAiSettings(next.ai, localSettings.ai);
     if (next.savedFilters !== undefined) {
-        next.savedFilters = normalizeSavedFilters(next.savedFilters);
+        next.savedFilters = keepSavedFilters(next.savedFilters);
     }
 
     return next;
@@ -996,7 +1048,7 @@ export const mergeSettingsForSync = (
         localValue: T,
         incomingValue: T,
         apply: (value: T, incomingWins: boolean) => void,
-        mergeValues?: (localValue: T, incomingValue: T, incomingWins: boolean) => T
+        mergeValues?: (localValue: T, incomingValue: T, incomingWins: boolean, localNewer: boolean) => T
     ) => {
         const localAt = localSettings.syncPreferencesUpdatedAt?.[key];
         const incomingAt = incomingSettings.syncPreferencesUpdatedAt?.[key];
@@ -1004,7 +1056,7 @@ export const mergeSettingsForSync = (
         const incomingWins = localOptedOut ? false : isIncomingNewer(localAt, incomingAt);
         const effectiveIncomingValue = localOptedOut ? localValue : incomingValue;
         const resolvedValue = mergeValues
-            ? mergeValues(localValue, effectiveIncomingValue, incomingWins)
+            ? mergeValues(localValue, effectiveIncomingValue, incomingWins, isIncomingNewer(incomingAt, localAt))
             : (incomingWins ? effectiveIncomingValue : localValue);
         apply(cloneSettingValue(resolvedValue), incomingWins);
         const winnerAt = incomingWins ? incomingAt : localAt;
@@ -1136,9 +1188,9 @@ export const mergeSettingsForSync = (
         localSettings.savedFilters,
         incomingSettings.savedFilters,
         (value) => {
-            merged.savedFilters = normalizeSavedFilters(value);
+            merged.savedFilters = keepSavedFilters(value);
         },
-        (localValue, incomingValue, incomingWins) => mergeSavedFiltersById(localValue, incomingValue, incomingWins)
+        mergeSavedFiltersById
     );
 
     mergeGroup(

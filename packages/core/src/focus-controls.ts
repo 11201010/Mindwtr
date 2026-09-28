@@ -38,7 +38,7 @@ import {
     type ListFilterState,
 } from './list-filter-state';
 import { buildAdvancedFilterCriteriaChips, removeAdvancedFilterCriteriaChip } from './saved-filter-labels';
-import { hasActiveFilterCriteria, markSavedFilterDeleted, SAVED_FILTER_NO_PROJECT_ID } from './saved-filters';
+import { hasActiveFilterCriteria, markSavedFilterDeleted, normalizeSavedFilters, SAVED_FILTER_NO_PROJECT_ID } from './saved-filters';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { FOCUS_SORT_OPTIONS } from './task-list-sort-options';
 import { getTaskMetadataFilterVisibility, type TaskMetadataFilterVisibility } from './task-metadata-filter-visibility';
@@ -104,9 +104,12 @@ export function getFocusGroupByLabel(groupBy: FocusGroupBy, t: Translate): strin
     }
 }
 
-/** The saved filters Focus offers: its own, not deleted, in stored order. */
+/**
+ * The saved filters Focus offers: its own, not deleted, in stored order, read
+ * through normalizeSavedFilters (a view this build does not know is hidden).
+ */
 export function selectFocusSavedFilters(savedFilters: readonly SavedFilter[] | undefined): SavedFilter[] {
-    return (savedFilters ?? []).filter((filter) => filter.view === 'focus' && !filter.deletedAt);
+    return normalizeSavedFilters(savedFilters).filter((filter) => filter.view === 'focus' && !filter.deletedAt);
 }
 
 /**
@@ -229,7 +232,9 @@ export function planFocusFilterSave(input: {
 /**
  * Remove one criterion that no picker can express (an area, a date range…)
  * from the applied saved filter. Null when there is no applied filter or the
- * criterion is not on it.
+ * criterion is not on it. The applied filter (as read) says which criterion
+ * is shown; it is removed from the stored filter's own criteria, so the
+ * criteria and fields this build does not know stay.
  */
 export function planFocusFilterCriterionRemoval(input: {
     activeSavedFilter: SavedFilter | null;
@@ -239,12 +244,13 @@ export function planFocusFilterCriterionRemoval(input: {
 }): { savedFilters: SavedFilter[] } | null {
     const active = input.activeSavedFilter;
     if (!active) return null;
-    const criteria = removeAdvancedFilterCriteriaChip(active.criteria, input.criterionId);
-    if (criteria === active.criteria) return null;
+    if (removeAdvancedFilterCriteriaChip(active.criteria, input.criterionId) === active.criteria) return null;
     return {
-        savedFilters: (input.savedFilters ?? []).map((filter) => (
-            filter.id === active.id ? { ...filter, criteria, updatedAt: input.nowIso } : filter
-        )),
+        savedFilters: (input.savedFilters ?? []).map((filter) => {
+            if (filter.id !== active.id) return filter;
+            const stored = filter.criteria && typeof filter.criteria === 'object' ? filter.criteria : {};
+            return { ...filter, criteria: removeAdvancedFilterCriteriaChip(stored, input.criterionId), updatedAt: input.nowIso };
+        }),
     };
 }
 

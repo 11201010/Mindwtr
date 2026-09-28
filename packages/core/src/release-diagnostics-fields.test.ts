@@ -87,6 +87,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'count',
     // someday-sections-keep-others reuses releaseCheck and count: stored entries this build cannot show, kept.
     'hiddenCount',
+    // saved-filters-kept-as-stored reuses releaseCheck, count and hiddenCount: whose list order the merge kept.
+    'order',
     // android-http-connect-timeout (apps/mobile/hooks/root-layout/use-root-layout-startup.ts)
     'connectTimeoutMs',
     // fence-mutation-horizon (packages/core/src/sync-remote-fence.ts)

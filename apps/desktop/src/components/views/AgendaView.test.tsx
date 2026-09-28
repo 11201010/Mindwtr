@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
-import { safeFormatDate, useTaskStore, type Project, type Task } from '@mindwtr/core';
+import { safeFormatDate, useTaskStore, type Project, type SavedFilter, type Task } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
 import { KeybindingProvider } from '../../contexts/keybinding-context';
 import { AgendaView } from './AgendaView';
@@ -2240,6 +2240,53 @@ describe('AgendaView', () => {
                 },
                 updatedAt: expect.any(String),
             });
+        });
+    });
+
+    it('removes one advanced criterion from the stored filter and keeps what this build does not know', async () => {
+        const deskTask: Task = {
+            id: 'desk-task',
+            title: 'Desk task',
+            status: 'next',
+            contexts: ['@desk'],
+            tags: [],
+            createdAt: nowIso,
+            updatedAt: nowIso,
+        };
+        // A newer app's field and criterion on a Focus filter this build can show.
+        const stored = {
+            id: 'filter-desk',
+            name: 'Desk',
+            view: 'focus',
+            color: 'red',
+            criteria: { contexts: ['@desk'], dueDateRange: { preset: 'this_week' }, futureCriterion: 'keep' },
+            createdAt: nowIso,
+            updatedAt: nowIso,
+        };
+
+        useTaskStore.setState({
+            tasks: [deskTask],
+            _allTasks: [deskTask],
+            projects: [],
+            _allProjects: [],
+            areas: [],
+            _allAreas: [],
+            settings: { savedFilters: [stored as unknown as SavedFilter] },
+            highlightTaskId: null,
+        });
+
+        const { getByRole } = renderAgenda();
+
+        fireEvent.click(getByRole('button', { name: 'Desk' }));
+        fireEvent.click(getByRole('button', { name: /^Filters/i }));
+        fireEvent.click(getByRole('button', { name: 'Remove filter: Due Date: This week' }));
+
+        await waitFor(() => {
+            expect(useTaskStore.getState().settings.savedFilters).toEqual([{
+                ...stored,
+                criteria: { contexts: ['@desk'], futureCriterion: 'keep' },
+                updatedAt: expect.any(String),
+            }]);
         });
     });
 

@@ -14,7 +14,7 @@ import { normalizeTaskStatus } from './task-status';
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRelativeStartOffset } from './task-relative-start';
 import { logInfo, logWarn } from './logger';
-import { normalizeSavedFilter, normalizeSavedFilters } from './saved-filters';
+import { keepSavedFilters } from './saved-filters';
 import { sleep } from './async-utils';
 import { TASK_SQLITE_COLUMNS, TASK_SQLITE_MIGRATION_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
 import {
@@ -384,6 +384,40 @@ export type SqliteAdapterOptions = {
      * short-lived automation clients use this guard so retry can reload first.
      */
     rejectConcurrentWrites?: boolean;
+};
+
+/**
+ * Put live saved filters a stale list omitted back into it. One the stored
+ * settings list holds returns whole, right after the nearest filter that
+ * stood before it there (first when none did); one only the table holds
+ * returns as the table has it, at the end.
+ */
+const restoreOmittedSavedFilters = (
+    list: readonly SavedFilter[],
+    storedList: readonly SavedFilter[],
+    keptIds: readonly string[],
+    fromTable: (id: string) => SavedFilter | null,
+): SavedFilter[] => {
+    const result = [...list];
+    const pending = new Set(keptIds);
+    // ponytail: quadratic in the list length; saved filters number in the tens.
+    storedList.forEach((filter, index) => {
+        if (!pending.delete(filter.id)) return;
+        let at = 0;
+        for (let previous = index - 1; previous >= 0; previous -= 1) {
+            const found = result.findIndex((item) => item.id === storedList[previous].id);
+            if (found >= 0) {
+                at = found + 1;
+                break;
+            }
+        }
+        result.splice(at, 0, filter);
+    });
+    for (const id of pending) {
+        const filter = fromTable(id);
+        if (filter) result.push(filter);
+    }
+    return result;
 };
 
 export class SqliteAdapter {
@@ -1011,20 +1045,15 @@ export class SqliteAdapter {
         };
     }
 
+    // The table copy as stored: a NOT NULL column saved empty was missing
+    // (see the saved-filters upsert), so it stays missing here.
     private mapSavedFilterRow(row: Record<string, unknown>): SavedFilter | null {
-        return normalizeSavedFilter({
-            id: row.id,
-            name: row.name,
-            icon: row.icon,
-            view: row.view,
-            criteria: fromJson<unknown>(row.criteria, {}),
-            sortBy: row.sortBy,
-            sortOrder: row.sortOrder,
-            groupBy: row.groupBy,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-            deletedAt: row.deletedAt,
-        });
+        const filter: Record<string, unknown> = { id: row.id };
+        for (const column of ['name', 'icon', 'view', 'criteria', 'sortBy', 'sortOrder', 'groupBy', 'createdAt', 'updatedAt', 'deletedAt']) {
+            if (column === 'criteria') filter.criteria = fromJson<unknown>(row.criteria, {});
+            else if (typeof row[column] === 'string' && row[column]) filter[column] = row[column];
+        }
+        return keepSavedFilters([filter])[0] ?? null;
     }
 
     async getData(): Promise<AppData> {
@@ -1076,7 +1105,7 @@ export class SqliteAdapter {
         if (!Array.isArray(settings.savedFilters) && savedFiltersFromTable.length > 0) {
             settings.savedFilters = savedFiltersFromTable;
         } else if (Array.isArray(settings.savedFilters)) {
-            settings.savedFilters = normalizeSavedFilters(settings.savedFilters);
+            settings.savedFilters = keepSavedFilters(settings.savedFilters);
         }
 
         // A read is the deletion baseline for this adapter. Retain exact row
@@ -1518,7 +1547,23 @@ export class SqliteAdapter {
             await syncIds('people', people.map((person) => person.id));
 
             const rawSavedFilters = data.settings?.savedFilters;
-            const savedFilters = normalizeSavedFilters(rawSavedFilters);
+            // The stored settings list, read in this transaction: the complete
+            // copy of every filter (the table holds only its own columns).
+            let storedFilterList: SavedFilter[] | null | undefined;
+            const readStoredFilterList = async () => {
+                if (storedFilterList === undefined) {
+                    const row = await timed(() => this.client.get<Record<string, unknown>>('SELECT data FROM settings WHERE id = 1'));
+                    const stored = row?.data ? fromJson<AppData['settings']>(row.data, {}) : {};
+                    storedFilterList = Array.isArray(stored.savedFilters) ? keepSavedFilters(stored.savedFilters) : null;
+                }
+                return storedFilterList;
+            };
+            // A snapshot without a list says nothing about saved filters: the stored list stays.
+            const filterList = Array.isArray(rawSavedFilters) ? rawSavedFilters : await readStoredFilterList();
+            const savedFilters = keepSavedFilters(filterList);
+            // The settings list keeps each filter as written; this table copy
+            // holds only its own columns, and a NOT NULL one it lacks is empty.
+            const textOr = <T>(value: unknown, fallback: T) => (typeof value === 'string' ? value : fallback);
             saveStep = 'saved-filters';
             await upsertBatch(
                 'saved_filters',
@@ -1537,16 +1582,16 @@ export class SqliteAdapter {
                 ],
                 savedFilters.map((filter) => [
                     filter.id,
-                    filter.name,
-                    filter.icon ?? null,
-                    filter.view,
-                    toJson(filter.criteria),
-                    filter.sortBy ?? null,
-                    filter.sortOrder ?? null,
-                    filter.groupBy ?? null,
-                    filter.createdAt,
-                    filter.updatedAt,
-                    filter.deletedAt ?? null,
+                    textOr(filter.name, ''),
+                    textOr(filter.icon, null),
+                    textOr(filter.view, ''),
+                    toJson(filter.criteria ?? {}),
+                    textOr(filter.sortBy, null),
+                    textOr(filter.sortOrder, null),
+                    textOr(filter.groupBy, null),
+                    textOr(filter.createdAt, ''),
+                    textOr(filter.updatedAt, ''),
+                    textOr(filter.deletedAt, null),
                 ]),
                 `name=excluded.name,
                  icon=excluded.icon,
@@ -1564,21 +1609,28 @@ export class SqliteAdapter {
             );
             saveStep = 'sync-saved-filter-ids';
             // The table mirrors settings.savedFilters, which this save rewrites.
-            // A kept live filter goes back into that list too, so the next load
-            // (which reads the list, or the table when there is no list) still
-            // shows it and the two copies never disagree. It also stays known,
-            // so a second stale save before a reload keeps it again.
+            // A kept live filter goes back into that list too, whole and at its
+            // stored place, so the next load (which reads the list, or the table
+            // when there is no list) still shows it and the two copies never
+            // disagree. It also stays known, so a second stale save before a
+            // reload keeps it again.
             const keptFilterRows = await syncIds('saved_filters', savedFilters.map((filter) => filter.id));
             const knownFilterVersions = nextKnownRows.get('saved_filters');
-            const keptFilters = keptFilterRows.flatMap((row) => {
+            const keptFilterRowById = new Map(keptFilterRows.map((row) => {
                 knownFilterVersions?.set(String(row.id), this.knownRowVersionFromRow(row));
-                const filter = this.mapSavedFilterRow(row);
-                return filter ? [filter] : [];
-            });
+                return [String(row.id), row] as const;
+            }));
 
             const settingsForSave = { ...(data.settings ?? {}) };
-            if (Array.isArray(rawSavedFilters)) {
-                settingsForSave.savedFilters = keptFilters.length > 0 ? [...savedFilters, ...keptFilters] : savedFilters;
+            if (Array.isArray(filterList)) {
+                settingsForSave.savedFilters = keptFilterRowById.size > 0
+                    ? restoreOmittedSavedFilters(
+                        savedFilters,
+                        (await readStoredFilterList()) ?? [],
+                        [...keptFilterRowById.keys()],
+                        (id) => this.mapSavedFilterRow(keptFilterRowById.get(id)!),
+                    )
+                    : savedFilters;
             } else {
                 delete settingsForSave.savedFilters;
             }
