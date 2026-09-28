@@ -5076,6 +5076,164 @@ final class FoundationUITests: XCTestCase {
         XCTAssertEqual(app.buttons.matching(identifier: "Focus project next action").count, 1)
     }
 
+    private func revealAreaRenameControl(_ app: XCUIApplication, _ element: XCUIElement) {
+        let scroll = app.scrollViews["area-manager-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        for _ in 0..<30 {
+            var viewport = scroll.frame.intersection(app.frame)
+            let keyboard = app.keyboards.firstMatch
+            if keyboard.exists && keyboard.frame.intersects(viewport) {
+                viewport.size.height = max(0, keyboard.frame.minY - viewport.minY)
+            }
+            if element.exists && element.isHittable && element.frame.minY >= viewport.minY
+                && element.frame.maxY <= viewport.maxY { return }
+            let downward = element.exists && element.frame.minY < viewport.minY
+            if keyboard.exists && keyboard.frame.intersects(scroll.frame) {
+                // Swipe inside the visible content, not the keyboard covering the scroll view.
+                let top = app.coordinate(withNormalizedOffset: .zero).withOffset(
+                    CGVector(dx: viewport.midX, dy: viewport.minY + viewport.height * 0.2))
+                let bottom = app.coordinate(withNormalizedOffset: .zero).withOffset(
+                    CGVector(dx: viewport.midX, dy: viewport.minY + viewport.height * 0.8))
+                (downward ? top : bottom).press(forDuration: 0.01, thenDragTo: downward ? bottom : top)
+            } else if downward { scroll.swipeDown() }
+            else { scroll.swipeUp() }
+        }
+        XCTFail("Area rename control could not be scrolled into view")
+    }
+
+    func testAreaRenameMergeAndDrafts() {
+        areaRenameFlow(library: "a5fce02c-72ca-4ff9-8380-efbcb868d496")
+    }
+
+    func testAreaRenameMergeLargestText() {
+        areaRenameFlow(library: "73a80a74-f4c2-4a93-b9c0-a28e934a688b")
+    }
+
+    private func areaRenameFlow(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch()
+        let source = "170c1eab-65ec-4a38-931d-3f03399b7d17"
+        let destination = "af884128-31d5-41eb-978c-2fd1a44b62e8"
+        let input = app.textFields["area-rename-name"]
+        let create = app.textFields["area-create-name"]
+        let project = app.textFields["projects-create-title"]
+        func openProjects() {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+            boardEnabled(project)
+        }
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            revealAreaRenameControl(app, button); boardEnabled(button)
+            if id.hasPrefix("area-rename-") {
+                // The native medium sheet scales its 48pt layout; check the screen-space hit region.
+                XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+                XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            }
+            button.tap()
+        }
+        func rename(_ value: String, cancel: Bool = false) {
+            tap("area-rename-open-" + source)
+            boardEnabled(input); revealAreaRenameControl(app, input)
+            replaceTextView(input, with: value)
+            if cancel {
+                let decomposed = value.decomposedStringWithCanonicalMapping
+                replaceTextView(input, with: decomposed)
+                XCTAssertEqual(Array((input.value as? String ?? "").utf8), Array(decomposed.utf8))
+            }
+            tap(cancel ? "area-rename-cancel" : "area-rename-save")
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: input)
+            waitForExpectations(timeout: 15)
+            XCTAssertFalse(app.staticTexts["area-rename-error"].exists)
+            XCTAssertEqual(create.value as? String, "Retained Area draft")
+        }
+        openProjects()
+        project.tap(); project.typeText("Retained Project draft")
+        boardTap(app, "projects-manage-areas")
+        boardEnabled(create); revealAreaRenameControl(app, create)
+        create.tap(); create.typeText("Retained Area draft")
+        rename("Cancelled Caf\u{e9}", cancel: true)
+        rename("  Renamed Source  ")
+        XCTAssertTrue(app.buttons["area-rename-open-" + source].label.contains("Renamed Source"))
+        rename("  Renamed Source  ")
+        rename("  HOME  ")
+        XCTAssertFalse(app.buttons["area-rename-open-" + source].exists)
+        let survivor = app.buttons["area-rename-open-" + destination]
+        revealAreaRenameControl(app, survivor); boardEnabled(survivor)
+        XCTAssertTrue(survivor.label.contains("HOME"))
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Area merge preserves destination and Area draft"
+        capture.lifetime = .keepAlways; add(capture)
+        boardTap(app, "area-manager-close")
+        XCTAssertEqual(project.value as? String, "Retained Project draft")
+        app.terminate(); app.launch(); openProjects()
+        boardTap(app, "projects-manage-areas"); boardEnabled(create)
+        XCTAssertFalse(app.buttons["area-rename-open-" + source].exists)
+        revealAreaRenameControl(app, survivor); boardEnabled(survivor)
+        XCTAssertTrue(survivor.label.contains("HOME"))
+        boardTap(app, "area-manager-close"); app.terminate()
+    }
+
+    func testAreaRenameFailureRetainsRawDraft() {
+        areaRenameRecovery(expectFailure: true)
+    }
+
+    func testAreaRenameColdRecovery() {
+        areaRenameRecovery(expectFailure: false)
+    }
+
+    private func areaRenameRecovery(expectFailure: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "0c4675cf-9a62-4a03-bd1e-c5ce2d64e6dd"]
+        app.launch()
+        let source = "170c1eab-65ec-4a38-931d-3f03399b7d17"
+        let destination = "af884128-31d5-41eb-978c-2fd1a44b62e8"
+        func tap(_ id: String) {
+            let button = app.buttons[id]
+            revealAreaRenameControl(app, button); boardEnabled(button); button.tap()
+        }
+        if expectFailure {
+            boardEnabled(app.buttons["tab-menu"], timeout: 30)
+            boardTap(app, "tab-menu"); boardTap(app, "menu-projects")
+        } else { boardEnabled(app.textFields["projects-create-title"], timeout: 30) }
+        boardTap(app, "projects-manage-areas")
+        boardEnabled(app.textFields["area-create-name"])
+        if expectFailure {
+            tap("area-rename-open-" + source)
+            let input = app.textFields["area-rename-name"]
+            boardEnabled(input); revealAreaRenameControl(app, input)
+            replaceTextView(input, with: "  HOME  "); tap("area-rename-save")
+            let error = app.staticTexts["area-rename-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertEqual(input.value as? String, "  HOME  ")
+                XCTAssertFalse(input.isEnabled)
+                for id in ["area-manager-close", "area-create-save", "area-create-cancel",
+                           "area-rename-save", "area-rename-cancel", "area-order-sort-name",
+                           "area-order-sort-color", "area-color-open-" + source,
+                           "area-rename-open-" + destination, "area-order-up-" + source] {
+                    XCTAssertFalse(app.buttons[id].isEnabled, id)
+                }
+                XCTAssertFalse(app.textFields["area-create-name"].isEnabled)
+                tap("area-rename-retry"); boardEnabled(app.buttons["area-rename-retry"])
+                XCTAssertTrue(error.exists)
+            }
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "Failed Area merge retains raw draft and Retry"
+            capture.lifetime = .keepAlways; add(capture)
+        } else {
+            XCTAssertFalse(app.buttons["area-rename-open-" + source].exists)
+            let survivor = app.buttons["area-rename-open-" + destination]
+            revealAreaRenameControl(app, survivor); boardEnabled(survivor)
+            XCTAssertTrue(survivor.label.contains("HOME"))
+            XCTAssertFalse(app.staticTexts["area-rename-error"].exists)
+            XCTAssertFalse(app.textFields["area-rename-name"].exists)
+            boardTap(app, "area-manager-close")
+        }
+        app.terminate()
+    }
+
     func testAreaDeleteProtectsProjectsRetainsTaskAndDraftAcrossRelaunch() {
         let app = XCUIApplication()
         let library = UUID().uuidString.lowercased()

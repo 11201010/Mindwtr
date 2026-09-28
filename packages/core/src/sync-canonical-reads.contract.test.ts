@@ -965,6 +965,33 @@ describe('canonical local reads contract', () => {
                 expect(nativeValue(await host.commitPreparedAreaColor({ request, prepared: planned.prepared })))
                     .toEqual(planned.prepared.result);
             },
+            commitPreparedAreaRename: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getAreaOrderOptions());
+                const selected = options.areas.find((entry) => entry.id === areaId);
+                expect(selected).toBeDefined();
+                if (!selected) return;
+                const request = { requestId: '2bf1993a-20c8-4eae-b747-51db55db67cf',
+                    areaId, name: 'Contract prepared Area rename', expected: selected };
+                const planned = nativeValue(host.prepareAreaRename(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    for (const { after } of planned.prepared.effect.areas) {
+                        expect(written.areas.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                    for (const { after } of planned.prepared.effect.projects) {
+                        expect(written.projects.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                    for (const { after } of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedAreaRename({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._areasById.get(areaId))
+                    .toEqual(planned.prepared.effect.areas[0].after);
+            },
             commitPreparedAreaOrder: async (control) => {
                 const host = await nativeHost(control);
                 const options = nativeValue(host.getAreaOrderOptions());

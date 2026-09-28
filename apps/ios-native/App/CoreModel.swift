@@ -148,6 +148,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var areaOrderIntent: CoreObject?
     @Published private(set) var areaOrderError: String?
     @Published private(set) var areaOrderReadError: String?
+    @Published private(set) var areaRenameEditingID: String?
+    @Published private(set) var areaRenameOriginalName = ""
+    @Published private(set) var areaRenameDraft = ""
+    @Published private(set) var areaRenameError: String?
+    @Published private(set) var areaRenameReadError: String?
     @Published private(set) var areaDeleteOptions: CoreObject = [:]
     @Published private(set) var areaDeleteIntentID: String?
     @Published private(set) var areaDeleteError: String?
@@ -459,6 +464,10 @@ final class CoreModel: ObservableObject {
     private var areaOrderRequest: String?
     private var areaOrderExpectedIDs: [String]?
     private var areaOrderOptionsCurrent = false
+    private var areaRenameOpeningExpected: CoreObject?
+    private var areaRenameRequest: String?
+    private var areaRenameExpectedSourceID: String?
+    private var areaRenameCloseAfterRefresh = false
     private var areaDeleteRequest: String?
     private var areaDeleteExpectedID: String?
     private var areaDeleteOptionsCurrent = false
@@ -831,7 +840,7 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .projects && !busy && !retryNeeded && projectCreateRequest == nil
             && projectFocusRequest == nil
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
-            && areaDeleteRequest == nil && !areaManagerPresented
+            && areaRenameRequest == nil && areaDeleteRequest == nil && !areaManagerPresented
             && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
     }
     var projectCreateCanSubmit: Bool {
@@ -848,6 +857,8 @@ final class CoreModel: ObservableObject {
     var areaCreatePending: Bool { areaCreateRequest != nil }
     var areaColorPending: Bool { areaColorRequest != nil }
     var areaOrderPending: Bool { areaOrderRequest != nil }
+    var areaRenamePending: Bool { areaRenameRequest != nil }
+    var areaRenameEditing: Bool { areaRenameEditingID != nil }
     var areaDeletePending: Bool { areaDeleteRequest != nil }
     private var areaManagerOptionsCurrent: Bool {
         areaCreateOptionsCurrent && areaColorOptionsCurrent && areaOrderOptionsCurrent && areaDeleteOptionsCurrent
@@ -855,7 +866,7 @@ final class CoreModel: ObservableObject {
     var areaCreateInputEnabled: Bool {
         ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
-            && areaDeleteRequest == nil
+            && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
             && areaManagerOptionsCurrent
     }
     var areaCreateCanSubmit: Bool {
@@ -872,19 +883,35 @@ final class CoreModel: ObservableObject {
     var areaColorInputEnabled: Bool {
         ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
-            && areaDeleteRequest == nil
+            && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
             && areaManagerOptionsCurrent && areaColorReadError == nil
     }
     var areaOrderInputEnabled: Bool {
         ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
-            && areaDeleteRequest == nil
+            && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
             && areaManagerOptionsCurrent && areaOrderReadError == nil
+    }
+    var areaRenameOpenEnabled: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
+            && areaManagerOptionsCurrent && areaOrderReadError == nil
+    }
+    var areaRenameInputEnabled: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
+            && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
+            && areaRenameRequest == nil && areaDeleteRequest == nil && areaRenameEditing
+            && areaManagerOptionsCurrent && areaRenameReadError == nil
+    }
+    var areaRenameCanSubmit: Bool {
+        areaRenameInputEnabled && areaRenameOpeningExpected != nil
     }
     var areaDeleteInputEnabled: Bool {
         ready && selectedSurface == .projects && areaManagerPresented && !busy && !retryNeeded
             && areaCreateRequest == nil && areaColorRequest == nil && areaOrderRequest == nil
-            && areaDeleteRequest == nil && areaManagerOptionsCurrent && areaDeleteReadError == nil
+            && areaRenameRequest == nil && areaDeleteRequest == nil && !areaRenameEditing
+            && areaManagerOptionsCurrent && areaDeleteReadError == nil
     }
     var contextsControlsEnabled: Bool {
         ready && selectedSurface == .contexts && !contexts.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented
@@ -1044,7 +1071,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -1060,7 +1087,7 @@ final class CoreModel: ObservableObject {
                         "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
                         "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
                         "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
-                        "common.save", "common.edit", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
+                        "common.save", "common.edit", "common.rename", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
                         "markdown.edit", "markdown.preview", "taskEdit.titleLabel", "taskEdit.descriptionLabel",
                         "taskEdit.descriptionPlaceholder", "search.placeholder", "search.noResults", "search.searching",
                         "search.resultProject", "search.resultTask", "search.inProjectSuffix", "search.showingFirst", "search.helpOperators",
@@ -3379,6 +3406,7 @@ final class CoreModel: ObservableObject {
         areaOrderIntent = nil
         areaOrderError = nil
         areaOrderReadError = nil
+        clearAreaRenameForm()
         areaDeleteIntentID = nil
         areaDeleteError = nil
         areaDeleteReadError = nil
@@ -3391,7 +3419,7 @@ final class CoreModel: ObservableObject {
 
     func closeAreaManager() {
         guard !busy, areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-              areaDeleteRequest == nil,
+              areaRenameRequest == nil, areaDeleteRequest == nil, !areaRenameEditing,
               !retryNeeded else { return }
         areaManagerPresented = false
         areaCreateNameGeneration += 1
@@ -3443,14 +3471,15 @@ final class CoreModel: ObservableObject {
             guard generation == areaCreateNameGeneration,
                   (forProject ? projectAreaCreatePresented : areaManagerPresented),
                   areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-                  areaDeleteRequest == nil else { return }
+                  areaRenameRequest == nil, areaDeleteRequest == nil else { return }
             do {
                 let result = try await query("areaCreateResolve", [try json([
                     "requestId": UUID().uuidString.lowercased(), "name": name,
                 ])])
                 guard generation == areaCreateNameGeneration,
                       (forProject ? projectAreaCreatePresented : areaManagerPresented),
-                      areaColorRequest == nil, areaOrderRequest == nil, areaDeleteRequest == nil else { return }
+                      areaColorRequest == nil, areaOrderRequest == nil,
+                      areaRenameRequest == nil, areaDeleteRequest == nil else { return }
                 if forProject {
                     guard let normalizedName = result["normalizedName"] as? String else {
                         throw CocoaError(.coderReadCorrupt)
@@ -3463,7 +3492,8 @@ final class CoreModel: ObservableObject {
             } catch {
                 guard generation == areaCreateNameGeneration,
                       (forProject ? projectAreaCreatePresented : areaManagerPresented),
-                      areaColorRequest == nil, areaOrderRequest == nil, areaDeleteRequest == nil else { return }
+                      areaColorRequest == nil, areaOrderRequest == nil,
+                      areaRenameRequest == nil, areaDeleteRequest == nil else { return }
                 if forProject && error.localizedDescription.hasPrefix("INVALID_INPUT:") {
                     projectAreaCreateNameValid = false
                     areaCreateReadError = nil
@@ -3623,7 +3653,7 @@ final class CoreModel: ObservableObject {
     func retryAreaCreateRead() async {
         guard areaManagerPresented, !busy, !retryNeeded,
               areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-              areaDeleteRequest == nil else { return }
+              areaRenameRequest == nil, areaDeleteRequest == nil else { return }
         busy = true
         defer { finishOperation() }
         do {
@@ -3735,7 +3765,7 @@ final class CoreModel: ObservableObject {
     func retryAreaColorRead() async {
         guard areaManagerPresented, !busy, !retryNeeded,
               areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-              areaDeleteRequest == nil else { return }
+              areaRenameRequest == nil, areaDeleteRequest == nil else { return }
         busy = true
         defer { finishOperation() }
         do {
@@ -3833,7 +3863,7 @@ final class CoreModel: ObservableObject {
     func retryAreaOrderRead() async {
         guard areaManagerPresented, !busy, !retryNeeded,
               areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-              areaDeleteRequest == nil else { return }
+              areaRenameRequest == nil, areaDeleteRequest == nil else { return }
         busy = true
         defer { finishOperation() }
         do {
@@ -3841,6 +3871,152 @@ final class CoreModel: ObservableObject {
             areaOrderReadError = nil
             error = nil
         } catch { areaOrderReadError = error.localizedDescription }
+    }
+
+    private func areaRenameToken(_ row: CoreObject) -> CoreObject? {
+        guard !row.text("id").isEmpty, !row.text("name").isEmpty, !row.text("updatedAt").isEmpty,
+              row["color"] is String || row["color"] is NSNull,
+              (row["order"] as? NSNumber)?.doubleValue.isFinite == true,
+              row["rev"] is Int || row["rev"] is NSNull,
+              row["revBy"] is String || row["revBy"] is NSNull else { return nil }
+        return ["id": row.text("id"), "name": row.text("name"),
+                "color": row["color"] ?? NSNull(), "order": row["order"] ?? NSNull(),
+                "rev": row["rev"] ?? NSNull(), "revBy": row["revBy"] ?? NSNull(),
+                "updatedAt": row.text("updatedAt")]
+    }
+
+    private func clearAreaRenameForm() {
+        areaRenameEditingID = nil
+        areaRenameOriginalName = ""
+        areaRenameDraft = ""
+        areaRenameError = nil
+        areaRenameReadError = nil
+        areaRenameOpeningExpected = nil
+        areaRenameExpectedSourceID = nil
+        areaRenameCloseAfterRefresh = false
+    }
+
+    func openAreaRename(_ id: String) {
+        guard areaRenameOpenEnabled,
+              let row = areaOrderOptions.objects("areas").first(where: { $0.text("id") == id }),
+              let expected = areaRenameToken(row) else { return }
+        areaRenameEditingID = id
+        areaRenameOriginalName = row.text("name")
+        areaRenameDraft = row.text("name")
+        areaRenameOpeningExpected = expected
+        areaRenameError = nil
+        areaRenameReadError = nil
+        areaRenameCloseAfterRefresh = false
+        expandedAreaColorID = nil
+    }
+
+    func setAreaRenameDraft(_ name: String) {
+        guard areaRenameInputEnabled, Data(name.utf8) != Data(areaRenameDraft.utf8) else { return }
+        areaRenameDraft = name
+        areaRenameError = nil
+    }
+
+    var areaRenameCanCancel: Bool {
+        ready && selectedSurface == .projects && areaManagerPresented && areaRenameEditing
+            && !busy && !retryNeeded && areaCreateRequest == nil && areaColorRequest == nil
+            && areaOrderRequest == nil && areaRenameRequest == nil && areaDeleteRequest == nil
+    }
+
+    func cancelAreaRename() {
+        guard areaRenameCanCancel else { return }
+        clearAreaRenameForm()
+    }
+
+    func renameArea() async {
+        guard areaRenameCanSubmit, let id = areaRenameEditingID,
+              let expected = areaRenameOpeningExpected else { return }
+        busy = true
+        areaCreateNameGeneration += 1
+        areaCreateNameChecking = false
+        expandedAreaColorID = nil
+        areaRenameError = nil
+        defer { finishOperation() }
+        let request: String
+        do {
+            request = try json(["requestId": UUID().uuidString.lowercased(), "areaId": id,
+                                "name": areaRenameDraft, "expected": expected])
+            areaRenameRequest = request
+            areaRenameExpectedSourceID = id
+        } catch {
+            areaRenameReadError = error.localizedDescription
+            return
+        }
+        let result: CoreObject
+        do { result = try await query("areaRename", [request]) }
+        catch { await handleAreaRenameWriteError(error); return }
+        do { try acknowledgeAreaRename(result) }
+        catch { await handleAreaRenameWriteError(error); return }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            completeAreaRenameAfterRefresh()
+        } catch {
+            areaRenameReadError = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func acknowledgeAreaRename(_ result: CoreObject) throws {
+        guard areaRenameRequest != nil, let expected = areaRenameExpectedSourceID,
+              result.count == 3, result.text("id") == expected,
+              !result.text("areaId").isEmpty, !result.text("name").isEmpty else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        areaRenameRequest = nil
+        areaRenameExpectedSourceID = nil
+        areaRenameCloseAfterRefresh = true
+        retryNeeded = false
+        areaRenameError = nil
+        areaRenameReadError = nil
+        error = nil
+    }
+
+    private func completeAreaRenameAfterRefresh() {
+        guard areaRenameCloseAfterRefresh else { return }
+        clearAreaRenameForm()
+    }
+
+    private func handleAreaRenameWriteError(_ failure: Error) async {
+        if areaRenameRequest != nil && isDefiniteRejection(failure) {
+            areaRenameRequest = nil
+            areaRenameExpectedSourceID = nil
+            areaRenameCloseAfterRefresh = false
+            retryNeeded = false
+            areaRenameError = failure.localizedDescription
+            areaRenameReadError = failure.localizedDescription
+            error = nil
+        } else {
+            retryNeeded = areaRenameRequest != nil
+            areaRenameError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
+    }
+
+    func retryAreaRenameRead() async {
+        guard areaManagerPresented, areaRenameEditing, !busy, !retryNeeded,
+              areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
+              areaRenameRequest == nil, areaDeleteRequest == nil else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            try await refreshAreaManagerAfterWrite()
+            if areaRenameCloseAfterRefresh {
+                completeAreaRenameAfterRefresh()
+            } else {
+                guard let id = areaRenameEditingID,
+                      let row = areaOrderOptions.objects("areas").first(where: { $0.text("id") == id }),
+                      let expected = areaRenameToken(row) else { throw CocoaError(.coderReadCorrupt) }
+                areaRenameOriginalName = row.text("name")
+                areaRenameOpeningExpected = expected
+                areaRenameError = nil
+                areaRenameReadError = nil
+            }
+            error = nil
+        } catch { areaRenameReadError = error.localizedDescription }
     }
 
     private func readAreaDeleteOptions() async throws {
@@ -3938,7 +4114,7 @@ final class CoreModel: ObservableObject {
     func retryAreaDeleteRead() async {
         guard areaManagerPresented, !busy, !retryNeeded,
               areaCreateRequest == nil, areaColorRequest == nil, areaOrderRequest == nil,
-              areaDeleteRequest == nil else { return }
+              areaRenameRequest == nil, areaDeleteRequest == nil else { return }
         busy = true
         defer { finishOperation() }
         do {
@@ -9244,6 +9420,20 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = areaRenameRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("areaRenameRetryOutcome", [request]) }
+                try acknowledgeAreaRename(result)
+                do {
+                    try await refreshAreaManagerAfterWrite()
+                    completeAreaRenameAfterRefresh()
+                } catch {
+                    areaRenameReadError = error.localizedDescription
+                    self.error = error.localizedDescription
+                }
+                return
+            }
             if let request = areaDeleteRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -9399,6 +9589,10 @@ final class CoreModel: ObservableObject {
             }
             if projectFocusRequest != nil {
                 await handleProjectFocusWriteError(error)
+                return
+            }
+            if areaRenameRequest != nil {
+                await handleAreaRenameWriteError(error)
                 return
             }
             if areaDeleteRequest != nil {

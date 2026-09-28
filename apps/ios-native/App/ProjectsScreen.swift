@@ -28,7 +28,8 @@ struct ProjectsScreen: View {
             AreaManagerSheet(model: model, palette: palette)
                 .presentationDetents([.medium, .large])
                 .interactiveDismissDisabled(model.busy || model.areaCreatePending || model.areaColorPending
-                    || model.areaOrderPending || model.areaDeletePending || model.retryNeeded)
+                    || model.areaOrderPending || model.areaRenamePending || model.areaDeletePending
+                    || model.areaRenameEditing || model.retryNeeded)
         }
     }
 
@@ -277,6 +278,7 @@ private struct AreaManagerSheet: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @FocusState private var nameFocused: Bool
+    @FocusState private var renameFocused: Bool
 
     private var areas: [CoreObject] { model.areaManagerAreas }
     private var colors: [String] { model.areaCreateOptions["colors"] as? [String] ?? [] }
@@ -292,7 +294,8 @@ private struct AreaManagerSheet: View {
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).disabled(model.busy || model.areaCreatePending || model.areaColorPending
-                    || model.areaOrderPending || model.areaDeletePending || model.retryNeeded)
+                    || model.areaOrderPending || model.areaRenamePending || model.areaDeletePending
+                    || model.areaRenameEditing || model.retryNeeded)
                 .accessibilityLabel(model.label("common.close"))
                 .accessibilityIdentifier("area-manager-close")
             }
@@ -335,8 +338,16 @@ private struct AreaManagerSheet: View {
                                         .buttonStyle(.plain).disabled(!model.areaColorInputEnabled)
                                         .accessibilityLabel("\(model.label("projects.changeColor")): \(area.text("name"))")
                                         .accessibilityIdentifier("area-color-open-" + area.text("id"))
-                                        Text(area.text("name")).rnFont(15)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        Button {
+                                            model.openAreaRename(area.text("id"))
+                                        } label: {
+                                            Text(area.text("name")).rnFont(15)
+                                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.areaRenameOpenEnabled)
+                                        .accessibilityLabel("\(model.label("common.rename")): \(area.text("name"))")
+                                        .accessibilityIdentifier("area-rename-open-" + area.text("id"))
                                         Button { submitAreaOrder("moveUp", areaID: area.text("id")) } label: {
                                             Image(systemName: "arrow.up").font(.system(size: 17, weight: .semibold))
                                                 .frame(width: 44, height: 44).contentShape(Rectangle())
@@ -358,6 +369,9 @@ private struct AreaManagerSheet: View {
                                         .accessibilityIdentifier("area-delete-" + area.text("id"))
                                     }
                                     .frame(minHeight: 44)
+                                    if model.areaRenameEditingID == area.text("id") {
+                                        areaRenameForm
+                                    }
                                     if model.expandedAreaColorID == area.text("id") {
                                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 10)], spacing: 10) {
                                             Button { submitAreaColor(area.text("id"), color: nil) } label: {
@@ -394,6 +408,10 @@ private struct AreaManagerSheet: View {
                         }
                         .padding(.horizontal, 14).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                    }
+                    if let editingID = model.areaRenameEditingID,
+                       !areas.contains(where: { $0.text("id") == editingID }) {
+                        areaRenameForm
                     }
                     if let message = model.areaColorError {
                         Text(message).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
@@ -515,7 +533,8 @@ private struct AreaManagerSheet: View {
                                 .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                         }
                             .disabled(model.busy || model.areaCreatePending || model.areaColorPending
-                                || model.areaOrderPending || model.areaDeletePending || model.retryNeeded)
+                                || model.areaOrderPending || model.areaRenamePending || model.areaDeletePending
+                                || model.areaRenameEditing || model.retryNeeded)
                             .accessibilityIdentifier("area-create-cancel")
                         Button { submitArea() } label: {
                             Text(model.label("common.save"))
@@ -536,6 +555,72 @@ private struct AreaManagerSheet: View {
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape) { model.closeAreaManager() }
+        .onChange(of: model.areaRenameInputEnabled) { renameFocused = $0 }
+    }
+
+    private var areaRenameForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(model.label("common.rename")): \(model.areaRenameOriginalName)").rnFont(14, .semibold)
+                .foregroundStyle(palette.secondary)
+            TextField(model.label("projects.areaLabel"), text: Binding(
+                get: { model.areaRenameDraft },
+                set: { model.setAreaRenameDraft($0) }))
+                .focused($renameFocused).submitLabel(.done)
+                .onSubmit { submitAreaRename() }
+                .rnFont(16).padding(.horizontal, 12).frame(minHeight: 48)
+                .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(!model.areaRenameInputEnabled)
+                .contentShape(Rectangle()).onTapGesture {
+                    if model.areaRenameInputEnabled { renameFocused = true }
+                }
+                .accessibilityLabel(model.label("projects.areaLabel"))
+                .accessibilityIdentifier("area-rename-name")
+            if let message = model.areaRenameError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("area-rename-error")
+            } else if let message = model.areaRenameReadError {
+                Text(message).rnFont(13).foregroundStyle(palette.danger)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("area-rename-error")
+            }
+            if model.areaRenamePending && model.retryNeeded {
+                Button { Task { await model.retry() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint)
+                .disabled(model.busy).accessibilityIdentifier("area-rename-retry")
+            }
+            if model.areaRenameReadError != nil && !model.areaRenamePending {
+                Button { Task { await model.retryAreaRenameRead() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint)
+                .disabled(model.busy || model.retryNeeded)
+                .accessibilityIdentifier("area-rename-read-retry")
+            }
+            HStack(spacing: 12) {
+                Button { cancelAreaRename() } label: {
+                    Text(model.label("common.cancel"))
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .disabled(!model.areaRenameCanCancel)
+                .accessibilityIdentifier("area-rename-cancel")
+                Button { submitAreaRename() } label: {
+                    Text(model.label("common.save"))
+                        .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                }
+                .disabled(!model.areaRenameCanSubmit)
+                .accessibilityIdentifier("area-rename-save")
+            }
+            .buttonStyle(.plain).rnFont(15, .semibold).foregroundStyle(palette.tint)
+        }
+        .padding(12).background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("area-rename-form")
     }
 
     private func submitArea() {
@@ -550,6 +635,20 @@ private struct AreaManagerSheet: View {
         nameFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         Task { await model.changeAreaColor(id, color: color) }
+    }
+
+    private func submitAreaRename() {
+        guard model.areaRenameCanSubmit else { return }
+        renameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await model.renameArea() }
+    }
+
+    private func cancelAreaRename() {
+        guard model.areaRenameCanCancel else { return }
+        renameFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        model.cancelAreaRename()
     }
 
     private func submitAreaOrder(_ kind: String, areaID: String? = nil) {

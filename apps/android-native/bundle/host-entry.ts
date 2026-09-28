@@ -782,6 +782,25 @@ globalThis.MindwtrHost = {
     areaColorCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedAreaColor(JSON.parse(json))));
     },
+    areaRenameRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeAreaRenameOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    areaRenamePrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareAreaRename(JSON.parse(json)));
+        });
+    },
+    areaRenameValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedAreaRename(JSON.parse(json))));
+    },
+    areaRenameCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedAreaRename(JSON.parse(json))));
+    },
     areaOrderOptions(): string {
         return submit(async () => {
             requireSaved();

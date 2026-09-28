@@ -178,6 +178,19 @@ export type PreparedAreaColor = {
     updateAt: string;
 };
 
+/** Frozen live Area resolution inventory and complete linked-row witnesses for rename/merge. */
+export type PreparedAreaRename = {
+    scope: { areas: Area[]; projects: Project[]; tasks: Task[] };
+    effect: {
+        areas: Array<{ before: Area; after: Area }>;
+        projects: Array<{ before: Project; after: Project }>;
+        tasks: Array<{ before: Task; after: Task }>;
+    };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    updateAt: string;
+};
+
 /** Frozen order revision for every live Area, including unchanged numeric orders. */
 export type PreparedAreaOrder = {
     scope: { areas: Area[] };
@@ -443,6 +456,8 @@ export interface TaskStore {
     commitPreparedProjectSectionOrder: (input: PreparedProjectSectionOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaColor: (input: PreparedAreaColor & { request: { requestId: string; areaId: string; color: string | null } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string };
+        result: { id: string; areaId: string; name: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaOrder: (input: PreparedAreaOrder & { request: { requestId: string; intent: AreaOrderIntent; expectedAreas: unknown[] }; result: { orderedIds: string[] } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaDelete: (input: PreparedAreaDelete & { request: { requestId: string; areaId: string }; result: { areaId: string } }) => Promise<PreparedTaskEditResult>;
     /** Update a project */

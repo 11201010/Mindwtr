@@ -244,6 +244,7 @@ import { createProjectSectionDeleteMethods } from './native-host-contract-projec
 import { createProjectSectionOrderMethods } from './native-host-contract-project-section-order';
 import { createAreaCreateMethods } from './native-host-contract-area-create';
 import { createAreaColorMethods } from './native-host-contract-area-color';
+import { createAreaRenameMethods } from './native-host-contract-area-rename';
 import { createAreaOrderMethods } from './native-host-contract-area-order';
 import { createAreaDeleteMethods } from './native-host-contract-area-delete';
 import { createCalendarViewMethods } from './native-host-contract-calendar';
@@ -1317,6 +1318,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         ...createAreaColorMethods({ readiness, save,
             revision: () => `${revision()}:${settingsRevision()}:${language}`,
             sortedAreas: () => sortAreasForDisplay(useTaskStore.getState().areas) }),
+
+        ...createAreaRenameMethods({ readiness, save }),
 
         ...createAreaOrderMethods({ readiness, save,
             revision: () => `${revision()}:${settingsRevision()}:${language}`,

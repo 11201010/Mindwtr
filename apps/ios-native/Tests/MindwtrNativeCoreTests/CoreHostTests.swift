@@ -7003,6 +7003,86 @@ final class CoreHostTests: XCTestCase {
         }
     }
 
+    private func seedAreaRenameRows() async throws {
+        let bootstrap = host()
+        _ = try await bootstrap.start()
+        await bootstrap.close()
+        let at = recentAreaTestTime()
+        let sourceName = "Source \u{FEFF}e\u{301}"
+        let destinationName = "m\u{FEFF}erge e\u{301}"
+        let sqlite = try SQLiteBridge(url: database)
+        for (id, name, color, icon, order, rev) in [
+            ("rename-source", sourceName, "#22c55e", "briefcase", 0, 4),
+            ("rename-destination", destinationName, "#ef4444", "target", 1, 7),
+            ("rename-other", "Other", "#22c55e", "circle", 2, 3),
+        ] {
+            _ = try sqlite.execute("INSERT INTO areas (id, name, color, icon, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, name, color, icon, order, at, at, rev]))
+        }
+        for (id, areaID, areaTitle, color, deleted, rev) in [
+            ("rename-source-live", "rename-source", sourceName, "#22c55e", false, 11),
+            ("rename-source-deleted", "rename-source", sourceName, "#22c55e", true, 12),
+            ("rename-destination-live", "rename-destination", destinationName, "#ef4444", false, 13),
+            ("rename-destination-deleted", "rename-destination", destinationName, "#ef4444", true, 14),
+            ("rename-destination-current", "rename-destination", destinationName, "#ef4444", false, 15),
+            ("rename-unrelated", "rename-other", "Other", "#22c55e", false, 16),
+        ] {
+            let attachments = try json([[
+                "id": "\(id)-file", "kind": "file", "title": "Keep project attachment",
+                "uri": "file:///\(id).txt", "mimeType": "text/plain", "size": 17,
+                "createdAt": at, "updatedAt": at, "cloudKey": "attachments/\(id).txt",
+                "fileHash": String(repeating: "a", count: 64), "contentRev": 2,
+                "contentMtimeMs": 1_700_000_000_000, "contentSize": 17,
+            ] as [String: Any]])
+            _ = try sqlite.execute("INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, "Project \(id)", "active", color, 9, "[\"keep-tag\"]", 1, "project", "title", 1, "Keep **notes**", attachments, "2036-10-02", "2036-10-03T12:00:00.000Z", areaID, areaTitle, at, at, deleted ? at as Any : NSNull(), rev]))
+        }
+        _ = try sqlite.execute("INSERT INTO sections (id, projectId, title, orderNum, isCollapsed, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                               parametersJSON: json(["rename-section", "rename-source-live", "Keep section", 4, 1, at, at, 21]))
+        let checklist = #"[{"id":"rename-step","title":"Keep checklist","isCompleted":false}]"#
+        for (id, areaID, projectID, sectionID, deleted, rev) in [
+            ("rename-direct", "rename-source" as Any, NSNull() as Any, NSNull() as Any, false, 22),
+            ("rename-direct-deleted", "rename-source" as Any, NSNull() as Any, NSNull() as Any, true, 23),
+            ("rename-dual", NSNull() as Any, "rename-source-live" as Any, "rename-section" as Any, false, 24),
+            ("rename-nested", NSNull() as Any, "rename-source-live" as Any, "rename-section" as Any, false, 25),
+            ("rename-unrelated-task", "rename-other" as Any, NSNull() as Any, NSNull() as Any, false, 26),
+        ] {
+            let attachments = try json([[
+                "id": "\(id)-file", "kind": "file", "title": "Keep task attachment",
+                "uri": "file:///\(id).txt", "mimeType": "text/plain", "size": 19,
+                "createdAt": at, "updatedAt": at, "cloudKey": "attachments/\(id).txt",
+                "fileHash": String(repeating: "b", count: 64), "contentRev": 3,
+                "contentMtimeMs": 1_700_000_000_000, "contentSize": 19,
+            ] as [String: Any]])
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, priority, energyLevel, startTime, dueDate, tags, contexts, checklist, description, attachments, projectId, sectionId, areaId, orderNum, boardOrder, focusOrder, isFocusedToday, timeEstimate, timeSpentMinutes, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, deletedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, "Task \(id)", "next", "high", "low", at, "2036-10-02", "[\"#keep\"]", "[\"@desk\"]", checklist, "Keep task details", attachments, projectID, sectionID, areaID, 8, 7, 6, 1, "15min", 5, 0, 0, 2, at, at, deleted ? at as Any : NSNull(), rev]))
+        }
+        sqlite.close()
+        // Persist through the real reader/writer once so recoveryLoad sees the same
+        // canonical SQL rows that the ordinary host used to freeze its prepared scope.
+        // Recoloring the unrelated Area gives this fixture a real write without using
+        // Area rename itself, and leaves its Area/Project relationship canonical.
+        let canonicalizer = host()
+        _ = try await canonicalizer.start()
+        let colorOptions = try object(await canonicalizer.call("areaColorOptions"))
+        let colorRows = try XCTUnwrap(colorOptions["areas"] as? [[String: Any]])
+        let other = try XCTUnwrap(colorRows.first { $0["id"] as? String == "rename-other" })
+        let colorRequest: [String: Any] = [
+            "requestId": UUID().uuidString.lowercased(), "areaId": "rename-other", "color": "#3b82f6",
+            "expected": other.filter { $0.key != "id" },
+        ]
+        _ = try await canonicalizer.call("areaColor", argumentsJSON: json([json(colorRequest)]))
+        await canonicalizer.close()
+    }
+
+    private func areaRenameRequest(_ core: CoreHost, areaID: String = "rename-source", name: String,
+                                   requestID: String = UUID().uuidString.lowercased()) async throws -> [String: Any] {
+        let options = try object(await core.call("areaOrderOptions"))
+        let rows = try XCTUnwrap(options["areas"] as? [[String: Any]])
+        let expected = try XCTUnwrap(rows.first { $0["id"] as? String == areaID })
+        return ["requestId": requestID, "areaId": areaID, "name": name, "expected": expected]
+    }
+
     private func nineTableSnapshot(_ sqlite: SQLiteBridge) throws -> [String] {
         try ["tasks", "projects", "areas", "people", "sections", "settings", "saved_filters", "schema_migrations", "calendar_sync"].map { table in
             let raw = try sqlite.execute("SELECT * FROM \(table) ORDER BY rowid")
@@ -9401,6 +9481,336 @@ final class CoreHostTests: XCTestCase {
             await expectFailure { _ = try await blocked.start() }
             XCTAssertEqual(sql, 0); XCTAssertEqual(cleanup, 0)
             XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            await blocked.close()
+        }
+    }
+
+    func testAreaRenameMergeFailedSQLiteCommitIsAtomicAndExactRetryPreservesRichRows() async throws {
+        try await seedAreaRenameRows()
+        let faults = HostIOFaults()
+        var diagnostics: [String] = []
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        let rawName = "  M\u{FEFF}ERGE e\u{301}  "
+        let finalName = "M\u{FEFF}ERGE e\u{301}"
+        let request = try await areaRenameRequest(core, name: rawName)
+        XCTAssertEqual(Array((request["name"] as? String ?? "").utf8), Array(rawName.utf8))
+        let sourceBefore = try XCTUnwrap(areaRows("rename-source").first)
+        let destinationBefore = try XCTUnwrap(areaRows("rename-destination").first)
+        let sourceProjectsBefore = try Dictionary(uniqueKeysWithValues: ["rename-source-live", "rename-source-deleted"].map {
+            ($0, try XCTUnwrap(projectRows($0).first))
+        })
+        let destinationProjectsBefore = try Dictionary(uniqueKeysWithValues: ["rename-destination-live", "rename-destination-deleted", "rename-destination-current"].map {
+            ($0, try XCTUnwrap(projectRows($0).first))
+        })
+        let tasksBefore = try Dictionary(uniqueKeysWithValues: ["rename-direct", "rename-direct-deleted", "rename-dual", "rename-nested", "rename-unrelated-task"].map {
+            ($0, try storedTask($0))
+        })
+        let sectionBefore = try XCTUnwrap(projectSectionRows("rename-section").first)
+        let unrelatedProjectBefore = try XCTUnwrap(projectRows("rename-unrelated").first)
+        let beforeSQLite = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeSQLite)
+        beforeSQLite.close()
+
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Area rename COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await core.call("areaRename", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        XCTAssertEqual(pending["method"] as? String, "areaRenameCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(pending["argumentsJSON"] as? String).utf8)) as? [String])
+        let frozen = try object(XCTUnwrap(args.first))
+        let frozenRequest = try XCTUnwrap(frozen["request"] as? [String: Any])
+        XCTAssertEqual(Array((frozenRequest["name"] as? String ?? "").utf8), Array(rawName.utf8))
+        let prepared = try XCTUnwrap(frozen["prepared"] as? [String: Any])
+        let scope = try XCTUnwrap(prepared["scope"] as? [String: Any])
+        XCTAssertEqual((scope["areas"] as? [[String: Any]])?.count, 3)
+        XCTAssertEqual((scope["projects"] as? [[String: Any]])?.count, 5)
+        XCTAssertEqual((scope["tasks"] as? [[String: Any]])?.count, 2)
+        let rolledBack = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(rolledBack), before)
+        rolledBack.close()
+        XCTAssertFalse(diagnostics.contains("areaRenameApplied"))
+
+        faults.beforeSQL = nil
+        let pendingRetry = try await core.retryPending()
+        let retry = try object(XCTUnwrap(pendingRetry))
+        XCTAssertEqual(Set(retry.keys), Set(["id", "areaId", "name"]))
+        XCTAssertEqual(retry["id"] as? String, "rename-source")
+        XCTAssertEqual(retry["areaId"] as? String, "rename-destination")
+        XCTAssertEqual(retry["name"] as? String, finalName)
+        let sourceAfter = try XCTUnwrap(areaRows("rename-source").first)
+        let destinationAfter = try XCTUnwrap(areaRows("rename-destination").first)
+        XCTAssertNotNil(sourceAfter["deletedAt"] as? String)
+        XCTAssertEqual(sourceAfter["rev"] as? Int, (sourceBefore["rev"] as? Int ?? 0) + 1)
+        XCTAssertEqual(try json(sourceAfter.filter { !["deletedAt", "rev", "revBy", "updatedAt"].contains($0.key) }),
+                       try json(sourceBefore.filter { !["deletedAt", "rev", "revBy", "updatedAt"].contains($0.key) }))
+        XCTAssertEqual(destinationAfter["name"] as? String, finalName)
+        XCTAssertEqual(destinationAfter["color"] as? String, destinationBefore["color"] as? String)
+        XCTAssertEqual(destinationAfter["icon"] as? String, destinationBefore["icon"] as? String)
+        XCTAssertEqual(destinationAfter["orderNum"] as? Int, destinationBefore["orderNum"] as? Int)
+        XCTAssertEqual(destinationAfter["rev"] as? Int, (destinationBefore["rev"] as? Int ?? 0) + 1)
+        for id in ["rename-source-live", "rename-source-deleted"] {
+            let prior = try XCTUnwrap(sourceProjectsBefore[id])
+            let saved = try XCTUnwrap(projectRows(id).first)
+            XCTAssertEqual(saved["areaId"] as? String, "rename-destination")
+            XCTAssertEqual(saved["areaTitle"] as? String, finalName)
+            XCTAssertEqual(saved["color"] as? String, destinationBefore["color"] as? String)
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+            XCTAssertEqual(try json(saved.filter { !["areaId", "areaTitle", "color", "rev", "revBy", "updatedAt"].contains($0.key) }),
+                           try json(prior.filter { !["areaId", "areaTitle", "color", "rev", "revBy", "updatedAt"].contains($0.key) }))
+        }
+        for id in ["rename-destination-live", "rename-destination-deleted", "rename-destination-current"] {
+            let prior = try XCTUnwrap(destinationProjectsBefore[id])
+            let saved = try XCTUnwrap(projectRows(id).first)
+            XCTAssertEqual(saved["areaTitle"] as? String, finalName)
+            XCTAssertEqual(saved["color"] as? String, prior["color"] as? String)
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+            XCTAssertEqual(try json(saved.filter { !["areaTitle", "rev", "revBy", "updatedAt"].contains($0.key) }),
+                           try json(prior.filter { !["areaTitle", "rev", "revBy", "updatedAt"].contains($0.key) }))
+        }
+        for id in ["rename-direct", "rename-direct-deleted"] {
+            let prior = try XCTUnwrap(tasksBefore[id])
+            let saved = try storedTask(id)
+            XCTAssertEqual(saved["areaId"] as? String, "rename-destination")
+            XCTAssertEqual(saved["rev"] as? Int, (prior["rev"] as? Int ?? 0) + 1)
+            XCTAssertEqual(saved["deletedAt"] as? String, prior["deletedAt"] as? String)
+            XCTAssertEqual(try json(saved.filter { !["areaId", "rev", "revBy", "updatedAt"].contains($0.key) }),
+                           try json(prior.filter { !["areaId", "rev", "revBy", "updatedAt"].contains($0.key) }))
+        }
+        XCTAssertEqual(try json(try storedTask("rename-dual")), try json(XCTUnwrap(tasksBefore["rename-dual"])))
+        XCTAssertEqual(try json(try storedTask("rename-nested")), try json(XCTUnwrap(tasksBefore["rename-nested"])))
+        XCTAssertEqual(try json(try storedTask("rename-unrelated-task")), try json(XCTUnwrap(tasksBefore["rename-unrelated-task"])))
+        XCTAssertEqual(try json(XCTUnwrap(projectRows("rename-unrelated").first)), try json(unrelatedProjectBefore))
+        XCTAssertEqual(try json(XCTUnwrap(projectSectionRows("rename-section").first)), try json(sectionBefore))
+        XCTAssertEqual(diagnostics.filter { $0 == "areaRenameApplied" }, ["areaRenameApplied"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        for noOpName in ["", "  \(finalName)  "] {
+            let noOpRequest = try await areaRenameRequest(core, areaID: "rename-destination", name: noOpName)
+            let beforeNoOp = try json(XCTUnwrap(areaRows("rename-destination").first))
+            let noOp = try object(await core.call("areaRename", argumentsJSON: json([json(noOpRequest)])))
+            XCTAssertEqual(noOp["id"] as? String, "rename-destination")
+            XCTAssertEqual(noOp["areaId"] as? String, "rename-destination")
+            XCTAssertEqual(noOp["name"] as? String, finalName)
+            XCTAssertEqual(try json(XCTUnwrap(areaRows("rename-destination").first)), beforeNoOp)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        }
+        for method in ["areaRenamePrepare", "areaRenameValidate", "areaRenameCommit"] {
+            await expectFailure("unavailable") { _ = try await core.call(method, argumentsJSON: json([json(request)])) }
+        }
+    }
+
+    func testAreaRenameColdFirstApplyAndReceiptPrecedeMutableInventory() async throws {
+        for kind in ["first", "receipt"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedAreaRenameRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let rawName = "  M\u{FEFF}ERGE e\u{301}  "
+            let request = try await areaRenameRequest(writer, name: rawName)
+            if kind == "first" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected cold Area rename failure") } }
+                await expectFailure("SAVE_FAILED") {
+                    _ = try await writer.call("areaRename", argumentsJSON: json([json(request)]))
+                }
+            } else {
+                var journalWrites = 0
+                faults.journalWrite = {
+                    journalWrites += 1
+                    if journalWrites == 2 { throw HostFailure("Injected Area rename lost reply") }
+                }
+                await expectFailure("lost reply") {
+                    _ = try await writer.call("areaRename", argumentsJSON: json([json(request)]))
+                }
+            }
+            XCTAssertEqual(try object(String(contentsOf: journal))["method"] as? String, "areaRenameCommit")
+            await writer.close()
+            if kind == "receipt" {
+                let edit = try SQLiteBridge(url: database)
+                let at = recentAreaTestTime(daysAgo: 0)
+                _ = try edit.execute("INSERT INTO areas (id, name, color, icon, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                     parametersJSON: json(["rename-late-inventory", "Late inventory", "#111111", "late", 99, at, at, 1]))
+                edit.close()
+            }
+            let beforeSQLite = try SQLiteBridge(url: database)
+            let before = try nineTableSnapshot(beforeSQLite)
+            beforeSQLite.close()
+            let replayFaults = HostIOFaults()
+            var mutations = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:areas|projects|sections|tasks|settings)\b"#, options: .regularExpression) != nil {
+                    mutations += 1
+                }
+            }
+            let reopened = host(replayFaults)
+            let startup = try object(await reopened.start())
+            let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+            XCTAssertEqual(recovery["method"] as? String, "areaRenameCommit")
+            let result = try XCTUnwrap(recovery["result"] as? [String: Any])
+            XCTAssertEqual(result["id"] as? String, "rename-source")
+            XCTAssertEqual(result["areaId"] as? String, "rename-destination")
+            XCTAssertEqual(result["name"] as? String, "M\u{FEFF}ERGE e\u{301}")
+            XCTAssertNotNil(try areaRows("rename-source").first?["deletedAt"] as? String)
+            XCTAssertEqual(try areaRows("rename-destination").first?["name"] as? String, "M\u{FEFF}ERGE e\u{301}")
+            if kind == "receipt" {
+                XCTAssertEqual(mutations, 0)
+                let check = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(check), before)
+                check.close()
+                XCTAssertEqual(try areaRows("rename-late-inventory").first?["name"] as? String, "Late inventory")
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await reopened.close()
+            directory = parent
+        }
+    }
+
+    func testAreaRenameUnknownProbeStaleInventoryAndPartialReceiptNeverWrite() async throws {
+        let parent = directory!
+        directory = parent.appendingPathComponent("unknown")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try await seedAreaRenameRows()
+        let probeFaults = HostIOFaults()
+        var probeMutations = 0, probeJournals = 0
+        probeFaults.beforeSQL = { sql in
+            if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+"#, options: .regularExpression) != nil { probeMutations += 1 }
+        }
+        probeFaults.journalWrite = { probeJournals += 1 }
+        let probe = host(probeFaults)
+        _ = try await probe.start()
+        probeMutations = 0
+        let unknownRequest = try await areaRenameRequest(probe, name: "Unknown result")
+        let probeSQLite = try SQLiteBridge(url: database)
+        let beforeProbe = try nineTableSnapshot(probeSQLite)
+        probeSQLite.close()
+        await expectFailure("STALE_REVISION") {
+            _ = try await probe.call("areaRenameRetryOutcome", argumentsJSON: json([json(unknownRequest)]))
+        }
+        XCTAssertEqual(probeMutations, 0)
+        XCTAssertEqual(probeJournals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let afterProbe = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(afterProbe), beforeProbe)
+        afterProbe.close()
+        await probe.close()
+        directory = parent
+
+        for kind in ["stale-inventory", "partial-after"] {
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedAreaRenameRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await areaRenameRequest(writer, name: "  M\u{FEFF}ERGE e\u{301}  ")
+            if kind == "stale-inventory" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Area rename") } }
+                await expectFailure("SAVE_FAILED") {
+                    _ = try await writer.call("areaRename", argumentsJSON: json([json(request)]))
+                }
+            } else {
+                var journalWrites = 0
+                faults.journalWrite = {
+                    journalWrites += 1
+                    if journalWrites == 2 { throw HostFailure("Injected partial Area rename receipt") }
+                }
+                await expectFailure("partial Area rename receipt") {
+                    _ = try await writer.call("areaRename", argumentsJSON: json([json(request)]))
+                }
+            }
+            await writer.close()
+            let edit = try SQLiteBridge(url: database)
+            if kind == "stale-inventory" {
+                let at = recentAreaTestTime(daysAgo: 0)
+                _ = try edit.execute("INSERT INTO areas (id, name, color, orderNum, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                     parametersJSON: json(["rename-new-collision", "m\u{FEFF}erge e\u{301}", "#111111", 99, at, at, 1]))
+            } else {
+                _ = try edit.execute("UPDATE projects SET areaTitle = 'Partial after-state', rev = rev + 1 WHERE id = 'rename-destination-live'")
+            }
+            let before = try nineTableSnapshot(edit)
+            edit.close()
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:areas|projects|sections|tasks|settings)\b"#, options: .regularExpression) != nil { writes += 1 }
+            }
+            let reopened = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+            XCTAssertEqual(writes, 0)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before)
+            check.close()
+            await reopened.close()
+            directory = parent
+        }
+    }
+
+    func testAreaRenameForgedTerminalPreparedAndOversizedJournalsRefuseBeforeSQLite() async throws {
+        try await seedAreaRenameRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await areaRenameRequest(writer, name: "  M\u{FEFF}ERGE e\u{301}  ")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Area rename") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("areaRename", argumentsJSON: json([json(request)]))
+        }
+        let pending = try object(String(contentsOf: journal))
+        let originalArguments = try XCTUnwrap(pending["argumentsJSON"] as? String)
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(originalArguments.utf8)) as? [String])
+        let originalEnvelope = try object(XCTUnwrap(args.first))
+        await writer.close()
+        let baseline = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(baseline)
+        baseline.close()
+
+        for corruption in ["prepared-result", "terminal", "oversized", "raw"] {
+            var method = "areaRenameCommit"
+            var argumentsJSON = originalArguments
+            var terminal: [String: Any]? = nil
+            switch corruption {
+            case "prepared-result":
+                var envelope = originalEnvelope
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var result = try XCTUnwrap(prepared["result"] as? [String: Any])
+                result["name"] = "Forged"
+                prepared["result"] = result
+                envelope["prepared"] = prepared
+                argumentsJSON = try json([json(envelope)])
+            case "terminal":
+                terminal = ["success": ["_0": try json([
+                    "id": "rename-source", "areaId": "rename-destination", "name": "Forged",
+                ])]]
+            case "oversized":
+                argumentsJSON = try json([String(repeating: "x", count: 2_000_001)])
+            default:
+                method = "areaRename"
+                argumentsJSON = try json([json(request)])
+            }
+            var forged: [String: Any] = ["version": 2, "method": method, "argumentsJSON": argumentsJSON]
+            if let terminal { forged["terminal"] = terminal }
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, cleanup = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { cleanup += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0)
+            XCTAssertEqual(cleanup, 0)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before)
+            check.close()
             await blocked.close()
         }
     }

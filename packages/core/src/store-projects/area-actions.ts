@@ -2,13 +2,10 @@ import { DEFAULT_PROJECT_COLOR } from '../color-constants';
 import { ensureDeviceId, getNextDataChangeAt, nextRevision, persist, replaceEntitiesInArray } from '../store-helpers';
 import { areaOrderIdsForIntent, sortAreasForOrderDisplay } from '../area-ordering';
 import { countLiveProjectsByArea } from '../area-project-usage';
+import { areaRenameEffect, planAreaRename, sameAreaAdditionRow, selectAreaRenameScope } from '../area-rename';
 import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
-import { areaToSqliteRow } from '../area-sync-schema';
-import { PROJECT_SQLITE_COLUMNS, projectToSqliteRow } from '../project-sync-schema';
-import { sectionToSqliteRow } from '../section-sync-schema';
-import { TASK_SQLITE_COLUMNS, taskToSqliteRow } from '../task-sync-schema';
 import { taskEditValuesEqual } from '../json-value-equality';
 import type { PreparedAreaColor, PreparedAreaCreate, PreparedAreaDelete, PreparedAreaOrder, PreparedTaskEditResult } from '../store-types';
 import type { Area, AreaActions, Project, ProjectActionContext, Section, Task } from './shared';
@@ -209,28 +206,7 @@ export function areaAdditionEffect(scope: PreparedAreaCreate['scope'], planned: 
         tasks: changed(scope.tasks, planned.tasks) };
 }
 
-// Foundation sorts object members when freezing a prepared journal. Compare only
-// JSON columns by value; all scalar SQLite columns remain exact and arrays ordered.
-const sameAreaJsonSqliteRow = (columns: readonly string[], jsonColumns: ReadonlySet<string>,
-    left: unknown[], right: unknown[]): boolean => left.length === right.length && left.every((value, index) => {
-    const other = right[index];
-    if (!jsonColumns.has(columns[index]) || typeof value !== 'string' || typeof other !== 'string') {
-        return Object.is(value, other);
-    }
-    return taskEditValuesEqual(JSON.parse(value), JSON.parse(other));
-});
-const areaProjectJsonColumns = new Set(['tagIds', 'attachments']);
-const areaTaskJsonColumns = new Set(['relativeStartOffset', 'recurrence', 'tags', 'contexts',
-    'checklist', 'attachments', 'viewSectionIds']);
-
-export const sameAreaAdditionRow = {
-    area: (left: Area, right: Area) => JSON.stringify(areaToSqliteRow(left, left.updatedAt)) === JSON.stringify(areaToSqliteRow(right, right.updatedAt)),
-    project: (left: Project, right: Project) => sameAreaJsonSqliteRow(PROJECT_SQLITE_COLUMNS, areaProjectJsonColumns,
-        projectToSqliteRow(left), projectToSqliteRow(right)),
-    section: (left: Section, right: Section) => JSON.stringify(sectionToSqliteRow(left)) === JSON.stringify(sectionToSqliteRow(right)),
-    task: (left: Task, right: Task) => sameAreaJsonSqliteRow(TASK_SQLITE_COLUMNS, areaTaskJsonColumns,
-        taskToSqliteRow(left), taskToSqliteRow(right)),
-};
+export { sameAreaAdditionRow } from '../area-rename';
 
 export const createAreaActions = ({
     set,
@@ -363,6 +339,68 @@ export const createAreaActions = ({
         return result;
     },
 
+    commitPreparedAreaRename: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Area rename conflicts with current data' };
+        set((state) => {
+            const { effect, request, scope } = input;
+            const areasById = new Map(state._allAreas.map((row) => [row.id, row]));
+            const projectsById = new Map(state._allProjects.map((row) => [row.id, row]));
+            const tasksById = new Map(state._allTasks.map((row) => [row.id, row]));
+            const completeAfter = effect.areas.length > 0 && (!input.deviceIdToInitialize
+                || state.settings.deviceId === input.deviceIdToInitialize)
+                && effect.areas.every(({ after }) => {
+                    const current = areasById.get(after.id);
+                    return current && sameAreaAdditionRow.area(current, after);
+                })
+                && effect.projects.every(({ after }) => {
+                    const current = projectsById.get(after.id);
+                    return current && sameAreaAdditionRow.project(current, after);
+                })
+                && effect.tasks.every(({ after }) => {
+                    const current = tasksById.get(after.id);
+                    return current && sameAreaAdditionRow.task(current, after);
+                });
+            if (completeAfter) {
+                result = { success: true, id: request.areaId, outcome: 'replayed' };
+                return state;
+            }
+            if ((state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null))
+                return state;
+            const liveAreas = state._allAreas.filter((row) => !row.deletedAt);
+            if (liveAreas.length !== scope.areas.length || liveAreas.some((row, index) =>
+                !sameAreaAdditionRow.area(row, scope.areas[index]))) return state;
+            const planned = planAreaRename({ areas: state._allAreas, projects: state._allProjects,
+                tasks: state._allTasks }, request.areaId, { name: request.name },
+            input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!planned || !taskEditValuesEqual(planned.result, input.result)) return state;
+            const currentScope = selectAreaRenameScope({ areas: state._allAreas,
+                projects: state._allProjects, tasks: state._allTasks }, request.areaId, planned.result.areaId);
+            const sameRows = <T>(current: T[], frozen: T[], same: (left: T, right: T) => boolean) =>
+                current.length === frozen.length && current.every((row, index) => same(row, frozen[index]));
+            if (!sameRows(currentScope.projects, scope.projects, sameAreaAdditionRow.project)
+                || !sameRows(currentScope.tasks, scope.tasks, sameAreaAdditionRow.task)) return state;
+            const replanned = areaRenameEffect(currentScope, request.areaId, request.name,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.updateAt);
+            if (!replanned || !taskEditValuesEqual(replanned.effect, effect)
+                || !taskEditValuesEqual(replanned.result, input.result)) return state;
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            if (planned.merged) clearDerivedCache();
+            persist(set, debouncedSave, state, { areas: planned.areas,
+                ...(effect.projects.length ? { projects: planned.projects } : {}),
+                ...(effect.tasks.length ? { tasks: planned.tasks } : {}),
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: request.areaId, outcome: 'applied' };
+            return { _allAreas: planned.areas,
+                ...(effect.projects.length ? { _allProjects: planned.projects } : {}),
+                ...(effect.tasks.length ? { _allTasks: planned.tasks } : {}),
+                settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
     commitPreparedAreaOrder: async (input): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
             error: 'Prepared Area order conflicts with current data' };
@@ -423,76 +461,37 @@ export const createAreaActions = ({
                     invalidName = true;
                     return state;
                 }
-                const normalized = trimmedName.toLowerCase();
-                const existing = allAreas.find((a) => a.id !== id && !a.deletedAt && a?.name?.trim().toLowerCase() === normalized);
-                if (existing) {
-                    const now = new Date().toISOString();
-                    const deletedArea: Area = {
-                        ...area,
-                        deletedAt: now,
-                        updatedAt: now,
-                        rev: nextRevision(area.rev),
-                        revBy: deviceState.deviceId,
-                    };
-                    const mergedArea: Area = {
-                        ...existing,
-                        ...updates,
-                        name: trimmedName,
-                        updatedAt: now,
-                        rev: nextRevision(existing.rev),
-                        revBy: deviceState.deviceId,
-                    };
-                    const newAllAreas = allAreas
-                        .filter((a) => a.id !== id && a.id !== existing.id)
-                        .concat(deletedArea, mergedArea)
-                        .sort((a, b) => a.order - b.order);
-                    const newAllProjects = state._allProjects.map((project) => {
-                        if (project.areaId === existing.id) {
-                            if (project.areaTitle === mergedArea.name) return project;
-                            repairedDestinationProjects++;
-                            return { ...project, areaTitle: mergedArea.name, updatedAt: now,
-                                rev: nextRevision(project.rev), revBy: deviceState.deviceId };
-                        }
-                        if (project.areaId !== id) return project;
-                        return {
-                            ...project,
-                            areaId: existing.id,
-                            areaTitle: mergedArea.name,
-                            color: mergedArea.color ?? project.color,
-                            updatedAt: now,
-                            rev: nextRevision(project.rev),
-                            revBy: deviceState.deviceId,
-                        };
-                    });
-                    const newAllTasks = state._allTasks.map((task) => {
-                        if (task.areaId !== id) return task;
-                        return {
-                            ...task,
-                            areaId: task.projectId ? undefined : existing.id,
-                            updatedAt: now,
-                            rev: nextRevision(task.rev),
-                            revBy: deviceState.deviceId,
-                        };
-                    });
+                const planned = planAreaRename({ areas: allAreas, projects: state._allProjects,
+                    tasks: state._allTasks }, id, updates, deviceState.deviceId, new Date().toISOString());
+                if (!planned) return state;
+                repairedDestinationProjects = planned.repairedDestinationProjects;
+                if (planned.merged) {
                     clearDerivedCache();
                     persist(set, debouncedSave, state, {
-                        tasks: newAllTasks,
-                        areas: newAllAreas,
-                        projects: newAllProjects,
+                        tasks: planned.tasks,
+                        areas: planned.areas,
+                        projects: planned.projects,
                         ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                     });
                     return {
-                        _allAreas: newAllAreas,
-                        _allProjects: newAllProjects,
-                        _allTasks: newAllTasks,
+                        _allAreas: planned.areas,
+                        _allProjects: planned.projects,
+                        _allTasks: planned.tasks,
                         lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
                         ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                     };
                 }
+                persist(set, debouncedSave, state, { areas: planned.areas,
+                    ...(planned.projectsChanged ? { projects: planned.projects } : {}),
+                    ...(deviceState.updated ? { settings: deviceState.settings } : {}) });
+                return { _allAreas: planned.areas,
+                    ...(planned.projectsChanged ? { _allProjects: planned.projects } : {}),
+                    lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
+                    ...(deviceState.updated ? { settings: deviceState.settings } : {}) };
             }
             const now = new Date().toISOString();
             const nextOrder = Number.isFinite(updates.order) ? (updates.order as number) : area.order;
-            const nextName = updates.name !== undefined ? updates.name.trim() : area.name;
+            const nextName = area.name;
             const plannedColor = Object.keys(updates).length === 1 && Object.prototype.hasOwnProperty.call(updates, 'color')
                 ? planAreaColorChange(area, state._allProjects, updates.color, deviceState.deviceId, now) : null;
             let projectsChanged = false;
