@@ -3854,8 +3854,11 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try json(XCTUnwrap(searched["rows"])), try json(XCTUnwrap(all["rows"])))
         anyInput["searchQuery"] = "no matching chip or task title"
         let searchedSelection = try await read(anyInput)
+        // RN keeps selected chips available even when the query matches neither.
         XCTAssertEqual((searchedSelection["chips"] as? [[String: Any]])?.compactMap { $0["id"] as? String },
                        ["all", "none", "@office", "#blue"])
+        XCTAssertEqual(try chip(searchedSelection, "@office")["selected"] as? Bool, true)
+        XCTAssertEqual(try chip(searchedSelection, "#blue")["selected"] as? Bool, true)
         XCTAssertEqual(try ids(searchedSelection), try ids(either))
         let empty = try await read(["tokens": ["@absent"], "offset": 0, "limit": 50])
         XCTAssertEqual(empty["total"] as? Int, 0)
@@ -3997,8 +4000,11 @@ final class CoreHostTests: XCTestCase {
         XCTAssertTrue(primary.allSatisfy { ($0["label"] as? String)?.isEmpty == false && ($0["icon"] as? String)?.isEmpty == false })
         let searches = try XCTUnwrap(more["savedSearches"] as? [String: Any])
         XCTAssertEqual(searches["total"] as? Int, 0)
-        for name in ["moveDialog", "contextsAction", "projects", "", "__proto__"] {
+        for name in ["moveDialog", "contextsAction", "", "__proto__"] {
             await expectFailure("Unsupported native menu") { _ = try await core.call("menuRead", argumentsJSON: json([name, "{}"])) }
+        }
+        await expectFailure("Unsupported native Projects tag filter") {
+            _ = try await core.call("menuRead", argumentsJSON: json(["projects", "{}"]))
         }
         for args in [["more", "[]"] as [Any], ["more", "null"], ["more", "broken JSON"], ["more", 7], ["more"], [7, "{}"]] {
             await expectFailure { _ = try await core.call("menuRead", argumentsJSON: json(args)) }

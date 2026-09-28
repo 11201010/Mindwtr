@@ -92,6 +92,50 @@ describe('prepared native Project Section delete', () => {
         })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 
+    it('commits and replays a complete Swift sorted-key journal with rich nested rows', async () => {
+        const attachment = { id: 'file', kind: 'file' as const, title: 'Keep attachment',
+            uri: 'file:///retained.txt', createdAt: NOW, updatedAt: NOW };
+        const originalProject = project('parent', { attachments: [attachment] });
+        const secondAttachment = { ...attachment, id: 'second', title: 'Keep second' };
+        const originalTask = task('live', { attachments: [attachment, secondAttachment],
+            checklist: [{ id: 'step', title: 'Keep checklist', isCompleted: false }],
+            reviewAt: null as never });
+        const { methods, request, prepare, data, saves } = await open({
+            projects: [originalProject], tasks: [originalTask],
+        });
+        const input = request();
+        const planned = prepare(input);
+        // CoreHost journals via JSONSerialization.sortedKeys, including dictionaries
+        // nested in attachment and checklist arrays.
+        const swiftRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value, (_key, part) =>
+            part && typeof part === 'object' && !Array.isArray(part)
+                ? Object.fromEntries(Object.entries(part).sort(([a], [b]) => a.localeCompare(b)))
+                : part)) as T;
+        const command = swiftRoundTrip({ request: input, prepared: planned });
+        expect(methods.validatePreparedProjectSectionDelete(command))
+            .toEqual({ ok: true, value: planned.result });
+        const baselineTasks = useTaskStore.getState()._allTasks;
+        useTaskStore.setState({ _allTasks: [{ ...originalTask,
+            attachments: [secondAttachment, attachment] }] });
+        expect(await methods.commitPreparedProjectSectionDelete(command))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allTasks: [{ ...originalTask, reviewAt: undefined }] });
+        expect(await methods.commitPreparedProjectSectionDelete(command))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        useTaskStore.setState({ _allTasks: baselineTasks });
+        expect(await methods.commitPreparedProjectSectionDelete(command))
+            .toEqual({ ok: true, value: planned.result });
+        expect(data().projects[0]).toEqual(originalProject);
+        expect(data().tasks[0].attachments).toEqual(originalTask.attachments);
+        expect(data().tasks[0].checklist).toEqual(originalTask.checklist);
+        expect(data().tasks[0].reviewAt).toBeNull();
+        expect(data().tasks[0].sectionId).toBeUndefined();
+        const count = saves();
+        expect(await methods.commitPreparedProjectSectionDelete(command))
+            .toEqual({ ok: true, value: planned.result });
+        expect(saves()).toBe(count);
+    });
+
     it('matches RN tombstone and detaches every linked Task, including deleted and wrong-project rows', async () => {
         vi.useFakeTimers(); vi.setSystemTime(new Date(NOW));
         const { request, prepare } = await open();

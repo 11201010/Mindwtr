@@ -53,6 +53,23 @@ export const sameSectionDeleteJson = (left: unknown, right: unknown): boolean =>
     return JSON.stringify(left, sorted) === JSON.stringify(right, sorted);
 };
 
+const SECTION_DELETE_TASK_JSON_COLUMNS = new Set([
+    'relativeStartOffset', 'recurrence', 'tags', 'contexts', 'checklist', 'attachments', 'viewSectionIds',
+]);
+
+/** A saved Task receipt may cross Swift's sorted-key JSON journal boundary. */
+const sameSectionDeleteTaskSqliteRow = (left: Task, right: Task): boolean => {
+    const stored = taskToSqliteRow(left);
+    const frozen = taskToSqliteRow(right);
+    return stored.length === frozen.length && stored.every((value, index) => {
+        if (value === frozen[index]) return true;
+        if (!SECTION_DELETE_TASK_JSON_COLUMNS.has(TASK_SQLITE_COLUMNS[index])
+            || typeof value !== 'string' || typeof frozen[index] !== 'string') return false;
+        try { return sameSectionDeleteJson(JSON.parse(value), JSON.parse(frozen[index])); }
+        catch { return false; }
+    });
+};
+
 /** RN updateSection's title-only row, preserving every unrelated raw field. */
 export const sectionRenameEffect = (before: Section, title: string, deviceId: string,
     now: string): PreparedProjectSectionRename['effect'] => ({
@@ -191,7 +208,7 @@ export const createSectionActions = ({
                 && sameSectionSqliteRow(current, input.effect.section.after)
                 && frozenTasks.every(({ after }) => {
                     const stored = tasksById.get(after.id);
-                    return stored && !duplicateTaskIds.has(after.id) && sameTaskSqliteRow(stored, after);
+                    return stored && !duplicateTaskIds.has(after.id) && sameSectionDeleteTaskSqliteRow(stored, after);
                 })) {
                 result = { success: true, id: current.id, outcome: 'replayed' };
                 return state;
@@ -212,7 +229,7 @@ export const createSectionActions = ({
             if (scopedById.size !== input.scope.tasks.length || linked.some((task) => {
                 const before = scopedById.get(task.id);
                 return !before || duplicateTaskIds.has(task.id)
-                    || !sameTaskSqliteRow(task, before) || !sameSectionDeleteJson(task, before);
+                    || !sameSectionDeleteTaskSqliteRow(task, before) || !sameSectionDeleteJson(task, before);
             })) return state;
             const effect = sectionDeleteEffect(current,
                 input.scope.tasks.map((task) => tasksById.get(task.id)!),
