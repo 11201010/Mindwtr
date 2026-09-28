@@ -878,6 +878,62 @@ describe('ingestPendingCaptures', () => {
         expect(outcomes).toEqual(['completed', 'already-done', 'terminal']);
     });
 
+    // A task changed after a queued command was made keeps its newer state. A command
+    // replayed after its own queue delete failed is such a command: its write landed.
+    it('never lets a replayed older Watch defer or check-off undo a later change', async () => {
+        const files = new Map<string, Record<string, unknown>>([
+            ['a.json', { kind: 'defer', id: 'd1', taskId: 'deferred', startDate: '2026-09-20', createdAt: '2026-09-10T10:00:00.000Z', source: 'apple-watch' }],
+            ['b.json', { kind: 'defer', id: 'd2', taskId: 'deferred', startDate: '2026-09-21', createdAt: '2026-09-10T10:01:00.000Z', source: 'apple-watch' }],
+            ['c.json', { kind: 'complete', id: 'c1', taskId: 'reopened', completedAt: '2026-09-10T10:02:00.000Z', source: 'android-widget' }],
+        ]);
+        fileSystemMocks.readDirectoryAsync.mockImplementation(async () => [...files.keys()]);
+        fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(files.get(uri.split('/').pop()!)));
+        // The first pass's deletes of a.json and c.json fail after their writes landed.
+        const failDelete = new Set(['a.json', 'c.json']);
+        fileSystemMocks.deleteAsync.mockImplementation(async (uri: string) => {
+            const name = uri.split('/').pop()!;
+            if (failDelete.delete(name)) throw new Error('killed before the delete');
+            files.delete(name);
+        });
+        const tasks = [
+            { id: 'deferred', title: 'Deferred', status: 'next', updatedAt: '2026-09-01T00:00:00.000Z' } as Task,
+            { id: 'reopened', title: 'Reopened', status: 'next', updatedAt: '2026-09-01T00:00:00.000Z' } as Task,
+        ];
+        let clock = Date.parse('2026-09-11T08:00:00.000Z');
+        const storeUpdate = vi.fn(async (id: string, updates: Partial<Task>) => {
+            Object.assign(tasks.find((task) => task.id === id)!, updates, { updatedAt: new Date(clock += 1_000).toISOString() });
+            return { success: true };
+        });
+        const deps = {
+            addTask: addTaskMock(), updateTask: storeUpdate, addProject, projects: [], areas: [], tasks, getTasks: () => tasks,
+            people: [], settings: emptySettings, flushPendingSave: vi.fn(async () => undefined),
+        };
+
+        await ingestPendingCaptures(deps);
+        expect(tasks[0].startTime).toBe('2026-09-21');
+        expect([...files.keys()]).toEqual(['a.json', 'c.json']);
+        expect(tasks[1].status).toBe('done');
+        // The user reopens the checked-off task before the next drain.
+        await storeUpdate('reopened', { status: 'next' });
+        storeUpdate.mockClear();
+        appLogMocks.logInfo.mockClear();
+
+        expect(await ingestPendingCaptures(deps)).toBe(2);
+
+        expect(storeUpdate).not.toHaveBeenCalled();
+        expect(tasks[0].startTime).toBe('2026-09-21');
+        expect(tasks[1].status).toBe('next');
+        expect(files.size).toBe(0);
+        expect(appLogMocks.logInfo.mock.calls).toEqual([
+            ['Queued command skipped: the task changed since', {
+                scope: 'capture', extra: { releaseCheck: 'v1.3.3/stale-queued-command-skipped', kind: 'defer', outcome: 'stale' },
+            }],
+            ['Queued command skipped: the task changed since', {
+                scope: 'capture', extra: { releaseCheck: 'v1.3.3/stale-queued-command-skipped', kind: 'complete', outcome: 'stale' },
+            }],
+        ]);
+    });
+
     it('orders Watch commands by createdAt even when UUID filenames sort differently', async () => {
         fileSystemMocks.readDirectoryAsync.mockResolvedValue(['a-start.json', 'z-reset.json']);
         fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(
