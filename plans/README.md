@@ -11,7 +11,7 @@ implements bounded code changes; root integrates one commit per finding.
 | --- | --- | --- | --- | --- | --- |
 | [132](132-editor-focus-draft-recurrence.md) | Editor Focus ignores draft recurrence | P2 | S | None | TODO |
 | [133](133-shared-token-grouping.md) | Four duplicate context/tag grouping loops | P3 | S | None | TODO |
-| [134](134-image-size-exception-rationale.md) | Stale image-size exception rationale | P3 | S | None | TODO |
+| [134](134-image-size-exception-rationale.md) | Stale image-size exception rationale | P3 | S | None | DONE |
 
 132 reuses the existing draft serializer;133 is the sole selected architecture
 candidate (Worth exploring, selected because two shipping adapters repeat the
@@ -264,7 +264,7 @@ Architecture deepening (Phase 3, from the architecture audit): DEBT-01 editor fi
 
 ### Deferred (this run)
 - **DEPS-R1** quick-xml 0.39.4 (RUSTSEC-2026-0194/0195) and rkyv 0.7.46 (RUSTSEC-2026-0235): `cargo update --precise` refuses both (wayland-scanner/ashpd/rfd/tauri-plugin-dialog pin quick-xml ^0.39; rust_decimal/byte-unit/tauri-plugin-log pin rkyv 0.7). Wait for the parents; a `[patch.crates-io]` override is not worth the risk for build-time XML and an unreached deserializer.
-- **DEPS-R2** image-size (Metro build-time transitive, no fixed release): monitor.
+- **DEPS-R2** image-size (Metro build-time transitive): patched 2.0.3 exists, but its API differs from the filename API used by Expo's pinned Metro. Defer replacement pending compatible Metro/image-size integration and Android/iOS asset-bundling validation; existing audit exceptions remain unchanged.
 - **B12** ~75 call-site keys still missing from en.ts (Obsidian view 38, People manager, Saved filters, Pomodoro phases, mobile context-automation): allowlisted shrink-only in `apps/desktop/src/test/i18n-missing-keys.test.ts` and `apps/mobile/tests/i18n-missing-keys.test.ts`; ~375-525 translations = own task.
 - `formatFocusTaskLimitText`'s literal-`3` fallback (`packages/core/src/focus-utils.ts:12-18`) is dead now that every locale carries `{{count}}` (guarded); delete with its test in a follow-up.
 

@@ -66,8 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           # image-size is currently reachable only through Metro's build-time
-          # asset inspection. There is no patched release for these advisories;
-          # the repository governance test fails if the lockfile topology or exact
+          # asset inspection. Patched image-size 2.x changes the API used by Expo's
+          # pinned Metro; an upgrade still needs asset-bundling validation.
+          # The repository governance test fails if the lockfile topology or exact
           # exception list changes, so a new runtime path cannot inherit them.
           if ! bun audit \
             --ignore=GHSA-5p2g-fcmc-qvqq \
@@ -82,9 +83,9 @@ jobs:
           npm audit --prefix apps/desktop --audit-level=low
           mobile_audit_report="$RUNNER_TEMP/mobile-npm-audit.json"
           if ! npm audit --prefix apps/mobile --audit-level=low --json > "$mobile_audit_report"; then
-            # Expo SDK 54's Metro build tooling is waiting for an upstream
-            # image-size release. Accept only that exact transitive advisory
-            # closure; the validator rejects any additional vulnerability.
+            # Expo SDK 54's pinned Metro needs compatibility validation before
+            # adopting patched image-size 2.x or a newer Metro. Accept only the
+            # existing transitive advisories; reject additional vulnerabilities.
             bun scripts/ci/validate-mobile-npm-audit.js "$mobile_audit_report"
           fi
           npm audit --prefix packages/core --audit-level=low
