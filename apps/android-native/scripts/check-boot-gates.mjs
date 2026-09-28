@@ -2315,7 +2315,18 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // The Data screen draws core's view: the switch sends core's edit; Share and Clear show only when core sends them.
     const settingsUiKt = source('SettingsScreen.kt');
     const data = code(settingsUiKt.slice(settingsUiKt.indexOf('private fun DataSettings('), settingsUiKt.indexOf('private fun ActionRow(')));
-    assert.match(data, /ToggleRow\(model, diagnostics\.getJSONObject\("debugLogging"\), true\) \{ settings\.data\(it\) \}/);
+    assert.match(data, /ToggleRow\(model, debug, true, colors = theme\.diagnosticsSwitch\(debug\.getBoolean\("value"\), isSystemInDarkTheme\(\)\)\) \{ settings\.data\(it\) \}/);
+    // RN's Debug logging switch sets only trackColor (sync-settings-sections.tsx): a solid track in those colors (RN multiplies
+    // SwitchCompat's opaque track image by it) and AppCompat's default thumb, which follows the system's night mode.
+    const rnSections = readFileSync(resolve(app, '../../apps/mobile/components/settings/sync-settings-sections.tsx'), 'utf8');
+    const rnDebugSwitch = /<Switch value=\{loggingEnabled\} onValueChange=\{toggleDebugLogging\} ([^/]*)\/>/.exec(rnSections)?.[1] ?? '';
+    const rnTrack = /trackColor=\{\{ false: '(#[0-9A-Fa-f]{6})', true: '(#[0-9A-Fa-f]{6})' \}\}/.exec(rnDebugSwitch);
+    assert(rnTrack && !/thumbColor/.test(rnDebugSwitch), `RN's Debug logging switch sets only trackColor: ${rnDebugSwitch}`);
+    const switchColors = themeKt.slice(themeKt.indexOf('fun diagnosticsSwitch('), themeKt.indexOf('\n\n', themeKt.indexOf('fun diagnosticsSwitch(')));
+    assert.match(switchColors, new RegExp(`if \\(on\\) rgb\\("${rnTrack[2].toUpperCase()}"\\) else rgb\\("${rnTrack[1].toUpperCase()}"\\)`), 'the track is RN\'s trackColor, solid');
+    // AppCompat 1.7.0 (RN's): colorAccent is material_deep_teal_500 / _200; colorSwitchThumbNormal is #F1F1F1 / #BDBDBD.
+    assert.match(switchColors, /on && systemDark -> rgb\("#80CBC4"\); on -> rgb\("#008577"\); systemDark -> rgb\("#BDBDBD"\); else -> rgb\("#F1F1F1"\)/);
+    assert.match(captureUi, /val track = colors\?\.first \?: \(if \(on\) theme\.tintTrack else c\.border\)\.let \{ it\.copy\(alpha = it\.alpha \* 0\.3f\) \}/, 'explicit colors draw a solid track; the default keeps its look');
     assert.match(data, /diagnostics\.optJSONObject\("shareLog"\)\?\.let/);
     assert.match(data, /diagnostics\.optJSONObject\("clearLog"\)\?\.let/);
     assert.doesNotMatch(data, /\bt\(|"settings\./, 'every word is the view\'s');

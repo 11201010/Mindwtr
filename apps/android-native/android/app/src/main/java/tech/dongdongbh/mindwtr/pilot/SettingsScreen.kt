@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -203,10 +204,11 @@ private fun PressRow(label: String, value: String?, divider: Boolean, enabled: B
 
 /** RN's SettingToggleRow: core's label and description, and RN's Android switch sending core's edit. */
 @Composable
-private fun ToggleRow(model: InboxViewModel, toggle: JSONObject, divider: Boolean, enabled: Boolean = true, write: (JSONObject) -> Unit) {
+private fun ToggleRow(model: InboxViewModel, toggle: JSONObject, divider: Boolean, enabled: Boolean = true, colors: Pair<Color, Color>? = null,
+                      write: (JSONObject) -> Unit) {
     val label = toggle.getString("label")
     SettingRow(label, toggle.menuText("description"), divider) {
-        RnSwitch(toggle.getBoolean("value"), enabled && model.failedAction == null, label) { write(toggle.getJSONObject("edit")) }
+        RnSwitch(toggle.getBoolean("value"), enabled && model.failedAction == null, label, colors) { write(toggle.getJSONObject("edit")) }
     }
 }
 
@@ -321,12 +323,14 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
  */
 @Composable
 private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
-    val c = LocalTheme.current.colors
+    val theme = LocalTheme.current
+    val c = theme.colors
     val diagnostics = view.getJSONObject("diagnostics")
     SectionTitle(diagnostics.getString("title"), top = 24)
     Card {
-        // RN always draws this row's top border (it follows the Encryption block).
-        ToggleRow(model, diagnostics.getJSONObject("debugLogging"), true) { settings.data(it) }
+        // RN always draws this row's top border (it follows the Encryption block). Its switch has RN's own colors.
+        val debug = diagnostics.getJSONObject("debugLogging")
+        ToggleRow(model, debug, true, colors = theme.diagnosticsSwitch(debug.getBoolean("value"), isSystemInDarkTheme())) { settings.data(it) }
         diagnostics.optJSONObject("shareLog")?.let { share ->
             ActionRow(share.getString("label"), share.getString("description"), c.tint, idle, "settings-share-log") { settings.shareLog() }
         }

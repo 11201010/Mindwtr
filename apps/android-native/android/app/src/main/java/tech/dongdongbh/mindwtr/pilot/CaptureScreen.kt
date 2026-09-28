@@ -185,17 +185,18 @@ private fun JSONObject.items(name: String): List<JSONObject> = optJSONArray(name
 
 /**
  * RN's Switch on Android (SwitchCompat): a 34x14dp track at 30% of RN's track color, and a raised 20dp thumb in RN's
- * thumb color (tint on, border off), so the off thumb stays visible on the border-colored track.
+ * thumb color (tint on, border off), so the off thumb stays visible on the border-colored track. [colors] (track, thumb) is
+ * a switch RN colors itself, its track drawn solid (MindwtrTheme.diagnosticsSwitch).
  */
 @Composable
-internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, toggle: () -> Unit) {
+internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, colors: Pair<Color, Color>? = null, toggle: () -> Unit) {
     val theme = LocalTheme.current
     val c = theme.colors
     Box(Modifier.size(48.dp).toggleable(on, enabled = enabled, role = Role.Switch) { toggle() }.semantics { contentDescription = label }
         .fade(if (enabled) 1f else 0.5f), contentAlignment = Alignment.Center) {
-        val track = if (on) theme.tintTrack else c.border
-        Box(Modifier.size(34.dp, 14.dp).clip(CircleShape).background(track.copy(alpha = track.alpha * 0.3f)))
-        Box(Modifier.offset(x = if (on) 7.dp else (-7).dp).size(20.dp).shadow(2.dp, CircleShape).clip(CircleShape).background(if (on) c.tint else c.border))
+        val track = colors?.first ?: (if (on) theme.tintTrack else c.border).let { it.copy(alpha = it.alpha * 0.3f) }
+        Box(Modifier.size(34.dp, 14.dp).clip(CircleShape).background(track))
+        Box(Modifier.offset(x = if (on) 7.dp else (-7).dp).size(20.dp).shadow(2.dp, CircleShape).clip(CircleShape).background(colors?.second ?: if (on) c.tint else c.border))
     }
 }
 

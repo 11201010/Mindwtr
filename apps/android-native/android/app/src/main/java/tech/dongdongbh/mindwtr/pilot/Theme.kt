@@ -168,6 +168,13 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val starWash = star.copy(alpha = 0x22 / 255f)
     val dangerWash = colors.danger.copy(alpha = 0x1A / 255f)
     val tintTrack = colors.tint.copy(alpha = 0x55 / 255f)
+    /**
+     * RN's Debug logging switch (sync-settings-sections.tsx), as (track, thumb). It sets only trackColor, #767577 off and #3B82F6
+     * on, drawn solid: RN multiplies SwitchCompat's opaque track image by it. Its thumb is AppCompat 1.7.0's own: colorAccent on
+     * and colorSwitchThumbNormal off, by the system's night mode (RN never sets the app's), not RN's theme.
+     */
+    fun diagnosticsSwitch(on: Boolean, systemDark: Boolean): Pair<Color, Color> =
+        (if (on) rgb("#3B82F6") else rgb("#767577")) to when { on && systemDark -> rgb("#80CBC4"); on -> rgb("#008577"); systemDark -> rgb("#BDBDBD"); else -> rgb("#F1F1F1") }
     /** RN's highlight of a project's available next action. */
     val availableBg = if (isDark) rgba(59, 130, 246, 0.08f) else rgba(59, 130, 246, 0.05f)
     val availableBorder = if (isDark) rgba(59, 130, 246, 0.34f) else rgba(59, 130, 246, 0.24f)
