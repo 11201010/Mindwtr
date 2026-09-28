@@ -77,4 +77,25 @@ describe('TokenPickerModal', () => {
     });
     expect(flattenStyle(tree.root.findAllByType(Pressable)[0].props.style).paddingBottom).toBeUndefined();
   });
+
+  it('reports the chosen chip as selected in single-select mode', () => {
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(
+        <TokenPickerModal visible title="Add tag" tokens={['#home', '#work']} onConfirm={vi.fn()} onClose={vi.fn()} />,
+      );
+    });
+    const chip = (token: string) => tree.root.findAll((node) => (
+      typeof node.type === 'string' && node.props.accessibilityRole === 'button' && node.findAllByProps({ children: token }).length > 0
+    ))[0];
+    expect(chip('#home').props.accessibilityState).toEqual({ selected: false });
+    expect(chip('#work').props.accessibilityState).toEqual({ selected: false });
+
+    // A pick also fills the field, which filters the list down to the picked chip.
+    act(() => {
+      chip('#home').props.onPress();
+    });
+
+    expect(chip('#home').props.accessibilityState).toEqual({ selected: true });
+  });
 });

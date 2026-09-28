@@ -88,6 +88,7 @@ vi.mock('../contexts/language-context', () => ({
       'bulk.organize': 'Organize',
       'bulk.selected': 'selected',
       'common.cancel': 'Cancel',
+      'common.delete': 'Delete',
       'common.share': 'Share',
       'common.tasks': 'tasks',
       'persistence.saved': 'Changes saved',
@@ -305,6 +306,31 @@ describe('ReviewScreen bulk organize', () => {
           status: 'next',
         }),
       },
+    ]);
+  });
+
+  it('gives every bulk bar action the button role', async () => {
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<ReviewScreen />);
+    });
+    pressButtonWithText(tree, 'All open tasks');
+    pressButtonWithLabel(tree, 'Expand areas');
+    pressButtonWithLabel(tree, 'Expand projects');
+    const row = tree.root.findByType('SwipeableTaskItem' as unknown as React.ElementType);
+    act(() => {
+      row.props.onLongPressAction(row.props.task);
+    });
+
+    const roles = ['Cancel', 'Organize', 'Move to', 'Add tag', 'Remove tag', 'Share', 'Delete'].map((label) => {
+      const button = tree.root.findAll((node) => (
+        typeof node.type === 'string' && node.props.onPress !== undefined && flattenText(node.props.children) === label
+      ))[0];
+      return [label, button?.props.accessibilityRole];
+    });
+    expect(roles).toEqual([
+      ['Cancel', 'button'], ['Organize', 'button'], ['Move to', 'button'], ['Add tag', 'button'],
+      ['Remove tag', 'button'], ['Share', 'button'], ['Delete', 'button'],
     ]);
   });
 

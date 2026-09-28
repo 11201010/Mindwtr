@@ -127,7 +127,7 @@ export function TokenPickerModal({
                   key={token}
                   onPress={() => toggleToken(token)}
                   accessibilityRole="button"
-                  accessibilityState={multiSelect ? { selected: isActive } : undefined}
+                  accessibilityState={{ selected: isActive }}
                   style={[
                     styles.tokenButton,
                     {

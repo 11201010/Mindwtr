@@ -365,7 +365,7 @@ export default function ReviewScreen() {
             <Text style={[styles.bulkCount, { color: tc.secondaryText }]}>
               {selectedIdsArray.length} {t('bulk.selected')}
             </Text>
-            <TouchableOpacity onPress={exitSelectionMode} style={styles.bulkCancelButton}>
+            <TouchableOpacity onPress={exitSelectionMode} style={styles.bulkCancelButton} accessibilityRole="button">
               <Text style={[styles.bulkCancelText, { color: tc.tint }]}>{t('common.cancel')}</Text>
             </TouchableOpacity>
           </View>
@@ -377,6 +377,7 @@ export default function ReviewScreen() {
               style={[styles.bulkActionButton, styles.reviewTaskActionButton, { backgroundColor: tc.tint, opacity: hasSelection && !reviewWriteBusy && !reviewSavePending ? 1 : 0.5 }]}
             ><Text style={[styles.bulkActionText, { color: tc.onTint }]}>{text.markReviewed}</Text></TouchableOpacity>}
             <TouchableOpacity
+              accessibilityRole="button"
               onPress={() => setBulkOrganizeVisible(true)}
               disabled={!hasSelection || bulkActionLoading}
               style={[
@@ -392,6 +393,7 @@ export default function ReviewScreen() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
               onPress={() => setMoveModalVisible(true)}
               disabled={!hasSelection}
               style={[styles.bulkActionButton, { backgroundColor: tc.filterBg, opacity: hasSelection ? 1 : 0.5 }]}
@@ -399,6 +401,7 @@ export default function ReviewScreen() {
               <Text style={[styles.bulkActionText, { color: tc.text }]}>{t('bulk.moveTo')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
               onPress={() => setTagModalVisible(true)}
               disabled={!hasSelection}
               style={[styles.bulkActionButton, { backgroundColor: tc.filterBg, opacity: hasSelection ? 1 : 0.5 }]}
@@ -406,6 +409,7 @@ export default function ReviewScreen() {
               <Text style={[styles.bulkActionText, { color: tc.text }]}>{t('bulk.addTag')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
               onPress={() => setRemoveTagPickerVisible(true)}
               disabled={!hasSelection || removableTagOptions.length === 0}
               style={[
@@ -421,6 +425,7 @@ export default function ReviewScreen() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
               onPress={handleBatchShare}
               disabled={!hasSelection}
               style={[styles.bulkActionButton, { backgroundColor: tc.filterBg, opacity: hasSelection ? 1 : 0.5 }]}
@@ -428,6 +433,7 @@ export default function ReviewScreen() {
               <Text style={[styles.bulkActionText, { color: tc.text }]}>{t('common.share')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
               onPress={handleBatchDelete}
               disabled={!hasSelection}
               style={[styles.bulkActionButton, { backgroundColor: tc.filterBg, opacity: hasSelection ? 1 : 0.5 }]}
