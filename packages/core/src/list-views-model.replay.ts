@@ -63,7 +63,9 @@ import { getListSearchChipLabel } from './list-filter-state';
 import { getProjectAccentColor } from './task-accent-color';
 import { formatListItemCount } from './list-count';
 import { getInlineMarkdownPreview } from './markdown';
-import type { createNativeHostContract, NativeArchiveAction, NativeContextsAction, NativeListActionResult, NativeTrashAction } from './native-host-contract';
+import type {
+    createNativeHostContract, NativeArchiveAction, NativeArchiveView, NativeContextsAction, NativeContextsView, NativeListActionResult, NativeTrashAction, NativeTrashView,
+} from './native-host-contract';
 import { updateRangeSelection } from './range-selection';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -324,8 +326,12 @@ export function createContextsCoreBackend(t: Translate): ContextsBackend {
     };
 }
 
-/** Contexts through the native host contract: views from getContextsView, writes through runContextsAction. */
+/**
+ * Contexts through the native host contract: views from getContextsView, writes through
+ * runContextsAction with the revisions the last view showed, as the native screen sends them.
+ */
 export function createContextsContractBackend(host: Host, requestId: () => string): ContextsBackend {
+    let shown: NativeContextsView | null = null;
     const toToast = (result: NativeListActionResult<NativeContextsAction>): Toast | null => {
         const toast = result.toast;
         if (!toast) return null;
@@ -340,6 +346,7 @@ export function createContextsContractBackend(host: Host, requestId: () => strin
             const view = expectOk(host.getContextsView({
                 tokens: state.tokens, matchMode: state.matchMode, searchQuery: state.searchQuery, selectedIds: state.selected, ...WINDOW,
             }));
+            shown = view;
             const pickers = view.bulk?.tokenActions ?? [];
             return {
                 chips: view.chips.map((chip): [string, boolean, string[]] => [chip.accessibilityLabel, chip.selected, [chip.label, String(chip.count)]]),
@@ -360,7 +367,13 @@ export function createContextsContractBackend(host: Host, requestId: () => strin
             };
         },
         async run(write) {
-            const result = expectOk(await host.runContextsAction({ requestId: requestId(), action: write as NativeContextsAction }));
+            // A row's revision, or the selection's (the bulk bar acts on the selected rows).
+            const rows = new Map(shown!.rows.map((row) => [row.id, row.taskRevision]));
+            const revisions = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, shown!.taskRevisions[id] ?? rows.get(id) ?? '']));
+            const action = ('taskId' in write
+                ? { ...write, taskRevision: rows.get(write.taskId) ?? '' }
+                : { ...write, taskRevisions: revisions(write.taskIds) }) as NativeContextsAction;
+            const result = expectOk(await host.runContextsAction({ requestId: requestId(), action }));
             // The row's own toast (Task deleted, Undo) belongs to the shared row; the capture mocked the row.
             return write.type === 'trashTask' ? null : toToast(result);
         },
@@ -502,10 +515,22 @@ type ArchiveModel = {
     labels: ReturnType<typeof getArchiveRowLabels> & { selectAll: string; restoreSelected: string; done: string; bulkSelected: string };
     confirmations: { trashTask: ListConfirmation; trashTasks: ListConfirmation };
 };
+/**
+ * Mobile's writes: explicit ids and ISO completion times (the contract's selectAll and
+ * day/time forms have their own tests). The contract backend adds the revisions its view showed.
+ */
+type ArchiveWrite =
+    | { type: 'moveToInbox'; taskId: string }
+    | { type: 'moveTasksToInbox'; taskIds: string[] }
+    | { type: 'setCompletedAt'; taskId: string; completedAt: string }
+    | { type: 'trashTask'; taskId: string }
+    | { type: 'trashTasks'; taskIds: string[] }
+    | { type: 'restoreTasks'; taskIds: string[] }
+    | { type: 'reactivateProject'; projectId: string }
+    | { type: 'trashProject'; projectId: string };
 type ArchiveBackend = {
     model: (state: ArchiveState) => ArchiveModel;
-    /** Mobile's writes: explicit ids and ISO completion times (the contract's selectAll and day/time forms have their own tests). */
-    run: (write: Exclude<NativeArchiveAction, { selectAll: unknown } | { day: string }>) => Promise<Toast | null>;
+    run: (write: ArchiveWrite) => Promise<Toast | null>;
 };
 
 /** The filter sheet's selections as mobile's hook turns them into criteria, chips and a count. */
@@ -624,8 +649,9 @@ export function createArchiveCoreBackend(t: Translate): ArchiveBackend {
     };
 }
 
-/** Archive through the native host contract. */
+/** Archive through the native host contract, writing with the revisions the last view showed. */
 export function createArchiveContractBackend(host: Host, requestId: () => string): ArchiveBackend {
+    let shown: NativeArchiveView | null = null;
     return {
         model(state) {
             const view = expectOk(host.getArchiveView({
@@ -633,6 +659,7 @@ export function createArchiveContractBackend(host: Host, requestId: () => string
                 filters: { ...state.filters }, filterSheetOpen: state.filtersVisible,
                 collapsedGroupIds: state.collapsed[state.groupBy] ?? [], selectedIds: state.selected, ...WINDOW,
             }));
+            shown = view;
             return {
                 segmentLabels: view.segments.map((segment) => segment.label),
                 search: view.search,
@@ -657,7 +684,16 @@ export function createArchiveContractBackend(host: Host, requestId: () => string
             };
         },
         async run(write) {
-            const result = expectOk(await host.runArchiveAction({ requestId: requestId(), action: write }));
+            // A row's or project item's revision, or the selection's.
+            const revision = new Map(shown!.items.flatMap((item) => (
+                item.type === 'task' ? [[item.row.id, item.row.taskRevision]] : item.type === 'project' ? [[item.id, item.projectRevision]] : []
+            )));
+            const action = ('taskId' in write
+                ? { ...write, taskRevision: revision.get(write.taskId) ?? '' }
+                : 'projectId' in write
+                    ? { ...write, projectRevision: revision.get(write.projectId) ?? '' }
+                    : { ...write, taskRevisions: Object.fromEntries(write.taskIds.map((id) => [id, shown!.taskRevisions[id] ?? revision.get(id) ?? ''])) }) as NativeArchiveAction;
+            const result = expectOk(await host.runArchiveAction({ requestId: requestId(), action }));
             const toast = result.toast;
             if (!toast) return null;
             const undo = toast.undo;
@@ -849,11 +885,16 @@ type TrashModel = {
     emptyTrash: { confirmation: ListConfirmation; run: () => Promise<void> } | null;
     empty: { title: string; message: string } | null;
 };
-type TrashBackend = { model: () => TrashModel; run: (write: NativeTrashAction) => Promise<void> };
+/** Trash's writes; the contract backend adds the revisions its view showed. */
+type TrashWrite =
+    | { type: 'restoreItem' | 'purgeItem'; kind: 'task' | 'project'; id: string }
+    | { type: 'restoreItems' | 'purgeItems'; taskIds: string[]; projectIds: string[] }
+    | { type: 'emptyTrash'; revision: string };
+type TrashBackend = { model: () => TrashModel; run: (write: TrashWrite) => Promise<void> };
 
 /** Trash through core's functions, as the React Native screen calls them. */
 export function createTrashCoreBackend(t: Translate): TrashBackend {
-    const run = async (write: NativeTrashAction) => {
+    const run = async (write: TrashWrite) => {
         const store = useTaskStore.getState();
         switch (write.type) {
             case 'restoreItem': await (write.kind === 'task' ? store.restoreTask(write.id) : store.restoreProject(write.id)); return;
@@ -907,13 +948,22 @@ export function createTrashCoreBackend(t: Translate): TrashBackend {
     };
 }
 
-/** Trash through the native host contract. */
+/** Trash through the native host contract, writing with the revisions the last view showed. */
 export function createTrashContractBackend(host: Host, requestId: () => string): TrashBackend {
-    const run = async (write: NativeTrashAction) => { expectOk(await host.runTrashAction({ requestId: requestId(), action: write })); };
+    let shown: NativeTrashView | null = null;
+    const run = async (write: TrashWrite) => {
+        const revision = new Map(shown!.items.map((item) => (item.type === 'task' ? [item.row.id, item.row.taskRevision] : [item.id, item.projectRevision])));
+        const revisions = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, revision.get(id) ?? '']));
+        const action = (write.type === 'emptyTrash' ? write
+            : 'id' in write ? { ...write, revision: revision.get(write.id) ?? '' }
+                : { ...write, taskRevisions: revisions(write.taskIds), projectRevisions: revisions(write.projectIds) }) as NativeTrashAction;
+        expectOk(await host.runTrashAction({ requestId: requestId(), action }));
+    };
     return {
         run,
         model() {
             const view = expectOk(host.getTrashView({ ...WINDOW }));
+            shown = view;
             const { labels } = view;
             return {
                 summary: view.summary,

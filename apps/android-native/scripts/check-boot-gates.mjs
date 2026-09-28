@@ -2356,13 +2356,13 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.projectDetail('p1', 50, 50,
 ready.projectDetailResult = { ok: true, value: { version: 1, revision: 'r', projectId: 'p1', readOnly: false, total: 0, items: [] } };
 assert.equal((await poll(ready, ready.MindwtrHost.projectDetail('p1', 0, 50, ''))).ok, true);
 assert.deepEqual(ready.projectInputs, ['projects', '{"projectId":"p1","offset":50,"limit":50,"revision":"r"}', '{"projectId":"p1","offset":0,"limit":50}']);
-// The new commands pass Kotlin's arguments to core unchanged: the star's target, the request UUID, "" as no area, a `next` selection.
-assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } });
-assert.deepEqual(await poll(ready, ready.MindwtrHost.projectFocus('p', false)), { ok: true, value: { blocked: '' } });
+// The new commands pass Kotlin's arguments to core unchanged: the star's target and the row's revision, the request UUID, "" as no area, a `next` selection.
+assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true, 'rt')), { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } });
+assert.deepEqual(await poll(ready, ready.MindwtrHost.projectFocus('p', false, 'rp')), { ok: true, value: { blocked: '' } });
 assert.deepEqual(await poll(ready, ready.MindwtrHost.createProject('New', '', '123')), { ok: true, value: { id: 'p' } });
 assert.equal((await poll(ready, ready.MindwtrHost.areaFilter())).value.label, 'All');
 assert.equal((await poll(ready, ready.MindwtrHost.setAreaFilter('{"included":["a"],"excluded":[]}'))).ok, true);
-assert.deepEqual(ready.newInputs, ['["taskFocus",{"id":"t","focused":true}]', '["projectFocus",{"id":"p","focused":false}]',
+assert.deepEqual(ready.newInputs, ['["taskFocus",{"id":"t","focused":true,"taskRevision":"rt"}]', '["projectFocus",{"id":"p","focused":false,"projectRevision":"rp"}]',
     '["createProject",{"title":"New","areaId":null,"requestId":"123"}]', 'areaFilter', '["setAreaFilter",{"included":["a"],"excluded":[]}]']);
 ready.taskFocusResult = { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } };
 assert.deepEqual(await poll(ready, ready.MindwtrHost.taskFocus('t', true)), { ok: false, error: 'SAVE_FAILED: disk full' });

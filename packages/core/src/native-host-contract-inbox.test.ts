@@ -23,6 +23,7 @@ import { buildProcessInboxStepView, INITIAL_PROCESS_INBOX_ANSWERS } from './proc
 import { resolveProcessInboxPlan } from './process-inbox-plan';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
+import { replayAfterRestart } from './screen-parity.replay';
 import { createTaskSimilarityIndex } from './task-similarity';
 import { generateUUID } from './uuid';
 
@@ -385,6 +386,27 @@ describe('native host contract: Process Inbox', () => {
         const { host } = await openHost({ name: 'empty', settings: 'base', taskIds: [], actions: [] });
         expect(host.startInboxProcessing()).toEqual({ ok: true, value: { sessionId: null, queue: { total: 0, taskIds: [] }, view: null } });
         expect(host.startInboxProcessing({ mode: 'fast' as never })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    });
+
+    it.each(['commitInboxProcessingStep', 'skipInboxProcessingTask'] as const)('%s: a replay after a restart finds no session and writes nothing', async (command) => {
+        freezeClock();
+        const { host, recorder } = await openHost(scenario('guided next action'));
+        const started = host.startInboxProcessing();
+        if (!started.ok || !started.value.view) throw new Error('No session');
+        const base = { sessionId: started.value.sessionId!, taskId: 'inbox-a', requestId: generateUUID() };
+        const run = (current: typeof host) => (command === 'commitInboxProcessingStep'
+            ? current.commitInboxProcessingStep({ ...base, step: 'actionable', decision: { choice: 'trash' } })
+            : current.skipInboxProcessingTask(base));
+        expect(await run(host)).toMatchObject({ ok: true });
+        // A later change to the item: restored from Trash, or edited.
+        if (command === 'commitInboxProcessingStep') await useTaskStore.getState().restoreTask('inbox-a');
+        else expect((await useTaskStore.getState().updateTask('inbox-a', { title: 'Edited later' })).success).toBe(true);
+        const after = useTaskStore.getState()._tasksById.get('inbox-a');
+        recorder.log.length = 0;
+        // The session lived in the old process: the replay is stale and writes nothing.
+        expect(await replayAfterRestart(run)).toMatchObject({ result: { ok: false, error: { code: 'STALE_REVISION' } }, wrote: false });
+        expect(recorder.log).toEqual([]);
+        expect(useTaskStore.getState()._tasksById.get('inbox-a')).toEqual(after);
     });
 
     it('is NOT_READY until storage is activated', async () => {

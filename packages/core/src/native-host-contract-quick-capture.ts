@@ -432,7 +432,8 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
     // The last recovery snapshot handed to the host, and the data it holds.
     let lastSnapshot: { fileName: string; changeAt: number } | null = null;
     // ponytail: every picker create's request ID for this process, so its retry finishes an owed
-    // save instead of reading as a plain select; a restart forgets them (the data is saved then).
+    // save instead of reading as a plain select; a restart forgets them (the data is saved then,
+    // and the project or area named by the request UUID answers the replay).
     const pickerCreates = new Set<string>();
     // Captures, batches and picker creates retry exactly through the shared helper; results
     // that write nothing (refusals, a picker search that selects) never enter it.
@@ -816,7 +817,10 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
          * Submit the project or area picker's search: choose the one with that
          * exact name, or create it, as the picker's "Create" row does. Returns the
          * options with it chosen; close the picker and read the view. Choosing an
-         * existing one writes nothing; reuse `requestId` to retry a create.
+         * existing one writes nothing; reuse `requestId` to retry a create. A
+         * created project or area takes the request UUID as its id, so a replay
+         * after a restart chooses it (renamed since or not) and writes nothing; one
+         * deleted or archived since is refused (STALE_REVISION).
          */
         async submitQuickCapturePickerQuery(input: {
             picker: 'project' | 'area';
@@ -846,16 +850,33 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                     ? resolveCaptureProjectQuery(state.projects, query, options.areaId)
                     : resolveCaptureAreaQuery(state.areas, query);
             };
+            const createdId = input.requestId.toLowerCase();
+            /** The project or area this request created (its id is the request UUID): the replay's answer, with no write. */
+            const made = (): NativeHostResult<{ options: QuickCaptureOptions; created: boolean }> | null => {
+                const state = useTaskStore.getState();
+                if (picker === 'project') {
+                    const project = state._allProjects.find((entry) => entry.id === createdId);
+                    if (!project) return null;
+                    return isSelectableProjectForTaskAssignment(project) ? choose(project.id, false) : fail('STALE_REVISION', 'The project this request created is gone');
+                }
+                const area = state._allAreas.find((entry) => entry.id === createdId);
+                if (!area) return null;
+                return area.deletedAt ? fail('STALE_REVISION', 'The area this request created is gone') : choose(area.id, false);
+            };
             // Choosing an existing one writes nothing, so it stays out of the receipts
             // (a retry of an earlier create still goes through them, to finish its save).
-            const first = resolve();
-            if (first.kind === 'select' && !pickerCreates.has(input.requestId)) {
-                return choose('project' in first ? first.project.id : first.area.id, false);
+            if (!pickerCreates.has(input.requestId)) {
+                const replayed = made();
+                if (replayed) return replayed;
+                const first = resolve();
+                if (first.kind === 'select') return choose('project' in first ? first.project.id : first.area.id, false);
             }
             return receipts.run<{ options: QuickCaptureOptions; created: boolean }>(
                 input.requestId,
                 JSON.stringify(['picker', picker, query, draft.value.text, options]),
                 async () => {
+                    const replayed = made();
+                    if (replayed) return replayed;
                     const resolution = resolve();
                     if (resolution.kind === 'empty') return fail('INVALID_INPUT', 'A search text is required');
                     if (resolution.kind === 'select') return choose('project' in resolution ? resolution.project.id : resolution.area.id, false);
@@ -864,10 +885,13 @@ export function createQuickCaptureMethods(deps: QuickCaptureDeps) {
                         const state = useTaskStore.getState();
                         if ('projectToCreate' in resolution) {
                             const { title, color, initialProps } = resolution.projectToCreate;
-                            const created = await state.addProject(title, color, initialProps);
+                            const created = await state.addProject(title, color, { ...initialProps, id: createdId });
                             return created ? choose(created.id, true) : notApplied(useTaskStore.getState().error ?? 'Project creation failed');
                         }
-                        const created = await state.addArea(resolution.areaToCreate.name, { color: resolution.areaToCreate.color });
+                        const { name, color } = resolution.areaToCreate;
+                        // The store restores a deleted area of that name and updates it with these props: an id there would rename it.
+                        const restores = state._allAreas.some((area) => area.name?.trim().toLowerCase() === name.trim().toLowerCase());
+                        const created = await state.addArea(name, restores ? { color } : { color, id: createdId });
                         return created ? choose(created.id, true) : notApplied(useTaskStore.getState().error ?? 'Area creation failed');
                     } catch (error) {
                         return caught(error);

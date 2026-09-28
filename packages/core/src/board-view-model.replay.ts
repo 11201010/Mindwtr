@@ -212,6 +212,8 @@ export async function replayBoardScenario(input: {
 
     const perform = async ([kind, target, ...rest]: [string, ...unknown[]]) => {
         const view = () => ok(contract.getBoardView({ filters, limit: 1 }));
+        /** The revision the card shows: a move or a delete sends it back. */
+        const shown = (taskId: string) => readBoard(contract, filters).cards.flat().find((card) => card.row.id === taskId)!.row.taskRevision;
         switch (kind) {
             case 'search': return edit({ type: 'setSearch', value: target as string });
             case 'clearSearch': return edit({ type: 'setSearch', value: '' });
@@ -241,7 +243,10 @@ export async function replayBoardScenario(input: {
                 dueExpanded = false;
                 return edit({ type: 'toggleDuePreset', preset: target as never });
             case 'drag':
-                ok(await run({ type: 'moveCard', taskId: target as string, status: rest[0] as never, afterId: rest[1] as string | null | undefined, filters }));
+                ok(await run({
+                    type: 'moveCard', taskId: target as string, status: rest[0] as never, afterId: rest[1] as string | null | undefined, filters,
+                    taskRevision: shown(target as string),
+                }));
                 return undefined;
             case 'tap':
                 editor = target as string;
@@ -252,7 +257,7 @@ export async function replayBoardScenario(input: {
             case 'swipe': {
                 for (const action of view().cardActions.swipes[rest[0] as 'left' | 'right'].actions) {
                     if (action === 'trash') {
-                        ok(await run({ type: 'trashTask', taskId: target as string }));
+                        ok(await run({ type: 'trashTask', taskId: target as string, taskRevision: shown(target as string) }));
                         continue;
                     }
                     const copied = await run({ type: 'duplicateTask', taskId: target as string });

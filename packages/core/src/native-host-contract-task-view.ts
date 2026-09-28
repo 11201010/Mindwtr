@@ -5,8 +5,9 @@
  * React Native editor edits its draft, and saveTaskDraft saves it with the rest of
  * the draft in one write. Reset checklist writes at once, as in React Native; it
  * takes a `requestId`: a repeat after a failed save only finishes that save
- * (native-request-receipts.ts), and it is target-state, so a replay that already
- * landed writes nothing.
+ * (native-request-receipts.ts). It is target-state, so a replay that already
+ * landed writes nothing, and compare-and-set on the View tab's `taskRevision`, so a
+ * replay after a restart never undoes a later edit (STALE_REVISION).
  */
 import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { createDateFormatter, type DateFormatter, type DateFormattingConfig } from './date';
@@ -14,7 +15,7 @@ import { tFallback } from './i18n';
 import { createMarkdownLinkLookup, resolveMarkdownBlocks, resolveMarkdownInline, type MarkdownInline, type ResolvedMarkdownBlock } from './markdown-blocks';
 import { NATIVE_HOST_CONTRACT_VERSION, NATIVE_HOST_MAX_WINDOW, type NativeHostResult } from './native-host-contract';
 import { isPaging, page, paramsKey } from './native-host-contract-menu-views';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, isRevision, refuseStaleTasks, runStoreWrite, settleWrite, taskRevisionOf } from './native-request-receipts';
 import { getProjectSectionsForView } from './project-utils';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
@@ -59,6 +60,8 @@ export type NativeTaskView = {
     markdownLabels: { deletedTask: string; deletedProject: string; copyCode: string };
     /** The saved checklist: where the editor's checklist starts, and saveTaskDraft's `checklist.base`. */
     checklistBase: ChecklistItem[];
+    /** The saved task's revision: resetTaskChecklist sends it. */
+    taskRevision: string;
 };
 
 export type NativeTaskChecklistEdit = TaskChecklistEdit;
@@ -301,6 +304,7 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
                         copyCode: tFallback(t, 'markdown.copyCode', 'Copy code'),
                     },
                     checklistBase: toChecklist(task.checklist),
+                    taskRevision: taskRevisionOf(task),
                 },
             };
         },
@@ -353,14 +357,16 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
          * once. Then apply the `uncheckAll` edit to the host's checklist and use `checklist`
          * as the new checklist base for saveTaskDraft. A saved checklist already open writes nothing. A task with no
          * saved checklist (items added in this editor only) writes nothing either: the host reopens its draft items.
+         * `taskRevision` is getTaskView's: a task changed since is not written (STALE_REVISION).
          */
-        async resetTaskChecklist(input: { id: string; requestId: string }): Promise<NativeHostResult<{ id: string; checklist: ChecklistItem[] }>> {
+        async resetTaskChecklist(input: { id: string; requestId: string; taskRevision: string }): Promise<NativeHostResult<{ id: string; checklist: ChecklistItem[] }>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            if (!isRecord(input)) return fail('INVALID_INPUT', 'Task ID is required');
+            if (!isRecord(input) || !isRevision(input.taskRevision)) return fail('INVALID_INPUT', 'Task ID and the revision the view showed are required');
             const found = findTask(input.id);
             if (!isTask(found)) return found;
-            return receipts.run(input.requestId, JSON.stringify(['resetTaskChecklist', input.id]), async () => {
+            const { taskRevision } = input;
+            return receipts.run(input.requestId, JSON.stringify(['resetTaskChecklist', input.id, taskRevision]), async () => {
                 const task = useTaskStore.getState()._tasksById.get(input.id);
                 if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (deps.isReadOnly(task)) return fail('INVALID_INPUT', 'Task is read-only while its project is archived');
@@ -368,6 +374,8 @@ export function createTaskViewMethods(deps: TaskViewDeps) {
                 if (items.length === 0 || (task.status !== 'done' && items.every((item) => !item.isCompleted))) {
                     return { ok: true, value: { id: task.id, checklist: toChecklist(items) } };
                 }
+                const stale = refuseStaleTasks([task.id], { [task.id]: taskRevision });
+                if (stale) return stale;
                 const written = await runStoreWrite(() => useTaskStore.getState().resetTaskChecklist(task.id));
                 return settleWrite(written, { id: task.id, checklist: toChecklist(useTaskStore.getState()._tasksById.get(task.id)?.checklist) });
             });

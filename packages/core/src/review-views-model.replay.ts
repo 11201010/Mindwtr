@@ -130,6 +130,14 @@ const ok = <T,>(result: NativeHostResult<T>): T => {
     return result.value;
 };
 
+/** The revision a drawn row showed for a task, as a screen sends it back. */
+const rowRevision = (rows: readonly { row: { id: string; taskRevision: string } }[], id: string): string => (
+    rows.find((entry) => entry.row.id === id)?.row.taskRevision ?? ''
+);
+const taskRowsOf = <T extends { type: string }>(items: readonly T[]) => items.flatMap((item) => (
+    item.type === 'task' ? [item as unknown as { row: { id: string; taskRevision: string } }] : []
+));
+
 let requestCount = 0;
 const requestId = () => {
     requestCount += 1;
@@ -278,10 +286,11 @@ async function replayReview(contract: Contract, scenario: ReviewScenario, record
             }
             case 'row': {
                 const [verb, status] = rest as [string, string?];
+                const taskRevision = rowRevision(taskRowsOf(items), String(target));
                 if (verb === 'edit') editor = String(target);
                 // The row's own toasts belong to the row, which the harness stands in for.
-                else if (verb === 'status') await run({ type: 'setTaskStatus', taskId: String(target), status: status as never });
-                else await run({ type: 'trashTask', taskId: String(target) });
+                else if (verb === 'status') await run({ type: 'setTaskStatus', taskId: String(target), status: status as never, taskRevision });
+                else await run({ type: 'trashTask', taskId: String(target), taskRevision });
                 return;
             }
             case 'longPress':
@@ -293,7 +302,7 @@ async function replayReview(contract: Contract, scenario: ReviewScenario, record
                 return;
             case 'removeTags':
                 modal = null;
-                await bulkWrite({ type: 'removeTags', taskIds: selected, tags: target as string[] });
+                await bulkWrite({ type: 'removeTags', taskIds: selected, tags: target as string[], taskRevisions: view.bulk!.taskRevisions });
                 return;
             case 'organize':
                 await bulkWrite({ type: 'organizeTasks', taskIds: selected, input: target as never, taskRevisions: view.bulk!.taskRevisions });
@@ -325,12 +334,14 @@ async function replayReview(contract: Contract, scenario: ReviewScenario, record
                     exitSelection();
                 } else if (bulk && modal === 'move' && bulk.statuses.some((status) => status.label === label)) {
                     modal = null;
-                    await bulkWrite({ type: 'moveTasks', taskIds: selected, status: bulk.statuses.find((status) => status.label === label)!.status });
+                    await bulkWrite({
+                        type: 'moveTasks', taskIds: selected, status: bulk.statuses.find((status) => status.label === label)!.status, taskRevisions: bulk.taskRevisions,
+                    });
                 } else if (bulk && modal === 'tag' && label === bulk.addTag.saveLabel) {
                     const tag = tagInput.trim();
                     tagInput = '';
                     modal = null;
-                    await bulkWrite({ type: 'addTag', taskIds: selected, tag });
+                    await bulkWrite({ type: 'addTag', taskIds: selected, tag, taskRevisions: bulk.taskRevisions });
                 } else if (bulk) {
                     const action = bulk.actions.find((entry) => entry.label === label)!;
                     if (action.id === 'moveTo') modal = 'move';
@@ -343,12 +354,13 @@ async function replayReview(contract: Contract, scenario: ReviewScenario, record
                     }
                     if (action.id === 'delete') {
                         const ids = [...selected];
+                        const taskRevisions = bulk.taskRevisions;
                         const confirmation = bulk.deleteConfirmation;
                         alerts.push({
                             title: confirmation.title,
                             message: confirmation.message,
                             buttons: [[confirmation.cancelLabel, 'cancel'], [confirmation.confirmLabel, 'destructive']],
-                            confirm: () => bulkWrite({ type: 'trashTasks', taskIds: ids }),
+                            confirm: () => bulkWrite({ type: 'trashTasks', taskIds: ids, taskRevisions }),
                         });
                     }
                 } else {
@@ -622,9 +634,10 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
                 return;
             case 'row': {
                 const [verb, status] = rest as [string, string?];
+                const taskRevision = rowRevision(taskRowsOf(items), label);
                 if (verb === 'edit') editor = [label, 'view'];
-                else if (verb === 'status') await run({ type: 'setTaskStatus', taskId: label, status: status as never });
-                else await run({ type: 'trashTask', taskId: label });
+                else if (verb === 'status') await run({ type: 'setTaskStatus', taskId: label, status: status as never, taskRevision });
+                else await run({ type: 'trashTask', taskId: label, taskRevision });
                 return;
             }
             case 'closeEditor':
@@ -682,7 +695,11 @@ async function replayWeekly(contract: Contract, part: ReviewFixturePart, scenari
                     ai.selected = new Set(ai.suggestions.filter(isActionableReviewSuggestion).map((suggestion) => suggestion.id));
                 } else if (content.step === 'stale' && label === `${labels.aiApply} (${ai.selected.size})`) {
                     const chosen = ai.suggestions.filter((suggestion) => ai.selected.has(suggestion.id));
-                    if (chosen.some(isActionableReviewSuggestion)) await run({ type: 'applySuggestions', suggestions: chosen });
+                    // Each actionable suggestion's task, at the revision the step's row shows.
+                    const taskRevisions = Object.fromEntries(chosen.filter(isActionableReviewSuggestion).map((suggestion) => (
+                        [suggestion.id, rowRevision(taskRowsOf(items), suggestion.id)]
+                    )));
+                    if (chosen.some(isActionableReviewSuggestion)) await run({ type: 'applySuggestions', suggestions: chosen, taskRevisions });
                 } else {
                     throw new Error(`Nothing to press for ${label}`);
                 }
@@ -824,14 +841,15 @@ async function replayDaily(contract: Contract, part: ReviewFixturePart, scenario
                 return;
             case 'row': {
                 const [verb, status] = rest as [string, string?];
+                const taskRevision = rowRevision(items, String(target));
                 if (verb === 'edit') editor = String(target);
-                else if (verb === 'status') await run({ type: 'setTaskStatus', taskId: String(target), status: status as never });
-                else await run({ type: 'trashTask', taskId: String(target) });
+                else if (verb === 'status') await run({ type: 'setTaskStatus', taskId: String(target), status: status as never, taskRevision });
+                else await run({ type: 'trashTask', taskId: String(target), taskRevision });
                 return;
             }
             case 'followUp': {
                 const item = items.find((entry) => entry.row.id === target);
-                if (item?.followUp && !item.followUp.due) await run({ type: 'followUpToday', taskId: String(target) });
+                if (item?.followUp && !item.followUp.due) await run({ type: 'followUpToday', taskId: String(target), taskRevision: item.row.taskRevision });
                 return;
             }
             case 'editorSave': {

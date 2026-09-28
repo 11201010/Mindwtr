@@ -11,11 +11,18 @@
  * to. External calendars are platform I/O: the host fetches the view's `range`
  * and sends what it has as `calendar` (loading, ready or error).
  *
- * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision. The legacy
- * runCalendarAction keeps in-process receipts for RN parity, but its raw
- * existing-composer replay can overwrite a newer task edit after restart. The
- * iOS host therefore exposes only the prepared existing-composer write below.
- * Its complete stamped target row is the durable receipt.
+ * Reads are windowed by NATIVE_HOST_MAX_WINDOW under one revision. Writes go
+ * through runCalendarAction with a request UUID: a request the receipts hold
+ * (running, or owing its save) goes to them before any other check, and a retry
+ * only saves (native-request-receipts.ts); every write is target-state, so a
+ * replay after a restart writes nothing, a write to an existing task
+ * compare-and-sets on the revision the view showed (a task changed since is
+ * refused: STALE_REVISION), and a task a request made answers its replay only
+ * while it is exactly what the request writes. Success means the change is
+ * saved. A refusal the screen shows (a time conflict, a composer error) writes
+ * nothing and leaves the request ID free. The iOS host exposes only the
+ * prepared existing-composer write below; its complete stamped target row is
+ * the durable receipt.
  *
  * Headings (month and week titles, day titles, weekday labels) come from
  * date-fns patterns through the user's date formatter: the host's engine has no
@@ -144,7 +151,7 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, taskRevisionOf, type NativeUnsavedWrite } from './native-request-receipts';
 import { buildQuickAddParseOptions } from './quick-add';
 import { isProjectedRecurringTaskId } from './recurrence';
 import { resolveFeatureFlags } from './resolve-feature-flags';
@@ -321,6 +328,8 @@ export type NativeCalendarComposer = {
     title: string;
     query: string;
     selectedTaskId: string | null;
+    /** The selected task's revision when core selected it: an existing-task Save is compare-and-set on it. */
+    taskRevision: string | null;
     error: CalendarComposerError | null;
 };
 
@@ -349,17 +358,21 @@ export type NativeCalendarComposerEdit =
 
 export type NativeCalendarSheet =
     | { kind: 'projected'; title: string; message: string; buttons: CalendarSheetButton<'ok'>[] }
-    | { kind: 'task'; taskId: string; title: string; buttons: CalendarSheetButton<'edit' | 'unschedule' | 'done' | 'delete' | 'cancel'>[] }
+    /** Remove from calendar, Done and Delete send `taskRevision` back. */
+    | { kind: 'task'; taskId: string; taskRevision: string; title: string; buttons: CalendarSheetButton<'edit' | 'unschedule' | 'done' | 'delete' | 'cancel'>[] }
     | { kind: 'event'; title: string; buttons: CalendarSheetButton<'createTask' | 'openInCalendar' | 'cancel'>[] };
 
 export type NativeCalendarAction =
     /** The composer's Save. A new task takes the request ID as its id. */
     | { type: 'saveComposer'; composer: NativeCalendarComposer }
-    /** A timeline block let go at `startMinutes` into `day`. */
-    | { type: 'moveTask'; taskId: string; day: string; startMinutes: number; durationMinutes: number }
-    | { type: 'unscheduleTask'; taskId: string }
-    | { type: 'completeTask'; taskId: string }
-    | { type: 'deleteTask'; taskId: string }
+    /**
+     * A timeline block let go at `startMinutes` into `day`. This and the next three send the
+     * task's revision the view showed (an item's `row.taskRevision`, the sheet's `taskRevision`).
+     */
+    | { type: 'moveTask'; taskId: string; day: string; startMinutes: number; durationMinutes: number; taskRevision: string }
+    | { type: 'unscheduleTask'; taskId: string; taskRevision: string }
+    | { type: 'completeTask'; taskId: string; taskRevision: string }
+    | { type: 'deleteTask'; taskId: string; taskRevision: string }
     /** An event's Create task. The request ID becomes the task id. */
     | { type: 'createTaskFromEvent'; event: ExternalCalendarEvent }
     | { type: 'setViewMode'; viewMode: CalendarViewMode }
@@ -473,7 +486,10 @@ const readFeed = (value: unknown): Feed | null => {
     return null;
 };
 
-const toComposer = (state: CalendarViewComposerState): NativeCalendarComposer => ({
+/** The composer as the contract holds it: the view model's state and the selected task's revision. */
+type ComposerState = CalendarViewComposerState & { taskRevision: string | null };
+
+const toComposer = (state: ComposerState): NativeCalendarComposer => ({
     date: state.date.toISOString(),
     startTimeValue: state.startTimeValue,
     startAt: state.startAt ? state.startAt.toISOString() : null,
@@ -483,10 +499,11 @@ const toComposer = (state: CalendarViewComposerState): NativeCalendarComposer =>
     title: state.title,
     query: state.query,
     selectedTaskId: state.selectedTaskId,
+    taskRevision: state.taskRevision,
     error: state.error,
 });
 const COMPOSER_ERROR_CODES = new Set(['invalid_range', 'title_required', 'task_required', 'overlap', 'invalid_date_command', 'start_after_due', 'save_failed']);
-const readComposer = (value: unknown, formatDate: DateFormatter): CalendarViewComposerState | null => {
+const readComposer = (value: unknown, formatDate: DateFormatter): ComposerState | null => {
     if (!isObjectRecord(value)) return null;
     const date = isText(value.date, ISO_INSTANT_LIMIT) ? safeParseDate(value.date) : null;
     const startAt = value.startAt === null ? null : isText(value.startAt, ISO_INSTANT_LIMIT) ? safeParseDate(value.startAt) : undefined;
@@ -498,7 +515,8 @@ const readComposer = (value: unknown, formatDate: DateFormatter): CalendarViewCo
         || !Number.isSafeInteger(value.durationMinutes) || (value.durationMinutes as number) < 1 || (value.durationMinutes as number) > 24 * 60
         || (value.mode !== 'new' && value.mode !== 'existing')
         || !isText(value.title, 10_000) || !isText(value.query, 2000)
-        || (value.selectedTaskId !== null && !isText(value.selectedTaskId))) {
+        || (value.selectedTaskId !== null && !isText(value.selectedTaskId))
+        || (value.taskRevision !== null && !isRevision(value.taskRevision))) {
         return null;
     }
     const rawStart = startAt ? formatCalendarTimeInputValue(startAt) : null;
@@ -514,6 +532,7 @@ const readComposer = (value: unknown, formatDate: DateFormatter): CalendarViewCo
         title: value.title,
         query: value.query,
         selectedTaskId: value.selectedTaskId as string | null,
+        taskRevision: value.taskRevision as string | null,
         error: error as CalendarComposerError | null,
     };
 };
@@ -1342,7 +1361,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         findFreeSlot: (day, durationMinutes, excludeTaskId) => findCalendarFreeSlot(day, durationMinutes, slotOptions(ctx, events(day), excludeTaskId)),
         timeEstimateToMinutes: ctx.estimateMinutes,
     });
-    const composerView = (ctx: Context, state: CalendarViewComposerState): NativeCalendarComposerView => {
+    const composerView = (ctx: Context, state: ComposerState): NativeCalendarComposerView => {
         const selectedTask = state.selectedTaskId ? ctx.store.tasks.find((task) => task.id === state.selectedTaskId) ?? null : null;
         return {
             composer: toComposer(state),
@@ -1418,10 +1437,14 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
         isSlotFree: (day, start, durationMinutes, excludeTaskId) => isCalendarSlotFree(day, start, durationMinutes, slotOptions(ctx, eventsByDay(feed)(day), excludeTaskId)),
     });
 
+    /** Compare-and-set, right before a write to an existing task: one changed since the view showed it is not written. */
+    const stale = (task: Task, taskRevision: string | null): Outcome | null => refuseStale([task], [taskRevision ?? undefined]);
+
     /**
      * The write. It runs inside the receipts, so it checks everything again: a
-     * write that does not apply returns ACTION_FAILED and leaves no receipt, and
-     * a target that already holds writes nothing.
+     * write that does not apply returns ACTION_FAILED and leaves no receipt, a
+     * target that already holds writes nothing, and a task that changed since the
+     * view is refused (STALE_REVISION).
      */
     const perform = async (requestId: string, action: NativeCalendarAction, ctx: Context, feed: Feed, state: CalendarPeriodState): Promise<Outcome> => {
         const store = useTaskStore.getState();
@@ -1439,7 +1462,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                     const task = liveTask(intent.taskId);
                     if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                     if (task.startTime === intent.updates.startTime && task.timeEstimate === intent.updates.timeEstimate) return unchanged(answer);
-                    return written(() => store.updateTask(task.id, intent.updates), answer);
+                    return stale(task, composer.taskRevision) ?? written(() => store.updateTask(task.id, intent.updates), answer);
                 }
                 const existing = taskById(createdId);
                 if (existing) {
@@ -1471,7 +1494,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 const target = moveTarget(action);
                 if (task.startTime === target) return unchanged();
                 if (isMoveFree(ctx, feed, action, task.id).kind !== 'move') return fail('ACTION_FAILED', getCalendarToasts(ctx.t).timeConflict.message);
-                return written(() => store.updateTask(task.id, { startTime: target }));
+                return stale(task, action.taskRevision) ?? written(() => store.updateTask(task.id, { startTime: target }));
             }
             case 'unscheduleTask':
             case 'completeTask': {
@@ -1480,17 +1503,17 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (action.type === 'unscheduleTask') {
                     if (!task.startTime) return unchanged();
-                    return written(() => store.updateTask(task.id, { ...CALENDAR_UNSCHEDULE_UPDATES }));
+                    return stale(task, action.taskRevision) ?? written(() => store.updateTask(task.id, { ...CALENDAR_UNSCHEDULE_UPDATES }));
                 }
                 if (task.status === 'done') return unchanged();
-                return written(() => store.updateTask(task.id, { ...CALENDAR_DONE_UPDATES }));
+                return stale(task, action.taskRevision) ?? written(() => store.updateTask(task.id, { ...CALENDAR_DONE_UPDATES }));
             }
             case 'deleteTask': {
                 if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot change');
                 const task = typeof action.taskId === 'string' ? store._tasksById.get(action.taskId) : undefined;
                 if (!task || task.purgedAt) return fail('TASK_NOT_FOUND', 'Task not found');
                 if (task.deletedAt) return unchanged();
-                return written(() => store.deleteTask(task.id));
+                return stale(task, action.taskRevision) ?? written(() => store.deleteTask(task.id));
             }
             case 'createTaskFromEvent': {
                 const plan = planCalendarEventTask(action.event, { calendarName: getCalendarSourceNames(feed.calendars).get(action.event.sourceId), t: ctx.t });
@@ -1553,8 +1576,8 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             case 'moveTask': {
                 if (!parseDayKey(action.day) || !Number.isSafeInteger(action.startMinutes) || action.startMinutes < 0
                     || !Number.isSafeInteger(action.durationMinutes) || action.durationMinutes < 1
-                    || action.startMinutes + action.durationMinutes > 24 * 60) {
-                    return fail('INVALID_INPUT', 'A day, a start minute and a duration inside the day are required');
+                    || action.startMinutes + action.durationMinutes > 24 * 60 || !isRevision(action.taskRevision)) {
+                    return fail('INVALID_INPUT', 'A day, a start minute and a duration inside the day, and the revision the view showed, are required');
                 }
                 if (isProjectedRecurringTaskId(action.taskId)) return fail('INVALID_INPUT', 'A projected occurrence cannot move');
                 const task = liveTask(action.taskId);
@@ -1565,7 +1588,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             case 'unscheduleTask':
             case 'completeTask':
             case 'deleteTask':
-                return isText(action.taskId) ? null : fail('INVALID_INPUT', 'A task id is required');
+                return isText(action.taskId) && isRevision(action.taskRevision) ? null : fail('INVALID_INPUT', 'A task id and the revision the view showed are required');
             case 'createTaskFromEvent':
                 return isEvent(action.event) ? null : fail('INVALID_INPUT', 'An event from the calendar feed is required');
             case 'setViewMode':
@@ -1674,7 +1697,9 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             const task = periodIndex(ctx, period, feed).rangeTasks.find((candidate) => candidate.id === input.taskId);
             if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
             const sheet = getCalendarTaskSheet(task, ctx.t);
-            return { ok: true, value: sheet.kind === 'projected' ? sheet : { ...sheet, kind: 'task', taskId: task.id } };
+            if (sheet.kind === 'projected') return { ok: true, value: sheet };
+            const stored = ctx.store._tasksById.get(task.id) ?? task;
+            return { ok: true, value: { ...sheet, kind: 'task', taskId: task.id, taskRevision: taskRevisionOf(stored) } };
         },
 
         /**
@@ -1718,10 +1743,11 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 const durationMinutes = ctx.estimateMinutes(task.timeEstimate);
                 const slot = openDeps.findFreeSlot(day, durationMinutes, task.id);
                 if (!slot) return { ok: true, value: { composer: null, toast: getCalendarToasts(ctx.t).noFreeTime } };
-                return { ok: true, value: { composer: composerView(ctx, toCalendarViewComposer(openComposerAt(slot, { durationMinutes, mode: 'existing', task }, openDeps), slot)), toast: null } };
+                const opened = toCalendarViewComposer(openComposerAt(slot, { durationMinutes, mode: 'existing', task }, openDeps), slot);
+                return { ok: true, value: { composer: composerView(ctx, { ...opened, taskRevision: taskRevisionOf(task) }), toast: null } };
             }
-            if (at) return { ok: true, value: { composer: composerView(ctx, toCalendarViewComposer(openComposerAt(at, { mode: input.mode ?? 'new' }, openDeps), at)), toast: null } };
-            if (day) return { ok: true, value: { composer: composerView(ctx, toCalendarViewComposer(openComposerForDate(day, { mode: input.mode ?? 'new' }, openDeps), day)), toast: null } };
+            if (at) return { ok: true, value: { composer: composerView(ctx, { ...toCalendarViewComposer(openComposerAt(at, { mode: input.mode ?? 'new' }, openDeps), at), taskRevision: null }), toast: null } };
+            if (day) return { ok: true, value: { composer: composerView(ctx, { ...toCalendarViewComposer(openComposerForDate(day, { mode: input.mode ?? 'new' }, openDeps), day), taskRevision: null }), toast: null } };
             return fail('INVALID_INPUT', 'An instant, a day or a task to schedule is required');
         },
 
@@ -1736,7 +1762,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
             const edit = isObjectRecord(input) && isObjectRecord(input.edit) ? input.edit as NativeCalendarComposerEdit : null;
             if (!state || !feed || !edit) return fail('INVALID_INPUT', 'A composer, an edit and the calendar are required');
             const events = eventsByDay(feed);
-            let next: CalendarViewComposerState | null = null;
+            let next: ComposerState | null = null;
             switch (edit.type) {
                 case 'mode':
                     if (edit.mode === 'new' || edit.mode === 'existing') next = { ...state, ...setComposerMode(state, edit.mode) };
@@ -1745,15 +1771,16 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                     if (isText(edit.title, 10_000)) next = { ...state, ...setComposerTitle(state, edit.title) };
                     break;
                 case 'query':
-                    if (isText(edit.query, 2000)) next = { ...state, ...setComposerQuery(state, edit.query) };
+                    // A new search drops the chosen task, and its revision with it.
+                    if (isText(edit.query, 2000)) next = { ...state, ...setComposerQuery(state, edit.query), taskRevision: null };
                     break;
                 case 'selectTask': {
                     const task = ctx.schedulableTasks.find((candidate) => candidate.id === edit.taskId);
-                    if (task) next = { ...state, ...selectComposerTask(state, task, composerDeps(ctx, events)) };
+                    if (task) next = { ...state, ...selectComposerTask(state, task, composerDeps(ctx, events)), taskRevision: taskRevisionOf(task) };
                     break;
                 }
                 case 'startTime':
-                    if (isText(edit.value, 64)) next = setCalendarViewComposerStartTime(state, edit.value);
+                    if (isText(edit.value, 64)) next = { ...setCalendarViewComposerStartTime(state, edit.value), taskRevision: state.taskRevision };
                     break;
                 case 'endTime':
                     if (isText(edit.value, 64)) next = { ...state, ...setComposerEndTime(state, edit.value) };
@@ -1978,7 +2005,9 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
          * One calendar action, as the screen writes it. Reuse `requestId` to retry:
          * a completed request writes nothing again. Send the `calendar` the view
          * shows: a move and a composer save check the day's events for overlaps, and
-         * an event task names its calendar.
+         * an event task names its calendar. A write to an existing task sends the
+         * revision the view showed (the composer carries its own) and is refused
+         * (STALE_REVISION) when the task changed since.
          */
         async runCalendarAction(input: {
             requestId: string;

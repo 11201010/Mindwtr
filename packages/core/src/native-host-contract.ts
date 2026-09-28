@@ -167,7 +167,21 @@ import {
     type HistoryTab,
 } from './archive-view-model';
 import type { BulkTaskTokenField, BulkTaskTokenMode } from './bulk-task-tokens';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import {
+    createNativeRequestReceipts,
+    isRevision,
+    isRevisions,
+    refuseStaleProjects,
+    refuseStaleTasks,
+    revisionOf,
+    runStoreWrite,
+    settleWrite,
+    taskRevisionOf,
+    taskRevisionsOf,
+    type NativeRevisions,
+    type NativeUnsavedWrite,
+} from './native-request-receipts';
+import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import {
     buildContextsTokenIndex,
     buildContextsViewModel,
@@ -346,6 +360,8 @@ export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
     laterToday: boolean;
     /** Focus Today footer, already formatted with the user's clock preference. */
     laterTodayLabel?: string | null;
+    /** The task's revision: send it with a command that writes this task (compare-and-set). */
+    taskRevision: string;
     /**
      * The React Native row's labels and meta line, formatted with the user's date
      * settings and language. Render `meta.parts` in order. Inbox and project detail
@@ -426,6 +442,8 @@ export type NativeFocusView = {
     controls: NativeFocusControls;
 };
 export type NativeProjectRow = Pick<Project, 'id' | 'title' | 'status'> & {
+    /** The project's revision: send it with a command that writes this project (compare-and-set). */
+    projectRevision: string;
     cancelled: boolean;
     statusLabel: string;
     isFocused: boolean;
@@ -546,6 +564,7 @@ const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>, meta: T
     revealDate: null,
     revealLabel: null,
     laterToday: false,
+    taskRevision: taskRevisionOf(task),
     meta,
 });
 
@@ -563,6 +582,7 @@ const toNativeProjectRow = (
         id: project.id,
         title: project.title,
         status: project.status,
+        projectRevision: revisionOf(project),
         ...getProjectRowStatus(project, t),
         isFocused,
         focusDisabled: !isFocused && focusedProjectCount >= MAX_FOCUSED_PROJECTS,
@@ -856,8 +876,6 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     };
     let cachedProjectNotesKey = '';
     let cachedProjectNotesBlocks: ResolvedMarkdownBlock[] | null = null;
-    // ponytail: title/area dedupe survives process death, but a renamed, moved, archived, or deleted project can be recreated; persist a capture ID if those retries become required.
-    const createdProjects = new Map<string, string>();
     // Per task, the last draft save the store accepted and the task it produced. The
     // same request against that same task is a retry: the store may have rewritten
     // fields it saved (a recurrence's series stamp, a deferred star), so the field
@@ -865,8 +883,6 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     // object, which ends the entry.
     // ponytail: keeps the 50 most recently saved tasks; an older task's retry falls back to the field comparison.
     const draftSaves = new Map<string, { key: string; task: Task | undefined }>();
-    // ponytail: keep 50 request IDs; an older retry falls back to the saved-query match.
-    const savedSearchRequests = new Map<string, { query: string; name: string; id: string }>();
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -1793,7 +1809,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                             id: item.id, title: item.title, status: item.status,
                             priority: null, dueDate: null, startTime: null, isFocusedToday: false,
                             projectTitle: item.projectId ? projectTitles.get(item.projectId) ?? null : null,
-                            hasNotes: false, revealDate: null, revealLabel: null, laterToday: false, meta: null,
+                            hasNotes: false, revealDate: null, revealLabel: null, laterToday: false, taskRevision: '', meta: null,
                         };
                     return { ...row, inStore,
                         cancelled: isTaskCancelled(full),
@@ -1836,22 +1852,23 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             }
             const trimmedQuery = input.query.trim();
             const name = input.name?.trim() || trimmedQuery;
-            const previous = savedSearchRequests.get(input.requestId);
-            if (previous && (previous.query !== trimmedQuery || previous.name !== name)) return fail('INVALID_INPUT', 'Request ID already belongs to another search');
             const state = useTaskStore.getState();
             const savedSearches = state.settings.savedSearches || [];
-            const resolved = resolveSavedSearch(savedSearches, trimmedQuery, name, previous?.id ?? generateUUID());
+            // The request UUID names the new search: a replay, even after a restart, finds the
+            // search this request made and writes nothing; another search under it is refused.
+            const id = input.requestId.toLowerCase();
+            const made = savedSearches.find((search) => search.id === id);
+            if (made && (made.query !== trimmedQuery || made.name !== name)) return fail('INVALID_INPUT', 'Request ID already belongs to another search');
+            const resolved = made ? { search: made, existing: false } : resolveSavedSearch(savedSearches, trimmedQuery, name, id);
             try {
-                if (!resolved.existing) {
-                    savedSearchRequests.set(input.requestId, { query: trimmedQuery, name, id: resolved.search.id });
-                    if (savedSearchRequests.size > 50) savedSearchRequests.delete(savedSearchRequests.keys().next().value!);
+                if (!made && !resolved.existing) {
                     await state.updateSettings({ savedSearches: [...savedSearches, resolved.search] });
                 } else if (useTaskStore.getState().persistenceFailure) {
                     await useTaskStore.getState().retryPersistence();
                 }
                 const saved = await save();
                 if (!saved.ok) return saved;
-                return { ok: true, value: { id: resolved.search.id, existing: !previous && resolved.existing } };
+                return { ok: true, value: { id: resolved.search.id, existing: resolved.existing } };
             } catch (error) {
                 const failure = useTaskStore.getState().persistenceFailure;
                 return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
@@ -2644,23 +2661,24 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 || typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) {
                 return fail('INVALID_INPUT', 'Project title, area ID, and request UUID are required');
             }
+            // The request UUID names the project: a replay, even after a restart, finds the project
+            // this request made (renamed, archived or deleted since) and writes nothing.
+            const id = input.requestId.toLowerCase();
             try {
                 const state = useTaskStore.getState();
-                const previousId = createdProjects.get(input.requestId);
-                const previous = previousId && state._projectsById.get(previousId);
-                if (previous && !previous.deletedAt) {
+                if (state._allProjects.some((project) => project.id === id)) {
                     if (state.persistenceFailure) await state.retryPersistence();
                     const saved = await save();
                     if (!saved.ok) return saved;
-                    return { ok: true, value: { id: previous.id } };
+                    return { ok: true, value: { id } };
                 }
                 const area = state.areas.find((candidate) => candidate.id === input.areaId && !candidate.deletedAt);
-                const created = await state.addProject(input.title, area?.color || DEFAULT_PROJECT_COLOR, { areaId: area?.id });
+                // A live project with this title in the area is reused, as mobile does: its ID is the answer.
+                const created = await state.addProject(input.title, area?.color || DEFAULT_PROJECT_COLOR, { areaId: area?.id, id });
                 if (!created) {
                     const failure = useTaskStore.getState().persistenceFailure;
                     return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? useTaskStore.getState().error ?? 'Project creation failed');
                 }
-                createdProjects.set(input.requestId, created.id);
                 const saved = await save();
                 if (!saved.ok) return saved;
                 return { ok: true, value: { id: created.id } };
@@ -2670,11 +2688,12 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             }
         },
 
-        async setTaskFocus(input: { id: string; focused: boolean }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: string; blockedTitle: string }>> {
+        /** `taskRevision` is the row's: a task changed since is not written (STALE_REVISION). */
+        async setTaskFocus(input: { id: string; focused: boolean; taskRevision: string }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: string; blockedTitle: string }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
-            if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean') {
-                return fail('INVALID_INPUT', 'Task ID and target focus state are required');
+            if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean' || !isRevision(input.taskRevision)) {
+                return fail('INVALID_INPUT', 'Task ID, target focus state and the revision the view showed are required');
             }
             const state = useTaskStore.getState();
             const task = state._tasksById.get(input.id);
@@ -2683,6 +2702,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 if (Boolean(task.isFocusedToday) === input.focused) {
                     if (state.persistenceFailure) await state.retryPersistence();
                 } else {
+                    // Compare-and-set: a replay never undoes a star changed after the view.
+                    const refused = refuseStaleTasks([task.id], { [task.id]: input.taskRevision });
+                    if (refused) return refused;
                     const action = state.getFocusStarAction(task);
                     if (!action.canToggle) return { ok: true, value: {
                         blocked: getFocusStarBlockedText(translate, action, normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit)) ?? '',
@@ -2704,11 +2726,12 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             }
         },
 
-        async setProjectFocus(input: { id: string; focused: boolean }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: '' }>> {
+        /** `projectRevision` is the row's: a project changed since is not written (STALE_REVISION). */
+        async setProjectFocus(input: { id: string; focused: boolean; projectRevision: string }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: '' }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
-            if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean') {
-                return fail('INVALID_INPUT', 'Project ID and target focus state are required');
+            if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean' || !isRevision(input.projectRevision)) {
+                return fail('INVALID_INPUT', 'Project ID, target focus state and the revision the view showed are required');
             }
             const state = useTaskStore.getState();
             const project = state._projectsById.get(input.id);
@@ -2717,6 +2740,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 if (Boolean(project.isFocused) === input.focused) {
                     if (state.persistenceFailure) await state.retryPersistence();
                 } else {
+                    // Compare-and-set: a replay never undoes a star changed after the view.
+                    const refused = refuseStaleProjects([project.id], { [project.id]: input.projectRevision });
+                    if (refused) return refused;
                     await state.toggleProjectFocus(input.id);
                     const after = useTaskStore.getState();
                     const failure = after.persistenceFailure;
@@ -2732,10 +2758,13 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             }
         },
 
-        async completeTask(input: { id: string }): Promise<NativeHostResult<{ id: string }>> {
+        /** `taskRevision` is the row's: a task changed since is not completed (STALE_REVISION). */
+        async completeTask(input: { id: string; taskRevision: string }): Promise<NativeHostResult<{ id: string }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
-            if (!input || typeof input.id !== 'string' || !input.id.trim()) return fail('INVALID_INPUT', 'Task ID is required');
+            if (!input || typeof input.id !== 'string' || !input.id.trim() || !isRevision(input.taskRevision)) {
+                return fail('INVALID_INPUT', 'Task ID and the revision the view showed are required');
+            }
             const state = useTaskStore.getState();
             const task = state._tasksById.get(input.id);
             if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
@@ -2750,6 +2779,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                         });
                         return fail('INVALID_INPUT', 'Task is read-only while its project is archived or deleted');
                     }
+                    // Compare-and-set: a replay never completes a task reopened or edited after the view.
+                    const refused = refuseStaleTasks([task.id], { [task.id]: input.taskRevision });
+                    if (refused) return refused;
                     const result = await state.updateTask(input.id, { status: 'done' });
                     if (!result.success) {
                         const failure = useTaskStore.getState().persistenceFailure;
@@ -3444,6 +3476,8 @@ export type NativeContextsView = {
     empty: ReturnType<typeof getContextsEmptyState> | null;
     /** The selected ids still on screen; the bulk bar shows while any remain. */
     selectedIds: string[];
+    /** Each of `selectedIds`' revision: send it as a bulk action's `taskRevisions`. */
+    taskRevisions: NativeRevisions;
     bulk: {
         countLabel: string;
         exitLabel: string;
@@ -3455,13 +3489,18 @@ export type NativeContextsView = {
         picker: { field: BulkTaskTokenField; mode: BulkTaskTokenMode; total: number; items: string[] } | null;
     } | null;
 };
+/**
+ * A write carries the revision the view showed for each task it names (a row's
+ * `taskRevision`, the view's `taskRevisions` for the selection, an Undo's as given):
+ * a task changed since is not written (STALE_REVISION).
+ */
 export type NativeContextsAction =
-    | { type: 'setTaskStatus'; taskId: string; status: TaskStatus }
-    | { type: 'moveTasks'; taskIds: string[]; status: TaskStatus }
-    | { type: 'editTaskTokens'; taskIds: string[]; field: BulkTaskTokenField; mode: BulkTaskTokenMode; values: string[] }
-    | { type: 'trashTask'; taskId: string }
-    | { type: 'trashTasks'; taskIds: string[] }
-    | { type: 'restoreTasks'; taskIds: string[] };
+    | { type: 'setTaskStatus'; taskId: string; status: TaskStatus; taskRevision: string }
+    | { type: 'moveTasks'; taskIds: string[]; status: TaskStatus; taskRevisions: NativeRevisions }
+    | { type: 'editTaskTokens'; taskIds: string[]; field: BulkTaskTokenField; mode: BulkTaskTokenMode; values: string[]; taskRevisions: NativeRevisions }
+    | { type: 'trashTask'; taskId: string; taskRevision: string }
+    | { type: 'trashTasks'; taskIds: string[]; taskRevisions: NativeRevisions }
+    | { type: 'restoreTasks'; taskIds: string[]; taskRevisions: NativeRevisions };
 
 /** Archive's view inputs; `filters` is the returned `filters.state`, `filterEdit` one control's edit. */
 export type NativeArchiveParams = {
@@ -3477,7 +3516,8 @@ export type NativeArchiveParams = {
 /**
  * RN's Select all: every task row on screen (a folded heading hides its rows), less
  * `except`, the rows deselected since. A bulk action resolves it again and refuses
- * with STALE_REVISION once those rows changed, so it acts only on the rows shown.
+ * with STALE_REVISION once those rows changed (which rows, or any row's revision), so
+ * it acts only on the rows shown, as they were shown.
  */
 export type NativeArchiveSelectAll = {
     /** The view's params (filters as returned, no filterEdit). */
@@ -3507,6 +3547,8 @@ export type NativeArchiveItem =
     | {
         type: 'project';
         id: string;
+        /** Send it with reactivateProject and trashProject. */
+        projectRevision: string;
         title: string;
         cancelled: boolean;
         struck: boolean;
@@ -3543,6 +3585,8 @@ export type NativeArchiveView = {
     visibleTaskCount: number;
     /** The explicitly selected rows still on screen (empty under Select all). */
     selectedIds: string[];
+    /** Each of `selectedIds`' revision: send it as a bulk action's `taskRevisions`. */
+    taskRevisions: NativeRevisions;
     selectedCount: number;
     /** Sent with `selectAll: { except }`: the object a bulk action takes as `selectAll`. Null otherwise. */
     selectAll: NativeArchiveSelectAll | null;
@@ -3550,23 +3594,29 @@ export type NativeArchiveView = {
     labels: ReturnType<typeof getArchiveRowLabels> & { selectAll: string; restoreSelected: string; done: string; selected: string };
     confirmations: { trashTask: ListConfirmation; trashTasks: ListConfirmation };
 };
+/**
+ * A write carries the revision the view showed for each row it names (a row's
+ * `taskRevision`, a project item's `projectRevision`, the view's `taskRevisions` for
+ * the selection, an Undo's as given; Select all carries its own): a row changed since
+ * is not written (STALE_REVISION).
+ */
 export type NativeArchiveAction =
-    | { type: 'moveToInbox'; taskId: string }
-    | { type: 'moveTasksToInbox'; taskIds: string[] }
+    | { type: 'moveToInbox'; taskId: string; taskRevision: string }
+    | { type: 'moveTasksToInbox'; taskIds: string[]; taskRevisions: NativeRevisions }
     | { type: 'moveTasksToInbox'; selectAll: NativeArchiveSelectAll }
-    | { type: 'setCompletedAt'; taskId: string; completedAt: string }
+    | { type: 'setCompletedAt'; taskId: string; completedAt: string; taskRevision: string }
     /** The picker's local day (yyyy-MM-dd) and time (HH:mm); core stores them as mobile's picker does. */
-    | { type: 'setCompletedAt'; taskId: string; day: string; time: string }
-    | { type: 'trashTask'; taskId: string }
-    | { type: 'trashTasks'; taskIds: string[] }
+    | { type: 'setCompletedAt'; taskId: string; day: string; time: string; taskRevision: string }
+    | { type: 'trashTask'; taskId: string; taskRevision: string }
+    | { type: 'trashTasks'; taskIds: string[]; taskRevisions: NativeRevisions }
     | { type: 'trashTasks'; selectAll: NativeArchiveSelectAll }
-    | { type: 'restoreTasks'; taskIds: string[] }
-    | { type: 'reactivateProject'; projectId: string }
-    | { type: 'trashProject'; projectId: string };
+    | { type: 'restoreTasks'; taskIds: string[]; taskRevisions: NativeRevisions }
+    | { type: 'reactivateProject'; projectId: string; projectRevision: string }
+    | { type: 'trashProject'; projectId: string; projectRevision: string };
 
 export type NativeTrashItem =
     | { type: 'task'; row: NativeTaskRow; typeLabel: string; deletedLabel: string; descriptionMarkdown: string | null }
-    | { type: 'project'; id: string; title: string; indicatorColor: string | null; typeLabel: string; deletedLabel: string };
+    | { type: 'project'; id: string; projectRevision: string; title: string; indicatorColor: string | null; typeLabel: string; deletedLabel: string };
 export type NativeTrashView = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
@@ -3577,18 +3627,24 @@ export type NativeTrashView = {
     projectCount: number;
     total: number;
     items: NativeTrashItem[];
-    selected: { taskIds: string[]; projectIds: string[] };
+    /** The selection still in Trash, with each item's revision to send with restoreItems and purgeItems. */
+    selected: { taskIds: string[]; projectIds: string[]; taskRevisions: NativeRevisions; projectRevisions: NativeRevisions };
     empty: ReturnType<typeof getTrashEmptyState> | null;
     labels: ReturnType<typeof getTrashRowLabels> & { done: string; clearAll: string; selectAll: string; restoreSelected: string; deleteSelected: string; selected: string };
     confirmations: { purgeItem: ListConfirmation; purgeSelection: ListConfirmation };
     /** Clear Trash deletes exactly these shown items; send `revision` with emptyTrash. */
     emptyTrash: { revision: string; taskCount: number; projectCount: number; confirmation: ListConfirmation } | null;
 };
+/**
+ * A write carries the revision the view showed for each item it names (`revision`: a
+ * task row's `taskRevision` or a project item's `projectRevision`; the selection's
+ * `taskRevisions` and `projectRevisions`): an item changed since is not written (STALE_REVISION).
+ */
 export type NativeTrashAction =
-    | { type: 'restoreItem'; kind: 'task' | 'project'; id: string }
-    | { type: 'restoreItems'; taskIds: string[]; projectIds: string[] }
-    | { type: 'purgeItem'; kind: 'task' | 'project'; id: string }
-    | { type: 'purgeItems'; taskIds: string[]; projectIds: string[] }
+    | { type: 'restoreItem'; kind: 'task' | 'project'; id: string; revision: string }
+    | { type: 'restoreItems'; taskIds: string[]; projectIds: string[]; taskRevisions: NativeRevisions; projectRevisions: NativeRevisions }
+    | { type: 'purgeItem'; kind: 'task' | 'project'; id: string; revision: string }
+    | { type: 'purgeItems'; taskIds: string[]; projectIds: string[]; taskRevisions: NativeRevisions; projectRevisions: NativeRevisions }
     | { type: 'emptyTrash'; revision: string };
 
 /** A list action's answer; SAVE_FAILED carries it when the write landed and only its save failed. */
@@ -3720,26 +3776,38 @@ function createListViewMethods(deps: ListViewDeps) {
         const missing = (ids: string[]) => ids.some((id) => !liveTask(id));
         switch (action.type) {
             case 'trashTask': {
+                if (!isRevision(action.taskRevision)) return fail('INVALID_INPUT', 'A task and the revision the view showed are required');
                 if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                // Compare-and-set: a replay never trashes a task restored or edited after the view.
+                const refused = refuseStaleTasks([action.taskId], { [action.taskId]: action.taskRevision });
+                if (refused) return refused;
                 const written = await write(() => store().deleteTask(action.taskId));
                 // Contexts rows offer Undo; Archive asked before deleting and offers none.
                 return settleWrite(written, { changed: true, toast: screen === 'contexts' ? {
                     tone: 'info' as const, title: null, message: tFallback(t, 'list.taskDeleted', 'Task deleted'),
-                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks' as const, taskIds: [action.taskId] } },
+                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks' as const, taskIds: [action.taskId], taskRevisions: taskRevisionsOf([action.taskId]) } },
                 } : null });
             }
             case 'trashTasks': {
-                if (!isIdList(action.taskIds) || missing(action.taskIds)) return fail('INVALID_INPUT', 'Every task must exist and not be in Trash');
+                if (!isIdList(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds) || missing(action.taskIds)) {
+                    return fail('INVALID_INPUT', 'Every task must exist and not be in Trash, with the revision the view showed for each');
+                }
+                const refused = refuseStaleTasks(action.taskIds, action.taskRevisions);
+                if (refused) return refused;
                 const written = await write(() => store().batchDeleteTasks(action.taskIds));
                 return settleWrite(written, { changed: true, toast: {
                     ...doneToast(action.taskIds.length, t),
-                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks' as const, taskIds: [...action.taskIds] } },
+                    // Read after the write: the Undo restores the tasks as this write left them.
+                    undo: { label: getTrashUndoLabel(t), action: { type: 'restoreTasks' as const, taskIds: [...action.taskIds], taskRevisions: taskRevisionsOf(action.taskIds) } },
                 } });
             }
             case 'restoreTasks': {
-                if (!isIdList(action.taskIds) || action.taskIds.some((id) => !trashedTask(id))) {
-                    return fail('INVALID_INPUT', 'Every task must be in Trash');
+                if (!isIdList(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds) || action.taskIds.some((id) => !trashedTask(id))) {
+                    return fail('INVALID_INPUT', 'Every task must be in Trash, with the revision the view showed for each');
                 }
+                // Compare-and-set: a replay never restores a task trashed again after the Undo was offered.
+                const refused = refuseStaleTasks(action.taskIds, action.taskRevisions);
+                if (refused) return refused;
                 const written = await write(() => Promise.all(action.taskIds.map((id) => store().restoreTask(id))));
                 return settleWrite(written, { changed: true, toast: null });
             }
@@ -3777,8 +3845,8 @@ function createListViewMethods(deps: ListViewDeps) {
             tokens: tokenOptions(options, resolved.state),
             archivedCount: allArchived.length,
             shownCount: params.segment === 'tasks' ? archivedTasks.length : projects.length,
-            // Select all's rows: any change to them makes its bulk action stale.
-            selectAllRevision: `${visibleIds.length}:${paramsKey(visibleIds)}`,
+            // Select all's rows and each one's revision: any change to them makes its bulk action stale.
+            selectAllRevision: `${visibleIds.length}:${paramsKey(visibleIds.map((id) => `${id}@${taskRevisionOf(state._tasksById.get(id)!)}`))}`,
             titles: projectTitles(),
         };
     });
@@ -3853,6 +3921,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 return {
                     model,
                     selected,
+                    taskRevisions: taskRevisionsOf(selected),
                     chips: [
                         { id: 'all', kind: 'all' as const, label: t('common.all'), accessibilityLabel: t('contexts.all'), count: model.allCount, selected: tokens.length === 0, next: next([], 'all') },
                         { id: 'none', kind: 'none' as const, label: t('contexts.none'), accessibilityLabel: t('contexts.none'), count: model.noContextCount, selected: model.noContextSelected, next: next(toggleContextsNoContext(tokens), 'all') },
@@ -3891,6 +3960,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 rows: view.model.tasks.slice(input.offset, input.offset + input.limit).map((task) => toNativeTaskRow(task, view.titles, deps.rowMeta(task, now))),
                 empty: view.empty,
                 selectedIds: view.selected,
+                taskRevisions: view.taskRevisions,
                 bulk: view.bulk && { ...view.bulk, picker: tokenPicker(view.bulk.tokenActions) },
             } };
         },
@@ -3911,31 +3981,43 @@ function createListViewMethods(deps: ListViewDeps) {
                 const store = useTaskStore.getState();
                 switch (action.type) {
                     case 'setTaskStatus': {
-                        if (!TASK_STATUSES.includes(action.status)) return fail('INVALID_INPUT', 'A task status is required');
+                        if (!TASK_STATUSES.includes(action.status) || !isRevision(action.taskRevision)) {
+                            return fail('INVALID_INPUT', 'A task status and the revision the view showed are required');
+                        }
                         if (!liveTask(action.taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
+                        // Compare-and-set: a replay never undoes a change made to the task after the view.
+                        const refused = refuseStaleTasks([action.taskId], { [action.taskId]: action.taskRevision });
+                        if (refused) return refused;
                         const written = await write(() => store.updateTask(action.taskId, { status: action.status }));
                         return settleWrite(written, { changed: true, toast: null });
                     }
                     case 'moveTasks': {
                         if (!CONTEXTS_BULK_STATUSES.some((status) => status === action.status)
-                            || !isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))) {
-                            return fail('INVALID_INPUT', 'A bulk status and tasks that exist are required');
+                            || !isIdList(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds) || action.taskIds.some((id) => !liveTask(id))) {
+                            return fail('INVALID_INPUT', 'A bulk status and tasks that exist, with the revision the view showed for each, are required');
                         }
+                        const refused = refuseStaleTasks(action.taskIds, action.taskRevisions);
+                        if (refused) return refused;
                         const written = await write(() => store.batchMoveTasks(action.taskIds, action.status));
                         return settleWrite(written, { changed: true, toast: doneToast(action.taskIds.length, t) });
                     }
                     case 'editTaskTokens': {
-                        if (!isIdList(action.taskIds) || action.taskIds.some((id) => !liveTask(id))
+                        if (!isIdList(action.taskIds) || !isRevisions(action.taskRevisions, action.taskIds) || action.taskIds.some((id) => !liveTask(id))
                             || (action.field !== 'tags' && action.field !== 'contexts') || (action.mode !== 'add' && action.mode !== 'remove')
                             || !isStringList(action.values, 100)) {
-                            return fail('INVALID_INPUT', 'Tasks that exist, a tags or contexts field, add or remove, and values are required');
+                            return fail('INVALID_INPUT', 'Tasks that exist with the revision the view showed for each, a tags or contexts field, add or remove, and values are required');
                         }
+                        const tasksById = Object.fromEntries(store.tasks.map((task) => [task.id, task]));
+                        // Compare-and-set on the tasks the edit changes: one already holding it writes nothing.
+                        const changing = buildBulkTaskTokenUpdates(action.taskIds, tasksById, action.field, action.values, action.mode).map(({ id }) => id);
+                        const refused = refuseStaleTasks(changing, action.taskRevisions);
+                        if (refused) return refused;
                         let changed = false;
                         let count = 0;
                         const written = await write(async () => {
                             const outcome = await editContextsTaskTokens(store, {
                                 taskIds: action.taskIds,
-                                tasksById: Object.fromEntries(store.tasks.map((task) => [task.id, task])),
+                                tasksById,
                                 field: action.field, mode: action.mode, values: action.values,
                             });
                             changed = outcome.changed;
@@ -3987,7 +4069,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 if (!('type' in entry)) {
                     const row = getArchivedProjectRow(entry, formatDate, view.areaById, labels.notSet);
                     return {
-                        type: 'project', id: entry.id, title: entry.title, cancelled: row.cancelled, struck: !row.cancelled,
+                        type: 'project', id: entry.id, projectRevision: revisionOf(entry), title: entry.title, cancelled: row.cancelled, struck: !row.cancelled,
                         dateLabel: `${row.cancelled ? labels.projectCancelled : labels.completed}: ${row.dateLabel}`,
                         areaName: entry.areaId ? view.areaById.get(entry.areaId)?.name ?? null : null,
                         indicatorColor: row.indicatorColor ?? null,
@@ -4038,6 +4120,7 @@ function createListViewMethods(deps: ListViewDeps) {
                 items: entries.slice(input.offset, input.offset + input.limit).map(toItem),
                 visibleTaskCount: view.visibleIds.length,
                 selectedIds: selectAll ? [] : selectedIds,
+                taskRevisions: selectAll ? {} : taskRevisionsOf(selectedIds),
                 selectedCount,
                 selectAll: selectAll
                     ? {
@@ -4104,25 +4187,33 @@ function createListViewMethods(deps: ListViewDeps) {
                     // Resolved inside the receipt: a retry of a landed request never resolves it again.
                     const ids = resolveSelectAll(action.selectAll);
                     if (!Array.isArray(ids)) return ids;
-                    resolved = { type: action.type, taskIds: ids };
+                    // Its revision held each row's revision, so the rows are as shown.
+                    resolved = { type: action.type, taskIds: ids, taskRevisions: taskRevisionsOf(ids) };
                 }
                 const shared = await performTaskAction('archive', resolved);
                 if (shared) return shared as ListActionOutcome<NativeArchiveAction>;
                 const store = useTaskStore.getState();
                 const done = (written: NativeHostResult<null>): ListActionOutcome<NativeArchiveAction> => settleWrite(written, { changed: true, toast: null });
+                // Compare-and-set, right before a write: a replay never undoes a change made after the view.
+                const staleTask = (taskId: string, taskRevision: string) => refuseStaleTasks([taskId], { [taskId]: taskRevision });
+                const staleProject = (projectId: string, projectRevision: string) => refuseStaleProjects([projectId], { [projectId]: projectRevision });
                 switch (resolved.type) {
                     case 'moveToInbox': {
-                        const { taskId } = resolved;
+                        const { taskId, taskRevision } = resolved;
+                        if (!isRevision(taskRevision)) return fail('INVALID_INPUT', 'A task and the revision the view showed are required');
                         if (!liveTask(taskId)) return fail('TASK_NOT_FOUND', 'Task not found');
-                        return done(await write(() => moveArchivedTaskToInbox(store, taskId)));
+                        return staleTask(taskId, taskRevision) ?? done(await write(() => moveArchivedTaskToInbox(store, taskId)));
                     }
                     case 'moveTasksToInbox': {
-                        const { taskIds } = resolved;
-                        if (!isIdList(taskIds) || taskIds.some((id) => !liveTask(id))) return fail('INVALID_INPUT', 'Tasks that exist are required');
-                        return done(await write(() => moveArchivedTasksToInbox(store, taskIds)));
+                        const { taskIds, taskRevisions } = resolved;
+                        if (!isIdList(taskIds) || !isRevisions(taskRevisions, taskIds) || taskIds.some((id) => !liveTask(id))) {
+                            return fail('INVALID_INPUT', 'Tasks that exist, with the revision the view showed for each, are required');
+                        }
+                        return refuseStaleTasks(taskIds, taskRevisions) ?? done(await write(() => moveArchivedTasksToInbox(store, taskIds)));
                     }
                     case 'setCompletedAt': {
-                        const { taskId } = resolved;
+                        const { taskId, taskRevision } = resolved;
+                        if (!isRevision(taskRevision)) return fail('INVALID_INPUT', 'A task and the revision the view showed are required');
                         const task = liveTask(taskId);
                         if (!task) return fail('TASK_NOT_FOUND', 'Task not found');
                         const { completedAt: iso, day, time } = resolved as { completedAt?: unknown; day?: unknown; time?: unknown };
@@ -4134,17 +4225,19 @@ function createListViewMethods(deps: ListViewDeps) {
                         }
                         // Target state: a replay of a time that already landed writes nothing.
                         if (task.completedAt === completedAt) return { ok: true, value: { changed: false, toast: null } };
-                        return done(await write(() => setArchivedTaskCompletedAt(store, taskId, completedAt)));
+                        return staleTask(taskId, taskRevision) ?? done(await write(() => setArchivedTaskCompletedAt(store, taskId, completedAt)));
                     }
                     case 'reactivateProject': {
-                        const { projectId } = resolved;
+                        const { projectId, projectRevision } = resolved;
+                        if (!isRevision(projectRevision)) return fail('INVALID_INPUT', 'A project and the revision the view showed are required');
                         if (!liveProject(projectId)) return fail('INVALID_INPUT', 'Project is not available');
-                        return done(await write(() => reactivateArchivedProject(store, projectId)));
+                        return staleProject(projectId, projectRevision) ?? done(await write(() => reactivateArchivedProject(store, projectId)));
                     }
                     case 'trashProject': {
-                        const { projectId } = resolved;
+                        const { projectId, projectRevision } = resolved;
+                        if (!isRevision(projectRevision)) return fail('INVALID_INPUT', 'A project and the revision the view showed are required');
                         if (!liveProject(projectId)) return fail('INVALID_INPUT', 'Project is not available');
-                        return done(await write(() => store.deleteProject(projectId)));
+                        return staleProject(projectId, projectRevision) ?? done(await write(() => store.deleteProject(projectId)));
                     }
                     default:
                         return fail('INVALID_INPUT', 'Archive does not offer that action');
@@ -4180,6 +4273,7 @@ function createListViewMethods(deps: ListViewDeps) {
                         taskIds: (input.selected?.taskIds ?? []).filter((id) => taskIds.has(id)),
                         projectIds: (input.selected?.projectIds ?? []).filter((id) => projectIds.has(id)),
                     },
+                    projectById: new Map(projects.map((project) => [project.id, project])),
                     titles: projectTitles(),
                 };
             });
@@ -4198,7 +4292,8 @@ function createListViewMethods(deps: ListViewDeps) {
                 items: view.items.slice(input.offset, input.offset + input.limit).map((item): NativeTrashItem => (
                     item.type === 'project'
                         ? {
-                            type: 'project', id: item.project.id, title: item.project.title, indicatorColor: getProjectAccentColor(item.project, view.areaById) ?? null,
+                            type: 'project', id: item.project.id, projectRevision: revisionOf(item.project),
+                            title: item.project.title, indicatorColor: getProjectAccentColor(item.project, view.areaById) ?? null,
                             typeLabel: labels.projectType, deletedLabel: deletedLabel(item.project.deletedAt),
                         }
                         : {
@@ -4207,7 +4302,11 @@ function createListViewMethods(deps: ListViewDeps) {
                             descriptionMarkdown: item.task.description ? getInlineMarkdownPreview(item.task.description) : null,
                         }
                 )),
-                selected: view.selected,
+                selected: {
+                    ...view.selected,
+                    taskRevisions: taskRevisionsOf(view.selected.taskIds),
+                    projectRevisions: Object.fromEntries(view.selected.projectIds.map((id) => [id, revisionOf(view.projectById.get(id)!)])),
+                },
                 empty: count === 0 ? getTrashEmptyState(t) : null,
                 labels: {
                     ...labels,
@@ -4258,8 +4357,14 @@ function createListViewMethods(deps: ListViewDeps) {
                 switch (action.type) {
                     case 'restoreItem':
                     case 'purgeItem': {
+                        if (!isRevision(action.revision)) return fail('INVALID_INPUT', 'An item and the revision the view showed are required');
                         const found = action.kind === 'task' ? trashedTask(action.id) : action.kind === 'project' ? trashedProject(action.id) : undefined;
                         if (!found) return fail('TASK_NOT_FOUND', 'Item is not in Trash');
+                        // Compare-and-set: a replay never restores or deletes an item restored and trashed again after the view.
+                        const refused = action.kind === 'task'
+                            ? refuseStaleTasks([action.id], { [action.id]: action.revision })
+                            : refuseStaleProjects([action.id], { [action.id]: action.revision });
+                        if (refused) return refused;
                         if (action.type === 'restoreItem') {
                             return done(await write(() => (action.kind === 'task' ? store.restoreTask(action.id) : store.restoreProject(action.id))));
                         }
@@ -4267,7 +4372,12 @@ function createListViewMethods(deps: ListViewDeps) {
                     }
                     case 'restoreItems':
                     case 'purgeItems': {
-                        if (!itemsInTrash(action.taskIds, action.projectIds)) return fail('INVALID_INPUT', 'Every item must be in Trash');
+                        if (!itemsInTrash(action.taskIds, action.projectIds)
+                            || !isRevisions(action.taskRevisions, action.taskIds) || !isRevisions(action.projectRevisions, action.projectIds)) {
+                            return fail('INVALID_INPUT', 'Every item must be in Trash, with the revision the view showed for each');
+                        }
+                        const refused = refuseStaleTasks(action.taskIds, action.taskRevisions) ?? refuseStaleProjects(action.projectIds, action.projectRevisions);
+                        if (refused) return refused;
                         const ids = { taskIds: inStoreOrder(action.taskIds, store._allTasks), projectIds: inStoreOrder(action.projectIds, store._allProjects) };
                         return done(await write(() => (action.type === 'restoreItems' ? restoreTrashItems(store, ids) : purgeTrashItems(store, ids))));
                     }

@@ -4,6 +4,8 @@ import { createDateFormatter } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createMarkdownLinkLookup, resolveMarkdownBlocks, resolveMarkdownInline } from './markdown-blocks';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
+import { taskRevisionOf } from './native-request-receipts';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { applyTaskChecklistEdit, buildTaskChecklistFieldModel } from './task-checklist-model';
@@ -138,7 +140,7 @@ describe('native host contract: task View tab', () => {
         expect(view.rows).toEqual(expected);
         expect(view.rows.map((row) => (row.type === 'field' ? row.field : row.type)))
             .toEqual(['title', 'status', 'priority', 'project', 'dueDate', 'tokens', 'description', 'checklist', 'attachments']);
-        expect(view).toMatchObject({ id: 't-list', readOnly: false, readOnlyHint: null, checklistBase: TASKS[0].checklist });
+        expect(view).toMatchObject({ id: 't-list', readOnly: false, readOnlyHint: null, checklistBase: TASKS[0].checklist, taskRevision: taskRevisionOf(stored('t-list')) });
         expect(view.markdownLabels).toEqual({ deletedTask: 'deleted task', deletedProject: 'deleted project', copyCode: 'Copy code' });
         const description = view.rows.find((row) => row.type === 'description');
         expect(JSON.stringify(description)).toContain('"kind":"task","id":"t-open"');
@@ -414,52 +416,73 @@ describe('native host contract: saving the checklist with the draft (saveTaskDra
 });
 
 describe('native host contract: Reset checklist', () => {
+    /** The reset's input: the saved task's revision as the View tab showed it. */
+    const reset = (host: Host, id: string, requestId = generateUUID()) => ({ id, requestId, taskRevision: value(host.getTaskView({ id })).taskRevision });
+
     it('resets the saved checklist and reopens a Done task; an open checklist writes nothing', async () => {
         freezeClock();
         const host = await openHost();
-        expect(value(await host.resetTaskChecklist({ id: 't-done', requestId: generateUUID() })))
+        expect(value(await host.resetTaskChecklist(reset(host, 't-done'))))
             .toEqual({ id: 't-done', checklist: [item('d1'), item('d2')] });
         expect(stored('t-done')).toMatchObject({ status: 'next', checklist: [item('d1'), item('d2')] });
         expect(stored('t-done').completedAt).toBeUndefined();
         writes.length = 0;
         const rev = stored('t-open').rev;
-        expect(value(await host.resetTaskChecklist({ id: 't-open', requestId: generateUUID() }))).toEqual({ id: 't-open', checklist: TASKS[2].checklist });
+        expect(value(await host.resetTaskChecklist(reset(host, 't-open')))).toEqual({ id: 't-open', checklist: TASKS[2].checklist });
         expect(writes).toEqual([]);
         expect(stored('t-open').rev).toBe(rev);
         // No saved checklist (items added in this editor only): nothing to write; the host reopens its draft items.
-        expect(value(await host.resetTaskChecklist({ id: 't-empty', requestId: generateUUID() }))).toEqual({ id: 't-empty', checklist: [] });
+        expect(value(await host.resetTaskChecklist(reset(host, 't-empty')))).toEqual({ id: 't-empty', checklist: [] });
         expect(writes).toEqual([]);
-        expect(await host.resetTaskChecklist({ id: 't-archived', requestId: generateUUID() })).toMatchObject(invalid);
+        expect(await host.resetTaskChecklist(reset(host, 't-archived'))).toMatchObject(invalid);
     });
 
     it('retries a failed save exactly: one write, and the retry finishes the save', async () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const host = await openHost(saveData);
-        const requestId = generateUUID();
+        const input = reset(host, 't-done');
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.resetTaskChecklist({ id: 't-done', requestId })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
+        expect(await host.resetTaskChecklist(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         expect(writes).toHaveLength(1);
         saveData.mockResolvedValue(undefined);
-        const retried = await host.resetTaskChecklist({ id: 't-done', requestId });
+        // The receipt answers before the revision, which the write moved.
+        const retried = await host.resetTaskChecklist(input);
         expect(retried.ok).toBe(true);
         expect(writes).toHaveLength(1);
         expect((saveData.mock.lastCall?.[0] as { tasks: Task[] }).tasks.find((entry) => entry.id === 't-done')).toMatchObject({ status: 'next', checklist: [item('d1'), item('d2')] });
         // A lost reply repeats the request: the same answer, no write, no save.
         const saves = saveData.mock.calls.length;
-        expect(await host.resetTaskChecklist({ id: 't-done', requestId })).toEqual(retried);
+        expect(await host.resetTaskChecklist(input)).toEqual(retried);
         expect(saveData).toHaveBeenCalledTimes(saves);
         expect(writes).toHaveLength(1);
     }, 30_000);
 
+    it('a replay after a restart never undoes a later edit: STALE once the task changed since', async () => {
+        freezeClock();
+        const host = await openHost();
+        const input = reset(host, 't-done');
+        value(await host.resetTaskChecklist(input));
+        // The user ticks an item again.
+        await useTaskStore.getState().updateTask('t-done', { checklist: [item('d1', true), item('d2')] });
+        writes.length = 0;
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.resetTaskChecklist(input));
+        expect(result).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(wrote).toBe(false);
+        expect(writes).toEqual([]);
+        expect(stored('t-done').checklist).toEqual([item('d1', true), item('d2')]);
+    });
+
     it('refuses a request ID reused for another task, and invalid input', async () => {
         freezeClock();
         const host = await openHost();
-        const requestId = generateUUID();
-        value(await host.resetTaskChecklist({ id: 't-done', requestId }));
-        expect(await host.resetTaskChecklist({ id: 't-list', requestId })).toMatchObject(invalid);
-        expect(await host.resetTaskChecklist({ id: 't-done', requestId: 'not-a-uuid' })).toMatchObject(invalid);
-        expect(await host.resetTaskChecklist({ id: 'missing', requestId: generateUUID() })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        const done = reset(host, 't-done');
+        value(await host.resetTaskChecklist(done));
+        expect(await host.resetTaskChecklist({ ...reset(host, 't-list'), requestId: done.requestId })).toMatchObject(invalid);
+        expect(await host.resetTaskChecklist({ ...reset(host, 't-done'), requestId: 'not-a-uuid' })).toMatchObject(invalid);
+        expect(await host.resetTaskChecklist({ id: 'missing', requestId: generateUUID(), taskRevision: 'r' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        // The reset carries the revision the View tab showed.
+        expect(await host.resetTaskChecklist({ id: 't-list', requestId: generateUUID() } as never)).toMatchObject(invalid);
     });
 });
 
@@ -473,5 +496,5 @@ it('is NOT_READY until storage is activated', async () => {
     expect(host.getTaskView({ id: 't-open' })).toMatchObject(notReady);
     expect(host.editTaskChecklist({ id: 't-open', draft, checklist: [], edit: { kind: 'add' } })).toMatchObject(notReady);
     expect(await host.saveTaskDraft({ id: 't-open', base: {}, patch: {}, checklist: { base: [], value: [] } })).toMatchObject(notReady);
-    expect(await host.resetTaskChecklist({ id: 't-open', requestId: generateUUID() })).toMatchObject(notReady);
+    expect(await host.resetTaskChecklist({ id: 't-open', requestId: generateUUID(), taskRevision: 'r' })).toMatchObject(notReady);
 });

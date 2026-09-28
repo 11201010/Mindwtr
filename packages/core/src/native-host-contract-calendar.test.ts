@@ -21,6 +21,8 @@ import { createDateFormatter } from './date';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
 import type { NativeCalendarEntry, NativeCalendarFeed, NativeCalendarView } from './native-host-contract-calendar';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
+import { taskRevisionOf } from './native-request-receipts';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
@@ -50,6 +52,15 @@ const days = (view: NativeCalendarView) => view.items.filter((entry): entry is E
 const items = (view: NativeCalendarView, lane: string) => view.items
     .filter((entry): entry is Extract<NativeCalendarEntry, { type: 'item' }> => entry.type === 'item' && entry.lane === lane)
     .map((entry) => entry.item);
+const week = { viewMode: 'week' as const, selectedDate: '2026-10-28', visibleMonth: '2026-10-28' };
+/** The revision a task's item sheet shows (the week of the fixture's today): what Remove from calendar, Done and Delete send back. */
+const sheetRevision = (host: ReturnType<typeof createNativeHostContract>, taskId: string) => {
+    const sheet = value(host.getCalendarItemSheet({ taskId, state: week, calendar: ready }));
+    if (sheet.kind !== 'task') throw new Error(`${taskId} has no task sheet`);
+    return sheet.taskRevision;
+};
+/** A task's revision in the store, for a task no sheet of the week shows. */
+const storeRevision = (taskId: string) => taskRevisionOf(useTaskStore.getState()._tasksById.get(taskId)!);
 
 describe('native host contract: Calendar', () => {
     const originalTz = process.env.TZ;
@@ -291,7 +302,9 @@ describe('native host contract: Calendar', () => {
         const { host } = await openHost();
         const later = '2026-11-01T06:30:00.000Z';
         await useTaskStore.getState().updateTask('t-standup', { startTime: later });
-        const result = value(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'moveTask', taskId: 't-standup', day: '2026-11-01', startMinutes: 90, durationMinutes: 30 }, calendar: ready }));
+        const result = value(await host.runCalendarAction({
+            requestId: generateUUID(), action: { type: 'moveTask', taskId: 't-standup', day: '2026-11-01', startMinutes: 90, durationMinutes: 30, taskRevision: storeRevision('t-standup') }, calendar: ready,
+        }));
         expect(result.changed).toBe(false);
         expect(useTaskStore.getState().tasks.find((task) => task.id === 't-standup')?.startTime).toBe(later);
     });
@@ -374,17 +387,21 @@ describe('native host contract: Calendar', () => {
         const saves = saveData.mock.calls.length;
         expect(value(await host.runCalendarAction(input))).toEqual(retried);
         expect(saveData).toHaveBeenCalledTimes(saves);
-        expect(await host.runCalendarAction({ ...input, action: { type: 'completeTask', taskId: 't-rent' } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.runCalendarAction({ ...input, action: { type: 'completeTask', taskId: 't-rent', taskRevision: sheetRevision(host, 't-rent') } }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 
     it('retries a failed move exactly: one write', async () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario(), saveData);
-        const input = { requestId: generateUUID(), action: { type: 'moveTask' as const, taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30 }, calendar: ready };
+        const input = {
+            requestId: generateUUID(), action: { type: 'moveTask' as const, taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30, taskRevision: sheetRevision(host, 't-standup') }, calendar: ready,
+        };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         saveData.mockResolvedValue(undefined);
+        // The retry answers from its receipt, before any revision check: the move changed the task's revision.
         expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true });
         expect(recorder.log).toEqual([['updateTask', 't-standup', { startTime: '2026-10-28T14:40:00.000Z' }]]);
     });
@@ -413,13 +430,13 @@ describe('native host contract: Calendar', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario(), saveData);
-        const move = { type: 'moveTask' as const, taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30 };
+        const move = { type: 'moveTask' as const, taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30, taskRevision: sheetRevision(host, 't-standup') };
         const input = { requestId: generateUUID(), action: move, calendar: ready };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runCalendarAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         // Another task now sits in that slot: a new request there is a conflict.
         await useTaskStore.getState().updateTask('t-rent', { startTime: '2026-10-28T14:40:00.000Z', timeEstimate: '1hr' });
-        expect(value(await host.runCalendarAction({ requestId: generateUUID(), action: { ...move, taskId: 't-plan' }, calendar: ready })))
+        expect(value(await host.runCalendarAction({ requestId: generateUUID(), action: { ...move, taskId: 't-plan', taskRevision: sheetRevision(host, 't-plan') }, calendar: ready })))
             .toMatchObject({ changed: false, toast: { title: 'Time conflict' } });
         saveData.mockResolvedValue(undefined);
         // The first request only saves.
@@ -462,7 +479,7 @@ describe('native host contract: Calendar', () => {
         const requestId = generateUUID();
         // Onto Deep work: the time-conflict toast.
         const conflict = value(await host.runCalendarAction({
-            requestId, action: { type: 'moveTask', taskId: 't-standup', day: '2026-10-28', startMinutes: 855, durationMinutes: 30 }, calendar: ready,
+            requestId, action: { type: 'moveTask', taskId: 't-standup', day: '2026-10-28', startMinutes: 855, durationMinutes: 30, taskRevision: sheetRevision(host, 't-standup') }, calendar: ready,
         }));
         expect(conflict).toMatchObject({ changed: false, toast: { tone: 'warning', title: 'Time conflict' } });
         // A date command the parser cannot read: the composer shows the error.
@@ -471,16 +488,30 @@ describe('native host contract: Calendar', () => {
         const refused = value(await host.runCalendarAction({ requestId, action: { type: 'saveComposer', composer: titled.composer }, calendar: ready }));
         expect(refused.composer?.error).toBe('Invalid date command: /due:someday');
         expect(recorder.log).toEqual([]);
-        expect(value(await host.runCalendarAction({ requestId, action: { type: 'completeTask', taskId: 't-rent' }, calendar: ready }))).toMatchObject({ changed: true });
+        expect(value(await host.runCalendarAction({ requestId, action: { type: 'completeTask', taskId: 't-rent', taskRevision: sheetRevision(host, 't-rent') }, calendar: ready }))).toMatchObject({ changed: true });
         // A projected occurrence cannot change.
         const week = value(host.getCalendarView({ state: { viewMode: 'week', selectedDate: '2026-10-28', visibleMonth: '2026-10-28' }, calendar: ready, ...page }));
         const projected = items(week, 'allDay').find((item) => item.projected)!;
         expect(projected.pressable).toBe(false);
-        expect(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'completeTask', taskId: projected.taskId! }, calendar: ready }))
+        expect(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'completeTask', taskId: projected.taskId!, taskRevision: projected.row!.taskRevision }, calendar: ready }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // A move, Remove from calendar, Done and Delete carry the revision the view showed.
+        for (const action of [
+            { type: 'moveTask', taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30 },
+            { type: 'unscheduleTask', taskId: 't-plan' },
+            { type: 'completeTask', taskId: 't-review', taskRevision: '' },
+            { type: 'deleteTask', taskId: 't-review', taskRevision: 7 },
+        ]) {
+            expect(await host.runCalendarAction({ requestId: generateUUID(), action: action as never, calendar: ready }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+        // A composer from before this contract carried a task revision is refused.
+        const { taskRevision: _dropped, ...older } = titled.composer;
+        expect(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'saveComposer', composer: older as never }, calendar: ready }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(value(host.getCalendarItemSheet({ taskId: projected.taskId!, state: week.state, calendar: ready }))).toMatchObject({ kind: 'projected', buttons: [{ id: 'ok' }] });
         const schedule = value(host.openCalendarComposer({ scheduleTaskId: 'n-email', day: '2026-10-28', calendar: ready }));
-        expect(schedule.composer?.composer).toMatchObject({ mode: 'existing', selectedTaskId: 'n-email', startTimeValue: '10:00' });
+        expect(schedule.composer?.composer).toMatchObject({ mode: 'existing', selectedTaskId: 'n-email', startTimeValue: '10:00', taskRevision: storeRevision('n-email') });
         expect(schedule.composer?.timeLabels.start).toBe('10:00 AM');
     });
 
@@ -491,10 +522,10 @@ describe('native host contract: Calendar', () => {
         const titled = value(host.editCalendarComposer({ composer: composer.composer, edit: { type: 'title', title: 'Early call' }, calendar: ready }));
         const actions: [string, unknown][] = [
             [generateUUID(), { type: 'saveComposer', composer: titled.composer }],
-            [generateUUID(), { type: 'moveTask', taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30 }],
-            [generateUUID(), { type: 'unscheduleTask', taskId: 't-plan' }],
-            [generateUUID(), { type: 'completeTask', taskId: 't-rent' }],
-            [generateUUID(), { type: 'deleteTask', taskId: 't-review' }],
+            [generateUUID(), { type: 'moveTask', taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30, taskRevision: sheetRevision(host, 't-standup') }],
+            [generateUUID(), { type: 'unscheduleTask', taskId: 't-plan', taskRevision: sheetRevision(host, 't-plan') }],
+            [generateUUID(), { type: 'completeTask', taskId: 't-rent', taskRevision: sheetRevision(host, 't-rent') }],
+            [generateUUID(), { type: 'deleteTask', taskId: 't-review', taskRevision: sheetRevision(host, 't-review') }],
             [generateUUID(), { type: 'createTaskFromEvent', event: fixture.calendarEvents[0] }],
             [generateUUID(), { type: 'setViewMode', viewMode: 'week' }],
             [generateUUID(), { type: 'setShowCompleted', on: true }],
@@ -517,6 +548,81 @@ describe('native host contract: Calendar', () => {
         expect(recorder.log).toHaveLength(writes);
     });
 
+    it('refuses a move, Remove from calendar, Done, Delete or a scheduled existing task replayed after a restart once the task changed since', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        // The timeline row, the item sheet and the composer carry the revision the host sends back.
+        const day = value(host.getCalendarView({ state: { ...week, viewMode: 'day' }, calendar: ready, ...page }));
+        const standup = items(day, 'timed').find((item) => item.taskId === 't-standup')!.row!.taskRevision;
+        expect([standup, sheetRevision(host, 't-plan')]).toEqual([storeRevision('t-standup'), storeRevision('t-plan')]);
+        const scheduling = value(host.openCalendarComposer({ scheduleTaskId: 'n-email', day: '2026-10-28', calendar: ready })).composer!;
+        expect(scheduling.composer.taskRevision).toBe(storeRevision('n-email'));
+        // Choosing a task in the composer takes its revision; a new search drops it with the choice.
+        const existing = value(host.openCalendarComposer({ at: new Date(2026, 9, 31, 8).toISOString(), mode: 'existing', calendar: ready })).composer!;
+        expect(existing.composer.taskRevision).toBeNull();
+        const chosen = value(host.editCalendarComposer({ composer: existing.composer, edit: { type: 'selectTask', taskId: 'n-plumber' }, calendar: ready }));
+        expect(chosen.composer.taskRevision).toBe(storeRevision('n-plumber'));
+        expect(value(host.editCalendarComposer({ composer: chosen.composer, edit: { type: 'query', query: 'pack' }, calendar: ready })).composer.taskRevision).toBeNull();
+
+        const later = '2026-10-28T20:00:00.000Z';
+        const requests: [Record<string, unknown>, () => Promise<unknown>, () => unknown][] = [
+            [{ type: 'moveTask', taskId: 't-standup', day: '2026-10-28', startMinutes: 640, durationMinutes: 30, taskRevision: standup },
+                () => useTaskStore.getState().updateTask('t-standup', { startTime: later }), () => useTaskStore.getState()._tasksById.get('t-standup')?.startTime],
+            [{ type: 'unscheduleTask', taskId: 't-plan', taskRevision: sheetRevision(host, 't-plan') },
+                () => useTaskStore.getState().updateTask('t-plan', { startTime: '2026-10-29' }), () => useTaskStore.getState()._tasksById.get('t-plan')?.startTime],
+            [{ type: 'completeTask', taskId: 't-rent', taskRevision: sheetRevision(host, 't-rent') },
+                () => useTaskStore.getState().updateTask('t-rent', { status: 'next' }), () => useTaskStore.getState()._tasksById.get('t-rent')?.status],
+            [{ type: 'deleteTask', taskId: 't-review', taskRevision: sheetRevision(host, 't-review') },
+                () => useTaskStore.getState().restoreTask('t-review'), () => useTaskStore.getState()._tasksById.get('t-review')?.deletedAt ?? null],
+            [{ type: 'saveComposer', composer: scheduling.composer },
+                () => useTaskStore.getState().updateTask('n-email', { startTime: later }), () => useTaskStore.getState()._tasksById.get('n-email')?.startTime],
+        ];
+        for (const [action, change, read] of requests) {
+            const input = { requestId: generateUUID(), action: action as never, calendar: ready };
+            expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true });
+            await change();
+            const kept = read();
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runCalendarAction(input));
+            expect(result).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(wrote).toBe(false);
+            expect(read()).toEqual(kept);
+        }
+    });
+
+    it('answers a composer task, an event task and the view settings replayed after a restart, and keeps a later change', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const opened = value(host.openCalendarComposer({ at: new Date(2026, 9, 28, 5).toISOString(), calendar: ready })).composer!;
+        const titled = value(host.editCalendarComposer({ composer: opened.composer, edit: { type: 'title', title: 'Early call' }, calendar: ready }));
+        // A created task edited since is not what the request writes: refused, nothing written.
+        for (const action of [{ type: 'saveComposer', composer: titled.composer }, { type: 'createTaskFromEvent', event: fixture.calendarEvents[0] }]) {
+            const input = { requestId: generateUUID(), action: action as never, calendar: ready };
+            const taskId = input.requestId.toLowerCase();
+            expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true, taskId });
+            await useTaskStore.getState().updateTask(taskId, { title: 'Renamed since' });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runCalendarAction(input));
+            expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState()._tasksById.get(taskId)?.title).toBe('Renamed since');
+        }
+        // A setting is target-state: its replay writes nothing and keeps another calendar setting changed since.
+        const settings: [Record<string, unknown>, Record<string, unknown>][] = [
+            [{ type: 'setViewMode', viewMode: 'week' }, { weekVisibleDays: 3 }],
+            [{ type: 'setShowCompleted', on: true }, { viewMode: 'day' }],
+            [{ type: 'setWeekVisibleDays', days: 7 }, { showCompleted: false }],
+        ];
+        for (const [action, change] of settings) {
+            const input = { requestId: generateUUID(), action: action as never, calendar: ready };
+            expect(value(await host.runCalendarAction(input))).toMatchObject({ changed: true });
+            await useTaskStore.getState().updateSettings({ calendar: { ...useTaskStore.getState().settings.calendar, ...change } });
+            const kept = useTaskStore.getState().settings.calendar;
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runCalendarAction(input));
+            expect(result).toMatchObject({ ok: true, value: { changed: false } });
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState().settings.calendar).toEqual(kept);
+        }
+    });
+
     it('is NOT_READY until storage is activated', async () => {
         setStorageAdapter(noopStorage);
         const host = createNativeHostContract();
@@ -525,6 +631,6 @@ describe('native host contract: Calendar', () => {
         expect(host.getCalendarItemSheet({ taskId: 't-rent' })).toMatchObject(notReady);
         expect(host.openCalendarComposer({ day: '2026-10-28' })).toMatchObject(notReady);
         expect(host.editCalendarComposer({ composer: {} as never, edit: { type: 'title', title: 'x' } })).toMatchObject(notReady);
-        expect(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'completeTask', taskId: 't-rent' } })).toMatchObject(notReady);
+        expect(await host.runCalendarAction({ requestId: generateUUID(), action: { type: 'completeTask', taskId: 't-rent', taskRevision: 'r' } })).toMatchObject(notReady);
     });
 });

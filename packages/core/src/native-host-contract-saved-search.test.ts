@@ -10,7 +10,7 @@ import {
     selectSavedSearchTasks,
     type SavedSearchScreenText,
 } from './saved-search-view-model';
-import { loadScreenFixture, normalize, openScreenHost, requestId, restartScreenHost, value, type ScreenHost } from './screen-parity.replay';
+import { loadScreenFixture, normalize, openScreenHost, replayAfterRestart, requestId, value, type ScreenHost } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import type { AppSettings, Area, Project, Task, TaskStatus } from './types';
@@ -260,16 +260,24 @@ describe('saved search screen: core and the native host contract', () => {
         expect(useTaskStore.getState().settings.savedSearches!.map((search) => search.id)).toEqual(['ss-errands', 'ss-next-work', 'ss-none', 'ss-blank']);
     });
 
-    it('a replay after a restart finds the saved search gone and writes nothing', async () => {
+    it('a replay after a restart finds the saved search gone, writes nothing, and keeps a later edit of the others', async () => {
         freezeClock();
         const { host, log } = await open();
         const input = { requestId: requestId(), id: 'ss-none' };
         expect(value(await host.deleteSavedSearch(input))).toEqual({ changed: true });
+        // Another writer renames another saved search.
+        await useTaskStore.getState().updateSettings({
+            savedSearches: useTaskStore.getState().settings.savedSearches!.map((search) => (search.id === 'ss-milk' ? { ...search, name: 'Dairy' } : search)),
+        });
+        const before = useTaskStore.getState().settings.savedSearches;
         log.length = 0;
-        const restarted = await restartScreenHost();
-        expect(value(await restarted.deleteSavedSearch(input))).toEqual({ changed: false });
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.deleteSavedSearch(input));
+        expect(result).toEqual({ ok: true, value: { changed: false } });
+        expect(wrote).toBe(false);
         expect(log).toEqual([]);
-        expect(findSavedSearch(useTaskStore.getState().settings.savedSearches, 'ss-none')).toBeUndefined();
+        expect(useTaskStore.getState().settings.savedSearches).toBe(before);
+        expect(findSavedSearch(before, 'ss-milk')?.name).toBe('Dairy');
+        expect(findSavedSearch(before, 'ss-none')).toBeUndefined();
     });
 
     it('retries a delete exactly after a failed save', async () => {

@@ -6,8 +6,9 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { getTranslator } from './i18n';
 import { buildManagePersonRow, isManageAreaNameTaken, isManageEditorSaveDisabled, sortManageAreas, sortManagePeople } from './manage-settings-model';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import type { NativeManageEditorTarget, NativeManageSettings } from './native-host-contract-settings';
+import type { NativeManageDeleteTarget, NativeManageEditorTarget, NativeManageSettings } from './native-host-contract-settings';
 import { getPersonTaskCounts } from './people';
+import { replayAfterRestart } from './screen-parity.replay';
 import { buildSettingsAdvancedMenu, buildSettingsMenu, getSettingsSyncBadge } from './settings-menu-model';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -70,6 +71,16 @@ const RECORDED = [
 ] as const;
 const writes: unknown[][] = [];
 let realActions: Record<string, (...args: unknown[]) => Promise<unknown>> | null = null;
+/**
+ * The host names a new area or person by its request UUID, so a replay finds it; React
+ * Native lets the store name it. The record leaves that ID out.
+ */
+const recorded = (name: string, args: unknown[]): unknown[] => {
+    const props = args[1] as Record<string, unknown> | undefined;
+    if ((name !== 'addArea' && name !== 'addPerson') || !props || !('id' in props)) return args;
+    const { id: _id, ...rest } = props;
+    return [args[0], Object.keys(rest).length > 0 ? rest : undefined, ...args.slice(2)];
+};
 
 async function seed(scenario: Pick<Scenario, 'data' | 'settings'>, saveData?: (data: unknown) => Promise<void>) {
     await flushPendingSave();
@@ -93,7 +104,7 @@ async function seed(scenario: Pick<Scenario, 'data' | 'settings'>, saveData?: (d
     await useTaskStore.getState().fetchData({ throwOnError: true });
     await flushPendingSave();
     useTaskStore.setState(Object.fromEntries(RECORDED.map((name) => [name, async (...args: unknown[]) => {
-        writes.push([name, ...(normalize(args) as unknown[])]);
+        writes.push([name, ...(normalize(recorded(name, args)) as unknown[])]);
         return real[name](...args);
     }])) as never);
     writes.length = 0;
@@ -489,6 +500,19 @@ describe('native host contract: Settings', () => {
         vi.setSystemTime(new Date(fixture.now));
     };
 
+    type ManageKind = 'area' | 'person' | 'context' | 'tag';
+    /** A Manage row's `edit.target` and `delete`, as the view shows them now. */
+    const shown = (host: Host, type: ManageKind, key: string): { edit: NativeManageEditorTarget; delete: NativeManageDeleteTarget } => {
+        const view = value(host.getManageSettings());
+        const rows = type === 'area' ? view.areas.rows.items : type === 'person' ? view.people.rows.items : (type === 'context' ? view.contexts : view.tags).rows.items;
+        const row = rows.find((entry) => ('id' in entry ? entry.id : entry.value) === key)!;
+        return { edit: row.edit.target, delete: row.delete };
+    };
+    /** A target as a host sends it back: the row's own, for a row the view shows. */
+    const asShown = (host: Host, target: { type: string; id?: string; name?: string }, which: 'edit' | 'delete' = 'edit') => (
+        ['area', 'person', 'context', 'tag'].includes(target.type) ? shown(host, target.type as ManageKind, (target.id ?? target.name)!)[which] : target
+    );
+
     const drivers = { menu: menuDriver, general: generalDriver, manage: manageDriver };
     const cases = (['menu', 'general', 'manage'] as const).flatMap((screen) => fixture[screen].map((scenario) => [scenario.name, screen, scenario] as const));
 
@@ -551,7 +575,7 @@ describe('native host contract: Settings', () => {
         const page = value(host.getManageSettingsList({ list: 'contexts', offset: 2, limit: 2, revision: first.revision }));
         expect(page).toMatchObject({ total: 5, items: [{ value: '@office' }, { value: '@phone' }] });
         expect(value(host.getManageSettings()).revision).toBe(first.revision);
-        value(await host.saveManageEditor({ requestId: generateUUID(), target: { type: 'context', name: '@town' }, name: '@city' }));
+        value(await host.saveManageEditor({ requestId: generateUUID(), target: shown(host, 'context', '@town').edit, name: '@city' }));
         const after = value(host.getManageSettings());
         expect(after.revision).not.toBe(first.revision);
         expect(host.getManageSettingsList({ list: 'contexts', offset: 0, limit: 2, revision: first.revision })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
@@ -600,10 +624,11 @@ describe('native host contract: Settings', () => {
         const host = await openHost();
         const { areas } = useTaskStore.getState();
         const text = value(host.getManageSettings()).editor.text;
-        const targets: NativeManageEditorTarget[] = [
-            { type: 'newArea' }, { type: 'area', id: 'a-work' }, { type: 'unassignedArea' }, { type: 'newPerson' },
-            { type: 'person', id: 'pe-alex' }, { type: 'context', name: '@home' }, { type: 'tag', name: '#web' },
-        ];
+        // The rows' own targets (with their revisions), and the same without one.
+        const targets = [
+            { type: 'newArea' }, shown(host, 'area', 'a-work').edit, { type: 'area', id: 'a-work' }, { type: 'unassignedArea' }, { type: 'newPerson' },
+            shown(host, 'person', 'pe-alex').edit, shown(host, 'context', '@home').edit, { type: 'tag', name: '#web' }, shown(host, 'tag', '#web').edit,
+        ] as NativeManageEditorTarget[];
         for (const target of targets) {
             for (const name of ['', '   ', 'Garden', ' home ', 'WORK', 'gone']) {
                 const nameTaken = isManageAreaNameTaken(target.type, name, areas);
@@ -628,19 +653,27 @@ describe('native host contract: Settings', () => {
         freezeClock();
         await seed({ data: 'manage', settings: 'manage' });
         const host = await openHost();
+        // Each target as the row showed it when the first run sent it; the second run sends those again.
+        const targets = new Map<string, NativeManageEditorTarget | NativeManageDeleteTarget>();
+        const at = (target: Host, type: ManageKind, key: string, which: 'edit' | 'delete' = 'edit') => {
+            if (!targets.has(`${which}:${key}`)) targets.set(`${which}:${key}`, shown(target, type, key)[which]);
+            return targets.get(`${which}:${key}`)!;
+        };
         const run = async (target: Host) => {
             value(await target.setGeneralSetting({ requestId: generateUUID(), edit: { type: 'weekStart', value: 'system' } }));
             value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'unassignedArea' }, color: '#f97316' }));
             value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'newArea' }, name: 'Garden', color: '#14b8a6' }));
-            value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'area', id: 'a-work' }, name: 'Office', color: '#ef4444' }));
+            value(await target.saveManageEditor({ requestId: generateUUID(), target: at(target, 'area', 'a-work') as NativeManageEditorTarget, name: 'Office', color: '#ef4444' }));
             value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'newPerson' }, name: 'Eve', note: 'Designer' }));
-            value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'person', id: 'pe-cy' }, name: 'Cy', note: 'Contractor', referenceLink: 'javascript:alert(1)' }));
-            value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'context', name: '@phone' }, name: '@Phone' }));
-            value(await target.saveManageEditor({ requestId: generateUUID(), target: { type: 'tag', name: '#urgent' }, name: 'later' }));
-            value(await target.deleteManageItem({ requestId: generateUUID(), target: { type: 'area', id: 'a-errands' } }));
-            value(await target.deleteManageItem({ requestId: generateUUID(), target: { type: 'person', id: 'pe-dee' } }));
-            value(await target.deleteManageItem({ requestId: generateUUID(), target: { type: 'context', name: '@town' } }));
-            value(await target.deleteManageItem({ requestId: generateUUID(), target: { type: 'tag', name: '#web' } }));
+            value(await target.saveManageEditor({
+                requestId: generateUUID(), target: at(target, 'person', 'pe-cy') as NativeManageEditorTarget, name: 'Cy', note: 'Contractor', referenceLink: 'javascript:alert(1)',
+            }));
+            value(await target.saveManageEditor({ requestId: generateUUID(), target: at(target, 'context', '@phone') as NativeManageEditorTarget, name: '@Phone' }));
+            value(await target.saveManageEditor({ requestId: generateUUID(), target: at(target, 'tag', '#urgent') as NativeManageEditorTarget, name: 'later' }));
+            value(await target.deleteManageItem({ requestId: generateUUID(), target: at(target, 'area', 'a-errands', 'delete') as NativeManageDeleteTarget }));
+            value(await target.deleteManageItem({ requestId: generateUUID(), target: at(target, 'person', 'pe-dee', 'delete') as NativeManageDeleteTarget }));
+            value(await target.deleteManageItem({ requestId: generateUUID(), target: at(target, 'context', '@town', 'delete') as NativeManageDeleteTarget }));
+            value(await target.deleteManageItem({ requestId: generateUUID(), target: at(target, 'tag', '#web', 'delete') as NativeManageDeleteTarget }));
         };
         await run(host);
         await flushPendingSave();
@@ -732,7 +765,9 @@ describe('native host contract: Settings', () => {
                     expect(saved.projects.find((project) => project.id === 'p-site')?.tagIds).toEqual(['#site']);
                 }],
         ] as const)('%s', async (_name, input, check) => {
-            await retry((host, requestId) => host.saveManageEditor({ requestId, ...input } as never), check as never);
+            // The row's target as the view showed it once, sent again by the retries.
+            let target: unknown;
+            await retry((host, requestId) => host.saveManageEditor({ requestId, ...input, target: target ??= asShown(host, input.target) } as never), check as never);
         });
 
         it.each([
@@ -751,7 +786,8 @@ describe('native host contract: Settings', () => {
                     expect(saved.projects.find((project) => project.id === 'p-site')?.tagIds).toEqual([]);
                 }],
         ] as const)('%s', async (_name, target, check) => {
-            await retry((host, requestId) => host.deleteManageItem({ requestId, target: target as never }), check as never);
+            let shownTarget: unknown;
+            await retry((host, requestId) => host.deleteManageItem({ requestId, target: (shownTarget ??= asShown(host, target, 'delete')) as never }), check as never);
         });
     });
 
@@ -761,12 +797,176 @@ describe('native host contract: Settings', () => {
         const host = await openHost();
         const before = new Map(useTaskStore.getState()._allTasks.map((task) => [task.id, task]));
         const projectsBefore = new Map(useTaskStore.getState()._allProjects.map((project) => [project.id, project]));
-        value(await host.saveManageEditor({ requestId: generateUUID(), target: { type: 'context', name: '@phone' }, name: '@office' }));
-        value(await host.saveManageEditor({ requestId: generateUUID(), target: { type: 'tag', name: '#urgent' }, name: 'Later' }));
-        value(await host.deleteManageItem({ requestId: generateUUID(), target: { type: 'area', id: 'a-errands' } }));
+        value(await host.saveManageEditor({ requestId: generateUUID(), target: shown(host, 'context', '@phone').edit, name: '@office' }));
+        value(await host.saveManageEditor({ requestId: generateUUID(), target: shown(host, 'tag', '#urgent').edit, name: 'Later' }));
+        value(await host.deleteManageItem({ requestId: generateUUID(), target: shown(host, 'area', 'a-errands').delete }));
         const changed = useTaskStore.getState()._allTasks.filter((task) => before.get(task.id) !== task).map((task) => task.id);
         expect(changed.sort()).toEqual(['t-call', 't-errand']);
         expect(useTaskStore.getState()._allProjects.every((project) => projectsBefore.get(project.id) === project)).toBe(true);
+    });
+
+    describe('a replay after a restart, once its target changed since', () => {
+        const stale = { ok: false, error: { code: 'STALE_REVISION' } };
+        const unchanged = { ok: true, value: { changed: false } };
+        const open = async () => {
+            freezeClock();
+            await seed({ data: 'manage', settings: 'manage' });
+            return openHost();
+        };
+        const area = (id: string) => useTaskStore.getState()._allAreas.find((entry) => entry.id === id);
+        const person = (id: string) => useTaskStore.getState()._allPeople.find((entry) => entry.id === id);
+        const taskOf = (id: string) => useTaskStore.getState()._tasksById.get(id)!;
+
+        it('setGeneralSetting: a landed setting answers changed: false and keeps a later change to another setting', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), edit: { type: 'weekStart' as const, value: 'monday' as const } };
+            expect(value(await host.setGeneralSetting(input)).changed).toBe(true);
+            await useTaskStore.getState().updateSettings({ timeFormat: '12h' });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.setGeneralSetting(input));
+            expect(result).toEqual({ ok: true, value: { changed: false, deviceWrites: [] } });
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState().settings).toMatchObject({ weekStart: 'monday', timeFormat: '12h' });
+        });
+
+        it('saveManageEditor, unassigned color: a landed color answers changed: false and keeps a later appearance change', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: { type: 'unassignedArea' as const }, color: '#f97316' };
+            expect(value(await host.saveManageEditor(input)).changed).toBe(true);
+            await useTaskStore.getState().updateSettings({ appearance: { ...useTaskStore.getState().settings.appearance, density: 'comfortable' } });
+            expect(await replayAfterRestart((restarted) => restarted.saveManageEditor(input))).toEqual({ result: unchanged, wrote: false });
+            expect(useTaskStore.getState().settings.appearance).toEqual({ density: 'comfortable', unassignedAreaColor: '#f97316' });
+        });
+
+        it('saveManageEditor, new area: named by the request UUID, so a replay finds it renamed and adds nothing', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: { type: 'newArea' as const }, name: ' Garden ', color: '#14b8a6' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            const id = input.requestId.toLowerCase();
+            expect(area(id)).toMatchObject({ name: 'Garden', color: '#14b8a6' });
+            await useTaskStore.getState().updateArea(id, { name: 'Yard' });
+            expect(await replayAfterRestart((restarted) => restarted.saveManageEditor(input))).toEqual({ result: unchanged, wrote: false });
+            expect(useTaskStore.getState()._allAreas.filter((entry) => entry.name === 'Garden')).toEqual([]);
+            expect(area(id)?.name).toBe('Yard');
+        });
+
+        it('saveManageEditor, new area named like a deleted one: the store restores that area under its own ID', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: { type: 'newArea' as const }, name: 'Gone', color: '#14b8a6' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            expect(area('a-gone')).toMatchObject({ name: 'Gone', deletedAt: undefined });
+            expect(area(input.requestId.toLowerCase())).toBeUndefined();
+        });
+
+        it('saveManageEditor, new person: named by the request UUID, so a replay finds them renamed and adds nothing', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: { type: 'newPerson' as const }, name: 'Eve', note: 'Designer' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            const id = input.requestId.toLowerCase();
+            expect(person(id)).toMatchObject({ name: 'Eve', note: 'Designer' });
+            await useTaskStore.getState().renamePerson(id, 'Evelyn');
+            expect(await replayAfterRestart((restarted) => restarted.saveManageEditor(input))).toEqual({ result: unchanged, wrote: false });
+            expect(useTaskStore.getState()._allPeople.filter((entry) => entry.name === 'Eve')).toEqual([]);
+        });
+
+        it('saveManageEditor, area: never renames or recolors an area changed since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'area', 'a-work').edit, name: 'Office', color: '#ef4444' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            await useTaskStore.getState().updateArea('a-work', { name: 'Job' });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveManageEditor(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(area('a-work')).toMatchObject({ name: 'Job', color: '#ef4444' });
+        });
+
+        it('saveManageEditor, person: never rewrites a person changed since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'person', 'pe-alex').edit, name: 'Alex', note: 'QA' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            await useTaskStore.getState().updatePerson('pe-alex', { note: 'Release manager' });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveManageEditor(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(person('pe-alex')?.note).toBe('Release manager');
+        });
+
+        it('saveManageEditor, context: never renames the context of a task that took it since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'context', '@phone').edit, name: '@office' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            await useTaskStore.getState().updateTask('t-errand', { contexts: ['@town', '@phone'] });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveManageEditor(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(taskOf('t-errand').contexts).toEqual(['@town', '@phone']);
+        });
+
+        it('saveManageEditor, tag: never renames the tag of a task that took it since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'tag', '#urgent').edit, name: 'later' };
+            expect(value(await host.saveManageEditor(input))).toEqual({ changed: true });
+            await useTaskStore.getState().updateTask('t-errand', { tags: ['#urgent'] });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.saveManageEditor(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(taskOf('t-errand').tags).toEqual(['#urgent']);
+        });
+
+        it('deleteManageItem, area: never deletes an area restored since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'area', 'a-errands').delete };
+            expect(value(await host.deleteManageItem(input))).toEqual({ changed: true });
+            await useTaskStore.getState().restoreArea('a-errands');
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.deleteManageItem(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(area('a-errands')?.deletedAt).toBeUndefined();
+        });
+
+        it('deleteManageItem, person: never deletes a person restored since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'person', 'pe-dee').delete };
+            expect(value(await host.deleteManageItem(input))).toEqual({ changed: true });
+            await useTaskStore.getState().restorePerson('pe-dee');
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.deleteManageItem(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(person('pe-dee')?.deletedAt).toBeUndefined();
+        });
+
+        it('deleteManageItem, context: never removes a context a task took since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'context', '@town').delete };
+            expect(value(await host.deleteManageItem(input))).toEqual({ changed: true });
+            // A landed delete answers changed: false.
+            expect(await replayAfterRestart((restarted) => restarted.deleteManageItem(input))).toEqual({ result: unchanged, wrote: false });
+            await useTaskStore.getState().updateTask('t-call', { contexts: ['@phone', '@town'] });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.deleteManageItem(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(taskOf('t-call').contexts).toEqual(['@phone', '@town']);
+        });
+
+        it('deleteManageItem, tag: never removes a tag a project took since', async () => {
+            const host = await open();
+            const input = { requestId: generateUUID(), target: shown(host, 'tag', '#web').delete };
+            expect(value(await host.deleteManageItem(input))).toEqual({ changed: true });
+            await useTaskStore.getState().updateProject('p-yard', { tagIds: ['#Garden', '#web'] });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.deleteManageItem(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState()._allProjects.find((project) => project.id === 'p-yard')?.tagIds).toEqual(['#Garden', '#web']);
+        });
+
+        it('checks a row\'s target as the view sent it, and refuses a write from a view read before a change', async () => {
+            const host = await open();
+            const target = shown(host, 'context', '@phone').edit;
+            expect(target).toMatchObject({ type: 'context', name: '@phone', revision: expect.any(String) });
+            expect(value(host.checkManageEditor({ target, name: '@office' }))).toEqual({ nameTaken: false, saveDisabled: false, message: null });
+            await useTaskStore.getState().updateTask('t-call', { title: 'Call the bank' });
+            expect(await host.saveManageEditor({ requestId: generateUUID(), target, name: '@office' })).toMatchObject(stale);
+            expect(taskOf('t-call').contexts).toEqual(['@phone']);
+        });
     });
 
     it('refuses input the screens do not offer', async () => {
@@ -789,7 +989,15 @@ describe('native host contract: Settings', () => {
         expect(await host.setGeneralSetting({ requestId: 'not-a-uuid', edit: { type: 'showTaskAge', value: true } })).toMatchObject(invalid);
         expect(await host.saveManageEditor({ requestId: id(), target: { type: 'newArea' }, name: '   ' })).toMatchObject(invalid);
         expect(await host.saveManageEditor({ requestId: id(), target: { type: 'newArea' }, name: 'Garden', color: '#123456' })).toMatchObject(invalid);
-        expect(await host.saveManageEditor({ requestId: id(), target: { type: 'area', id: 'a-gone' }, name: 'Back' })).toMatchObject(invalid);
+        expect(await host.saveManageEditor({ requestId: id(), target: { type: 'area', id: 'a-gone', revision: '1' }, name: 'Back' })).toMatchObject(invalid);
+        // A write to an area, person, context or tag carries the revision its row showed.
+        const work = shown(host, 'area', 'a-work');
+        for (const target of [{ type: 'area', id: 'a-work' }, { type: 'person', id: 'pe-cy', revision: '' }, { type: 'context', name: '@phone' }, { type: 'tag', name: '#web', revision: 5 }]) {
+            expect(await host.saveManageEditor({ requestId: id(), target: target as never, name: 'x' })).toMatchObject(invalid);
+            expect(await host.deleteManageItem({ requestId: id(), target: target as never })).toMatchObject(invalid);
+        }
+        expect(await host.saveManageEditor({ requestId: id(), target: { ...work.edit, extra: 1 } as never, name: 'x' })).toMatchObject(invalid);
+        expect(await host.saveManageEditor({ requestId: id(), target: { type: 'newArea', revision: 'r' } as never, name: 'x' })).toMatchObject(invalid);
         expect(await host.saveManageEditor({ requestId: id(), target: { type: 'project', id: 'p-site' } as never, name: 'x' })).toMatchObject(invalid);
         expect(await host.deleteManageItem({ requestId: id(), target: { type: 'newArea' } as never })).toMatchObject(invalid);
         expect(host.checkManageEditor({ target: { type: 'project', id: 'p-site' } as never, name: 'x' })).toMatchObject(invalid);
@@ -813,6 +1021,6 @@ describe('native host contract: Settings', () => {
         expect(await host.setGeneralSetting({ requestId, edit: { type: 'showTaskAge', value: true } })).toMatchObject(notReady);
         expect(await host.saveManageEditor({ requestId, target: { type: 'newArea' }, name: 'Garden' })).toMatchObject(notReady);
         expect(host.checkManageEditor({ target: { type: 'newArea' }, name: 'Garden' })).toMatchObject(notReady);
-        expect(await host.deleteManageItem({ requestId, target: { type: 'context', name: '@home' } })).toMatchObject(notReady);
+        expect(await host.deleteManageItem({ requestId, target: { type: 'context', name: '@home', revision: 'r' } })).toMatchObject(notReady);
     });
 });

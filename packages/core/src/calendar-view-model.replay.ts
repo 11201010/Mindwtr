@@ -245,15 +245,15 @@ export async function replayCalendarScenario(options: {
             return;
         }
         if (sheet.kind !== 'task') return;
-        const taskId = sheet.taskId;
+        const { taskId, taskRevision } = sheet;
         alerts.push({
             title: sheet.title,
             message: null,
             buttons: sheetButtons(sheet.buttons, {
                 edit: async () => { editor = taskId; },
-                unschedule: async () => { await run({ type: 'unscheduleTask', taskId }); },
-                done: async () => { await run({ type: 'completeTask', taskId }); },
-                delete: async () => { await run({ type: 'deleteTask', taskId }); },
+                unschedule: async () => { await run({ type: 'unscheduleTask', taskId, taskRevision }); },
+                done: async () => { await run({ type: 'completeTask', taskId, taskRevision }); },
+                delete: async () => { await run({ type: 'deleteTask', taskId, taskRevision }); },
             }),
         });
     };
@@ -365,10 +365,10 @@ export async function replayCalendarScenario(options: {
                 }
                 for (const item of byDay(day, 'deadlines')) {
                     press({ disabled: !item.pressable, press: itemPress(item) }, [item.title, item.detail ?? '']);
-                    if (item.showDone) press({ press: async () => { await run({ type: 'completeTask', taskId: item.taskId }); } }, [view.text.done]);
+                    if (item.showDone) press({ press: async () => { await run({ type: 'completeTask', taskId: item.taskId, taskRevision: item.row!.taskRevision }); } }, [view.text.done]);
                 }
                 for (const item of byDay(day, 'scheduled')) {
-                    const done = { press: async () => { await run({ type: 'completeTask', taskId: item.taskId }); } };
+                    const done = { press: async () => { await run({ type: 'completeTask', taskId: item.taskId, taskRevision: item.row!.taskRevision }); } };
                     drawn.presses.push({ disabled: !item.pressable, press: itemPress(item), texts: [item.title, item.detail ?? '', ...(item.showDone ? [view.text.done] : [])] });
                     text(item.title);
                     text(item.detail ?? '');
@@ -590,7 +590,10 @@ export async function replayCalendarScenario(options: {
                 const startMinutes = Math.round((top + Number(rest[0])) / PIXELS_PER_MINUTE / 5) * 5;
                 const clamped = Math.max(0, Math.min(24 * 60 - timed.durationMinutes, startMinutes));
                 const content = view.content as Extract<NativeCalendarView['content'], { mode: 'day' }>;
-                const result = await run({ type: 'moveTask', taskId: block.item.taskId, day: content.dayKey, startMinutes: clamped, durationMinutes: timed.durationMinutes });
+                const result = await run({
+                    type: 'moveTask', taskId: block.item.taskId, day: content.dayKey, startMinutes: clamped, durationMinutes: timed.durationMinutes,
+                    taskRevision: block.item.row!.taskRevision,
+                });
                 if (result.toast) toasts.push([result.toast.tone, result.toast.title, result.toast.message, result.toast.durationMs]);
                 return;
             }

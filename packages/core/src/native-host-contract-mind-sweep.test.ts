@@ -10,7 +10,7 @@ import {
     type MindSweepView,
 } from './mind-sweep-view-model';
 import { createNativeHostContract } from './native-host-contract';
-import { loadScreenFixture, normalize, openScreenHost, requestId, restartScreenHost, value } from './screen-parity.replay';
+import { loadScreenFixture, normalize, openScreenHost, replayAfterRestart, requestId, restartScreenHost, value } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { taskToSqliteRow } from './task-sync-schema';
 
@@ -246,6 +246,21 @@ describe('Mind Sweep: core and the native host contract', () => {
         expect(await restarted.addMindSweepItem({ requestId: id, title: 'Different capture' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(useTaskStore.getState()._tasksById.get(id)).toMatchObject({ title: 'Fix the sink' });
         expect(contract.log).toEqual([]);
+    });
+
+    it('a replay after a restart answers with the task it made, edited since, and writes nothing', async () => {
+        freezeClock();
+        const { host, log } = await open();
+        const input = { requestId: requestId(), title: 'Fix the sink' };
+        value(await host.addMindSweepItem(input));
+        // The user processes the capture.
+        await useTaskStore.getState().updateTask(input.requestId, { status: 'next' });
+        log.length = 0;
+        const { result, wrote } = await replayAfterRestart((restarted) => restarted.addMindSweepItem(input));
+        expect(result).toEqual({ ok: true, value: { id: input.requestId, title: 'Fix the sink' } });
+        expect(wrote).toBe(false);
+        expect(log).toEqual([]);
+        expect(useTaskStore.getState()._tasksById.get(input.requestId)).toMatchObject({ title: 'Fix the sink', status: 'next' });
     });
 
     it('retries exactly after a failed save', async () => {

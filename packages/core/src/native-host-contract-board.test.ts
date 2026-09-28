@@ -13,6 +13,8 @@ import { createBoardRecorder, loadBoardViewsFixture, seedBoardStore, type BoardF
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
+import { taskRevisionOf } from './native-request-receipts';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
@@ -57,6 +59,9 @@ describe('native host contract: Board', () => {
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         return result.value;
     };
+    /** The revision a card shows: what a move or a delete sends back. */
+    const shown = (host: ReturnType<typeof createNativeHostContract>, taskId: string) => value(host.getBoardView({ limit: 100 })).columns
+        .flatMap((column) => column.cards).find((card) => card.row.id === taskId)!.row.taskRevision;
     /** The Board as core's model builds it straight from the store. */
     const direct = (filters = EMPTY_BOARD_FILTER_STATE) => {
         const state = useTaskStore.getState();
@@ -257,7 +262,7 @@ describe('native host contract: Board', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(saveData);
-        const input = { requestId: generateUUID(), action: { type: 'moveCard' as const, taskId: 'n-rent', status: 'waiting' as const } };
+        const input = { requestId: generateUUID(), action: { type: 'moveCard' as const, taskId: 'n-rent', status: 'waiting' as const, taskRevision: shown(host, 'n-rent') } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runBoardAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         expect(recorder.log).toEqual([['updateTask', 'n-rent', { status: 'waiting' }]]);
@@ -303,12 +308,31 @@ describe('native host contract: Board', () => {
         expect(await restarted.runBoardAction({ requestId, action: { ...action, taskId: 'n-demo' } }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(useTaskStore.getState()._allTasks.map((task) => [task.id, task.rev])).toEqual(before);
+        // An edit of the copy since: the replay is refused and writes nothing.
         await useTaskStore.getState().updateTask(requestId, { title: 'Edited copy' });
-        await flushPendingSave();
-        const editedRestart = createNativeHostContract();
-        expect(await editedRestart.activate({ writeSafetyReady: true })).toMatchObject({ ok: true });
-        expect(await editedRestart.runBoardAction({ requestId, action }))
-            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const replayed = await replayAfterRestart((restarted) => restarted.runBoardAction({ requestId, action }));
+        expect(replayed.result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(replayed.wrote).toBe(false);
+        expect(useTaskStore.getState()._tasksById.get(requestId)?.title).toBe('Edited copy');
+    });
+
+    it('refuses a move or a delete replayed after a restart when its card changed since, and writes nothing', async () => {
+        freezeClock();
+        const { host } = await openHost();
+        const move = { requestId: generateUUID(), action: { type: 'moveCard' as const, taskId: 'n-rent', status: 'waiting' as const, taskRevision: shown(host, 'n-rent') } };
+        const trash = { requestId: generateUUID(), action: { type: 'trashTask' as const, taskId: 'n-bulbs', taskRevision: shown(host, 'n-bulbs') } };
+        expect(value(await host.runBoardAction(move))).toEqual({ changed: true, open: null });
+        expect(value(await host.runBoardAction(trash))).toEqual({ changed: true, open: null });
+        // Later changes: the card goes back to Next, the deleted task comes back.
+        await useTaskStore.getState().updateTask('n-rent', { status: 'next' });
+        await useTaskStore.getState().restoreTask('n-bulbs');
+        for (const input of [move, trash]) {
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runBoardAction(input));
+            expect(result).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(wrote).toBe(false);
+        }
+        expect(useTaskStore.getState()._tasksById.get('n-rent')?.status).toBe('next');
+        expect(useTaskStore.getState()._tasksById.get('n-bulbs')?.deletedAt).toBeUndefined();
     });
 
     it('replays a requested duplicate after restart with an older identical copy', async () => {
@@ -329,7 +353,7 @@ describe('native host contract: Board', () => {
     it('writes nothing when a move or a delete that already landed is replayed after a restart', async () => {
         freezeClock();
         const { host, recorder } = await openHost();
-        const actions: [string, unknown][] = [
+        const actions: [string, Record<string, unknown>][] = [
             [generateUUID(), { type: 'moveCard', taskId: 'n-rent', status: 'waiting' }],
             [generateUUID(), { type: 'moveCard', taskId: 'w-alice', status: 'someday' }],
             [generateUUID(), { type: 'moveCard', taskId: 'n-loose', status: 'next', afterId: null }],
@@ -339,7 +363,11 @@ describe('native host contract: Board', () => {
             [generateUUID(), { type: 'trashTask', taskId: 'n-bulbs' }],
         ];
         const run = (target: typeof host, requestId: string, action: unknown) => target.runBoardAction({ requestId, action: action as never });
-        for (const [requestId, action] of actions) expect(value(await run(host, requestId, action))).toMatchObject({ changed: true });
+        for (const [requestId, action] of actions) {
+            // Each request carries the revision its card shows when it is sent.
+            action.taskRevision = shown(host, action.taskId as string);
+            expect(value(await run(host, requestId, action))).toMatchObject({ changed: true });
+        }
         const writes = recorder.log.length;
         const revisions = () => useTaskStore.getState()._allTasks.map((task) => [task.id, task.rev, task.status, task.boardOrder]);
         const before = revisions();
@@ -361,7 +389,7 @@ describe('native host contract: Board', () => {
         const { host, recorder } = await openHost(undefined, { ...part, tasks: [...part.tasks, card('A', '2026-09-20T12:00:00.000Z'), card('B', '2026-09-10T12:00:00.000Z')] });
         const someday = () => value(host.getBoardView({ limit: 10 })).columns.find((column) => column.status === 'someday')!.cards.map((entry) => entry.row.id);
         expect(someday()).toEqual(['A', 'B']);
-        expect(value(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'moveCard', taskId: 'B', status: 'someday', afterId: null } })))
+        expect(value(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'moveCard', taskId: 'B', status: 'someday', afterId: null, taskRevision: shown(host, 'B') } })))
             .toEqual({ changed: true, open: null });
         expect(recorder.log).toEqual([['reorderBoardTasks', 'someday', ['B', 'A'], 'B']]);
         expect(someday()).toEqual(['B', 'A']);
@@ -371,7 +399,7 @@ describe('native host contract: Board', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(saveData);
-        const move = { type: 'moveCard' as const, taskId: 'n-rent', status: 'waiting' as const };
+        const move = { type: 'moveCard' as const, taskId: 'n-rent', status: 'waiting' as const, taskRevision: shown(host, 'n-rent') };
         const requestId = generateUUID();
         value(await host.runBoardAction({ requestId, action: move }));
         // Saves fail from here on; a finished move replayed after a restart still answers.
@@ -381,11 +409,12 @@ describe('native host contract: Board', () => {
         expect(await restarted.activate({ writeSafetyReady: true })).toEqual({ ok: true, value: null });
         expect(await restarted.runBoardAction({ requestId, action: move })).toEqual({ ok: true, value: { changed: false, open: null } });
         const noOp = generateUUID();
-        expect(await host.runBoardAction({ requestId: noOp, action: { type: 'trashTask', taskId: 't-trashed' } })).toEqual({ ok: true, value: { changed: false, open: null } });
+        const trashed = taskRevisionOf(useTaskStore.getState()._tasksById.get('t-trashed')!);
+        expect(await host.runBoardAction({ requestId: noOp, action: { type: 'trashTask', taskId: 't-trashed', taskRevision: trashed } })).toEqual({ ok: true, value: { changed: false, open: null } });
         expect(saveData).toHaveBeenCalledTimes(saves);
         // No receipt was kept: the same ID can carry another action.
         saveData.mockResolvedValue(undefined);
-        expect(value(await host.runBoardAction({ requestId: noOp, action: { type: 'trashTask', taskId: 'n-bulbs' } }))).toEqual({ changed: true, open: null });
+        expect(value(await host.runBoardAction({ requestId: noOp, action: { type: 'trashTask', taskId: 'n-bulbs', taskRevision: shown(host, 'n-bulbs') } }))).toEqual({ changed: true, open: null });
         expect(recorder.log).toEqual([['updateTask', 'n-rent', { status: 'waiting' }], ['deleteTask', 'n-bulbs']]);
     });
 
@@ -399,14 +428,18 @@ describe('native host contract: Board', () => {
         expect(host.getBoardView({ filterEdit: { type: 'explode' } as never, limit: 1 })).toMatchObject(invalid);
         expect(host.getBoardList({ list: 'cards', offset: 0, limit: 10, revision: 'r' })).toMatchObject(invalid);
         const run = (action: unknown) => host.runBoardAction({ requestId: generateUUID(), action: action as never });
-        expect(await host.runBoardAction({ requestId: 'not-a-uuid', action: { type: 'trashTask', taskId: 'n-rent' } })).toMatchObject(invalid);
-        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'reference' })).toMatchObject(invalid);
+        const taskRevision = shown(host, 'n-rent');
+        expect(await host.runBoardAction({ requestId: 'not-a-uuid', action: { type: 'trashTask', taskId: 'n-rent', taskRevision } })).toMatchObject(invalid);
+        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'reference', taskRevision })).toMatchObject(invalid);
         // A drop into another column has no position; a drop inside names a card shown there.
-        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'waiting', afterId: 'w-alice' })).toMatchObject(invalid);
-        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'next', afterId: 'w-alice' })).toMatchObject(invalid);
-        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'next', afterId: 'n-demo', filters: { searchQuery: 'demo' } })).toMatchObject(invalid);
-        expect(await run({ type: 'moveCard', taskId: 'r-manual', status: 'next' })).toMatchObject(invalid);
-        expect(await run({ type: 'moveCard', taskId: 'missing', status: 'next' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'waiting', afterId: 'w-alice', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'next', afterId: 'w-alice', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'next', afterId: 'n-demo', filters: { searchQuery: 'demo' }, taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'moveCard', taskId: 'r-manual', status: 'next', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'moveCard', taskId: 'missing', status: 'next', taskRevision })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        // A move or a delete carries the revision its card showed.
+        expect(await run({ type: 'moveCard', taskId: 'n-rent', status: 'waiting' })).toMatchObject(invalid);
+        expect(await run({ type: 'trashTask', taskId: 'n-rent', taskRevision: '' })).toMatchObject(invalid);
         expect(await run({ type: 'duplicateTask', taskId: 't-trashed' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
         expect(await run({ type: 'archiveColumn', status: 'done' })).toMatchObject(invalid);
     });
@@ -418,6 +451,6 @@ describe('native host contract: Board', () => {
         expect(host.getBoardView({ limit: 10 })).toMatchObject(notReady);
         expect(host.getBoardList({ list: 'tokens', offset: 0, limit: 10, revision: 'r' })).toMatchObject(notReady);
         expect(host.getBoardList({ list: 'projects', query: 'a', offset: 0, limit: 10, revision: 'r' })).toMatchObject(notReady);
-        expect(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'trashTask', taskId: 'n-rent' } })).toMatchObject(notReady);
+        expect(await host.runBoardAction({ requestId: generateUUID(), action: { type: 'trashTask', taskId: 'n-rent', taskRevision: 'r' } })).toMatchObject(notReady);
     });
 });

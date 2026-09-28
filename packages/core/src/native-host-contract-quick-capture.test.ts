@@ -4,6 +4,7 @@ import { createNativeHostContract } from './native-host-contract';
 import type { NativeQuickCaptureView } from './native-host-contract-quick-capture';
 import type { QuickCaptureOptions } from './quick-capture-model';
 import { loadQuickCaptureFixture, seedQuickCaptureStore, type QuickCaptureFixture } from './quick-capture-model.replay';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import { generateUUID } from './uuid';
 
@@ -354,6 +355,59 @@ describe('native host contract: the capture popup', () => {
         const area = value(await host.submitQuickCapturePickerQuery({ picker: 'area', query: 'Garden', text: 'Draft', options, requestId: generateUUID() }));
         expect(value(host.getQuickCaptureView({ text: 'Draft', options: area.options })).area.label).toBe('Garden');
         expect(writes(recorder.log)).toEqual(['addProject', 'addArea']);
+    });
+
+    it('names a picker\'s new project or area by its request UUID: a replay after a restart chooses it, renamed since, and writes nothing', async () => {
+        const { host } = await openHost('base');
+        const opened = value(host.openQuickCapture());
+        const options = value(host.editQuickCapture({ text: 'Draft', options: opened.options, edit: { type: 'selectArea', areaId: 'a-work' } })).view.options;
+        const project = { picker: 'project' as const, query: 'Kitchen remodel', text: 'Draft', options, requestId: generateUUID() };
+        const area = { picker: 'area' as const, query: 'Garden', text: 'Draft', options, requestId: generateUUID() };
+        const projectId = project.requestId.toLowerCase();
+        const areaId = area.requestId.toLowerCase();
+        expect(value(await host.submitQuickCapturePickerQuery(project))).toEqual({ options: { ...options, projectId, areaId: null }, created: true });
+        expect(value(await host.submitQuickCapturePickerQuery(area))).toEqual({ options: { ...options, areaId }, created: true });
+        // Renamed since: the search no longer names them, and the replay still finds them.
+        await useTaskStore.getState().updateProject(projectId, { title: 'Kitchen' });
+        await useTaskStore.getState().updateArea(areaId, { name: 'Yard' });
+        const projectReplay = await replayAfterRestart((restarted) => restarted.submitQuickCapturePickerQuery(project));
+        expect(projectReplay).toEqual({ result: { ok: true, value: { options: { ...options, projectId, areaId: null }, created: false } }, wrote: false });
+        const areaReplay = await replayAfterRestart((restarted) => restarted.submitQuickCapturePickerQuery(area));
+        expect(areaReplay).toEqual({ result: { ok: true, value: { options: { ...options, areaId }, created: false } }, wrote: false });
+        expect(useTaskStore.getState()._allProjects.filter((entry) => entry.title === 'Kitchen remodel')).toEqual([]);
+        expect(useTaskStore.getState()._allAreas.filter((entry) => entry.name === 'Garden')).toEqual([]);
+        // One deleted since cannot be chosen: refused, and nothing is written.
+        await useTaskStore.getState().deleteArea(areaId);
+        const gone = await replayAfterRestart((restarted) => restarted.submitQuickCapturePickerQuery(area));
+        expect(gone.result).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(gone.wrote).toBe(false);
+        // The store restores a deleted area of that name under its own id; the request UUID never renames it.
+        const restored = value(await host.submitQuickCapturePickerQuery({ ...area, query: 'Gone', requestId: generateUUID() }));
+        expect(restored.options.areaId).toBe('a-gone');
+        expect(useTaskStore.getState()._allAreas.find((entry) => entry.id === 'a-gone')?.deletedAt).toBeUndefined();
+    });
+
+    it('refuses a capture or a batch replayed after a restart once its task was edited since, and writes nothing', async () => {
+        const { host } = await openHost('base');
+        const options = value(host.openQuickCapture()).options;
+        const capture = { text: 'Call @phone', options, captureId: generateUUID() };
+        expect(value(await host.submitQuickCapture(capture))).toMatchObject({ kind: 'saved', taskId: capture.captureId.toLowerCase() });
+        const snapshotFileName = value(await host.createQuickCaptureSnapshot())!.fileName;
+        const lines = { text: 'Buy eggs\nCall plumber', options, captureIds: [generateUUID(), generateUUID()], snapshotFileName };
+        expect(value(await host.submitQuickCaptureLines(lines))).toMatchObject({ kind: 'saved' });
+        // A replay of a request that landed answers from its task.
+        expect(await replayAfterRestart((restarted) => restarted.submitQuickCapture(capture)))
+            .toMatchObject({ result: { ok: true, value: { kind: 'saved', taskId: capture.captureId.toLowerCase() } }, wrote: false });
+        await useTaskStore.getState().updateTask(capture.captureId.toLowerCase(), { title: 'Call Bob' });
+        await useTaskStore.getState().updateTask(lines.captureIds[1].toLowerCase(), { title: 'Call the plumber' });
+        const single = await replayAfterRestart((restarted) => restarted.submitQuickCapture(capture));
+        const batch = await replayAfterRestart((restarted) => restarted.submitQuickCaptureLines(lines));
+        for (const { result, wrote } of [single, batch]) {
+            expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(wrote).toBe(false);
+        }
+        expect([capture.captureId, lines.captureIds[1]].map((id) => useTaskStore.getState()._tasksById.get(id.toLowerCase())?.title))
+            .toEqual(['Call Bob', 'Call the plumber']);
     });
 
     it('windows a long picker list and counts every match', async () => {

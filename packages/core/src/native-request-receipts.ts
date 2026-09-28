@@ -28,8 +28,14 @@ import type { Task } from './types';
  *
  * Receipts live in memory. They cover the window in which a save is owed. After
  * a durable acknowledgment, a restart or an eviction, a replay runs the write
- * again, so every write must be target-state: a replay of a request that already
- * landed writes nothing.
+ * again (the native app journals every write and replays it after process death),
+ * so every write must be safe to run again after a later change:
+ *
+ * - target-state: a replay of a request that already landed writes nothing;
+ * - compare-and-set: a write to existing rows carries the revision the view showed
+ *   for each (revisionOf) and refuses rows changed since (refuseStale), so a
+ *   replay never undoes a later change;
+ * - a create names its row by the request UUID, so a replay finds the row it made.
  */
 export type NativeRequestReceipts = {
     run<T>(requestId: unknown, payload: string, write: () => Promise<NativeHostResult<T> | NativeUnsavedWrite<T>>): Promise<NativeHostResult<T>>;
@@ -74,12 +80,66 @@ export function settleWrite<T>(written: NativeHostResult<null>, value: T): Nativ
     return written;
 }
 
+/** A synced row: a task, project, area or person. */
+type Revisioned = { rev?: number; revBy?: string; updatedAt: string };
+
 /**
- * A task's revision for a compare-and-set write: it changes with every write to the task,
- * here or synced from another device. A command made on one revision refuses a task
+ * A row's revision for a compare-and-set write: it changes with every write to the row,
+ * here or synced from another device. A command made on one revision refuses a row
  * that changed since, so a replay after a restart never undoes a later change.
  */
-export const taskRevisionOf = (task: Task): string => `${task.rev ?? 0}:${task.revBy ?? ''}:${task.updatedAt}`;
+export const revisionOf = (row: Revisioned): string => `${row.rev ?? 0}:${row.revBy ?? ''}:${row.updatedAt}`;
+export const taskRevisionOf = (task: Task): string => revisionOf(task);
+
+/** Each target row's revision as the view showed it, by ID. */
+export type NativeRevisions = Record<string, string>;
+
+/** A revision as a command carries it: the non-empty text a view gave. */
+export const isRevision = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200;
+
+/** Whether `value` holds a revision for each of `ids`, and for nothing else. */
+export const isRevisions = (value: unknown, ids: readonly string[]): value is NativeRevisions => (
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+    && Object.keys(value).length === ids.length && ids.every((id) => isRevision((value as Record<string, unknown>)[id]))
+);
+
+/**
+ * Compare-and-set for a write about to change these rows: STALE_REVISION when one is
+ * gone or no longer at the revision the view showed. Call it inside the receipts'
+ * write (a same-host retry of a landed write still answers from its receipt), after
+ * the target-state check (a replay whose target already holds writes nothing), for
+ * the rows the write changes.
+ */
+export function refuseStale(
+    rows: readonly (Revisioned | undefined)[],
+    revisions: readonly (string | undefined)[],
+    message = 'It changed since the view showed it; read the view again',
+): NativeHostResult<never> | null {
+    return rows.some((row, index) => !row || revisionOf(row) !== revisions[index])
+        ? { ok: false, error: { code: 'STALE_REVISION', message } }
+        : null;
+}
+
+/** refuseStale for tasks by ID, against `revisions` (a view's `taskRevisions`). */
+export function refuseStaleTasks(ids: readonly string[], revisions: NativeRevisions): NativeHostResult<never> | null {
+    const { _tasksById } = useTaskStore.getState();
+    return refuseStale(ids.map((id) => _tasksById.get(id)), ids.map((id) => revisions[id]), 'A task changed since the view showed it; read the view again');
+}
+
+/** refuseStale for projects by ID, in Trash too. */
+export function refuseStaleProjects(ids: readonly string[], revisions: NativeRevisions): NativeHostResult<never> | null {
+    const byId = new Map(useTaskStore.getState()._allProjects.map((project) => [project.id, project]));
+    return refuseStale(ids.map((id) => byId.get(id)), ids.map((id) => revisions[id]), 'A project changed since the view showed it; read the view again');
+}
+
+/** These tasks' revisions now, by ID: what an Undo carries after its write. */
+export const taskRevisionsOf = (ids: readonly string[]): NativeRevisions => {
+    const { _tasksById } = useTaskStore.getState();
+    return Object.fromEntries(ids.flatMap((id) => {
+        const task = _tasksById.get(id);
+        return task ? [[id, taskRevisionOf(task)]] : [];
+    }));
+};
 
 const REQUEST_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 

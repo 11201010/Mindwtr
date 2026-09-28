@@ -114,7 +114,7 @@ const core = (probe = false) => JSON.parse(execFileSync('bun', ['-e', `
                 const startMinutes = block.timed.startMinutes + delta;
                 if (startMinutes < 0 || startMinutes + block.timed.durationMinutes > 1440) continue;
                 const result = await host.runCalendarAction({ requestId: crypto.randomUUID(), state: dayState,
-                    action: { type: 'moveTask', taskId: task.id, day: key, startMinutes, durationMinutes: block.timed.durationMinutes } });
+                    action: { type: 'moveTask', taskId: task.id, day: key, startMinutes, durationMinutes: block.timed.durationMinutes, taskRevision: sheet.taskRevision } });
                 if (result.ok && result.value.changed) { move = { delta, startTime: useTaskStore.getState()._tasksById.get(task.id).startTime }; break; }
             }
         }

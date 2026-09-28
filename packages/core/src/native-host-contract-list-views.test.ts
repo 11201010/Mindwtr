@@ -19,7 +19,9 @@ import {
     type ListViewsScenario,
 } from './list-views-model.replay';
 import { EMPTY_LIST_FILTER_STATE } from './list-filter-state';
-import { createNativeHostContract } from './native-host-contract';
+import { createNativeHostContract, type NativeArchiveAction, type NativeContextsAction, type NativeContextsView, type NativeHostResult, type NativeTrashAction } from './native-host-contract';
+import { revisionOf, taskRevisionOf } from './native-request-receipts';
+import { replayAfterRestart, value } from './screen-parity.replay';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -194,7 +196,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
     it('retries a Contexts bulk move after a failed save: one write', async () => {
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'), saveData);
-        const input = { requestId: generateUUID(), action: { type: 'moveTasks' as const, taskIds: ['c-call', 'c-sink'], status: 'someday' as const } };
+        const { taskRevisions } = value(host.getContextsView({ selectedIds: ['c-call', 'c-sink'], offset: 0, limit: 100 }));
+        const input = { requestId: generateUUID(), action: { type: 'moveTasks' as const, taskIds: ['c-call', 'c-sink'], status: 'someday' as const, taskRevisions } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runContextsAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         expect(recorder.log).toEqual([['batchMoveTasks', ['c-call', 'c-sink'], 'someday']]);
@@ -231,7 +234,7 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         };
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(part, scenario(fixture.contexts, 'chips, counts and chip search'), saveData);
-        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'c-reopen', status: 'next' as const } };
+        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'c-reopen', status: 'next' as const, taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get('c-reopen')!) } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runContextsAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         // The store changed the task and its project in memory before its save failed.
@@ -296,9 +299,10 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
 
     it('counts only Contexts tasks actually changed by a bulk tag removal', async () => {
         const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const { taskRevisions } = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
         const result = await host.runContextsAction({
             requestId: generateUUID(),
-            action: { type: 'editTaskTokens', taskIds: ['c-call', 'c-email'], field: 'tags', mode: 'remove', values: ['#work'] },
+            action: { type: 'editTaskTokens', taskIds: ['c-call', 'c-email'], field: 'tags', mode: 'remove', values: ['#work'], taskRevisions },
         });
         expect(result).toMatchObject({ ok: true, value: { changed: true, toast: { message: '1 task' } } });
         expect(recorder.log).toEqual([['batchUpdateTasks', [{ id: 'c-email', updates: { tags: [] } }]]]);
@@ -307,14 +311,16 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
     it('retries an Archive bulk move to Trash after a failed save, then undoes it', async () => {
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'), saveData);
-        const input = { requestId: generateUUID(), action: { type: 'trashTasks' as const, taskIds: ['ar-milk', 'ar-call'] } };
+        const { taskRevisions } = archiveView(host, { selectedIds: ['ar-milk', 'ar-call'], offset: 0, limit: 100 });
+        const input = { requestId: generateUUID(), action: { type: 'trashTasks' as const, taskIds: ['ar-milk', 'ar-call'], taskRevisions } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runArchiveAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         saveData.mockResolvedValue(undefined);
         const retried = await host.runArchiveAction(input);
+        const trashed = (id: string) => taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!);
         expect(retried).toEqual({ ok: true, value: { changed: true, toast: {
             tone: 'success', title: 'Done', message: '2 tasks',
-            undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['ar-milk', 'ar-call'] } },
+            undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['ar-milk', 'ar-call'], taskRevisions: { 'ar-milk': trashed('ar-milk'), 'ar-call': trashed('ar-call') } } },
         } } });
         expect(recorder.log).toEqual([['batchDeleteTasks', ['ar-milk', 'ar-call']]]);
         if (!retried.ok || !retried.value.toast?.undo) return;
@@ -345,7 +351,7 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
 
     it('writes once for concurrent exact retries, and refuses a request ID reused on another screen', async () => {
         const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
-        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'c-call', status: 'done' as const } };
+        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'c-call', status: 'done' as const, taskRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get('c-call')!) } };
         const rev = useTaskStore.getState()._tasksById.get('c-call')!.rev ?? 0;
         const [first, second] = await Promise.all([host.runContextsAction(input), host.runContextsAction(input)]);
         expect(first).toEqual({ ok: true, value: { changed: true, toast: null } });
@@ -353,8 +359,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(recorder.log).toEqual([['updateTask', 'c-call', { status: 'done' }]]);
         expect(useTaskStore.getState()._tasksById.get('c-call')!.rev).toBe(rev + 1);
         const reused = await Promise.all([
-            host.runArchiveAction({ requestId: input.requestId, action: { type: 'trashTask', taskId: 'c-sink' } }),
-            host.runTrashAction({ requestId: input.requestId, action: { type: 'purgeItem', kind: 'task', id: 'c-trashed' } }),
+            host.runArchiveAction({ requestId: input.requestId, action: { type: 'trashTask', taskId: 'c-sink', taskRevision: 'r' } }),
+            host.runTrashAction({ requestId: input.requestId, action: { type: 'purgeItem', kind: 'task', id: 'c-trashed', revision: 'r' } }),
         ]);
         reused.forEach((result) => expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } }));
         expect(recorder.log).toHaveLength(1);
@@ -375,16 +381,22 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
     it('never deletes forever or restores an item that is not in Trash', async () => {
         const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
         const run = (action: unknown) => host.runTrashAction({ requestId: generateUUID(), action: action as never });
-        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-live' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
-        expect(await run({ type: 'purgeItem', kind: 'project', id: 'tp-live' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
-        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-purged' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
-        expect(await run({ type: 'purgeItems', taskIds: ['tt-report', 'tt-live'], projectIds: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await run({ type: 'restoreItems', taskIds: [], projectIds: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await run({ type: 'purgeItems', taskIds: ['tt-report', 'tt-report'], projectIds: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await host.runTrashAction({ requestId: 'not-a-uuid', action: { type: 'purgeItem', kind: 'task', id: 'tt-report' } }))
+        const revision = (id: string) => taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!);
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-live', revision: revision('tt-live') })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'purgeItem', kind: 'project', id: 'tp-live', revision: 'r' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-purged', revision: revision('tt-purged') })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'purgeItems', taskIds: ['tt-report', 'tt-live'], projectIds: [], taskRevisions: { 'tt-report': revision('tt-report'), 'tt-live': revision('tt-live') }, projectRevisions: {} }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await run({ type: 'restoreItems', taskIds: [], projectIds: [], taskRevisions: {}, projectRevisions: {} })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await run({ type: 'purgeItems', taskIds: ['tt-report', 'tt-report'], projectIds: [], taskRevisions: { 'tt-report': revision('tt-report') }, projectRevisions: {} }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // A selection's revisions name exactly its items.
+        expect(await run({ type: 'purgeItems', taskIds: ['tt-report'], projectIds: [], taskRevisions: {}, projectRevisions: {} })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-report' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.runTrashAction({ requestId: 'not-a-uuid', action: { type: 'purgeItem', kind: 'task', id: 'tt-report', revision: revision('tt-report') } }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(recorder.log).toEqual([]);
-        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-report' })).toEqual({ ok: true, value: { changed: true, toast: null } });
+        expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-report', revision: revision('tt-report') })).toEqual({ ok: true, value: { changed: true, toast: null } });
         expect(recorder.log).toEqual([['purgeTask', 'tt-report']]);
         expect(useTaskStore.getState()._tasksById.get('tt-report')).toMatchObject({ purgedAt: expect.any(String) });
     });
@@ -393,17 +405,25 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
         const archive = (action: unknown) => host.runArchiveAction({ requestId: generateUUID(), action: action as never });
         const contexts = (action: unknown) => host.runContextsAction({ requestId: generateUUID(), action: action as never });
-        expect(await archive({ type: 'setCompletedAt', taskId: 'ar-call', completedAt: '2026-09-20T10:00:00.000Z' }))
+        const revision = (id: string) => taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!);
+        expect(await archive({ type: 'setCompletedAt', taskId: 'ar-call', completedAt: '2026-09-20T10:00:00.000Z', taskRevision: revision('ar-call') }))
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await archive({ type: 'setCompletedAt', taskId: 'ar-milk', completedAt: '2026-09-20' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await archive({ type: 'moveToInbox', taskId: 'ar-gone' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
-        expect(await archive({ type: 'trashProject', projectId: 'p-gone' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'setCompletedAt', taskId: 'ar-milk', completedAt: '2026-09-20', taskRevision: revision('ar-milk') })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'moveToInbox', taskId: 'ar-gone', taskRevision: revision('ar-gone') })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await archive({ type: 'trashProject', projectId: 'p-gone', projectRevision: revisionOf(useTaskStore.getState()._allProjects.find((entry) => entry.id === 'p-gone')!) }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // Every write names the revision the view showed.
+        expect(await archive({ type: 'moveToInbox', taskId: 'ar-milk' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'moveTasksToInbox', taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: { 'ar-milk': revision('ar-milk') } })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await archive({ type: 'reactivateProject', projectId: 'p-report' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await contexts({ type: 'setTaskStatus', taskId: 'n-next', status: 'done' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await contexts({ type: 'trashTask', taskId: 'n-next', taskRevision: '' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await archive({ type: 'moveTasks', taskIds: ['ar-milk'], status: 'next' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await contexts({ type: 'moveTasks', taskIds: ['n-next'], status: 'archived' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await contexts({ type: 'restoreTasks', taskIds: ['n-next'] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await contexts({ type: 'editTaskTokens', taskIds: ['n-next'], field: 'people', mode: 'add', values: ['x'] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(recorder.log).toEqual([]);
-        expect(await contexts({ type: 'editTaskTokens', taskIds: ['n-next'], field: 'contexts', mode: 'add', values: ['@office'] }))
+        expect(await contexts({ type: 'editTaskTokens', taskIds: ['n-next'], field: 'contexts', mode: 'add', values: ['@office'], taskRevisions: { 'n-next': revision('n-next') } }))
             .toEqual({ ok: true, value: { changed: false, toast: null } });
         expect(recorder.log).toEqual([]);
     });
@@ -499,8 +519,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(await run({ type: 'moveTasksToInbox', selectAll: { ...selectAll, params: { ...selectAll.params, filterEdit: { type: 'clear' } } } })).toMatchObject(invalid);
         expect(await run({ type: 'trashTasks', selectAll: { params: selectAll.params } })).toMatchObject(invalid);
         expect(recorder.log).toEqual([]);
-        // A change that leaves the rows shown as they were does not refuse.
-        expect((await useTaskStore.getState().updateTask('ar-nodate', { title: 'Renamed' })).success).toBe(true);
+        // A change to a row the fold hides leaves the rows shown as they were: it does not refuse.
+        expect((await useTaskStore.getState().updateTask('ar-report', { title: 'Renamed' })).success).toBe(true);
         recorder.log.length = 0;
         expect(await run({ type: 'moveTasksToInbox', selectAll })).toEqual({ ok: true, value: { changed: true, toast: null } });
         expect(recorder.log).toEqual([['batchMoveTasks', shown.filter((id) => id !== 'ar-milk'), 'inbox']]);
@@ -556,7 +576,9 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         // ar-alpha completed at 09:00Z: 05:00 on the fixture's New York clock.
         expect(view.items.find((item) => item.type === 'task' && item.row.id === 'ar-alpha')).toMatchObject({ completedAtPicker: { day: '2026-09-23', time: '05:00' } });
         expect(view.items.find((item) => item.type === 'task' && item.row.id === 'ar-call')).toMatchObject({ cancelled: true, completedAtPicker: null });
-        const input = { requestId: generateUUID(), action: { type: 'setCompletedAt' as const, taskId: 'ar-alpha', day: '2026-09-20', time: '14:30' } };
+        const alpha = view.items.find((item) => item.type === 'task' && item.row.id === 'ar-alpha');
+        const taskRevision = alpha?.type === 'task' ? alpha.row.taskRevision : '';
+        const input = { requestId: generateUUID(), action: { type: 'setCompletedAt' as const, taskId: 'ar-alpha', day: '2026-09-20', time: '14:30', taskRevision } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runArchiveAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         saveData.mockResolvedValue(undefined);
@@ -564,15 +586,184 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(recorder.log).toEqual([['updateTask', 'ar-alpha', { completedAt: '2026-09-20T18:30:00.000Z' }]]);
         const run = (action: unknown) => host.runArchiveAction({ requestId: generateUUID(), action: action as never });
         // Target state: the same time again writes nothing, in either form.
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '14:30' })).toEqual({ ok: true, value: { changed: false, toast: null } });
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', completedAt: '2026-09-20T18:30:00.000Z' })).toEqual({ ok: true, value: { changed: false, toast: null } });
+        // Target state, checked before the revision: the same time again writes nothing, in either form.
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '14:30', taskRevision })).toEqual({ ok: true, value: { changed: false, toast: null } });
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', completedAt: '2026-09-20T18:30:00.000Z', taskRevision })).toEqual({ ok: true, value: { changed: false, toast: null } });
+        // Another time on the revision the view showed before the write is stale.
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-21', time: '14:30', taskRevision })).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-02-30', time: '14:30' })).toMatchObject(invalid);
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20' })).toMatchObject(invalid);
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '2:30 PM' })).toMatchObject(invalid);
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '14:30', completedAt: '2026-09-20T18:30:00.000Z' })).toMatchObject(invalid);
-        expect(await run({ type: 'setCompletedAt', taskId: 'ar-call', day: '2026-09-20', time: '14:30' })).toMatchObject(invalid);
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-02-30', time: '14:30', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '2:30 PM', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '14:30', completedAt: '2026-09-20T18:30:00.000Z', taskRevision })).toMatchObject(invalid);
+        expect(await run({ type: 'setCompletedAt', taskId: 'ar-call', day: '2026-09-20', time: '14:30', taskRevision })).toMatchObject(invalid);
         expect(recorder.log).toHaveLength(1);
+    });
+
+    // The native app journals each write and replays it after process death. A new host
+    // holds no receipts, so a replay after a later change must write nothing wrong.
+    type Host = ReturnType<typeof createNativeHostContract>;
+    const store = () => useTaskStore.getState();
+    const stored = (id: string) => store()._tasksById.get(id)!;
+    const storedProject = (id: string) => store()._allProjects.find((entry) => entry.id === id)!;
+    const stale = { ok: false, error: { code: 'STALE_REVISION' } };
+    /** Runs the request, lets `change` touch its rows, then replays it on a new host: nothing may be written. */
+    const replayAfterChange = async <T,>(
+        host: Host, recorder: { log: unknown[][] }, run: (host: Host) => Promise<NativeHostResult<T>>, change: () => Promise<unknown>,
+    ) => {
+        expect(await run(host)).toMatchObject({ ok: true, value: { changed: true } });
+        await change();
+        recorder.log.length = 0;
+        const { result, wrote } = await replayAfterRestart(run);
+        expect(wrote).toBe(false);
+        expect(recorder.log).toEqual([]);
+        return result;
+    };
+    const contextsRow = (view: NativeContextsView, id: string) => view.rows.find((row) => row.id === id)!.taskRevision;
+
+    it.each([
+        ['setTaskStatus', (view: NativeContextsView): NativeContextsAction => ({ type: 'setTaskStatus', taskId: 'c-call', status: 'done', taskRevision: contextsRow(view, 'c-call') }),
+            () => store().updateTask('c-call', { status: 'next' }), () => expect(stored('c-call').status).toBe('next')],
+        ['moveTasks', (view: NativeContextsView): NativeContextsAction => ({ type: 'moveTasks', taskIds: ['c-call', 'c-email'], status: 'someday', taskRevisions: view.taskRevisions }),
+            () => store().updateTask('c-call', { status: 'next' }), () => expect(stored('c-call').status).toBe('next')],
+        ['editTaskTokens', (view: NativeContextsView): NativeContextsAction => ({
+            type: 'editTaskTokens', taskIds: ['c-call', 'c-email'], field: 'tags', mode: 'add', values: ['#urgent'], taskRevisions: view.taskRevisions,
+        }), () => store().updateTask('c-call', { tags: [] }), () => expect(stored('c-call').tags).toEqual([])],
+        ['trashTask', (view: NativeContextsView): NativeContextsAction => ({ type: 'trashTask', taskId: 'c-call', taskRevision: contextsRow(view, 'c-call') }),
+            () => store().restoreTask('c-call'), () => expect(stored('c-call').deletedAt).toBeUndefined()],
+        ['trashTasks', (view: NativeContextsView): NativeContextsAction => ({ type: 'trashTasks', taskIds: ['c-call', 'c-email'], taskRevisions: view.taskRevisions }),
+            async () => { await store().restoreTask('c-call'); await store().restoreTask('c-email'); }, () => expect(stored('c-call').deletedAt).toBeUndefined()],
+    ] as const)('Contexts %s: a replay after a restart never undoes a later change', async (_name, request, change, check) => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const view = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
+        expect(view.taskRevisions).toEqual({ 'c-call': taskRevisionOf(stored('c-call')), 'c-email': taskRevisionOf(stored('c-email')) });
+        const input = { requestId: generateUUID(), action: request(view) };
+        expect(await replayAfterChange(host, recorder, (current) => current.runContextsAction(input), change)).toMatchObject(stale);
+        check();
+    });
+
+    it('Contexts restoreTasks: a replay of an Undo after a restart never restores a task trashed again', async () => {
+        const { host, recorder } = await openHost(fixture.contexts, scenario(fixture.contexts, 'chips, counts and chip search'));
+        const view = value(host.getContextsView({ selectedIds: ['c-call', 'c-email'], offset: 0, limit: 100 }));
+        const trashed = value(await host.runContextsAction({ requestId: generateUUID(), action: { type: 'trashTasks', taskIds: ['c-call', 'c-email'], taskRevisions: view.taskRevisions } }));
+        const undo = trashed.toast!.undo!.action;
+        // The Undo carries the revisions its write left.
+        expect(undo).toEqual({ type: 'restoreTasks', taskIds: ['c-call', 'c-email'], taskRevisions: { 'c-call': taskRevisionOf(stored('c-call')), 'c-email': taskRevisionOf(stored('c-email')) } });
+        const input = { requestId: generateUUID(), action: undo };
+        const change = () => store().batchDeleteTasks(['c-call', 'c-email']);
+        expect(await replayAfterChange(host, recorder, (current) => current.runContextsAction(input), change)).toMatchObject(stale);
+        expect(stored('c-call').deletedAt).toEqual(expect.any(String));
+    });
+
+    const archiveRow = (host: Host, id: string) => {
+        const item = value(host.getArchiveView({ offset: 0, limit: 100 })).items.find((entry) => entry.type === 'task' && entry.row.id === id);
+        return item?.type === 'task' ? item.row.taskRevision : '';
+    };
+    const archiveProject = (host: Host, id: string) => {
+        const item = value(host.getArchiveView({ segment: 'projects', offset: 0, limit: 100 })).items.find((entry) => entry.type === 'project' && entry.id === id);
+        return item?.type === 'project' ? item.projectRevision : '';
+    };
+    const archiveSelection = (host: Host) => value(host.getArchiveView({ selectedIds: ['ar-milk', 'ar-nodate'], offset: 0, limit: 100 })).taskRevisions;
+
+    it.each([
+        ['moveToInbox', (host: Host): NativeArchiveAction => ({ type: 'moveToInbox', taskId: 'ar-milk', taskRevision: archiveRow(host, 'ar-milk') }),
+            () => store().updateTask('ar-milk', { status: 'archived' }), () => expect(stored('ar-milk').status).toBe('archived')],
+        ['moveTasksToInbox', (host: Host): NativeArchiveAction => ({ type: 'moveTasksToInbox', taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: archiveSelection(host) }),
+            () => store().updateTask('ar-milk', { status: 'archived' }), () => expect(stored('ar-milk').status).toBe('archived')],
+        ['setCompletedAt', (host: Host): NativeArchiveAction => ({ type: 'setCompletedAt', taskId: 'ar-alpha', day: '2026-09-20', time: '14:30', taskRevision: archiveRow(host, 'ar-alpha') }),
+            () => store().updateTask('ar-alpha', { completedAt: '2026-09-21T10:00:00.000Z' }), () => expect(stored('ar-alpha').completedAt).toBe('2026-09-21T10:00:00.000Z')],
+        ['trashTask', (host: Host): NativeArchiveAction => ({ type: 'trashTask', taskId: 'ar-milk', taskRevision: archiveRow(host, 'ar-milk') }),
+            () => store().restoreTask('ar-milk'), () => expect(stored('ar-milk').deletedAt).toBeUndefined()],
+        ['trashTasks', (host: Host): NativeArchiveAction => ({ type: 'trashTasks', taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: archiveSelection(host) }),
+            async () => { await store().restoreTask('ar-milk'); await store().restoreTask('ar-nodate'); }, () => expect(stored('ar-milk').deletedAt).toBeUndefined()],
+        ['trashTasks under Select all', (host: Host): NativeArchiveAction => ({ type: 'trashTasks', selectAll: value(host.getArchiveView({ selectAll: {}, offset: 0, limit: 100 })).selectAll! }),
+            async () => { for (const id of ['ar-report', 'ar-call', 'ar-milk', 'ar-nodate', 'ar-alpha']) await store().restoreTask(id); },
+            () => expect(stored('ar-milk').deletedAt).toBeUndefined()],
+        ['reactivateProject', (host: Host): NativeArchiveAction => ({ type: 'reactivateProject', projectId: 'p-report', projectRevision: archiveProject(host, 'p-report') }),
+            () => store().updateProject('p-report', { status: 'archived' }), () => expect(storedProject('p-report').status).toBe('archived')],
+        ['trashProject', (host: Host): NativeArchiveAction => ({ type: 'trashProject', projectId: 'p-old', projectRevision: archiveProject(host, 'p-old') }),
+            () => store().restoreProject('p-old'), () => expect(storedProject('p-old').deletedAt).toBeUndefined()],
+    ] as const)('Archive %s: a replay after a restart never undoes a later change', async (_name, request, change, check) => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const input = { requestId: generateUUID(), action: request(host) };
+        expect(await replayAfterChange(host, recorder, (current) => current.runArchiveAction(input), change)).toMatchObject(stale);
+        check();
+    });
+
+    it('Archive restoreTasks: a replay of an Undo after a restart never restores a task trashed again', async () => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const trashed = value(await host.runArchiveAction({ requestId: generateUUID(), action: { type: 'trashTasks', taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: archiveSelection(host) } }));
+        const undo = trashed.toast!.undo!.action;
+        expect(undo).toEqual({ type: 'restoreTasks', taskIds: ['ar-milk', 'ar-nodate'], taskRevisions: { 'ar-milk': taskRevisionOf(stored('ar-milk')), 'ar-nodate': taskRevisionOf(stored('ar-nodate')) } });
+        const input = { requestId: generateUUID(), action: undo };
+        const change = () => store().batchDeleteTasks(['ar-milk', 'ar-nodate']);
+        expect(await replayAfterChange(host, recorder, (current) => current.runArchiveAction(input), change)).toMatchObject(stale);
+        expect(stored('ar-milk').deletedAt).toEqual(expect.any(String));
+    });
+
+    it('refuses an Archive Select all once a selected row changed in place, and writes nothing', async () => {
+        const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        const view = value(host.getArchiveView({ selectAll: {}, offset: 0, limit: 100 }));
+        expect((await store().updateTask('ar-milk', { title: 'Buy oat milk' })).success).toBe(true);
+        recorder.log.length = 0;
+        expect(await host.runArchiveAction({ requestId: generateUUID(), action: { type: 'moveTasksToInbox', selectAll: view.selectAll! } })).toMatchObject(stale);
+        expect(recorder.log).toEqual([]);
+    });
+
+    const trashView = (host: Host, selected?: { taskIds: string[]; projectIds: string[] }) => value(host.getTrashView({ selected, offset: 0, limit: 100 }));
+    const trashItemRevision = (host: Host, id: string) => {
+        const item = trashView(host).items.find((entry) => (entry.type === 'task' ? entry.row.id : entry.id) === id)!;
+        return item.type === 'task' ? item.row.taskRevision : item.projectRevision;
+    };
+
+    it.each([
+        ['restoreItem (task)', (host: Host): NativeTrashAction => ({ type: 'restoreItem', kind: 'task', id: 'tt-report', revision: trashItemRevision(host, 'tt-report') }),
+            () => store().deleteTask('tt-report'), () => expect(stored('tt-report').deletedAt).toEqual(expect.any(String))],
+        ['restoreItem (project)', (host: Host): NativeTrashAction => ({ type: 'restoreItem', kind: 'project', id: 'tp-home', revision: trashItemRevision(host, 'tp-home') }),
+            () => store().deleteProject('tp-home'), () => expect(storedProject('tp-home').deletedAt).toEqual(expect.any(String))],
+        ['restoreItems', (host: Host): NativeTrashAction => {
+            const { selected } = trashView(host, { taskIds: ['tt-report'], projectIds: ['tp-home'] });
+            return { type: 'restoreItems', taskIds: selected.taskIds, projectIds: selected.projectIds, taskRevisions: selected.taskRevisions, projectRevisions: selected.projectRevisions };
+        }, async () => { await store().deleteTask('tt-report'); await store().deleteProject('tp-home'); }, () => expect(stored('tt-report').deletedAt).toEqual(expect.any(String))],
+    ] as const)('Trash %s: a replay after a restart never undoes a later change', async (_name, request, change, check) => {
+        const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        const input = { requestId: generateUUID(), action: request(host) };
+        expect(await replayAfterChange(host, recorder, (current) => current.runTrashAction(input), change)).toMatchObject(stale);
+        check();
+    });
+
+    it.each([
+        ['purgeItem', (host: Host): NativeTrashAction => ({ type: 'purgeItem', kind: 'task', id: 'tt-report', revision: trashItemRevision(host, 'tt-report') })],
+        ['purgeItems', (host: Host): NativeTrashAction => {
+            const { selected } = trashView(host, { taskIds: ['tt-report'], projectIds: [] });
+            return { type: 'purgeItems', taskIds: selected.taskIds, projectIds: [], taskRevisions: selected.taskRevisions, projectRevisions: selected.projectRevisions };
+        }],
+    ] as const)('Trash %s: a replay after a restart deletes nothing it did not show', async (_name, request) => {
+        const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        // The request never ran: the item was restored and trashed again after the view showed it.
+        const stalled = { requestId: generateUUID(), action: request(host) };
+        await store().restoreTask('tt-report');
+        await store().deleteTask('tt-report');
+        recorder.log.length = 0;
+        expect(await replayAfterRestart((current) => current.runTrashAction(stalled))).toMatchObject({ result: stale, wrote: false });
+        expect(stored('tt-report').purgedAt).toBeUndefined();
+        // A request that landed finds its item gone for good.
+        const input = { requestId: generateUUID(), action: request(host) };
+        expect(await host.runTrashAction(input)).toEqual({ ok: true, value: { changed: true, toast: null } });
+        recorder.log.length = 0;
+        const replayed = await replayAfterRestart((current) => current.runTrashAction(input));
+        expect(replayed).toMatchObject({ result: { ok: false }, wrote: false });
+        expect(recorder.log).toEqual([]);
+    });
+
+    it('Trash emptyTrash: a replay after a restart is stale, its confirmation belongs to the old process', async () => {
+        const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'clear the whole trash'));
+        const input = { requestId: generateUUID(), action: { type: 'emptyTrash' as const, revision: trashView(host).emptyTrash!.revision } };
+        expect(await host.runTrashAction(input)).toEqual({ ok: true, value: { changed: true, toast: null } });
+        await store().deleteTask('tt-live');
+        recorder.log.length = 0;
+        expect(await replayAfterRestart((current) => current.runTrashAction(input))).toMatchObject({ result: stale, wrote: false });
+        expect(stored('tt-live').purgedAt).toBeUndefined();
     });
 
     it('is NOT_READY until storage is activated', async () => {
@@ -585,12 +776,12 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         expect(host.getArchiveView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTrashView({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getHistoryView({ tab: 'archived' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.runContextsAction({ requestId, action: { type: 'trashTask', taskId: 'x' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.runArchiveAction({ requestId, action: { type: 'trashTask', taskId: 'x' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.runContextsAction({ requestId, action: { type: 'trashTask', taskId: 'x', taskRevision: 'r' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.runArchiveAction({ requestId, action: { type: 'trashTask', taskId: 'x', taskRevision: 'r' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getArchiveFilterTokens({ offset: 0, limit: 1, revision: 'r' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.runArchiveAction({ requestId, action: { type: 'moveTasksToInbox', selectAll: { params: {}, revision: 'r' } } }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
-        expect(await host.runArchiveAction({ requestId, action: { type: 'setCompletedAt', taskId: 'x', day: '2026-09-20', time: '10:00' } }))
+        expect(await host.runArchiveAction({ requestId, action: { type: 'setCompletedAt', taskId: 'x', day: '2026-09-20', time: '10:00', taskRevision: 'r' } }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.runTrashAction({ requestId, action: { type: 'emptyTrash', revision: 'x' } })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
     });

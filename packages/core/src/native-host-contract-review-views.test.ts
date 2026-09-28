@@ -20,6 +20,8 @@ import {
 } from './review-views-model';
 import { createReviewRecorder, loadReviewViewsFixture, seedReviewStore, type ReviewScenario } from './review-views-model.replay';
 import { taskRevisionOf } from './native-request-receipts';
+import type { NativeReviewAction } from './native-host-contract-review-views';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
@@ -67,6 +69,9 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         return result.value;
     };
+    const task = (id: string) => useTaskStore.getState()._tasksById.get(id)!;
+    const rev = (id: string) => taskRevisionOf(task(id));
+    const revs = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, rev(id)]));
 
     it('returns what core\'s review models return when called directly', async () => {
         freezeClock();
@@ -205,7 +210,10 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario(), saveData);
-        const input = { requestId: generateUUID(), action: { type: 'moveTasks' as const, taskIds: ['n-launch', 'n-demo'], status: 'waiting' as const } };
+        const input = {
+            requestId: generateUUID(),
+            action: { type: 'moveTasks' as const, taskIds: ['n-launch', 'n-demo'], status: 'waiting' as const, taskRevisions: revs(['n-launch', 'n-demo']) },
+        };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runReviewAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         const writes = recorder.log.length;
@@ -242,15 +250,25 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
     it('follows up a waiting item as target state, and undoes a delete from its toast', async () => {
         freezeClock();
         const { host, recorder } = await openHost();
-        const followUp = { requestId: generateUUID(), action: { type: 'followUpToday' as const, taskId: 'w-vendor' } };
+        // The Daily Review's row carries the revision the follow-up sends.
+        const daily = value(host.getDailyReview({ checkpoint: JSON.stringify({ step: 'waiting', startedAt: part.now }), calendar: ready, ...page }));
+        const vendor = daily.items.find((item) => item.row.id === 'w-vendor')!;
+        expect(vendor.row.taskRevision).toBe(rev('w-vendor'));
+        const followUp = { requestId: generateUUID(), action: { type: 'followUpToday' as const, taskId: 'w-vendor', taskRevision: vendor.row.taskRevision } };
         expect(value(await host.runReviewAction(followUp))).toMatchObject({ changed: true });
         expect(recorder.log).toEqual([['updateTask', 'w-vendor', { reviewAt: '2026-09-23' }]]);
         // Already due for review: nothing to write, even for a new request.
         expect(value(await host.runReviewAction({ ...followUp, requestId: generateUUID() }))).toMatchObject({ changed: false });
         expect(recorder.log).toHaveLength(1);
 
-        const trashed = value(await host.runReviewAction({ requestId: generateUUID(), action: { type: 'trashTasks', taskIds: ['i-thought', 'n-bike'] } }));
-        expect(trashed.toast).toMatchObject({ message: '2 tasks', undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'] } } });
+        const trashed = value(await host.runReviewAction({
+            requestId: generateUUID(), action: { type: 'trashTasks', taskIds: ['i-thought', 'n-bike'], taskRevisions: revs(['i-thought', 'n-bike']) },
+        }));
+        // The Undo carries the revisions the tasks have in Trash.
+        expect(trashed.toast).toMatchObject({
+            message: '2 tasks',
+            undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'], taskRevisions: revs(['i-thought', 'n-bike']) } },
+        });
         value(await host.runReviewAction({ requestId: generateUUID(), action: trashed.toast!.undo!.action }));
         expect(['i-thought', 'n-bike'].map((id) => useTaskStore.getState()._tasksById.get(id)?.deletedAt)).toEqual([undefined, undefined]);
     });
@@ -272,7 +290,7 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         };
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario(), saveData, data);
-        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'd-reopen', status: 'next' as const } };
+        const input = { requestId: generateUUID(), action: { type: 'setTaskStatus' as const, taskId: 'd-reopen', status: 'next' as const, taskRevision: rev('d-reopen') } };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.runReviewAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         expect(useTaskStore.getState()._projectsById.get('p-shelved')?.status).toBe('active');
@@ -289,16 +307,13 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         const { host, recorder } = await openHost();
         const run = (target: typeof host, requestId: string, action: unknown) => target.runReviewAction({ requestId, action: action as never });
         const actions: [string, unknown][] = [
-            [generateUUID(), { type: 'moveTasks', taskIds: ['n-launch', 'n-demo'], status: 'waiting' }],
-            [generateUUID(), { type: 'trashTasks', taskIds: ['i-thought', 'n-bike'] }],
-            [generateUUID(), { type: 'setTaskStatus', taskId: 'n-cv', status: 'someday' }],
-            [generateUUID(), { type: 'addTag', taskIds: ['n-logo'], tag: '#design' }],
-            [generateUUID(), {
-                type: 'organizeTasks', taskIds: ['n-rent'], input: { areaId: 'a-home', tags: ['#bills'] },
-                taskRevisions: { 'n-rent': taskRevisionOf(useTaskStore.getState()._tasksById.get('n-rent')!) },
-            }],
-            [generateUUID(), { type: 'followUpToday', taskId: 'w-vendor' }],
-            [generateUUID(), { type: 'trashTask', taskId: 'n-orphan' }],
+            [generateUUID(), { type: 'moveTasks', taskIds: ['n-launch', 'n-demo'], status: 'waiting', taskRevisions: revs(['n-launch', 'n-demo']) }],
+            [generateUUID(), { type: 'trashTasks', taskIds: ['i-thought', 'n-bike'], taskRevisions: revs(['i-thought', 'n-bike']) }],
+            [generateUUID(), { type: 'setTaskStatus', taskId: 'n-cv', status: 'someday', taskRevision: rev('n-cv') }],
+            [generateUUID(), { type: 'addTag', taskIds: ['n-logo'], tag: '#design', taskRevisions: revs(['n-logo']) }],
+            [generateUUID(), { type: 'organizeTasks', taskIds: ['n-rent'], input: { areaId: 'a-home', tags: ['#bills'] }, taskRevisions: revs(['n-rent']) }],
+            [generateUUID(), { type: 'followUpToday', taskId: 'w-vendor', taskRevision: rev('w-vendor') }],
+            [generateUUID(), { type: 'trashTask', taskId: 'n-orphan', taskRevision: rev('n-orphan') }],
         ];
         for (const [requestId, action] of actions) expect(value(await run(host, requestId, action))).toMatchObject({ changed: true });
         const writes = recorder.log.length;
@@ -315,8 +330,164 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         expect(recorder.log).toHaveLength(writes);
         expect(revisions()).toEqual(before);
         // Restoring what is already live writes nothing either.
-        expect(value(await run(restarted, generateUUID(), { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'] }))).toMatchObject({ changed: true });
-        expect(value(await run(restarted, generateUUID(), { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'] }))).toMatchObject({ changed: false });
+        const restore = { type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'], taskRevisions: revs(['i-thought', 'n-bike']) };
+        expect(value(await run(restarted, generateUUID(), restore))).toMatchObject({ changed: true });
+        expect(value(await run(restarted, generateUUID(), restore))).toMatchObject({ changed: false });
+    });
+
+    describe('a replay after a restart, once a target changed since', () => {
+        const stale = { ok: false, error: { code: 'STALE_REVISION' } };
+        const replay = (requestId: string, action: unknown) => replayAfterRestart((host) => host.runReviewAction({ requestId, action: action as NativeReviewAction }));
+        /**
+         * Opens the review, builds the action from what it shows, runs it, makes the
+         * intervening change and replays the original request on a new host.
+         */
+        const landThenReplay = async (build: () => unknown, change: () => Promise<unknown>, entry = scenario()) => {
+            const { host } = await openHost(entry);
+            const action = await build();
+            const requestId = generateUUID();
+            const landed = value(await host.runReviewAction({ requestId, action: action as NativeReviewAction }));
+            expect(landed.changed).toBe(true);
+            await change();
+            return { landed, ...(await replay(requestId, action)) };
+        };
+
+        it('setTaskStatus: never moves a task back after a later status change', async () => {
+            freezeClock();
+            const { result, wrote } = await landThenReplay(
+                () => ({ type: 'setTaskStatus', taskId: 'n-cv', status: 'someday', taskRevision: rev('n-cv') }),
+                () => useTaskStore.getState().updateTask('n-cv', { status: 'next' }),
+            );
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('n-cv').status).toBe('next');
+        });
+
+        it('trashTask: never trashes again a task restored since, and its Undo carries the revision in Trash', async () => {
+            freezeClock();
+            let trashedRevision = '';
+            const { landed, result, wrote } = await landThenReplay(
+                () => ({ type: 'trashTask', taskId: 'n-orphan', taskRevision: rev('n-orphan') }),
+                () => {
+                    trashedRevision = rev('n-orphan');
+                    return useTaskStore.getState().restoreTask('n-orphan');
+                },
+            );
+            expect(landed.toast?.undo?.action).toEqual({ type: 'restoreTasks', taskIds: ['n-orphan'], taskRevisions: { 'n-orphan': trashedRevision } });
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('n-orphan').deletedAt).toBeUndefined();
+        });
+
+        it('followUpToday: never moves a follow-up set later since', async () => {
+            freezeClock();
+            const { result, wrote } = await landThenReplay(
+                () => ({ type: 'followUpToday', taskId: 'w-vendor', taskRevision: rev('w-vendor') }),
+                () => useTaskStore.getState().updateTask('w-vendor', { reviewAt: '2026-10-05' }),
+            );
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('w-vendor').reviewAt).toBe('2026-10-05');
+        });
+
+        it('restoreTasks: a replayed Undo never restores a task trashed again since', async () => {
+            freezeClock();
+            const { result, wrote } = await landThenReplay(
+                async () => {
+                    await useTaskStore.getState().deleteTask('i-thought');
+                    return { type: 'restoreTasks', taskIds: ['i-thought'], taskRevisions: revs(['i-thought']) };
+                },
+                () => useTaskStore.getState().deleteTask('i-thought'),
+            );
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('i-thought').deletedAt).toBeTruthy();
+        });
+
+        it('moveTasks: never moves a task back after a later status change', async () => {
+            freezeClock();
+            const { result, wrote } = await landThenReplay(
+                () => ({ type: 'moveTasks', taskIds: ['n-launch', 'n-demo'], status: 'waiting', taskRevisions: revs(['n-launch', 'n-demo']) }),
+                () => useTaskStore.getState().updateTask('n-launch', { status: 'next' }),
+            );
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect([task('n-launch').status, task('n-demo').status]).toEqual(['next', 'waiting']);
+        });
+
+        it('trashTasks: never trashes again a task restored since, and its Undo carries the revisions in Trash', async () => {
+            freezeClock();
+            let trashedRevisions = {};
+            const { landed, result, wrote } = await landThenReplay(
+                () => ({ type: 'trashTasks', taskIds: ['i-thought', 'n-bike'], taskRevisions: revs(['i-thought', 'n-bike']) }),
+                () => {
+                    trashedRevisions = revs(['i-thought', 'n-bike']);
+                    return useTaskStore.getState().restoreTask('n-bike');
+                },
+            );
+            expect(landed.toast?.undo?.action).toEqual({ type: 'restoreTasks', taskIds: ['i-thought', 'n-bike'], taskRevisions: trashedRevisions });
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('n-bike').deletedAt).toBeUndefined();
+        });
+
+        it('addTag: never adds a tag again after it was removed since', async () => {
+            freezeClock();
+            const { result, wrote } = await landThenReplay(
+                () => ({ type: 'addTag', taskIds: ['n-logo'], tag: '#design', taskRevisions: revs(['n-logo']) }),
+                () => useTaskStore.getState().updateTask('n-logo', { tags: [] }),
+            );
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('n-logo').tags).toEqual([]);
+        });
+
+        it('removeTags: never removes a tag again after it was added back since', async () => {
+            freezeClock();
+            const { result, wrote } = await landThenReplay(
+                () => ({ type: 'removeTags', taskIds: ['n-cv'], tags: ['#career'], taskRevisions: revs(['n-cv']) }),
+                () => useTaskStore.getState().updateTask('n-cv', { tags: ['#career'] }),
+            );
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('n-cv').tags).toEqual(['#career']);
+        });
+
+        it('applySuggestions: never parks a task again that changed since, even once it is stale again', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('ai'));
+            // The stale step's rows carry the revisions Apply sends, by the suggestion's task.
+            const staleStep = value(host.getWeeklyReview({ checkpoint: JSON.stringify({ step: 'stale', startedAt: part.now }), ...page }));
+            const rows = new Map(staleStep.items.flatMap((item) => (item.type === 'task' ? [[item.row.id, item.row.taskRevision]] : [])));
+            expect(rows.get('n-bike')).toBe(rev('n-bike'));
+            const suggestions = [{ id: 'n-bike', action: 'someday', reason: 'Untouched for weeks' }];
+            const action = { type: 'applySuggestions', suggestions, taskRevisions: { 'n-bike': rows.get('n-bike') } };
+            const requestId = generateUUID();
+            expect(value(await host.runReviewAction({ requestId, action: action as NativeReviewAction })).changed).toBe(true);
+            expect(task('n-bike').status).toBe('someday');
+            await useTaskStore.getState().updateTask('n-bike', { status: 'next' });
+            // Changed since: no longer stale, so nothing to apply.
+            expect(await replay(requestId, action)).toEqual({ result: { ok: true, value: { changed: false, toast: null, createdId: null } }, wrote: false });
+            // Two months on it is stale again, at a revision Apply never saw.
+            vi.setSystemTime(new Date('2026-11-23T14:00:00.000Z'));
+            const later = await replay(requestId, action);
+            expect(later.result).toMatchObject(stale);
+            expect(later.wrote).toBe(false);
+            expect(task('n-bike').status).toBe('next');
+        });
+
+        it('addProjectTask: the replay answers with its task, and writes nothing once the task changed since', async () => {
+            freezeClock();
+            const action = { type: 'addProjectTask', projectId: 'p-garden', title: 'Buy bulbs @garden' };
+            const { landed, result, wrote } = await landThenReplay(() => action, async () => undefined);
+            expect({ result, wrote }).toEqual({ result: { ok: true, value: { changed: false, toast: null, createdId: landed.createdId } }, wrote: false });
+            await useTaskStore.getState().updateTask(landed.createdId!, { title: 'Buy tulips' });
+            // The request's task is no longer what it made: refused, and nothing is added.
+            const again = await replayAfterRestart((host) => host.runReviewAction({ requestId: landed.createdId!, action: action as NativeReviewAction }));
+            expect(again.result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+            expect(again.wrote).toBe(false);
+            expect(task(landed.createdId!).title).toBe('Buy tulips');
+        });
     });
 
     it('answers a replayed project Add task with its task, and refuses a request ID another task holds', async () => {
@@ -411,14 +582,29 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
         expect(host.getDailyReview({ checkpoint: 42 as never, ...page })).toMatchObject(invalid);
         const run = (action: unknown) => host.runReviewAction({ requestId: generateUUID(), action: action as never });
         expect(await host.runReviewAction({ requestId: 'not-a-uuid', action: { type: 'trashTask', taskId: 'i-thought' } })).toMatchObject(invalid);
-        expect(await run({ type: 'moveTasks', taskIds: ['i-thought'], status: 'archived' })).toMatchObject(invalid);
         const revision = { 'i-thought': taskRevisionOf(useTaskStore.getState()._tasksById.get('i-thought')!) };
+        expect(await run({ type: 'moveTasks', taskIds: ['i-thought'], status: 'archived', taskRevisions: revision })).toMatchObject(invalid);
+        // Every write to existing tasks carries the revision the view showed for each.
+        for (const action of [
+            { type: 'setTaskStatus', taskId: 'i-thought', status: 'next' },
+            { type: 'trashTask', taskId: 'i-thought', taskRevision: '' },
+            { type: 'followUpToday', taskId: 'w-vendor' },
+            { type: 'moveTasks', taskIds: ['i-thought'], status: 'next' },
+            { type: 'trashTasks', taskIds: ['i-thought'], taskRevisions: {} },
+            { type: 'restoreTasks', taskIds: ['i-thought'], taskRevisions: { ...revision, 'n-bike': 'r' } },
+            { type: 'addTag', taskIds: ['i-thought'], tag: '#x' },
+            { type: 'removeTags', taskIds: ['i-thought'], tags: ['#x'], taskRevisions: { 'i-thought': 7 } },
+            { type: 'applySuggestions', suggestions: [{ id: 'n-bike', action: 'someday', reason: 'Old' }] },
+            { type: 'applySuggestions', suggestions: [{ id: 'n-bike', action: 'someday', reason: 'Old' }], taskRevisions: { 'w-vendor': 'r' } },
+        ]) {
+            expect(await run(action)).toMatchObject(invalid);
+        }
         expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { areaId: 'no-such-area' }, taskRevisions: revision })).toMatchObject(invalid);
         expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { dueDate: 'soon' }, taskRevisions: revision })).toMatchObject(invalid);
         expect(await run({ type: 'organizeTasks', taskIds: ['i-thought'], input: { tags: ['#x'] } })).toMatchObject(invalid);
         expect(await run({ type: 'addProjectTask', projectId: 'p-garden', title: '   ' })).toMatchObject(invalid);
         expect(await run({ type: 'applySuggestions', suggestions: [{ id: 'n-bike', action: 'delete', reason: '' }] })).toMatchObject(invalid);
-        expect(await run({ type: 'setTaskStatus', taskId: 'missing', status: 'next' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
+        expect(await run({ type: 'setTaskStatus', taskId: 'missing', status: 'next', taskRevision: 'r' })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
         expect(await run({ type: 'purgeEverything' })).toMatchObject(invalid);
     });
 

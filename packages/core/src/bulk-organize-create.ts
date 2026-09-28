@@ -41,13 +41,18 @@ export function addBulkOrganizeProject(title: string, areaId?: string, id?: stri
     );
 }
 
-/** The store call behind createBulkOrganizeArea, without its durable save: an area of that name is reused. `id` names a new area. */
+/**
+ * The store call behind createBulkOrganizeArea, without its durable save: an area of that name is reused. `id` names a new area.
+ * The store restores a deleted area of that name and applies the props to it, so `id` goes only where no area has the name.
+ */
 export async function addBulkOrganizeArea(name: string, id?: string): Promise<Area | null> {
     const state = useTaskStore.getState();
     const choice = resolveCaptureAreaQuery(state.areas, name);
     if (choice.kind === 'select') return choice.area;
     if (choice.kind === 'empty') return null;
-    return state.addArea(choice.areaToCreate.name, { color: choice.areaToCreate.color, ...(id ? { id } : {}) });
+    const key = choice.areaToCreate.name.trim().toLowerCase();
+    const named = state._allAreas.some((area) => area?.name?.trim().toLowerCase() === key);
+    return state.addArea(choice.areaToCreate.name, { color: choice.areaToCreate.color, ...(id && !named ? { id } : {}) });
 }
 
 export async function createBulkOrganizeProject(title: string, areaId?: string): Promise<Project | null> {

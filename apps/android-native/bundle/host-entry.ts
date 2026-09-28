@@ -1259,17 +1259,17 @@ globalThis.MindwtrHost = {
     capturePicker(json: string): string {
         return submit(async () => taskResult('quickCapturePicker', await contract.submitQuickCapturePickerQuery(JSON.parse(json))));
     },
-    complete(id: string): string {
-        return submit(async () => taskResult('complete', await contract.completeTask({ id })));
+    complete(id: string, taskRevision = ''): string {
+        return submit(async () => taskResult('complete', await contract.completeTask({ id, taskRevision })));
     },
     /** A target state, so an exact retry re-sends the same target. A `{ blocked }` reply wrote nothing. */
-    taskFocus(id: string, focused: boolean): string {
-        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused })));
+    taskFocus(id: string, focused: boolean, taskRevision = ''): string {
+        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused, taskRevision })));
     },
-    projectFocus(id: string, focused: boolean): string {
-        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused })));
+    projectFocus(id: string, focused: boolean, projectRevision = ''): string {
+        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused, projectRevision })));
     },
-    /** `areaId` "" is no area. Core dedupes a retry by `requestId` within this process. */
+    /** `areaId` "" is no area. Core names the new project by `requestId`, so a replay finds it. */
     createProject(title: string, areaId: string, requestId: string): string {
         return submit(async () => taskResult('createProject', await contract.createProject({ title, areaId: areaId || null, requestId })));
     },

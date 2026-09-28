@@ -9,9 +9,11 @@
  * the filter state the view returns and sends it back, with a `filterEdit` to change it.
  *
  * runBoardAction writes with a request UUID: while a save is owed, a retry only
- * saves (native-request-receipts.ts). A move and Delete are target-state, so a
- * replay after a restart writes nothing; Duplicate uses its request UUID as the
- * copy ID and checks unchanged copy fields. Success means the change is saved.
+ * saves (native-request-receipts.ts). A move and Delete are target-state and
+ * compare-and-set on the revision the card showed, so a replay after a restart
+ * writes nothing, and never undoes a later change (STALE_REVISION); Duplicate uses
+ * its request UUID as the copy ID and checks unchanged copy fields. Success means
+ * the change is saved.
  *
  * Only functions read this module's imports from native-host-contract.ts, so the
  * import cycle between the two files is safe.
@@ -52,7 +54,7 @@ import {
     type NativeHostResult,
     type NativeTaskRow,
 } from './native-host-contract';
-import { createNativeRequestReceipts, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
+import { createNativeRequestReceipts, isRevision, refuseStale, runStoreWrite, settleWrite, type NativeUnsavedWrite } from './native-request-receipts';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
 import type { Task } from './types';
@@ -135,10 +137,11 @@ export type NativeBoardAction =
      * A drop. Into another column, leave `afterId` out: only the status changes and the
      * card keeps its board order, as on mobile. Inside its column, `afterId` is the card
      * it lands after (null: first) in the column as `filters` show it.
+     * `taskRevision` is the card's `row.taskRevision`, as for Delete.
      */
-    | { type: 'moveCard'; taskId: string; status: BoardStatus; afterId?: string | null; filters?: NativeBoardFilters }
+    | { type: 'moveCard'; taskId: string; status: BoardStatus; afterId?: string | null; filters?: NativeBoardFilters; taskRevision: string }
     | { type: 'duplicateTask'; taskId: string }
-    | { type: 'trashTask'; taskId: string };
+    | { type: 'trashTask'; taskId: string; taskRevision: string };
 
 /** Durable native stage: Move needs a separate frozen lifecycle/order planner. */
 export type NativeBoardWriteRequest = {
@@ -355,6 +358,11 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
     /** Nothing to write: the request's target state already holds (a replay after a restart lands here). */
     const unchanged: Prepared = { result: { ok: true, value: { changed: false, open: null } } };
     const refuse = (code: NativeHostErrorCode, message: string): Prepared => ({ result: fail(code, message) });
+    /** Compare-and-set: a card that changed since the view showed it is not written. */
+    const stale = (task: Task, taskRevision: string): Prepared | null => {
+        const refused = refuseStale([task], [taskRevision], 'The card changed since the Board showed it; read the Board again');
+        return refused ? { result: refused } : null;
+    };
     const liveTask = (id: unknown) => {
         const task = typeof id === 'string' ? useTaskStore.getState()._tasksById.get(id) : undefined;
         return task && !task.deletedAt && !task.purgedAt ? task : undefined;
@@ -374,9 +382,9 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         switch (action.type) {
             case 'moveCard': {
                 const filters = readFilters(action.filters);
-                if (!isBoardStatus(action.status) || !filters
+                if (!isBoardStatus(action.status) || !filters || !isRevision(action.taskRevision)
                     || !(action.afterId === undefined || action.afterId === null || isText(action.afterId))) {
-                    return refuse('INVALID_INPUT', 'A task, a Board column, an optional card to land after and valid filters are required');
+                    return refuse('INVALID_INPUT', 'A task, a Board column, an optional card to land after, valid filters and the revision the view showed are required');
                 }
                 const task = liveTask(action.taskId);
                 if (!task) return refuse('TASK_NOT_FOUND', 'Task not found');
@@ -393,6 +401,8 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 }
                 const plan = planBoardDrop({ task, status: action.status, columnIds, afterId: action.afterId });
                 if (!plan) return unchanged;
+                const refused = stale(task, action.taskRevision);
+                if (refused) return refused;
                 return {
                     write: () => written(() => (plan.kind === 'status'
                         ? store.updateTask(plan.taskId, { status: plan.status })
@@ -400,10 +410,11 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
                 };
             }
             case 'trashTask': {
+                if (!isRevision(action.taskRevision)) return refuse('INVALID_INPUT', 'A task and the revision the view showed are required');
                 const task = typeof action.taskId === 'string' ? store._tasksById.get(action.taskId) : undefined;
                 if (!task || task.purgedAt) return refuse('TASK_NOT_FOUND', 'Task not found');
                 if (task.deletedAt) return unchanged;
-                return { write: () => written(() => store.deleteTask(task.id)) };
+                return stale(task, action.taskRevision) ?? { write: () => written(() => store.deleteTask(task.id)) };
             }
             case 'duplicateTask': {
                 const task = liveTask(action.taskId);
@@ -630,9 +641,10 @@ export function createBoardViewMethods(deps: BoardViewDeps) {
         /**
          * One Board action. Reuse `requestId` to retry: a completed request writes nothing
          * again. A move and Delete are target-state, so a replay after a restart finds the
-         * card where it asked and writes nothing. `changed` is false when the store did not
-         * change; a request with nothing to write neither saves nor keeps a receipt.
-         *
+         * card where it asked and writes nothing; they send the card's `row.taskRevision`,
+         * and a card that changed since is refused (STALE_REVISION). `changed` is false when
+         * the store did not change; a request with nothing to write neither saves nor keeps
+         * a receipt.
          */
         async runBoardAction(input: { requestId: string; action: NativeBoardAction }): Promise<NativeHostResult<NativeBoardActionResult>> {
             const ready = deps.readiness();

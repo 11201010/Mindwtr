@@ -14,8 +14,11 @@ import {
 } from './menu-views-model';
 import { createWriteRecorder, loadMenuViewsFixture, seedMenuViewsStore, type MenuViewScenario } from './menu-views-model.replay';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
+import { revisionOf } from './native-request-receipts';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
+import type { ViewSectionDefinition } from './types';
 import { generateUUID } from './uuid';
 
 const fixture = loadMenuViewsFixture();
@@ -59,6 +62,16 @@ describe('native host contract: More sheet and list views', () => {
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         return result.value;
     };
+    type Host = ReturnType<typeof createNativeHostContract>;
+    /** A parked project's revision, as Waiting shows it. */
+    const parkedRevision = (host: Host, id: string) => value(host.getWaitingView({ offset: 0, limit: 1 })).deferred!.rows.items
+        .find((row) => row.id === id)!.projectRevision;
+    /** Someday rows' revisions, as the view shows them. */
+    const somedayRevisions = (host: Host, ids: string[]) => {
+        const rows = value(host.getSomedayView({ offset: 0, limit: 100 })).items.flatMap((item) => (item.type === 'task' ? [item.row] : []));
+        return Object.fromEntries(ids.map((id) => [id, rows.find((row) => row.id === id)!.taskRevision]));
+    };
+    const projectRevision = (id: string) => revisionOf(useTaskStore.getState()._projectsById.get(id)!);
     const visible = () => {
         const state = useTaskStore.getState();
         const areas = sortAreasForDisplay(state.areas);
@@ -79,7 +92,9 @@ describe('native host contract: More sheet and list views', () => {
         const waiting = buildWaitingViewModel({ tasks: visibleTasks, projects: state.projects, resolvedAreaFilter, areaById, person: 'alice', t });
         const waitingView = value(host.getWaitingView({ person: 'alice', offset: 0, limit: 100 }));
         expect(waitingView.rows.map((row) => row.id)).toEqual(waiting.tasks.map((task) => task.id));
-        expect(waitingView.deferred).toEqual({ ...waiting.deferred, rows: { total: waiting.deferred!.rows.length, items: waiting.deferred!.rows } });
+        // Parked project rows carry the revision activateProject compares.
+        const parked = waiting.deferred!.rows.map((row) => ({ ...row, projectRevision: projectRevision(row.id) }));
+        expect(waitingView.deferred).toEqual({ ...waiting.deferred, rows: { total: parked.length, items: parked } });
 
         const tasks = selectSomedayTasks(visibleTasks);
         const options = buildSomedayFilterOptions({ tasks, projects: state.projects, settings: state.settings, t });
@@ -166,21 +181,28 @@ describe('native host contract: More sheet and list views', () => {
             .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await host.reorderSomedaySections({ ids: ['s-later', 's-ideas'] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await host.renameSomedaySection({ id: 's-later', title: '  ' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await host.createSomedaySection({ title: ' ' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: null, requestId: 'nope' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-        expect(await host.activateProject({ projectId: 'p-old' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.createSomedaySection({ title: ' ', requestId: generateUUID() })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.createSomedaySection({ title: 'Hobbies' } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        const revisions = somedayRevisions(host, ['s-a']);
+        expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: null, requestId: 'nope', taskRevisions: revisions })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // A move carries the revision the view showed for each task it sends, and nothing else.
+        expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: null, requestId: generateUUID() } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a', 's-b'], sectionId: null, requestId: generateUUID(), taskRevisions: revisions }))
+            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.activateProject({ projectId: 'p-old', projectRevision: projectRevision('p-old') })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.activateProject({ projectId: 'p-vendor' } as never)).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(await host.setTaskListSort({ sortBy: 'completed' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
 
     it('writes nothing again for a target already reached', async () => {
         freezeClock();
         const { host, recorder } = await openHost(scenario('someday', 'sections'));
-        expect(value(await host.activateProject({ projectId: 'p-launch' }))).toEqual({ id: 'p-launch', changed: false });
+        expect(value(await host.activateProject({ projectId: 'p-launch', projectRevision: projectRevision('p-launch') }))).toEqual({ id: 'p-launch', changed: false });
         expect(value(await host.renameSomedaySection({ id: 's-later', title: ' Later ' }))).toEqual({ id: 's-later', changed: false });
         expect(value(await host.reorderSomedaySections({ ids: ['s-later', 's-ideas', 's-empty'] }))).toEqual({ changed: false });
-        expect(value(await host.createSomedaySection({ title: 'IDEAS' }))).toEqual({ id: 's-ideas', existing: true });
+        expect(value(await host.createSomedaySection({ title: 'IDEAS', requestId: generateUUID() }))).toEqual({ id: 's-ideas', existing: true });
         expect(value(await host.deleteSomedaySection({ id: 'missing' }))).toEqual({ id: 'missing', changed: false });
-        expect(value(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: 's-later', requestId: generateUUID() })))
+        expect(value(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: 's-later', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a']) })))
             .toEqual({ moved: 0, toast: null, undoRequestId: null });
         expect(recorder.log).toEqual([]);
     });
@@ -196,7 +218,7 @@ describe('native host contract: More sheet and list views', () => {
             gtd: { ...useTaskStore.getState().settings.gtd, viewSections: { someday: [later, future, ideas, folder, travel] as never } },
         });
 
-        const created = value(await host.createSomedaySection({ title: 'Books' }));
+        const created = value(await host.createSomedaySection({ title: 'Books', requestId: generateUUID() }));
         value(await host.renameSomedaySection({ id: 's-ideas', title: 'Big ideas' }));
         const moveDown = value(host.getSomedaySections()).rows[0].moveDown.ids!;
         expect(moveDown).toEqual(['s-ideas', 's-later', 's-empty', created.id]);
@@ -225,7 +247,7 @@ describe('native host contract: More sheet and list views', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario('someday', 'sections'), saveData);
-        const input = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID() };
+        const input = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a', 's-b']) };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.moveSomedayTasksToSection(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
         expect(recorder.log).toHaveLength(1);
@@ -264,7 +286,7 @@ describe('native host contract: More sheet and list views', () => {
                 return result;
             },
         });
-        const input = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID() };
+        const input = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a', 's-b']) };
         saveData.mockRejectedValue(new Error('disk unavailable'));
         expect(await host.moveSomedayTasksToSection(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         expect(recorder.log).toHaveLength(1);
@@ -294,11 +316,13 @@ describe('native host contract: More sheet and list views', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario('someday', 'sections'), saveData);
+        const input = { title: 'Hobbies', requestId: generateUUID() };
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.createSomedaySection({ title: 'Hobbies' })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(await host.createSomedaySection(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         saveData.mockResolvedValue(undefined);
-        const retried = value(await host.createSomedaySection({ title: 'Hobbies' }));
-        expect(retried.existing).toBe(true);
+        // The retry answers from its receipt: the section the request made, named by its UUID.
+        const retried = value(await host.createSomedaySection(input));
+        expect(retried).toEqual({ id: input.requestId.toLowerCase(), existing: false });
         expect(recorder.log).toHaveLength(1);
         const saved = saveData.mock.lastCall?.[0] as { settings: { gtd: { viewSections: { someday: { id: string; title: string }[] } } } };
         expect(saved.settings.gtd.viewSections.someday.find((section) => section.title === 'Hobbies')?.id).toBe(retried.id);
@@ -309,9 +333,10 @@ describe('native host contract: More sheet and list views', () => {
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host, recorder } = await openHost(scenario('waiting', 'base'), saveData);
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.activateProject({ projectId: 'p-vendor' })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        const input = { projectId: 'p-vendor', projectRevision: parkedRevision(host, 'p-vendor') };
+        expect(await host.activateProject(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
         saveData.mockResolvedValue(undefined);
-        expect(value(await host.activateProject({ projectId: 'p-vendor' }))).toEqual({ id: 'p-vendor', changed: false });
+        expect(value(await host.activateProject(input))).toEqual({ id: 'p-vendor', changed: false });
         expect(recorder.log).toEqual([['updateProject', 'p-vendor', { status: 'active' }]]);
         const saved = saveData.mock.lastCall?.[0] as { projects: { id: string; status: string }[] };
         expect(saved.projects.find((project) => project.id === 'p-vendor')?.status).toBe('active');
@@ -387,14 +412,14 @@ describe('native host contract: More sheet and list views', () => {
         const { host } = await openHost(scenario('someday', 'sections'));
         expect(await host.undoSomedaySectionMove({ moveRequestId: generateUUID(), requestId: generateUUID() }))
             .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
-        const move = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID() };
+        const move = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a', 's-b']) };
         expect(value(await host.moveSomedayTasksToSection(move))).toMatchObject({ moved: 2, undoRequestId: move.requestId });
         await useTaskStore.getState().updateTask('s-b', { status: 'next' });
         expect(value(await host.undoSomedaySectionMove({ moveRequestId: move.requestId, requestId: generateUUID() }))).toEqual({ reverted: 1 });
         expect(useTaskStore.getState()._tasksById.get('s-a')?.viewSectionIds).toEqual({ someday: 's-later' });
         expect(useTaskStore.getState()._tasksById.get('s-b')?.viewSectionIds).toEqual({ someday: 's-empty' });
         // A move retried after its receipt is gone is target state: it writes nothing again.
-        const again = { taskIds: ['s-a'], sectionId: 's-ideas', requestId: generateUUID() };
+        const again = { taskIds: ['s-a'], sectionId: 's-ideas', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a']) };
         expect(value(await host.moveSomedayTasksToSection(again))).toMatchObject({ moved: 1 });
         expect(value(await host.moveSomedayTasksToSection({ ...again, requestId: generateUUID() })))
             .toEqual({ moved: 0, toast: null, undoRequestId: null });
@@ -404,9 +429,10 @@ describe('native host contract: More sheet and list views', () => {
         freezeClock();
         const saveData = vi.fn().mockResolvedValue(undefined);
         const { host } = await openHost(scenario('waiting', 'base'), saveData);
+        const input = { projectId: 'p-vendor', projectRevision: parkedRevision(host, 'p-vendor') };
         saveData.mockRejectedValue(new Error('disk unavailable'));
-        expect(await host.activateProject({ projectId: 'p-vendor' })).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
-        await expect(host.activateProject({ projectId: 'p-vendor' })).resolves.toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        expect(await host.activateProject(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        await expect(host.activateProject(input)).resolves.toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
     }, 30_000);
 
     it('titles older completion months with the user\'s date formatting', async () => {
@@ -464,15 +490,125 @@ describe('native host contract: More sheet and list views', () => {
         expect(host.getDoneView(page)).toMatchObject(notReady);
         expect(host.getSomedaySections()).toMatchObject(notReady);
         expect(host.getSomedayMoveDialog({ taskIds: ['s-a'] })).toMatchObject(notReady);
-        expect(await host.activateProject({ projectId: 'p' })).toMatchObject(notReady);
-        expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: null, requestId: generateUUID() })).toMatchObject(notReady);
+        expect(await host.activateProject({ projectId: 'p', projectRevision: 'r' })).toMatchObject(notReady);
+        expect(await host.moveSomedayTasksToSection({ taskIds: ['s-a'], sectionId: null, requestId: generateUUID(), taskRevisions: { 's-a': 'r' } })).toMatchObject(notReady);
         expect(await host.undoSomedaySectionMove({ moveRequestId: generateUUID(), requestId: generateUUID() })).toMatchObject(notReady);
         expect(host.getMenuViewCollection({ view: 'someday', collection: 'tokens', offset: 0, limit: 10, revision: 'r' })).toMatchObject(notReady);
         expect(await host.addSomedaySectionTask({ title: 'x', sectionId: null, captureId: generateUUID() })).toMatchObject(notReady);
-        expect(await host.createSomedaySection({ title: 'x' })).toMatchObject(notReady);
+        expect(await host.createSomedaySection({ title: 'x', requestId: generateUUID() })).toMatchObject(notReady);
         expect(await host.renameSomedaySection({ id: 's', title: 'x' })).toMatchObject(notReady);
         expect(await host.reorderSomedaySections({ ids: [] })).toMatchObject(notReady);
         expect(await host.deleteSomedaySection({ id: 's' })).toMatchObject(notReady);
         expect(await host.setTaskListSort({ sortBy: 'title' })).toMatchObject(notReady);
+    });
+
+    describe('a replay after a restart (a new host, no receipts) never undoes a later change', () => {
+        const stale = { ok: false, error: { code: 'STALE_REVISION' } };
+        const sections = () => useTaskStore.getState().settings.gtd?.viewSections?.someday ?? [];
+        /** Another writer's edit of the Someday sections. */
+        const writeSections = (next: ViewSectionDefinition[]) => useTaskStore.getState().updateSettings({
+            gtd: { ...useTaskStore.getState().settings.gtd, viewSections: { someday: next } },
+        });
+
+        it('activateProject: STALE once the project changed since', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('waiting', 'base'));
+            const input = { projectId: 'p-vendor', projectRevision: parkedRevision(host, 'p-vendor') };
+            expect(value(await host.activateProject(input))).toEqual({ id: 'p-vendor', changed: true });
+            // The user parks it again.
+            await useTaskStore.getState().updateProject('p-vendor', { status: 'waiting' });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.activateProject(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState()._projectsById.get('p-vendor')?.status).toBe('waiting');
+        });
+
+        it('moveSomedayTasksToSection: STALE once a task it moves changed since', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('someday', 'sections'));
+            const input = { taskIds: ['s-a', 's-b'], sectionId: 's-empty', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a', 's-b']) };
+            expect(value(await host.moveSomedayTasksToSection(input))).toMatchObject({ moved: 2 });
+            // The user files s-a elsewhere.
+            await useTaskStore.getState().updateTask('s-a', { viewSectionIds: { someday: 's-ideas' } });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.moveSomedayTasksToSection(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState()._tasksById.get('s-a')?.viewSectionIds).toEqual({ someday: 's-ideas' });
+        });
+
+        it('undoSomedaySectionMove: its Undo lives in memory, so a replay is STALE', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('someday', 'sections'));
+            const move = { taskIds: ['s-a'], sectionId: 's-empty', requestId: generateUUID(), taskRevisions: somedayRevisions(host, ['s-a']) };
+            value(await host.moveSomedayTasksToSection(move));
+            const undo = { moveRequestId: move.requestId, requestId: generateUUID() };
+            expect(value(await host.undoSomedaySectionMove(undo))).toEqual({ reverted: 1 });
+            await useTaskStore.getState().updateTask('s-a', { viewSectionIds: { someday: 's-empty' } });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.undoSomedaySectionMove(undo));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState()._tasksById.get('s-a')?.viewSectionIds).toEqual({ someday: 's-empty' });
+        });
+
+        it('createSomedaySection: the section named by the request UUID answers, renamed since, and nothing is added', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('someday', 'sections'));
+            const input = { title: 'Hobbies', requestId: generateUUID() };
+            const created = value(await host.createSomedaySection(input));
+            expect(created).toEqual({ id: input.requestId.toLowerCase(), existing: false });
+            await writeSections(sections().map((section) => (section.id === created.id ? { ...section, title: 'Crafts' } : section)));
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.createSomedaySection(input));
+            expect(result).toEqual({ ok: true, value: created });
+            expect(wrote).toBe(false);
+            expect(sections().map((section) => section.title)).toEqual(['Later', 'Ideas', 'Travel', 'Crafts']);
+        });
+
+        it('addSomedaySectionTask: the task named by the capture UUID answers, edited since, and nothing is added', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('someday', 'sections'));
+            const input = { title: 'Book flights', sectionId: 's-empty', captureId: generateUUID() };
+            value(await host.addSomedaySectionTask(input));
+            await useTaskStore.getState().updateTask(input.captureId, { status: 'next' });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.addSomedaySectionTask(input));
+            expect(result).toEqual({ ok: true, value: { id: input.captureId, toast: 'Task created' } });
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState()._tasksById.get(input.captureId)?.status).toBe('next');
+        });
+
+        it('renameSomedaySection, reorderSomedaySections, deleteSomedaySection: target state keeps another writer\'s later edit', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('someday', 'sections'));
+            const rename = { id: 's-later', title: 'Soon' };
+            const remove = { id: 's-empty' };
+            const reorder = { ids: ['s-ideas', 's-later'] };
+            value(await host.renameSomedaySection(rename));
+            value(await host.deleteSomedaySection(remove));
+            value(await host.reorderSomedaySections(reorder));
+            // Another field of the same settings: Ideas is renamed.
+            await writeSections(sections().map((section) => (section.id === 's-ideas' ? { ...section, title: 'Big ideas' } : section)));
+            const expected = structuredClone(sections());
+            for (const replay of [
+                (restarted: Host) => restarted.renameSomedaySection(rename),
+                (restarted: Host) => restarted.reorderSomedaySections(reorder),
+                (restarted: Host) => restarted.deleteSomedaySection(remove),
+            ]) {
+                const { result, wrote } = await replayAfterRestart(replay);
+                expect(result).toMatchObject({ ok: true, value: { changed: false } });
+                expect(wrote).toBe(false);
+            }
+            expect(sections()).toEqual(expected);
+        });
+
+        it('setTaskListSort: target state keeps another writer\'s later settings edit', async () => {
+            freezeClock();
+            const { host } = await openHost(scenario('reference', 'base'));
+            value(await host.setTaskListSort({ sortBy: 'title' }));
+            // Another field of the same settings.
+            await useTaskStore.getState().updateSettings({ gtd: { ...useTaskStore.getState().settings.gtd, autoArchiveDays: 3 } });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.setTaskListSort({ sortBy: 'title' }));
+            expect(result).toEqual({ ok: true, value: { sortBy: 'title', changed: false } });
+            expect(wrote).toBe(false);
+            expect(useTaskStore.getState().settings).toMatchObject({ taskSortBy: 'title', gtd: { autoArchiveDays: 3 } });
+        });
     });
 });

@@ -1,8 +1,8 @@
 /**
- * Test support only (imported by the Mind Sweep and saved search
- * tests; not exported). Loads a frozen React Native screen fixture, seeds the store
- * as the mobile harness does, records the store calls the harness records, and opens
- * a native host over that store.
+ * Test support only (imported by the native host contract tests; not exported).
+ * Loads a frozen React Native screen fixture, seeds the store as the mobile harness
+ * does, records the store calls the harness records, and opens a native host over
+ * that store; replayAfterRestart replays a request on a new host.
  */
 import { readFileSync } from 'node:fs';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
@@ -82,4 +82,19 @@ export async function restartScreenHost() {
     value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
     value(await host.activate({ writeSafetyReady: true }));
     return host;
+}
+
+/**
+ * A replay after a restart: a new host (restartScreenHost's) runs `replay`, a request that
+ * already ran before a later change. `wrote` says whether the store's data changed.
+ */
+export async function replayAfterRestart<T>(replay: (host: ScreenHost) => Promise<NativeHostResult<T>>) {
+    const host = await restartScreenHost();
+    const data = () => {
+        const state = useTaskStore.getState();
+        return [state._allTasks, state._allProjects, state._allSections, state._allAreas, state._allPeople, state.settings];
+    };
+    const before = data();
+    const result = await replay(host);
+    return { result, wrote: data().some((entry, index) => entry !== before[index]) };
 }

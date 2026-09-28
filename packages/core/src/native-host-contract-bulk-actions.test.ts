@@ -4,6 +4,8 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract } from './native-host-contract';
 import type { NativeBulkAction } from './native-host-contract-bulk-actions';
 import { createBulkOrganizeArea, createBulkOrganizeProject } from './bulk-organize-create';
+import { taskRevisionOf, taskRevisionsOf } from './native-request-receipts';
+import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import {
     BULK_ORGANIZE_KEEP,
@@ -67,10 +69,18 @@ describe('native host contract: selection mode', () => {
     };
     /** Every task as stored, less the device stamp. */
     const tasksNow = () => normalize(useTaskStore.getState()._allTasks.map(({ revBy: _revBy, ...task }) => task));
+    type Host = Awaited<ReturnType<typeof open>>['host'];
+    /** The action with the revisions the list's selection view shows for its explicit rows. */
+    const withRevisions = (host: Host, list: 'inbox' | 'waiting' | 'someday' | 'reference' | 'done', action: NativeBulkAction): NativeBulkAction => (
+        action.taskIds === undefined || action.type === 'restoreTasks' ? action
+            : { ...action, taskRevisions: value(host.getBulkActions({ list, params: list === 'reference' ? { includeArchivedProjects: true } : {}, taskIds: action.taskIds })).taskRevisions }
+    );
+    /** The toast's Undo as core builds it: the trashed tasks, at their revisions after the delete. */
+    const undoOf = (taskIds: string[]) => ({ type: 'restoreTasks', taskIds, taskRevisions: taskRevisionsOf(taskIds) });
 
     describe('equals core called directly', () => {
         const cases: { name: string; action: NativeBulkAction; list: 'inbox' | 'done'; write: () => TaskListBulkWrite | null }[] = [
-            { name: 'move', list: 'inbox', action: { type: 'moveTasks', taskIds: ['i-call', 'i-milk'], status: 'next' }, write: () => ({ kind: 'move', taskIds: ['i-call', 'i-milk'], status: 'next' }) },
+            { name: 'move', list: 'inbox', action: { type: 'moveTasks', taskIds: ['i-call', 'i-milk'], status: 'next' } as NativeBulkAction, write: () => ({ kind: 'move', taskIds: ['i-call', 'i-milk'], status: 'next' }) },
             {
                 name: 'add a tag', list: 'inbox',
                 action: { type: 'editTaskTokens', taskIds: ['i-call', 'i-milk'], field: 'tags', mode: 'add', values: ['urgent'] },
@@ -99,13 +109,14 @@ describe('native host contract: selection mode', () => {
                 await flushPendingSave();
 
                 const contract = await open();
-                const result = value(await contract.host.runBulkAction({ requestId: requestId(), list: entry.list, action: entry.action }));
+                const action = withRevisions(contract.host, entry.list, entry.action);
+                const result = value(await contract.host.runBulkAction({ requestId: requestId(), list: entry.list, action }));
                 expect({ tasks: tasksNow(), log: contract.log }).toEqual(expected);
                 expect(result).toEqual({
                     changed: true,
                     toast: toast && {
                         tone: toast.tone, title: toast.title, message: toast.message,
-                        undo: toast.undo ? { label: toast.undo.label, action: { type: 'restoreTasks', taskIds: toast.undo.taskIds } } : null,
+                        undo: toast.undo ? { label: toast.undo.label, action: undoOf(toast.undo.taskIds) } : null,
                     },
                 });
             });
@@ -155,7 +166,7 @@ describe('native host contract: selection mode', () => {
             freezeClock();
             const saveData = vi.fn().mockResolvedValue(undefined);
             const { host, log } = await open(saveData);
-            const input = { requestId: requestId(), list, action };
+            const input = { requestId: requestId(), list, action: withRevisions(host, list, action) };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.runBulkAction(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED', message: 'disk unavailable' } });
             expect(log).toEqual(expectedLog);
@@ -173,7 +184,7 @@ describe('native host contract: selection mode', () => {
             const saves = saveData.mock.calls.length;
             expect(await host.runBulkAction(input)).toEqual(retried);
             expect(saveData).toHaveBeenCalledTimes(saves);
-            expect(await host.runBulkAction({ ...input, action: { ...action, taskIds: ['w-bob'] } as NativeBulkAction }))
+            expect(await host.runBulkAction({ ...input, action: { ...input.action, taskIds: ['w-bob'] } as NativeBulkAction }))
                 .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
             return { host, retried };
         };
@@ -207,10 +218,10 @@ describe('native host contract: selection mode', () => {
             const { host, retried } = await retry('inbox', { type: 'trashTasks', taskIds: ['i-milk', 'i-party'] }, [['batchDeleteTasks', ['i-milk', 'i-party']]]);
             expect(retried).toEqual({ ok: true, value: { changed: true, toast: {
                 tone: 'success', title: 'Done', message: '2 tasks',
-                undo: { label: 'Undo', action: { type: 'restoreTasks', taskIds: ['i-milk', 'i-party'] } },
+                undo: { label: 'Undo', action: undoOf(['i-milk', 'i-party']) },
             } } });
-            expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: { type: 'restoreTasks', taskIds: ['i-milk', 'i-party'] } })))
-                .toEqual({ changed: true, toast: null });
+            const undo = (retried as { value: { toast: { undo: { action: NativeBulkAction } } } }).value.toast.undo.action;
+            expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: undo }))).toEqual({ changed: true, toast: null });
             expect(useTaskStore.getState()._tasksById.get('i-milk')?.deletedAt).toBeUndefined();
         }, 20_000);
 
@@ -218,9 +229,9 @@ describe('native host contract: selection mode', () => {
             freezeClock();
             const saveData = vi.fn().mockResolvedValue(undefined);
             const { host, log } = await open(saveData);
-            value(await host.runBulkAction({ requestId: requestId(), list: 'waiting', action: { type: 'trashTasks', taskIds: ['w-landlord'] } }));
+            const trashed = value(await host.runBulkAction({ requestId: requestId(), list: 'waiting', action: withRevisions(host, 'waiting', { type: 'trashTasks', taskIds: ['w-landlord'] }) }));
             log.length = 0;
-            const undo = { requestId: requestId(), list: 'waiting' as const, action: { type: 'restoreTasks' as const, taskIds: ['w-landlord'] } };
+            const undo = { requestId: requestId(), list: 'waiting' as const, action: trashed.toast!.undo!.action };
             saveData.mockRejectedValue(new Error('disk unavailable'));
             expect(await host.runBulkAction(undo)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
             saveData.mockResolvedValue(undefined);
@@ -260,6 +271,18 @@ describe('native host contract: selection mode', () => {
             const done = value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: { type: 'trashTasks', selectAll: fresh.selectAll! } }));
             expect(done).toMatchObject({ changed: true, toast: { message: '3 tasks', undo: { action: { type: 'restoreTasks', taskIds: ['i-party', 'i-call', 'i-milk'] } } } });
         });
+
+        it('refuses with STALE_REVISION once a selected row changed, even one still on screen', async () => {
+            freezeClock();
+            const { host, log } = await open();
+            const view = value(host.getBulkActions({ list: 'inbox', selectAll: {} }));
+            // Another device renames a row: the rows on screen stay the same.
+            await useTaskStore.getState().updateTask('i-call', { title: 'Call the dentist' });
+            log.length = 0;
+            expect(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: { type: 'moveTasks', status: 'next', selectAll: view.selectAll! } }))
+                .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            expect(log).toEqual([]);
+        });
     });
 
     describe('selection', () => {
@@ -279,6 +302,25 @@ describe('native host contract: selection mode', () => {
             // A row filtered away leaves the selection.
             const filtered = value(host.getBulkActions({ list: 'reference', params: { filters: { searchQuery: 'wifi' } }, taskIds: ['r-manual', 'r-wifi'] }));
             expect(filtered).toMatchObject({ selectedIds: ['r-wifi'], selectedCount: 1 });
+        });
+
+        it('shows the revision of each selected row, for the action to send', async () => {
+            freezeClock();
+            const { host, log } = await open();
+            const tasks = useTaskStore.getState()._tasksById;
+            const revisions = { 's-novel': taskRevisionOf(tasks.get('s-novel')!), 's-piano': taskRevisionOf(tasks.get('s-piano')!) };
+            const view = value(host.getBulkActions({ list: 'someday', taskIds: ['s-novel', 's-piano'] }));
+            expect(view.taskRevisions).toEqual(revisions);
+            expect(view.moveToSection).toEqual({ taskIds: ['s-novel', 's-piano'], taskRevisions: revisions });
+            // Select all's own revision covers its rows.
+            expect(value(host.getBulkActions({ list: 'someday', selectAll: {} })).taskRevisions).toEqual({});
+            // Explicit rows need exactly their revisions.
+            const refused = { ok: false, error: { code: 'INVALID_INPUT' } };
+            expect(await host.runBulkAction({ requestId: requestId(), list: 'someday', action: { type: 'trashTasks', taskIds: ['s-novel'] } })).toMatchObject(refused);
+            expect(await host.runBulkAction({ requestId: requestId(), list: 'someday', action: { type: 'trashTasks', taskIds: ['s-novel'], taskRevisions: revisions } }))
+                .toMatchObject(refused);
+            expect(await host.runBulkAction({ requestId: requestId(), list: 'someday', action: { type: 'restoreTasks', taskIds: ['s-novel'] } as never })).toMatchObject(refused);
+            expect(log).toEqual([]);
         });
 
         it('the project picker lists projects in the mobile picker order (by order, not by title)', async () => {
@@ -333,11 +375,16 @@ describe('native host contract: selection mode', () => {
                 { type: 'editTaskTokens', taskIds: ['i-milk'], field: 'tags', mode: 'add', values: ['urgent'] },
                 { type: 'organize', taskIds: ['i-read'], draft: { projectChoice: 'p-home', dueDate: '2026-10-20' } },
                 { type: 'trashTasks', taskIds: ['i-party'] },
-                { type: 'restoreTasks', taskIds: ['i-party'] },
             ];
-            for (const action of actions) {
-                expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }))).toMatchObject({ changed: true });
+            let undo: NativeBulkAction | null = null;
+            for (const [index, action] of [...actions].entries()) {
+                actions[index] = withRevisions(host, 'inbox', action);
+                const result = value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: actions[index] }));
+                expect(result).toMatchObject({ changed: true });
+                undo = result.toast?.undo?.action ?? undo;
             }
+            actions.push(undo!);
+            expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: undo! }))).toMatchObject({ changed: true });
             log.length = 0;
             // The Undo's replay finds the task back; the delete's replay would trash it again, so it runs before its Undo.
             for (const action of actions.slice(0, 3)) {
@@ -362,11 +409,66 @@ describe('native host contract: selection mode', () => {
         it('a delete replayed after it landed writes nothing', async () => {
             freezeClock();
             const { host, log } = await open();
-            const action: NativeBulkAction = { type: 'trashTasks', taskIds: ['i-party', 'i-milk'] };
+            const action = withRevisions(host, 'inbox', { type: 'trashTasks', taskIds: ['i-party', 'i-milk'] });
             value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }));
             log.length = 0;
             expect(value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action }))).toEqual({ changed: false, toast: null });
             expect(log).toEqual([]);
+        });
+    });
+
+    describe('a replay after a restart (a new host, no receipts) never undoes a later change', () => {
+        const stale = { ok: false, error: { code: 'STALE_REVISION' } };
+        const task = (id: string) => useTaskStore.getState()._tasksById.get(id)!;
+
+        it.each([
+            ['moveTasks', { type: 'moveTasks', taskIds: ['i-call', 'i-milk'], status: 'next' },
+                () => useTaskStore.getState().updateTask('i-call', { status: 'inbox' }), () => expect(task('i-call').status).toBe('inbox')],
+            ['editTaskTokens', { type: 'editTaskTokens', taskIds: ['i-call'], field: 'tags', mode: 'add', values: ['urgent'] },
+                () => useTaskStore.getState().updateTask('i-call', { tags: ['#health'] }), () => expect(task('i-call').tags).toEqual(['#health'])],
+            ['organize', { type: 'organize', taskIds: ['i-read'], draft: { status: 'someday', tags: 'later' } },
+                () => useTaskStore.getState().updateTask('i-read', { status: 'inbox', tags: [] }), () => expect(task('i-read')).toMatchObject({ status: 'inbox', tags: [] })],
+            ['trashTasks', { type: 'trashTasks', taskIds: ['i-milk', 'i-party'] },
+                async () => { await useTaskStore.getState().restoreTask('i-milk'); await useTaskStore.getState().restoreTask('i-party'); },
+                () => expect([task('i-milk').deletedAt, task('i-party').deletedAt]).toEqual([undefined, undefined])],
+        ] as const)('%s: STALE once a task it writes changed since', async (_name, sent, change, kept) => {
+            freezeClock();
+            const { host } = await open();
+            const input = { requestId: requestId(), list: 'inbox' as const, action: withRevisions(host, 'inbox', sent as NativeBulkAction) };
+            expect(value(await host.runBulkAction(input))).toMatchObject({ changed: true });
+            // The user takes it back by hand.
+            await change();
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runBulkAction(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            kept();
+        });
+
+        it('restoreTasks (a delete\'s Undo): STALE once a task it restores changed since', async () => {
+            freezeClock();
+            const { host } = await open();
+            const trashed = value(await host.runBulkAction({ requestId: requestId(), list: 'inbox', action: withRevisions(host, 'inbox', { type: 'trashTasks', taskIds: ['i-milk'] }) }));
+            const undo = { requestId: requestId(), list: 'inbox' as const, action: trashed.toast!.undo!.action };
+            expect(value(await host.runBulkAction(undo))).toEqual({ changed: true, toast: null });
+            // The user deletes it again.
+            await useTaskStore.getState().deleteTask('i-milk');
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runBulkAction(undo));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('i-milk').deletedAt).toBeTruthy();
+        });
+
+        it('Select all: STALE once a row it selects changed since, even one still on screen', async () => {
+            freezeClock();
+            const { host } = await open();
+            const view = value(host.getBulkActions({ list: 'inbox', selectAll: {} }));
+            const input = { requestId: requestId(), list: 'inbox' as const, action: { type: 'editTaskTokens', field: 'tags', mode: 'add', values: ['urgent'], selectAll: view.selectAll! } as NativeBulkAction };
+            expect(value(await host.runBulkAction(input))).toMatchObject({ changed: true });
+            await useTaskStore.getState().updateTask('i-call', { tags: ['#health'] });
+            const { result, wrote } = await replayAfterRestart((restarted) => restarted.runBulkAction(input));
+            expect(result).toMatchObject(stale);
+            expect(wrote).toBe(false);
+            expect(task('i-call').tags).toEqual(['#health']);
         });
     });
 
@@ -514,6 +616,22 @@ describe('native host contract: selection mode', () => {
             expect(useTaskStore.getState()._projectsById.get(first[1].id)?.deletedAt).toBeTruthy();
         }, 20_000);
 
+        it('a new area named like a deleted one restores that area under its own ID, and saves', async () => {
+            freezeClock();
+            const { host } = await open();
+            await useTaskStore.getState().deleteArea('a-home');
+            await flushPendingSave();
+            const input = { requestId: requestId(), list: 'inbox' as const, kind: 'area' as const, name: 'Home' };
+            // The store restores the deleted area: the request UUID must not rename it.
+            expect(value(await host.createBulkOrganizeDestination(input))).toMatchObject({ id: 'a-home', changed: true });
+            expect(useTaskStore.getState()._allAreas.filter((area) => area.name === 'Home').map((area) => [area.id, area.deletedAt]))
+                .toEqual([['a-home', undefined]]);
+            expect(useTaskStore.getState().persistenceFailure).toBeNull();
+            // A replay after a restart finds no row under its UUID and a live Home: refused, nothing written.
+            const replayed = await replayAfterRestart((restarted) => restarted.createBulkOrganizeDestination(input));
+            expect(replayed).toMatchObject({ result: { ok: false, error: { code: 'INVALID_INPUT' } }, wrote: false });
+        });
+
         it('refuses invalid input without writing', async () => {
             freezeClock();
             const { host } = await open();
@@ -550,8 +668,13 @@ describe('native host contract: selection mode', () => {
     it('refuses invalid input without writing', async () => {
         freezeClock();
         const { host, log } = await open();
-        const refused = async (list: string, action: unknown) => expect(await host.runBulkAction({ requestId: requestId(), list: list as 'inbox', action: action as NativeBulkAction }))
-            .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        // Explicit rows carry revisions, so each case below is refused for what it names.
+        const refused = async (list: string, action: unknown) => {
+            const sent = action as { taskIds?: unknown };
+            const revisions = Array.isArray(sent.taskIds) ? { taskRevisions: Object.fromEntries(sent.taskIds.map((id: string) => [id, 'r'])) } : {};
+            expect(await host.runBulkAction({ requestId: requestId(), list: list as 'inbox', action: { ...sent, ...revisions } as NativeBulkAction }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        };
         await refused('trash', { type: 'trashTasks', taskIds: ['i-call'] });
         await refused('inbox', { type: 'moveTasks', taskIds: ['i-call'], status: 'inbox' });
         await refused('waiting', { type: 'moveTasks', taskIds: ['w-bob'], status: 'archived' });
