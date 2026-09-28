@@ -153,7 +153,23 @@ export function parseSearchQuery(query: string): SearchQuery {
         token = decodeSearchValue(token);
         if (!token) continue;
 
+        // The quick-add prefixes work in search too (#1264): `@home` is
+        // `context:@home`, `#tag` is `tag:#tag`, `%name` is `person:name`.
+        // Parse them before fields so a colon inside a quoted value stays data.
+        // A bare prefix stays a text term.
         const colonIndex = token.indexOf(':');
+        const shorthand = SHORTHAND_FIELDS[token[0]];
+        if (shorthand && token.length > 1 && (colonIndex < 0 || token[1] === '"')) {
+            const value = decodeSearchValue(token.slice(1));
+            currentTerms.push({
+                field: shorthand,
+                comparator: null,
+                value: shorthand === 'person' ? value : `${token[0]}${value}`,
+                negated,
+            });
+            continue;
+        }
+
         if (colonIndex > 0) {
             const field = token.slice(0, colonIndex).toLowerCase();
             const valueRaw = token.slice(colonIndex + 1);
@@ -165,19 +181,6 @@ export function parseSearchQuery(query: string): SearchQuery {
                 negated,
             });
         } else {
-            // The quick-add prefixes work in search too (#1264): `@home` is
-            // `context:@home`, `#tag` is `tag:#tag`, `%name` is `person:name`.
-            // A bare prefix stays a text term.
-            const shorthand = SHORTHAND_FIELDS[token[0]];
-            if (shorthand && token.length > 1) {
-                currentTerms.push({
-                    field: shorthand,
-                    comparator: null,
-                    value: shorthand === 'person' ? token.slice(1) : token,
-                    negated,
-                });
-                continue;
-            }
             currentTerms.push({
                 field: null,
                 comparator: null,

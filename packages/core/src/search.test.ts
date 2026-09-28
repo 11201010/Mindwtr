@@ -180,6 +180,33 @@ describe('search', () => {
         expect(filterTasksBySearch(tasks, [], '@').map((task) => task.id)).toEqual(['work']);
     });
 
+    it('decodes quoted shorthand values before matching them', () => {
+        const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
+        const base = { status: 'next' as const, createdAt: nowIso, updatedAt: nowIso };
+        const tasks: Task[] = [
+            {
+                id: 'multiword', title: 'Multiword shorthand', assignedTo: 'Alex Smith',
+                contexts: ['@home office'], tags: ['#family trip'], ...base,
+            },
+            {
+                id: 'colon', title: 'Colon shorthand', assignedTo: 'Alex: "Ace" Smith',
+                contexts: ['@work'], tags: ['#people'], ...base,
+            },
+            {
+                id: 'other', title: 'Other task', assignedTo: 'Taylor',
+                contexts: ['@work'], tags: ['#people'], ...base,
+            },
+        ];
+        const ids = (query: string) => filterTasksBySearch(tasks, [], query).map((task) => task.id);
+
+        expect(ids('%"Alex Smith"')).toEqual(['multiword']);
+        expect(ids('@"home office"')).toEqual(['multiword']);
+        expect(ids('#"family trip"')).toEqual(['multiword']);
+        expect(ids('-@"home office"')).toEqual(['colon', 'other']);
+        expect(ids('%"Alex: \\"Ace\\" Smith"')).toEqual(['colon']);
+        expect(ids('person:"Alex: \\"Ace\\" Smith"')).toEqual(['colon']);
+    });
+
     it('matches project filter by title', () => {
         const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
         const projects: Project[] = [
