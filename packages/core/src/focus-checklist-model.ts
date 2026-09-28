@@ -36,7 +36,7 @@ export function applyFocusChecklistEdit(checklist: readonly ChecklistItem[], edi
 
 export type FocusChecklistPageModel = {
     backLabel: string;
-    /** Shown alone when the task is not among the visible tasks (deleted, archived, or unknown). */
+    /** Shown alone under the header Back when the task is not among the visible tasks (deleted, archived, or unknown). */
     missingText: string;
     /** The task's title; null when the task is missing. */
     title: string | null;

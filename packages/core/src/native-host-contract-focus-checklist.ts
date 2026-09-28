@@ -10,7 +10,7 @@
  * - getFocusChecklist reads the page for a task ID; its items come in windows of
  *   at most 100 (`offset`, `limit`; a later window sends the first one's `revision`).
  *   A task that is not among the visible tasks (deleted, archived, unknown) reads
- *   `found: false`: show `missingText` alone.
+ *   `found: false`: show `missingText` alone under the header Back.
  * - Each item carries its `toggle` and `remove` edits; a rename is
  *   `{ kind: 'rename', index, itemId, text }` with the typed text; Add is
  *   `{ kind: 'add', itemId }` with a new UUID for the item. Send one with

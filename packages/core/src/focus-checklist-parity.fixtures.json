@@ -3,7 +3,19 @@
   "command": "cd apps/mobile && MINDWTR_CAPTURE_FOCUS_CHECKLIST=1 MINDWTR_CAPTURE_FOCUS_CHECKLIST_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run app/check-focus.parity.test.tsx",
   "capturedAt": "0b859c1b729cd204bd3a8282be56d9ea300cd06d",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except the Mind Sweep, saved search and Focus checklist parity harnesses and their fixtures.",
-  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). Theme colors are markers: a button is `tinted` when drawn in the tint, an input is `secondary` when its text uses the secondary color. generateUUID returns uuid-1, uuid-2, ... in each scenario. `fail` makes the next updateTask resolve { success: false, error } (refuse), { success: false } (refuseSilent) or throw. Strings are English."
+  "rendering": "react-test-renderer over the apps/mobile react-native shim (host elements by name). Theme colors are markers: a button is `tinted` when drawn in the tint, an input is `secondary` when its text uses the secondary color. generateUUID returns uuid-1, uuid-2, ... in each scenario. `fail` makes the next updateTask resolve { success: false, error } (refuse), { success: false } (refuseSilent) or throw. Strings are English.",
+  "recaptured": [
+   {
+    "base": "fba67ff7b",
+    "change": "The missing-task state now shows the header Back (task rn-pass11-bugs-20260928-05). Before, it showed only the missing text, and the route has no navigation header, so there was no way back.",
+    "command": "cd apps/mobile && TZ=UTC bunx vitest run app/check-focus.parity.test.tsx, with the React Native fix in place; only the observations below were replaced by hand, and every other observation matched the frozen one",
+    "observations": [
+     "an archived task: observation 1 buttons: [] became the header Back [\"button\", \"Back\", null, false, 0]",
+     "a deleted task: observation 1 buttons: [] became the header Back [\"button\", \"Back\", null, false, 0]",
+     "an unknown task: observation 1 buttons: [] became the header Back [\"button\", \"Back\", null, false, 0]"
+    ]
+   }
+  ]
  },
  "timeZone": "UTC",
  "now": "2026-09-27T14:00:00.000Z",
@@ -2124,7 +2136,15 @@
     "texts": [
      "No tasks found"
     ],
-    "buttons": [],
+    "buttons": [
+     [
+      "button",
+      "Back",
+      null,
+      false,
+      0
+     ]
+    ],
     "inputs": [],
     "toasts": [],
     "writes": [],
@@ -2136,7 +2156,15 @@
     "texts": [
      "No tasks found"
     ],
-    "buttons": [],
+    "buttons": [
+     [
+      "button",
+      "Back",
+      null,
+      false,
+      0
+     ]
+    ],
     "inputs": [],
     "toasts": [],
     "writes": [],
@@ -2148,7 +2176,15 @@
     "texts": [
      "No tasks found"
     ],
-    "buttons": [],
+    "buttons": [
+     [
+      "button",
+      "Back",
+      null,
+      false,
+      0
+     ]
+    ],
     "inputs": [],
     "toasts": [],
     "writes": [],
