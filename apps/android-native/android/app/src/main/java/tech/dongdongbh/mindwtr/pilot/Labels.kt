@@ -18,6 +18,8 @@ val LABEL_KEYS = listOf(
     "nav.addTask", "quickAdd.inputLabel", "quickAdd.bulkImportTextFile", "quickAdd.bulkImportTextFileLabel", "common.more", "common.retry", "common.done", "common.edit", "common.back",
     "agenda.laterToday",
     "common.cancel", "common.close", "common.save", "common.ok", "common.clear", "common.discard",
+    // RN's capture screen's failure line (its other words are core's view).
+    "task.addFailed",
     "common.none", "common.notSet", "taskEdit.titleLabel", "taskEdit.descriptionLabel", "taskEdit.statusLabel",
     "taskEdit.priorityLabel", "taskEdit.noProjectOption", "taskEdit.startDateLabel",
     "taskEdit.dueDateLabel", "taskEdit.discardChanges", "taskEdit.discardChangesDesc", "projects.archivedReadOnlyHint",

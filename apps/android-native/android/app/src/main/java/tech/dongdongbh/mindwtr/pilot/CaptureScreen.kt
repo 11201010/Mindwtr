@@ -323,7 +323,7 @@ fun CapturePopup(model: InboxViewModel, draft: CaptureDraft) = with(model) {
                 // RN's field: Return saves (Add another keeps the keyboard up for the next capture). RN's mic is not built.
                 TitleField(draft.text, copy.getString("inputLabel"), !locked, Modifier.focusRequester(titleFocus)) { typed -> typeCapture(typed) }
                 val preview = view.items("preview")
-                if (preview.isNotEmpty()) PreviewStrip(preview)
+                if (preview.isNotEmpty()) PreviewStrip(preview, Modifier.padding(top = 8.dp))
                 FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
                     itemVerticalAlignment = Alignment.CenterVertically) {
                     if (!draft.expanded) {
@@ -463,25 +463,26 @@ private fun ImportTextButton(enabled: Boolean, pick: () -> Unit) {
     }
 }
 
-/** RN's QuickAddPreview: core's entries as passive chips (a warning in the danger color), at most six, then "+N". */
+/** RN's QuickAddPreview (the popup's and the capture screen's): core's entries as passive chips (a warning in the danger color), at most six, then "+N". */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PreviewStrip(entries: List<JSONObject>) {
+internal fun PreviewStrip(entries: List<JSONObject>, modifier: Modifier) {
     val theme = LocalTheme.current
     val c = theme.colors
     val pill = RoundedCornerShape(999.dp)
-    FlowRow(Modifier.padding(top = 8.dp).fillMaxWidth().testTag("quick-add-preview"), horizontalArrangement = Arrangement.spacedBy(6.dp),
+    FlowRow(modifier.fillMaxWidth().testTag("quick-add-preview"), horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (entry in entries.take(PREVIEW_CHIPS)) {
             val warning = entry.getString("tone") == "warning"
+            // RN's chip: its padding (8, 2) inside a 1 dp border, and RN's Android text line (font padding) of 13.
             Row(Modifier.clip(pill).background(if (warning) theme.dangerWash else c.filterBg).border(1.dp, if (warning) c.danger else c.border, pill)
-                .padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                entry.text("label")?.let { Text(it, style = rnText(11, 400), color = if (warning) c.danger else c.secondaryText, maxLines = 1) }
-                Text(entry.getString("value"), style = rnText(11, 600), color = if (warning) c.danger else c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                .padding(horizontal = 9.dp, vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                entry.text("label")?.let { Text(it, style = rnText(11, 400, 13), color = if (warning) c.danger else c.secondaryText, maxLines = 1) }
+                Text(entry.getString("value"), style = rnText(11, 600, 13), color = if (warning) c.danger else c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (entries.size > PREVIEW_CHIPS) Box(Modifier.clip(pill).background(c.filterBg).border(1.dp, c.border, pill).padding(horizontal = 8.dp, vertical = 2.dp)) {
-            Text("+${entries.size - PREVIEW_CHIPS}", style = rnText(11, 600), color = c.secondaryText)
+        if (entries.size > PREVIEW_CHIPS) Box(Modifier.clip(pill).background(c.filterBg).border(1.dp, c.border, pill).padding(horizontal = 9.dp, vertical = 3.dp)) {
+            Text("+${entries.size - PREVIEW_CHIPS}", style = rnText(11, 600, 13), color = c.secondaryText)
         }
     }
 }
@@ -553,9 +554,9 @@ private fun DueDates(due: JSONObject, enabled: Boolean, send: (JSONObject) -> Un
     }
 }
 
-/** RN's picker card over the popup: its title, the search field, core's create or add row, and core's list. */
+/** RN's picker card over the popup (and the capture screen's several-lines question): its title, then its content. */
 @Composable
-private fun PickerCard(title: String, dismiss: () -> Unit, content: @Composable () -> Unit) {
+internal fun PickerCard(title: String, dismiss: () -> Unit, content: @Composable () -> Unit) {
     val theme = LocalTheme.current
     val c = theme.colors
     Box(Modifier.fillMaxSize().imePadding().background(theme.scrim).pointerInput(Unit) { detectTapGestures { dismiss() } }.padding(horizontal = 20.dp),
@@ -678,7 +679,7 @@ private fun InboxViewModel.LinesConfirm(model: InboxViewModel, confirm: JSONObje
 }
 
 @Composable
-private fun DialogAction(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) =
+internal fun DialogAction(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) =
     Box(Modifier.heightIn(min = 44.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center) {
         Text(label, style = rnText(14, 600), color = color, modifier = Modifier.fade(if (enabled) 1f else 0.5f))

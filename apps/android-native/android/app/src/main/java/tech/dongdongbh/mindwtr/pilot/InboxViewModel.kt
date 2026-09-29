@@ -82,7 +82,7 @@ internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_N
  */
 private val STALE_SHOWN = setOf("saveDraft", "update", "calendarCreate", "manageEditor")
 /** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
-private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS
+private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -229,10 +229,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val menu = MenuModel(this, saved, prefs, File(app.noBackupFilesDir, "menu"))
     /** RN's app lock (AppLock.kt): core's stored value and the gate's state. */
     val lock = AppLock(this)
+    /** RN's capture confirmation screen that links, shares and assistant notes open (CaptureModalModel.kt). */
+    val captureModal = CaptureModalModel(this, saved, File(app.noBackupFilesDir, "capture-modal"))
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
     val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
     /** A system capture ended: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
-    var leaveApp by mutableStateOf(false); private set
+    var leaveApp by mutableStateOf(false); internal set
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
@@ -281,6 +283,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     if (reopenCapture != null) resumeCapture(reopenCapture) else captureStore.delete()
                     // An owed create left on disk goes first; then the open sheet and screen are read.
                     menu.start(sheet)
+                    captureModal.resume()
                     search?.let { current ->
                         readSearch()
                         // A Save Search whose outcome was lost with the process: its exact request first, then the dialog unlocks.
@@ -351,6 +354,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         val action = pending.action
         // An owed capture reopens the popup on the same request, never re-sent here.
         if (action.kind in CAPTURE_KINDS) storedCapture?.let { keepCapture(it.copy(pending = action)) }
+        if (action.kind in CAPTURE_MODAL_KINDS) captureModal.restored(action)
         // An owed saved search or Process Inbox answer reopens its screen on the same request.
         if (action.kind == "saveSearch") keepSearch(SearchState(action.title, saveName = action.patch["name"], saveRequestId = action.id, submitted = action.patch["name"]))
         if (action.kind in STEP_KINDS) storedProcessing?.let { keepProcessing(it.copy(pending = action)) }
@@ -855,6 +859,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             "capture" -> sendCapture(action)
             "captureLines" -> sendLines(action)
             "capturePicker" -> sendPicker(action)
+            "captureModal", "captureModalLines" -> captureModal.retry(action)
             "complete" -> complete(action.id, action.patch["taskRevision"].orEmpty())
             "update" -> sendUpdate(action)
             "saveDraft" -> sendDraft(action)

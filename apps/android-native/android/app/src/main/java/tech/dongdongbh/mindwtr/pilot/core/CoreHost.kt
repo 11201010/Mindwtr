@@ -196,6 +196,12 @@ class CoreHost(
     /** Core's submitQuickCapturePickerQuery with [json] unchanged; its requestId makes a create's retry exact. */
     fun submitQuickCapturePickerQuery(json: String): JSONObject = callAsync("capturePicker", json)
 
+    /** Core's submitCaptureModal (the capture screen's Save) with [json] unchanged; its captureId makes a retry exact. */
+    fun submitCaptureModal(json: String): JSONObject = callAsync("captureModalSubmit", json)
+
+    /** Core's submitCaptureModalLines (the capture screen's Create tasks) with [json] unchanged; one capture ID per line. */
+    fun submitCaptureModalLines(json: String): JSONObject = callAsync("captureModalLines", json)
+
     /** Core's completeTask; [taskRevision] is the row's: a task changed since is refused (STALE_REVISION). */
     fun completeTask(id: String, taskRevision: String): JSONObject = callAsync("complete", id, taskRevision)
 

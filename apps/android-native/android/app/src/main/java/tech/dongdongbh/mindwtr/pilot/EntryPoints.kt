@@ -93,7 +93,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
 
     /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work is open. */
     val blocked: Boolean get() = with(shell) {
-        !writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture != null
+        !writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture != null || captureModal.open != null
             || menu.dialog != null || menu.focusControls.dialog != null || menu.calendar.composer != null || search?.saveName != null
             || menu.screen == MenuScreen.MindSweep
             // Typed text not yet sent: a Settings field before its commit, and the Add new project field while the list shows it
@@ -111,10 +111,13 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
                 val reply = runtime.menuRead("entryPoint", entry.input)
                 check(reply.getInt("version") == 1) { "Unsupported core contract" }
                 // A capture opens RN's popup: core rebuilds its known tokens (openQuickCapture), then reads the entry's draft.
-                reply to reply.optJSONObject("capture")?.let { open ->
+                // RN's capture screen opens on the route params core answered: its first draft and view.
+                reply to (reply.optJSONObject("capture")?.let { open ->
                     runtime.openQuickCapture()
                     runtime.quickCaptureView(JSONObject().put("text", open.getString("text")).put("options", open.getJSONObject("options")).toString())
-                }
+                } ?: reply.optJSONObject("captureModal")?.let { modal ->
+                    runtime.menuRead("captureModalOpen", JSONObject().put("params", modal.getJSONObject("params")).toString())
+                })
             } catch (failure: Throwable) {
                 ui { failed(entry, failure.message) }
                 // A refused input shows its own notice; any other failure is the read's, with the screen's retry.
@@ -151,10 +154,11 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
         head = lifecycle.head
     }
 
-    /** Core's answer: its toast, its route (with the task or project it names), then its capture popup over the tabs. */
+    /** Core's answer: its toast, its route (with the task or project it names), then RN's capture screen over it, or the popup over the tabs. */
     private fun open(reply: JSONObject, view: JSONObject?): Unit = with(shell) {
         reply.optJSONObject("notice")?.let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
         reply.menuText("route")?.let { go(it, reply) }
+        reply.optJSONObject("captureModal")?.let { captureModal.opened(it.getJSONObject("params"), view ?: return) }
         val capture = reply.optJSONObject("capture") ?: return
         // RN's capture screen replaces the screen it opens over; this popup shows over the tabs.
         closeSearch()

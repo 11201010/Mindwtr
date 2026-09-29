@@ -35,6 +35,7 @@ class WriteJournal(
          */
         val SHAPES = mapOf(
             "captureSubmit" to listOf("{captureId}"), "captureLines" to listOf("{captureIds[]}"), "capturePicker" to listOf("{requestId}"),
+            "captureModalSubmit" to listOf("{captureId}"), "captureModalLines" to listOf("{captureIds[]}"),
             "complete" to listOf("id", "id"), "update" to listOf("{id,requestId}"), "saveDraft" to listOf("{id,requestId}"),
             "resetChecklist" to listOf("{id,requestId,taskRevision}"), "taskFocus" to listOf("id", "bool", "id"), "projectFocus" to listOf("id", "bool", "id"),
             "createProject" to listOf("id", "text", "id"), "setAreaFilter" to listOf("{included[],excluded[]}"), "saveSearch" to listOf("{requestId}"),

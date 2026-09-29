@@ -308,6 +308,8 @@ const viewStateKt = source('ViewState.kt');
 const searchUi = source('SearchScreen.kt');
 const processUi = source('ProcessInbox.kt');
 const captureUi = source('CaptureScreen.kt');
+const captureModalUi = source('CaptureModal.kt');
+const captureModalModel = source('CaptureModalModel.kt');
 // The Menu tab (pass 6): its model, the More sheet, the shared widgets, and one file per list screen.
 const menuModel = source('MenuModel.kt');
 const moreUi = source('MoreSheet.kt');
@@ -385,7 +387,7 @@ assert.match(rowUi, /val onDelete = actions\?\.delete\?\.takeIf \{ canEdit && !s
 assert.doesNotMatch(code(rowUi), /SwipeToDismissBox|combinedClickable\([^)]*\)[^\n]*openEditor/, 'no one-gesture swipe; the row\'s own long-press stays free');
 // Every failed command holds its exact retry, except an update or editor save core refused before writing.
 assert.match(model, /internal val UPDATE_REFUSALS = listOf\("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND"\)/);
-assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\) \+ MENU_KINDS/);
+assert.match(model, /private val REFUSABLE = setOf\("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker"\) \+ MENU_KINDS \+ CAPTURE_MODAL_KINDS/);
 assert.match(model, /val refused = message\.startsWith\("STALE_REVISION"\) \|\| \(action\?\.kind in REFUSABLE && UPDATE_REFUSALS\.any \{ message\.startsWith\(it\) \}\)/);
 // A command refused as stale wrote nothing: it is never owed (no retry loop on a revision that can never match), its lists are
 // read again, and nothing shows but the conflict line of the editor save, the status menu and an open draft's Save.
@@ -466,14 +468,14 @@ assert.equal(code(editorUi).match(/toggle = true/g).length, 2, 'only the quick t
 assert.match(editorUi, /if \(status == "waiting" && !active\) openWaitingPrompt\(\) else editFields\(mapOf\("status" to status\)\)/);
 assert.match(model, /keepEditor\(current\.assignWaiting\(person\)\)\s+editFields\(mapOf\("status" to "waiting", "assignedTo" to person\)\)/);
 // One host per process: the Activity and ViewModel never close it, and only the owner constructs it.
-for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...Object.values(menuScreens)]) {
+for (const file of [activity, model, editorUi, focusUi, projectsUi, labelsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, captureModalUi, captureModalModel, menuModel, ...Object.values(menuScreens)]) {
     assert.doesNotMatch(file, /close\(|onDestroy|onCleared|CoreHost\(/);
 }
 const guard = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/LegacyRnStoreGuard.kt'), 'utf8');
 const themeKt = source('Theme.kt');
 const iconsKt = source('Icons.kt');
 const logFileKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/DiagnosticsLogFile.kt'), 'utf8');
-const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, snapshotsKt, coreHost, sqliteBridge, guard,
+const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, captureModalUi, captureModalModel, snapshotsKt, coreHost, sqliteBridge, guard,
     menuModel, logFileKt, ...Object.values(menuScreens)];
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
@@ -711,9 +713,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // holds them, and Kotlin never calls them.
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask'];
-    // Core writes no host method calls yet (the capture confirmation screen, reminder actions, Settings › Sync's option,
-    // Settings › Calendar's edits, Settings › AI): wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['submitCaptureModal', 'submitCaptureModalLines', 'completeReminderTask', 'snoozeReminder', 'setSyncPreference', 'setCalendarSetting',
+    // Core writes no host method calls yet (reminder actions, Settings › Sync's option, Settings › Calendar's edits, Settings › AI):
+    // wiring one into host-entry fails the write-list checks above until the journal takes it.
+    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setSyncPreference', 'setCalendarSetting',
         'addCalendarFeed', 'openAISettings', 'setAISetting', 'setAIKey', 'setAIEndpoint'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
@@ -726,7 +728,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'activateProject', 'moveSomedayTasksToSection', 'undoSomedaySectionMove', 'addSomedaySectionTask', 'createSomedaySection', 'setTaskListSort',
         'runArchiveAction', 'runContextsAction', 'runTrashAction', 'runReviewAction', 'runCalendarAction', 'runBoardAction', 'runBulkAction', 'setFocusGroupBy',
         'saveFocusFilter', 'removeFocusFilterCriterion', 'deleteFocusFilter', 'reorderFocus', 'createBulkOrganizeDestination', 'addMindSweepItem', 'deleteSavedSearch',
-        'setGeneralSetting', 'setGtdSetting', 'setDataSetting', 'saveManageEditor', 'deleteManageItem', 'renameSomedaySection', 'reorderSomedaySections', 'deleteSomedaySection'];
+        'setGeneralSetting', 'setGtdSetting', 'setDataSetting', 'saveManageEditor', 'deleteManageItem', 'renameSomedaySection', 'reorderSomedaySections', 'deleteSomedaySection',
+        'submitCaptureModal', 'submitCaptureModalLines'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -857,7 +860,7 @@ assert.equal(model.match(/runtime\.saveTaskDraft\(/g).length, 1, 'the editor sav
 assert.equal(model.match(/runtime\.updateTask\(/g).length, 1, 'the status menu and the Restore and Next swipes');
 assert.equal(model.match(/runtime\.editorSuggestions\(/g).length, 1);
 assert.equal([activity, owner, editorUi].join('\n').match(/taskEditorModel\(|taskView\(|editTaskChecklist\(|resetTaskChecklist\(|editorSuggestions\(|saveTaskDraft\(|updateTask\(/g), null);
-assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, ...Object.values(menuScreens)].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
+assert.equal([activity, editorUi, focusUi, projectsUi, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, captureModalUi, ...Object.values(menuScreens)].join('\n').replace(/^import .*$/gm, '').match(/CoreHost|callAsync|\bruntime\b/g), null);
 // The save: exactly the changed draft fields, base = their loaded values, as a perform with its exact FailedAction; no change means no call.
 assert.match(editorUi, /val patch: Map<String, String\?> get\(\) = edited\.filter \{ \(field, literal\) -> literal != base\(field\) \}/);
 assert.match(editorUi, /val base: Map<String, String\?> get\(\) = patch\.keys\.associateWith \{ base\(it\) \}/);
@@ -1058,7 +1061,7 @@ assert.match(editorUi, /ChoiceChips\(editor, "priority", editor\.view\.prioritie
 // No literal text reaches a Text, a content description, or a click label; key literals are label keys.
 // Pass 8's Calendar and Board screens and models are held to the same rule.
 const pass8Sources = { calendarModel: source('CalendarModel.kt'), calendarUi: source('CalendarScreen.kt'), boardModel: source('BoardModel.kt'), boardUi: source('BoardScreen.kt') };
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...menuScreens, ...pass8Sources })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, themeKt, iconsKt, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, captureModalUi, captureModalModel, menuModel, ...menuScreens, ...pass8Sources })) {
     // Icons.kt's bySymbol keys are core's SF Symbols names (more-menu-model.ts), not label keys.
     const body = code(text).replace(/val bySymbol = mapOf\([\s\S]*?\n {4}\)/, '');
     for (const [, key] of body.matchAll(/"([a-z][A-Za-z]*(?:\.[A-Za-z]+)+)"/g)) assert(labelKeys.includes(key), `${name}: ${key} is not in LABEL_KEYS`);
@@ -1145,11 +1148,11 @@ for (const scheme of ['light', 'dark']) {
     assert.deepEqual(kotlinPalette(`${scheme.toUpperCase()} =`), FIELDS.map((field) => genericValue(scheme, field)), `RN default ${scheme} matches`);
 }
 // No color is written anywhere else: every other file draws with LocalTheme.
-for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, menuModel, ...menuScreens })) {
+for (const [name, text] of Object.entries({ activity, model, editorUi, focusUi, projectsUi, labelsKt, iconsKt, owner, rowUi, areaUi, viewStateKt, searchUi, processUi, captureUi, captureModalUi, captureModalModel, menuModel, ...menuScreens })) {
     assert.doesNotMatch(code(text), /\bColor\(|Color\.(Black|White|Red|Green|Blue|Gray|Yellow|Cyan|Magenta|DarkGray|LightGray|Transparent)\b|parseColor|"#[0-9A-Fa-f]{3,8}"|0x[0-9A-Fa-f]{8}/,
         `${name} writes a color; colors live only in Theme.kt`);
 }
-assert.equal([activity, focusUi, projectsUi, rowUi, areaUi, searchUi, processUi, captureUi, ...Object.values(menuScreens)].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
+assert.equal([activity, focusUi, projectsUi, rowUi, areaUi, searchUi, processUi, captureUi, captureModalUi, ...Object.values(menuScreens)].join('\n').match(/MaterialTheme\.typography/g), null, 'the lists use RN\'s type (rnText), not Material\'s');
 assert.equal(code(activity).match(/MindwtrTheme\(/g).length, 1, 'one theme wraps the whole app');
 // Core classifies the theme and owns its hues; Kotlin never names a theme mode.
 assert.doesNotMatch(code(themeKt + owner), /"(system|material3-light|material3-dark)"/);
@@ -2231,7 +2234,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(entryKt), /saved\[|SavedStateHandle/, 'the queue lives on disk, not in the saved state');
     assert.match(entryKt, /if \(!queue\.add\(input\.toString\(\)\)\)/);
     // Any open unsaved work holds the entry back (the capture popup and its draft included): a share never replaces it.
-    assert.match(entryKt, /!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture != null\s+\|\| menu\.dialog != null \|\| menu\.focusControls\.dialog != null \|\| menu\.calendar\.composer != null \|\| search\?\.saveName != null\s+\|\| menu\.screen == MenuScreen\.MindSweep/);
+    assert.match(entryKt, /!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture != null \|\| captureModal\.open != null\s+\|\| menu\.dialog != null \|\| menu\.focusControls\.dialog != null \|\| menu\.calendar\.composer != null \|\| search\?\.saveName != null\s+\|\| menu\.screen == MenuScreen\.MindSweep/);
     // Typed text not yet sent holds entries back too: the Add new project field while the Projects list shows it, and a
     // Settings field before its commit (a GTD text field, a Someday section's inline rename).
     assert.match(entryKt, /\|\| \(menu\.screen == MenuScreen\.Settings && menu\.settings\.uncommitted\)\s+\|\| \(projectDraft\.isNotBlank\(\) && openProjectId == null && \(menu\.screen == MenuScreen\.Projects\s+\|\| \(menu\.screen == null && screen == Screen\.Projects && menu\.quickView == "projects"\)\)\)/);
@@ -2453,6 +2456,50 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.deepEqual(late, [], `a fade after a background or border: ${late.join(', ')}`);
 }
 
+// The capture screen (pass B1b): RN's capture-modal.tsx on core's capture screen contract (native-host-contract-capture-modal.ts).
+// Links, shares, assistant notes and capture-quick open it with the route params core's entry answer carries (a link's tags and
+// project stay the screen's props); the + button keeps the popup, as RN. Its open, edits and Cancel are Menu reads; Save and
+// Create tasks are journaled task commands, each request on disk before its call and sent again exactly after process death.
+{
+    const modalKt = captureModalModel;
+    const entryKt = source('EntryPoints.kt');
+    for (const [name, call] of [['captureModalOpen', 'openCaptureModal'], ['captureModalEdit', 'editCaptureModal'], ['captureModalDiscard', 'discardCaptureModal']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${call}\\(input\\),$`, 'm'), `${name} is a Menu read`);
+    }
+    for (const [method, operation, call] of [['captureModalSubmit', 'captureModal', 'submitCaptureModal'], ['captureModalLines', 'captureModalLines', 'submitCaptureModalLines']]) {
+        assert.match(hostEntry, new RegExp(`${method}\\(json: string\\): string \\{\\s*return submit\\(async \\(\\) => taskResult\\('${operation}', await contract\\.${call}\\(JSON\\.parse\\(json\\)\\)\\)\\);`));
+        assert.match(coreHost, new RegExp(`fun ${call}\\(json: String\\): JSONObject = callAsync\\("${method}", json\\)`), `CoreHost.${call} reaches ${method}`);
+        assert.match(modalKt, new RegExp(`runtime\\.${call}\\(request\\)`));
+    }
+    assert.match(hostEntry, /entry\.captureModal \? 'captureModal'/, 'the entry-point line says the capture screen opened');
+    // The entry's screen opens in the same perform as core's answer, on the answer's own params; an open screen holds entries back.
+    assert.match(entryKt, /reply\.optJSONObject\("captureModal"\)\?\.let \{ modal ->\s+runtime\.menuRead\("captureModalOpen", JSONObject\(\)\.put\("params", modal\.getJSONObject\("params"\)\)\.toString\(\)\)/);
+    assert.match(entryKt, /reply\.optJSONObject\("captureModal"\)\?\.let \{ captureModal\.opened\(it\.getJSONObject\("params"\), view \?: return\) \}/);
+    // Save and Create tasks: the exact request on disk before the call; a retry reuses it; a refusal frees the capture UUIDs.
+    assert.match(modalKt, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->/);
+    assert.equal(code(modalKt).match(/keep\(current\.copy\(pending = action, [^\n]*\)\)\s+send\(action\)/g)?.length, 2, 'Save and Create tasks persist their request first');
+    for (const kind of ['captureModal', 'captureModalLines']) assert.match(modalKt, new RegExp(`current\\.pending\\?\\.takeIf \\{ it\\.kind == "${kind}" \\}`), `${kind}: a retry reuses the pending request`);
+    assert.match(modalKt, /shell\.acknowledged\(action\)/);
+    assert.match(modalKt, /val refused = UPDATE_REFUSALS\.any \{ failure\.message\?\.startsWith\(it\) == true \}/);
+    // The Bundle holds only whether the screen is open; the screen itself is on disk, each write synced and renamed into place.
+    assert.match(modalKt, /saved\["captureModal"\] = value != null/);
+    assert.match(modalKt, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(text\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
+    assert.match(model, /val captureModal = CaptureModalModel\(this, saved, File\(app\.noBackupFilesDir, "capture-modal"\)\)/);
+    // After process death the screen comes back (an owed request is sent again first); an owed failure in this process reopens it.
+    assert.match(model, /menu\.start\(sheet\)\s+captureModal\.resume\(\)/);
+    assert.match(model, /if \(action\.kind in CAPTURE_MODAL_KINDS\) captureModal\.restored\(action\)/);
+    assert.match(model, /"captureModal", "captureModalLines" -> captureModal\.retry\(action\)/);
+    // Every control sends core's own edit; Kotlin builds only the typed fields' edits.
+    assert.deepEqual([...new Set([...code(modalKt + captureModalUi).matchAll(/put\("type", "(\w+)"\)/g)].map(([, type]) => type))].sort(), ['setDescription', 'setText']);
+    assert.match(captureModalUi, /edit\(help\.getJSONObject\("edit"\)\)/, 'the ? button sends core\'s toggleHelp');
+    // Full screen over every other screen, as RN presents its modal route; a system capture ends behind the previous app.
+    assert.match(activity, /if \(modal != null && writable\) CaptureModalScreen\(model, modal\)\s+else if \(open != null && writable\) TaskEditorScreen\(model, open\)/);
+    assert.match(modalKt, /if \(close\.getBoolean\("returnToPreviousApp"\)\) shell\.leaveApp = true/);
+    // RN's Save is its fixed blue (capture-modal.tsx styles.save), in every theme.
+    assert.match(themeKt, /val captureSave = rgb\("#3B82F6"\)/);
+    assert.match(captureModalUi, /background\(theme\.captureSave\)/);
+}
+
 const fakeCore = `
 export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
 export function setLogger(logger) { globalThis.coreLogger = logger; }
@@ -2563,6 +2610,11 @@ export function createNativeHostContract() {
     async createQuickCaptureSnapshot() { globalThis.captureInputs.push('snapshot'); return globalThis.snapshotResult; },
     async submitQuickCaptureLines(input) { globalThis.captureInputs.push(JSON.stringify(['lines', input])); return { ok: true, value: { kind: 'saved', taskIds: input.captureIds } }; },
     async submitQuickCapturePickerQuery(input) { globalThis.captureInputs.push(JSON.stringify(['picker', input])); return { ok: true, value: { options: input.options, created: true } }; },
+    openCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalOpen', input])); return { ok: true, value: { draft: { text: '' }, view: { version: 1 } } }; },
+    editCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalEdit', input])); return { ok: true, value: { draft: input.draft, view: { version: 1 } } }; },
+    discardCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalDiscard', input])); return { ok: true, value: { close: { returnTo: null, returnToPreviousApp: false } } }; },
+    async submitCaptureModal(input) { globalThis.captureInputs.push(JSON.stringify(['modalSubmit', input])); return { ok: true, value: { kind: 'saved', taskId: input.captureId, projectId: null, next: 'close', close: { returnTo: null, returnToPreviousApp: false } } }; },
+    async submitCaptureModalLines(input) { globalThis.captureInputs.push(JSON.stringify(['modalLines', input])); return { ok: true, value: { kind: 'saved', taskIds: input.captureIds, close: { returnTo: null, returnToPreviousApp: true } } }; },
     async setTaskFocus(input) { globalThis.newInputs.push(JSON.stringify(['taskFocus', input])); return globalThis.taskFocusResult; },
     async setProjectFocus(input) { globalThis.newInputs.push(JSON.stringify(['projectFocus', input])); return { ok: true, value: { blocked: '' } }; },
     async createProject(input) { globalThis.newInputs.push(JSON.stringify(['createProject', input])); return { ok: true, value: { id: 'p' } }; },
@@ -2739,6 +2791,20 @@ assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: tru
     assert.equal((await poll(ready, ready.MindwtrHost.capturePicker(JSON.stringify(pickerInput)))).value.created, true);
     assert.deepEqual(ready.captureInputs, [JSON.stringify(['submit', submitInput]), 'open', JSON.stringify(['view', { ...draft, picker: { kind: 'project', query: 'h' } }]),
         JSON.stringify(['edit', { ...draft, edit: { type: 'toggleFocus' } }]), 'snapshot', 'snapshot', JSON.stringify(['lines', linesInput]), JSON.stringify(['picker', pickerInput])]);
+    ready.captureInputs.length = 0;
+}
+// The capture screen: its reads are Menu reads, its Save and Create tasks journaled task commands; each passes Kotlin's JSON unchanged.
+{
+    const params = { initialValue: 'Buy%20milk', project: 'Home' };
+    const draft = { text: 'Buy milk', description: '', showHelp: false, suggestion: null, applied: { tags: [] }, failed: false };
+    const reads = [['captureModalOpen', { params }], ['captureModalEdit', { params, draft, edit: { type: 'toggleHelp' } }], ['captureModalDiscard', { params }]];
+    for (const [name, input] of reads) assert.equal((await poll(ready, ready.MindwtrHost.menuRead(name, JSON.stringify(input)))).ok, true, `menuRead ${name}`);
+    const submitInput = { params, draft, captureId: '5', openAfterSave: true };
+    assert.equal((await poll(ready, ready.MindwtrHost.captureModalSubmit(JSON.stringify(submitInput)))).value.taskId, '5');
+    const linesInput = { params, draft: { ...draft, text: 'a\nb' }, captureIds: ['6', '7'] };
+    assert.deepEqual((await poll(ready, ready.MindwtrHost.captureModalLines(JSON.stringify(linesInput)))).value.taskIds, ['6', '7']);
+    assert.deepEqual(ready.captureInputs, [JSON.stringify(['modalOpen', reads[0][1]]), JSON.stringify(['modalEdit', reads[1][1]]), JSON.stringify(['modalDiscard', reads[2][1]]),
+        JSON.stringify(['modalSubmit', submitInput]), JSON.stringify(['modalLines', linesInput])]);
     ready.captureInputs.length = 0;
 }
 // update passes Kotlin's { id, base, patch } to core unchanged, and a refusal keeps its code prefix.

@@ -240,6 +240,8 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val swatchSelected = rgb("#0F172A")
     val settingsScrim = rgba(0, 0, 0, 0.4f)
     val settingsCheck = rgb("#3B82F6")
+    /** RN's capture screen Save (capture-modal.tsx styles.save): the same blue in every theme. */
+    val captureSave = rgb("#3B82F6")
     val nowLine = rgb("#EF4444")
     val blockText = rgb("#FFFFFF")
     val composerScrim = rgba(0, 0, 0, 0.55f)

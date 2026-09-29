@@ -165,7 +165,7 @@ type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayT
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
-    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | MenuCommand;
+    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const ios = globalThis.__mindwtrHostPlatform === 'ios';
     const meta = {
@@ -349,8 +349,8 @@ const runNetDeadline = async (port: string, mode: string, signal: AbortSignal) =
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
 /** What an entry point opened, by kind only: never its URL, route text, or shared text. */
 const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
-    const entry = result.ok ? result.value as { route: string | null; taskId: string | null; projectId: string | null; search: unknown; capture: unknown; notice: unknown } : null;
-    const outcome = !entry ? 'refused' : entry.capture ? 'capture' : entry.notice ? 'notice' : entry.taskId ? 'task' : entry.projectId ? 'project'
+    const entry = result.ok ? result.value as { route: string | null; taskId: string | null; projectId: string | null; search: unknown; capture: unknown; captureModal: unknown; notice: unknown } : null;
+    const outcome = !entry ? 'refused' : entry.captureModal ? 'captureModal' : entry.capture ? 'capture' : entry.notice ? 'notice' : entry.taskId ? 'task' : entry.projectId ? 'project'
         : entry.search ? 'search' : entry.route ? 'screen' : 'nothing';
     const kind = ['link', 'share', 'createNote'].includes(input?.kind as string) ? input.kind as string : 'other';
     try {
@@ -421,6 +421,10 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     // A link, text share or assistant note (native-host-contract-entry-points.ts), and the capture popup's Import .txt.
     entryPoint: (input) => logEntryPoint(input, contract.resolveNativeEntryPoint(input)),
     captureImport: (input) => contract.planQuickCaptureImport(input),
+    // The capture screen an entry opens (native-host-contract-capture-modal.ts): its open, its edits and its Cancel write nothing.
+    captureModalOpen: (input) => contract.openCaptureModal(input),
+    captureModalEdit: (input) => contract.editCaptureModal(input),
+    captureModalDiscard: (input) => contract.discardCaptureModal(input),
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
@@ -1555,6 +1559,14 @@ globalThis.MindwtrHost = {
     /** `json` is `{ picker, query, text, options, requestId }`: the project or area picker's search, chosen or created. */
     capturePicker(json: string): string {
         return submit(async () => taskResult('quickCapturePicker', await contract.submitQuickCapturePickerQuery(JSON.parse(json))));
+    },
+    /** `json` is `{ params, draft, captureId, openAfterSave }`: the capture screen's Save. Reusing captureId retries: written at most once. */
+    captureModalSubmit(json: string): string {
+        return submit(async () => taskResult('captureModal', await contract.submitCaptureModal(JSON.parse(json))));
+    },
+    /** `json` is `{ params, draft, captureIds }`: the capture screen's Create tasks, one task per line in one write. */
+    captureModalLines(json: string): string {
+        return submit(async () => taskResult('captureModalLines', await contract.submitCaptureModalLines(JSON.parse(json))));
     },
     // A revision left out ("", as iOS sends none) is no revision: core requires one only from a journaling host.
     complete(id: string, taskRevision = ''): string {

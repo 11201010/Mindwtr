@@ -124,13 +124,15 @@ class MainActivity : FragmentActivity() {
                 // A waiting entry opens once the app is free (EntryRouter.pump); a system capture that ended puts the app behind the previous one.
                 LaunchedEffect(entries.head, entries.blocked) { entries.pump() }
                 LaunchedEffect(leaveApp) { if (leaveApp) { leftApp(); moveTaskToBack(true) } }
+                val modal = captureModal.open
                 val open = editor
                 val flow = processing?.takeUnless { it.hidden }
                 val searching = search
                 val listed = menu.screen
-                // Full-screen flows over the tabs, as RN presents them: the editor, then Process Inbox, then search, then a
-                // Menu destination (RN pushes it over the tabs).
-                if (open != null && writable) TaskEditorScreen(model, open)
+                // Full-screen flows over the tabs, as RN presents them: RN's capture screen (its modal route, over any screen), the
+                // editor, then Process Inbox, then search, then a Menu destination (RN pushes it over the tabs).
+                if (modal != null && writable) CaptureModalScreen(model, modal)
+                else if (open != null && writable) TaskEditorScreen(model, open)
                 else if (flow != null && writable) ProcessInboxScreen(model, flow)
                 else if (searching != null && writable) SearchScreen(model, searching)
                 else if (listed != null && writable) MenuScreenHost(model, listed)
