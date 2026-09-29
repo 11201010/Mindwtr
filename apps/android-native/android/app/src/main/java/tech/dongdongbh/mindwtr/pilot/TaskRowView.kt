@@ -167,6 +167,11 @@ fun TaskRowItem(
                             Icon(Lucide.Repeat, null, tint = c.secondaryText,
                                 modifier = Modifier.padding(start = 4.dp).size(12.dp))
                         }
+                        // Hidden details keep one cue that the task has more to read (#1287).
+                        if (!details && meta.hasDescription) {
+                            Icon(Lucide.AlignLeft, null, tint = c.secondaryText,
+                                modifier = Modifier.padding(start = 4.dp).size(12.dp))
+                        }
                         if (showStar) StarButton(model, task, starBlocked?.takeIf { !task.isFocusedToday })
                     }
                     // TalkBack hears the line in core's label above, so it is not read twice.

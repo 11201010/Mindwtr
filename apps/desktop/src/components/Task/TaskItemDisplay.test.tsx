@@ -735,6 +735,46 @@ describe('TaskItemDisplay', () => {
         expect(dateOnly.queryByText(safeFormatDate(dateOnlyStartTask.startTime, 'P'))).not.toBeInTheDocument();
     });
 
+    it('marks a task with a description when details are hidden (#1287)', () => {
+        const renderTask = (compactMetaEnabled: boolean) => render(
+            <LanguageProvider>
+                <TaskItemDisplay
+                    task={{ ...baseTask, description: 'Call before noon' }}
+                    language="en"
+                    selectionMode={false}
+                    isViewOpen={false}
+                    actions={{
+                        onToggleView: vi.fn(),
+                        onEdit: vi.fn(),
+                        onDelete: vi.fn(),
+                        onDuplicate: vi.fn(),
+                        onStatusChange: vi.fn(),
+                        openAttachment: vi.fn(),
+                    }}
+                    visibleAttachments={[]}
+                    recurrenceRule=""
+                    recurrenceStrategy="strict"
+                    prioritiesEnabled={false}
+                    timeEstimatesEnabled={false}
+                    isStagnant={false}
+                    showQuickDone={false}
+                    compactMetaEnabled={compactMetaEnabled}
+                    readOnly={false}
+                    t={(key: string) => key}
+                />
+            </LanguageProvider>
+        );
+
+        const hidden = renderTask(false);
+        expect(hidden.container.querySelector('[title="Description"]')).not.toBeNull();
+        expect(hidden.queryByText('Call before noon')).not.toBeInTheDocument();
+        hidden.unmount();
+
+        const shown = renderTask(true);
+        expect(shown.container.querySelector('[title="Description"]')).toBeNull();
+        expect(shown.getByText('Call before noon')).toBeInTheDocument();
+    });
+
     it('keeps board overlay tags in the metadata row instead of the absolute action controls', () => {
         const taggedTask: Task = {
             ...baseTask,

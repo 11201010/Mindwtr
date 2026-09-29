@@ -1,6 +1,6 @@
 import React, { type ReactNode, useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { Check, CircleDot, History, Hourglass, ListChecks, Paperclip, Repeat, UserRound } from 'lucide-react-native';
+import { AlignLeft, Check, CircleDot, History, Hourglass, ListChecks, Paperclip, Repeat, UserRound } from 'lucide-react-native';
 import { useThemeTokens } from '../../hooks/use-theme-tokens';
 import { useStatusColors } from '../../hooks/use-status-colors';
 import {
@@ -106,6 +106,8 @@ export function SwipeableTaskItemContent({
     const ageLabel = hideDetails ? null : meta.ageLabel;
     const descriptionPreview = hideDetails ? null : meta.descriptionPreview;
     const compactRecurrence = hideDetails && meta.parts.some((part) => part.kind === 'recurrence');
+    // Hidden details keep one cue that the task has more to read (#1287).
+    const compactDescription = hideDetails && Boolean(meta.descriptionPreview);
     const statusColors = useStatusColors()[task.status];
     const isAvailableNextAction = sequenceCue === 'available';
     const canNavigateMeta = !selectionMode;
@@ -427,6 +429,7 @@ export function SwipeableTaskItemContent({
                         {task.title}
                     </Text>
                     {compactRecurrence && <Repeat size={12} color={tc.secondaryText} strokeWidth={2} />}
+                    {compactDescription && <AlignLeft size={12} color={tc.secondaryText} strokeWidth={2} />}
                     {canShowFocusToggle && !selectionMode && (
                         <Pressable
                             onPress={(event) => {
