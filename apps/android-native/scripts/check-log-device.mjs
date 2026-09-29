@@ -95,7 +95,9 @@ const setLogging = async (on) => {
  */
 const density = Number(/(\d+)\s*$/.exec(sh('wm density'))[1]) / 160;
 const systemDark = /yes/.test(sh('cmd uimode night'));
-const RN_SWITCH = { on: { track: '3B82F6', thumb: systemDark ? '80CBC4' : '008577' }, off: { track: '767577', thumb: systemDark ? 'BDBDBD' : 'F1F1F1' } };
+// SwitchCompat's thumb image is #FAFAFA: RN's thumb reads its color times 250/255.
+const shade = (hex) => [0, 2, 4].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * 250 / 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+const RN_SWITCH = { on: { track: '3B82F6', thumb: shade(systemDark ? '80CBC4' : '008577') }, off: { track: '767577', thumb: shade(systemDark ? 'BDBDBD' : 'F1F1F1') } };
 const switchColors = (nodes, on) => {
     const [l, t, r, b] = box(withDescription(nodes, words.debugLogging) ?? fail('no Debug logging switch'));
     const file = resolve(work, `switch-${on ? 'on' : 'off'}.png`);

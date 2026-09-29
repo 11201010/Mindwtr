@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -205,11 +204,11 @@ private fun PressRow(label: String, value: String?, divider: Boolean, enabled: B
 
 /** RN's SettingToggleRow: core's label and description, and RN's Android switch sending core's edit. */
 @Composable
-private fun ToggleRow(model: InboxViewModel, toggle: JSONObject, divider: Boolean, enabled: Boolean = true, colors: Pair<Color, Color>? = null,
-                      write: (JSONObject) -> Unit) {
+private fun ToggleRow(model: InboxViewModel, toggle: JSONObject, divider: Boolean, enabled: Boolean = true,
+                      props: RnSwitchProps = LocalTheme.current.settingsSwitch, write: (JSONObject) -> Unit) {
     val label = toggle.getString("label")
     SettingRow(label, toggle.menuText("description"), divider) {
-        RnSwitch(toggle.getBoolean("value"), enabled && model.failedAction == null, label, colors) { write(toggle.getJSONObject("edit")) }
+        RnSwitch(toggle.getBoolean("value"), enabled && model.failedAction == null, label, props) { write(toggle.getJSONObject("edit")) }
     }
 }
 
@@ -278,6 +277,7 @@ private fun SettingInput(value: String, label: String, placeholder: String?, mod
 /** RN's GeneralSettingsScreen on core's getGeneralSettings; every choice sends core's edit through setGeneralSetting. */
 @Composable
 private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
+    val theme = LocalTheme.current
     val appearance = view.getJSONObject("appearance")
     val privacy = view.getJSONObject("privacy")
     val language = view.getJSONObject("language")
@@ -285,9 +285,9 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
     val open = { picker: String -> keepDialog(JSONObject().put("kind", "settingsPicker").put("picker", picker)) }
     SectionTitle(appearance.getString("title"))
     Card {
-        val theme = appearance.getJSONObject("theme")
-        PressRow(theme.getString("label"), theme.getString("value"), false, idle) { open("theme") }
-        ToggleRow(model, appearance.getJSONObject("showTaskAge"), true) { settings.general(it) }
+        val themeRow = appearance.getJSONObject("theme")
+        PressRow(themeRow.getString("label"), themeRow.getString("value"), false, idle) { open("theme") }
+        ToggleRow(model, appearance.getJSONObject("showTaskAge"), true, props = theme.generalSwitch) { settings.general(it) }
         val quick = appearance.getJSONObject("quickAccess")
         PressRow(quick.getString("label"), quick.getString("value"), true, idle) { open("quickAccess") }
     }
@@ -296,9 +296,9 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
         // RN's app lock (AppLock.kt): turning it on asks the device lock first; a no shows core's line for why under the row.
         val lock = privacy.getJSONObject("appLock")
         SettingRow(lock.getString("label"), lock.getString("description"), failure = model.lock.switchFailure(lock)) {
-            RnSwitch(lock.getBoolean("value"), model.failedAction == null && !model.lock.authenticating, lock.getString("label")) { model.lock.toggle(lock) }
+            RnSwitch(lock.getBoolean("value"), model.failedAction == null && !model.lock.authenticating, lock.getString("label"), theme.generalSwitch) { model.lock.toggle(lock) }
         }
-        privacy.optJSONObject("appSearch")?.let { ToggleRow(model, it, true) { edit -> settings.general(edit) } }
+        privacy.optJSONObject("appSearch")?.let { ToggleRow(model, it, true, props = theme.generalSwitch) { edit -> settings.general(edit) } }
     }
     SectionTitle(language.getString("title"), top = 16)
     Description(language.getString("description"))
@@ -329,9 +329,8 @@ private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.m
     val diagnostics = view.getJSONObject("diagnostics")
     SectionTitle(diagnostics.getString("title"), top = 24)
     Card {
-        // RN always draws this row's top border (it follows the Encryption block). Its switch has RN's own colors.
-        val debug = diagnostics.getJSONObject("debugLogging")
-        ToggleRow(model, debug, true, colors = theme.diagnosticsSwitch(debug.getBoolean("value"), isSystemInDarkTheme())) { settings.data(it) }
+        // RN always draws this row's top border (it follows the Encryption block).
+        ToggleRow(model, diagnostics.getJSONObject("debugLogging"), true) { settings.data(it) }
         val activity = LocalActivity.current
         LaunchedEffect(settings.logToShare) { if (settings.logToShare != null) activity?.let(settings::openShareSheet) }
         diagnostics.optJSONObject("shareLog")?.let { share ->

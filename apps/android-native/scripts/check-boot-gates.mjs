@@ -2028,7 +2028,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // General's switch: off sends core's edit at once; on only after the device lock's yes; a no shows core's errors[reason] under the row.
     assert.match(lockKt, /if \(!edit\.getBoolean\("value"\)\) return settings\.general\(edit\)\s+ask\(row\.getJSONObject\("enablePrompt"\)\.getString\("promptMessage"\)\) \{ reason ->\s+if \(reason == null\) shell\.menu\.whenIdle \{ settings\.general\(edit\) \} else settings\.editLocal \{ put\(SWITCH_FAILURE, reason\) \}/);
     assert.match(lockKt, /row\.getJSONObject\("errors"\)\.getString\(it\)/);
-    assert.match(settingsUi, /RnSwitch\(lock\.getBoolean\("value"\), model\.failedAction == null && !model\.lock\.authenticating, lock\.getString\("label"\)\) \{ model\.lock\.toggle\(lock\) \}/);
+    assert.match(settingsUi, /RnSwitch\(lock\.getBoolean\("value"\), model\.failedAction == null && !model\.lock\.authenticating, lock\.getString\("label"\), theme\.generalSwitch\) \{ model\.lock\.toggle\(lock\) \}/);
     assert.match(settingsModel, /"appLock" -> shell\.lock\.stored\(input\.getJSONObject\("edit"\)\.getBoolean\("value"\)\)/);
     // The phone check (findings 6 and 7): each database change happens with the app's process gone, from an untouched pulled copy,
     // staged and size-checked beside the database, the old WAL and SHM removed, then renamed over it; the restore proves core's value,
@@ -2318,22 +2318,59 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // The Data screen draws core's view: the switch sends core's edit; Share and Clear show only when core sends them.
     const settingsUiKt = source('SettingsScreen.kt');
     const data = code(settingsUiKt.slice(settingsUiKt.indexOf('private fun DataSettings('), settingsUiKt.indexOf('private fun ActionRow(')));
-    assert.match(data, /ToggleRow\(model, debug, true, colors = theme\.diagnosticsSwitch\(debug\.getBoolean\("value"\), isSystemInDarkTheme\(\)\)\) \{ settings\.data\(it\) \}/);
-    // RN's Debug logging switch sets only trackColor (sync-settings-sections.tsx): a solid track in those colors (RN multiplies
-    // SwitchCompat's opaque track image by it) and AppCompat's default thumb, which follows the system's night mode.
-    const rnSections = readFileSync(resolve(app, '../../apps/mobile/components/settings/sync-settings-sections.tsx'), 'utf8');
-    const rnDebugSwitch = /<Switch value=\{loggingEnabled\} onValueChange=\{toggleDebugLogging\} ([^/]*)\/>/.exec(rnSections)?.[1] ?? '';
-    const rnTrack = /trackColor=\{\{ false: '(#[0-9A-Fa-f]{6})', true: '(#[0-9A-Fa-f]{6})' \}\}/.exec(rnDebugSwitch);
-    assert(rnTrack && !/thumbColor/.test(rnDebugSwitch), `RN's Debug logging switch sets only trackColor: ${rnDebugSwitch}`);
-    const switchColors = themeKt.slice(themeKt.indexOf('fun diagnosticsSwitch('), themeKt.indexOf('\n\n', themeKt.indexOf('fun diagnosticsSwitch(')));
-    assert.match(switchColors, new RegExp(`if \\(on\\) rgb\\("${rnTrack[2].toUpperCase()}"\\) else rgb\\("${rnTrack[1].toUpperCase()}"\\)`), 'the track is RN\'s trackColor, solid');
-    // AppCompat 1.7.0 (RN's): colorAccent is material_deep_teal_500 / _200; colorSwitchThumbNormal is #F1F1F1 / #BDBDBD.
-    assert.match(switchColors, /on && systemDark -> rgb\("#80CBC4"\); on -> rgb\("#008577"\); systemDark -> rgb\("#BDBDBD"\); else -> rgb\("#F1F1F1"\)/);
-    assert.match(captureUi, /val track = colors\?\.first \?: \(if \(on\) theme\.tintTrack else c\.border\)\.let \{ it\.copy\(alpha = it\.alpha \* 0\.3f\) \}/, 'explicit colors draw a solid track; the default keeps its look');
+    // The Debug logging switch takes ToggleRow's default: SettingToggleRow's pair, which RN's switch sets itself (checked below).
+    assert.match(data, /ToggleRow\(model, diagnostics\.getJSONObject\("debugLogging"\), true\) \{ settings\.data\(it\) \}/);
     assert.match(data, /diagnostics\.optJSONObject\("shareLog"\)\?\.let/);
     assert.match(data, /val activity = LocalActivity\.current\s+LaunchedEffect\(settings\.logToShare\) \{ if \(settings\.logToShare != null\) activity\?\.let\(settings::openShareSheet\) \}/);
     assert.match(data, /diagnostics\.optJSONObject\("clearLog"\)\?\.let/);
     assert.doesNotMatch(data, /\bt\(|"settings\./, 'every word is the view\'s');
+}
+
+// Every native switch draws RN's Switch on Android (ReactSwitch over AppCompat 1.7.0's SwitchCompat) for the props its RN call
+// site sets. RN multiplies SwitchCompat's opaque track image by trackColor, so the track is that color, solid. Without
+// thumbColor the thumb is AppCompat's (colorAccent on, colorSwitchThumbNormal off, the disabled color when disabled), by the
+// system's night mode. Nothing fades.
+{
+    const rnSource = (file) => readFileSync(resolve(app, '../../apps/mobile', file), 'utf8');
+    const props = (name) => new RegExp(`val ${name} = RnSwitchProps\\(([^\\n]*)\\)\\n`).exec(themeKt)?.[1] ?? '';
+    // SettingToggleRow's default: GTD's switches, and Data's Debug logging, which sets the same pair itself.
+    const legacy = /LEGACY_SWITCH_TRACK_COLOR = \{ false: '(#\w{6})', true: '(#\w{6})' \}/.exec(rnSource('components/settings/setting-row.tsx'));
+    assert.equal(props('settingsSwitch'), `rgb("${legacy[1].toUpperCase()}"), rgb("${legacy[2].toUpperCase()}")`);
+    const rnDebug = /<Switch value=\{loggingEnabled\} onValueChange=\{toggleDebugLogging\} ([^/]*)\/>/.exec(rnSource('components/settings/sync-settings-sections.tsx'))?.[1] ?? '';
+    assert.equal(rnDebug.trim(), `trackColor={{ false: '${legacy[1]}', true: '${legacy[2]}' }}`, 'RN\'s Debug logging switch sets only SettingToggleRow\'s pair');
+    const gtd = rnSource('components/settings/gtd-settings-screen.tsx');
+    assert(gtd.includes('<SettingToggleRow') && !/trackColor|thumbColor/.test(gtd), 'RN\'s GTD switches keep SettingToggleRow\'s default');
+    // General's three switches: trackColor { false: secondaryText, true: tint }, no thumbColor.
+    const general = rnSource('components/settings/general-settings-screen.tsx');
+    assert.equal(general.match(/trackColor=\{\{ false: tc\.secondaryText, true: tc\.tint \}\}/g)?.length, 3);
+    assert.doesNotMatch(general, /thumbColor/);
+    assert.equal(props('generalSwitch'), 'colors.secondaryText, colors.tint');
+    // The capture popup's Add another sets both.
+    assert.match(rnSource('components/quick-capture-sheet/QuickCaptureSheetBody.tsx'), /thumbColor=\{addAnother \? tc\.tint : tc\.border\}\s+trackColor=\{\{ false: tc\.border, true: `\$\{tc\.tint\}55` \}\}/);
+    assert.equal(props('captureSwitch'), 'colors.border, tintTrack, colors.border, colors.tint');
+    assert.match(themeKt, /val tintTrack = colors\.tint\.copy\(alpha = 0x55 \/ 255f\)/);
+    // Reference's filter sheet (task-list.tsx).
+    assert.match(rnSource('components/task-list.tsx'), /trackColor=\{\{ false: themeColors\.border, true: themeColors\.tint \}\}/);
+    assert.equal(props('referenceSwitch'), 'colors.border, colors.tint');
+    // AppCompat 1.7.0's thumb: switch_thumb_disabled_material, colorAccent (material_deep_teal_500 / _200), colorSwitchThumbNormal.
+    assert.match(themeKt, /!enabled -> if \(systemDark\) rgb\("#616161"\) else rgb\("#BDBDBD"\)\s+on -> if \(systemDark\) rgb\("#80CBC4"\) else rgb\("#008577"\)\s+else -> if \(systemDark\) rgb\("#BDBDBD"\) else rgb\("#F1F1F1"\)/);
+    // The drawing: the track solid in RN's color, the thumb RN's or AppCompat's, and no fade.
+    const graphicAt = captureUi.indexOf('internal fun RnSwitchGraphic(');
+    const graphic = code(captureUi.slice(graphicAt, captureUi.indexOf('\n}\n', graphicAt)));
+    assert.match(graphic, /background\(if \(on\) props\.trackOn else props\.trackOff\)/);
+    assert.match(graphic, /theme\.switchThumbShade\(\(if \(on\) props\.thumbOn else props\.thumbOff\) \?: theme\.switchThumb\(on, enabled, isSystemInDarkTheme\(\)\)\)/);
+    // SwitchCompat's thumb image is #FAFAFA (AppCompat 1.7.0's abc_btn_switch_to_on_mtrl), multiplied by the thumb color.
+    assert.match(themeKt, /private const val THUMB_IMAGE = 250f \/ 255f/);
+    assert.match(themeKt, /Color\(red = color\.red \* THUMB_IMAGE, green = color\.green \* THUMB_IMAGE, blue = color\.blue \* THUMB_IMAGE, alpha = color\.alpha\)/);
+    const rnSwitch = code(captureUi.slice(captureUi.indexOf('internal fun RnSwitch('), graphicAt));
+    assert.doesNotMatch(rnSwitch + graphic, /fade\(|alpha/, 'RN never fades a disabled switch');
+    // Each call site passes its RN props: General's three, the capture popup, Reference's sheet; GTD and Data take the default.
+    const settingsUiKt = code(source('SettingsScreen.kt'));
+    assert.equal(settingsUiKt.match(/theme\.generalSwitch/g)?.length, 3);
+    assert.match(settingsUiKt, /props: RnSwitchProps = LocalTheme\.current\.settingsSwitch/);
+    assert.match(code(captureUi), /RnSwitch\(on, enabled = !locked, label = label, props = theme\.captureSwitch\)/);
+    assert.match(code(menuUi), /RnSwitchGraphic\(on, true, LocalTheme\.current\.referenceSwitch\)/);
+    assert.doesNotMatch(code(menuUi), /fun RnSwitch\(/, 'one switch drawing');
 }
 
 const fakeCore = `

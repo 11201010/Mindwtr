@@ -664,7 +664,7 @@ private fun FilterSheet(model: InboxViewModel, view: JSONObject, open: JSONObjec
                         Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).toggleable(on, enabled = idle, role = Role.Switch) { archivedProjects(it) }
                             .semantics { contentDescription = label }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             Text(label, style = rnText(15, 500), color = c.text, modifier = Modifier.weight(1f))
-                            RnSwitch(on)
+                            RnSwitchGraphic(on, true, LocalTheme.current.referenceSwitch)
                         }
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -826,17 +826,6 @@ internal fun SheetField(value: String, placeholder: String, description: String,
                 inner()
             }
         })
-}
-
-/** RN's Android Switch, as the capture popup draws it: a raised thumb on a faint track, the tint when on. */
-@Composable
-internal fun RnSwitch(on: Boolean) {
-    val theme = LocalTheme.current
-    val c = theme.colors
-    Box(Modifier.size(width = 36.dp, height = 20.dp), contentAlignment = Alignment.CenterStart) {
-        Box(Modifier.fillMaxWidth().height(14.dp).clip(CircleShape).background(if (on) theme.tintTrack else c.border))
-        Box(Modifier.offset(x = if (on) 16.dp else 0.dp).size(20.dp).clip(CircleShape).background(if (on) c.tint else c.cardBg).border(1.dp, c.border, CircleShape))
-    }
 }
 
 /**
