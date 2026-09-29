@@ -696,6 +696,26 @@ describe('deleteMindwtrCalendar', () => {
         expect(mockDeleteCalendarSyncEntry).toHaveBeenCalledWith('task-1', 'ios');
         expect(mockDeleteCalendarSyncEntry).not.toHaveBeenCalledWith('task-2', 'ios');
     });
+
+    it('keeps the saved calendar and its pushed events when the calendar cannot be deleted', async () => {
+        const storage = new Map<string, string>([
+            ['mindwtr:calendar-push-sync:calendar-id', 'stored-calendar'],
+        ]);
+        mockGetItem.mockImplementation(async (key: string) => storage.get(key) ?? null);
+        mockRemoveItem.mockImplementation(async (key: string) => { storage.delete(key); });
+        mockGetCalendarsAsync.mockResolvedValue([
+            { id: 'stored-calendar', title: 'Mindwtr', name: 'mindwtr', accessLevel: 'owner', allowsModifications: true },
+        ]);
+        mockDeleteCalendarAsync.mockRejectedValueOnce(new Error('Calendar provider refused'));
+        setCalendarSyncEntries([
+            { taskId: 'task-1', calendarEventId: 'evt-1', calendarId: 'stored-calendar', platform: 'ios', lastSyncedAt: '' },
+        ]);
+
+        await expect(deleteMindwtrCalendar()).rejects.toThrow();
+
+        expect(storage.get('mindwtr:calendar-push-sync:calendar-id')).toBe('stored-calendar');
+        expect(mockDeleteCalendarSyncEntry).not.toHaveBeenCalled();
+    });
 });
 
 describe('buildEventDetails — date-only calendar events stay on the intended day', () => {

@@ -532,17 +532,18 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
      * The app owns only the calendar whose ID it saved: another install (another
      * phone on the account, or a second Mindwtr app) may have a calendar with the
      * same title and name, and it is never deleted.
+     *
+     * The device calendar goes first; its pushed-event map, the chosen calendar and
+     * the saved ID are cleared only once it is gone, the saved ID last. A failed
+     * delete keeps them all and rejects (retry later), and a run cut short at any
+     * step finishes when it runs again.
      */
     const deleteMindwtrCalendar = async (): Promise<void> => {
         if (isSandboxMode()) return;
         const storedId = await getStoredCalendarId();
         const selectedTargetId = await getCalendarPushTargetCalendarId();
-        const calendarIdsToDelete = new Set<string>();
-        if (storedId) {
-            calendarIdsToDelete.add(storedId);
-        }
 
-        if (calendarIdsToDelete.size === 0) {
+        if (!storedId) {
             await storage.removeItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
             if (selectedTargetId) {
                 const targets = await getCalendarPushTargetCalendars();
@@ -557,35 +558,41 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             return;
         }
 
+        const exists = async () => (await device.getCalendars()).some((calendar) => calendar.id === storedId);
         try {
-            await Promise.allSettled(
-                Array.from(calendarIdsToDelete).map((calendarId) => device.deleteCalendar(calendarId))
-            );
-        } catch {
-            // Already deleted or not found — ignore
-        }
-
-        await storage.removeItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
-        if (selectedTargetId && calendarIdsToDelete.has(selectedTargetId)) {
-            await setCalendarPushTargetCalendarId(null);
+            if (await exists()) await device.deleteCalendar(storedId);
+        } catch (error) {
+            // A provider may answer a calendar that is already gone with an error: gone is gone.
+            if (await exists().catch(() => true)) {
+                void log.warn('Failed to delete Mindwtr calendar; keeping it for a retry', {
+                    scope: 'calendar-push',
+                    extra: { error: getCalendarErrorMessage(error) },
+                });
+                throw error;
+            }
         }
 
         try {
             const syncedEntries = await syncEntries.getAll(PLATFORM);
-            const deletedEntries = syncedEntries.filter((entry) => calendarIdsToDelete.has(entry.calendarId));
-            await Promise.allSettled(
-                deletedEntries.map((entry) => syncEntries.delete(entry.taskId, PLATFORM))
-            );
+            for (const entry of syncedEntries.filter((item) => item.calendarId === storedId)) {
+                await syncEntries.delete(entry.taskId, PLATFORM);
+            }
         } catch (error) {
+            // Stale rows for a deleted calendar are harmless: the next push finds their events missing.
             void log.warn('Failed to clear deleted Mindwtr calendar sync entries', {
                 scope: 'calendar-push',
                 extra: { error: String(error) },
             });
         }
 
+        if (selectedTargetId === storedId) {
+            await setCalendarPushTargetCalendarId(null);
+        }
+        await storage.removeItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
+
         void log.info('Deleted Mindwtr calendar', {
             scope: 'calendar-push',
-            extra: { deletedCalendars: String(calendarIdsToDelete.size) },
+            extra: { deletedCalendars: '1' },
         });
     };
 
