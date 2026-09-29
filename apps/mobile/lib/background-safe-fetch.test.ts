@@ -140,6 +140,41 @@ describe('backgroundSafeFetch', () => {
     expect(FakeXhr.instances).toHaveLength(1);
   });
 
+  it('fails a sync PUT that the iOS client followed to another URL as a GET', async () => {
+    // RCTHTTPRequestHandler follows a 303 on a PUT as a GET without the Authorization
+    // header, and reports the GET's 200 with the final URL as responseURL.
+    const { backgroundSafeFetch } = await loadModule();
+    const pending = webdavPutJson('http://dav.example/dav/data.json', { tasks: [] }, {
+      fetcher: backgroundSafeFetch,
+      allowInsecureHttp: true,
+    });
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    const xhr = FakeXhr.instances[0];
+    xhr.status = 200;
+    xhr.responseURL = 'https://dav.example/dav/data.json';
+    xhr.rawResponseHeaders = 'ETag: "old"\r\n';
+    xhr.response = new TextEncoder().encode('{"tasks":[]}').buffer;
+    xhr.onload?.();
+
+    await expect(pending).rejects.toThrow('fetch failed: unexpected redirect');
+  });
+
+  it('keeps a sync PUT whose native client reports the same URL in its own spelling', async () => {
+    const { backgroundSafeFetch } = await loadModule();
+    const pending = webdavPutJson('https://dav.example/dav/My Tasks/data.json', { tasks: [] }, {
+      fetcher: backgroundSafeFetch,
+    });
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    const xhr = FakeXhr.instances[0];
+    xhr.status = 201;
+    xhr.responseURL = 'https://dav.example:443/dav/My%20Tasks/data.json';
+    xhr.rawResponseHeaders = 'ETag: "new"\r\n';
+    xhr.response = new ArrayBuffer(0);
+    xhr.onload?.();
+
+    await expect(pending).resolves.not.toThrow();
+  });
+
   it('falls back to the platform fetch where React Native XMLHttpRequest is absent', async () => {
     vi.unstubAllGlobals();
     const fetchMock = vi.fn(async () => new Response('ok'));

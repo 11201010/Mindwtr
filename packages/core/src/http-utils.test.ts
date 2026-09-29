@@ -407,6 +407,100 @@ describe('fetchWithTimeout', () => {
         },
     );
 
+    const answeredFrom = (url: string, status = 200) => {
+        const response = new Response(null, { status });
+        Object.defineProperty(response, 'url', { value: url });
+        return response;
+    };
+
+    it.each([
+        ['http://dav.example.com/dav/data.json', 'https://dav.example.com/dav/data.json'],
+        ['https://dav.example.com/dav/data.json', 'https://files.example.net/dav/data.json'],
+        ['https://dav.example.com/dav/data.json', 'https://dav.example.com:8443/dav/data.json'],
+        ['https://dav.example.com/dav/data.json', 'https://dav.example.com/dav/data.json/'],
+        ['https://dav.example.com/dav/data.json', 'https://dav.example.com/login?next=%2Fdav'],
+        ['https://bücher.example/dav/data.json', 'https://dav.example.com/dav/data.json'],
+    ])('refuses a write to %s that iOS followed to %s', async (requested, answered) => {
+        // React Native on iOS follows a write redirect (a 303 as a GET) and hands back
+        // the final answer; only the URL it came from tells.
+        const logs: LogPayload[] = [];
+        setLogger((payload) => { logs.push(payload); });
+        try {
+            await expect(fetchWithTimeoutAndConsume(
+                requested,
+                { method: 'PUT', body: '{"tasks":[]}' },
+                1_000,
+                async () => answeredFrom(answered),
+                'Request timed out',
+                () => 'written',
+            )).rejects.toThrow('fetch failed: unexpected redirect');
+        } finally {
+            setLogger(consoleLogger);
+        }
+        expect(logs).toEqual([expect.objectContaining({
+            level: 'warn',
+            context: { releaseCheck: 'v1.3.4/fetch-redirect-refused-ios', method: 'PUT', status: 200 },
+        })]);
+        expect(JSON.stringify(logs)).not.toContain('example');
+    });
+
+    it.each([
+        ['https://dav.example.com/dav/My File.json', 'https://DAV.Example.com:443/dav/My%20File.json'],
+        ['http://192.168.1.5:80/dav/data.json', 'http://192.168.1.5/dav/data.json'],
+        ['https://user:secret@dav.example.com/dav/data.json', 'https://dav.example.com/dav/data.json'],
+        ['https://dav.example.com/dav/a|b%7c.json', 'https://dav.example.com/dav/a%7Cb%7C.json'],
+        ['https://dav.example.com/dav/./x/../data.json#top', 'https://dav.example.com/dav/data.json'],
+        ['https://dav.example.com', 'https://dav.example.com/'],
+        ['https://dav.example.com/dav/data.json?', 'https://dav.example.com/dav/data.json'],
+        ['https://bücher.example/dav/data.json', 'https://xn--bcher-kva.example/dav/data.json'],
+        ['https://[fd00::1]:443/dav/data.json', 'https://[FD00::1]/dav/data.json'],
+        ['https://dav.example.com/dav/data.json', ''],
+    ])('accepts a write to %s answered from %s, the same URL', async (requested, answered) => {
+        // OkHttp (Android) and NSURL (iOS) report a URL they did not redirect in their
+        // own spelling; that must never read as a redirect.
+        await expect(fetchWithTimeoutAndConsume(
+            requested,
+            { method: 'PUT', body: '{"tasks":[]}' },
+            1_000,
+            async () => answeredFrom(answered, 201),
+            'Request timed out',
+            () => 'written',
+        )).resolves.toBe('written');
+    });
+
+    it('refuses an Android redirect once, with its own line', async () => {
+        // Android's interceptor hands the 3xx back from the URL asked for; the answering
+        // URL check must neither refuse it a second time nor claim it was followed.
+        const logs: LogPayload[] = [];
+        setLogger((payload) => { logs.push(payload); });
+        try {
+            await expect(fetchWithTimeoutAndConsume(
+                'https://dav.example.com/dav/My File.json',
+                { method: 'DELETE' },
+                1_000,
+                async () => answeredFrom('https://dav.example.com/dav/My%20File.json', 301),
+                'Request timed out',
+                () => 'deleted',
+            )).rejects.toThrow('fetch failed: unexpected redirect');
+        } finally {
+            setLogger(consoleLogger);
+        }
+        expect(logs).toEqual([expect.objectContaining({
+            context: { releaseCheck: 'v1.3.3/fetch-redirect-refused', method: 'DELETE', status: 301 },
+        })]);
+    });
+
+    it('lets a read answered from another URL through', async () => {
+        await expect(fetchWithTimeoutAndConsume(
+            'http://dav.example.com/dav/data.json',
+            { method: 'GET' },
+            1_000,
+            async () => answeredFrom('https://dav.example.com/dav/data.json'),
+            'Request timed out',
+            (response) => response.status,
+        )).resolves.toBe(200);
+    });
+
     it('hands a redirect status back to a read, which keeps the default policy', async () => {
         await expect(fetchWithTimeoutAndConsume(
             'https://dav.example.com/data.json',

@@ -442,12 +442,74 @@ export const createProgressStream = (bytes: Uint8Array, onProgress: (loaded: num
  * keep the default `follow` -- WebDAV servers legitimately 301 collection URLs.
  * React Native ignores `redirect`: its Android OkHttp client hands these methods'
  * redirects back unfollowed (SyncHttpClientPackage.kt) and the check below refuses them.
- * Known ceiling: RN on iOS still follows them, and expo-file-system's streamed uploads
- * use their own clients on both platforms.
+ * On iOS it follows them without the Authorization header: a 303 turns the write into a
+ * GET that can answer 200, and a 301, 302, 307 or 308 re-sends it to the new URL. So the
+ * check also refuses a write answered from another URL. Known ceiling: a redirect back to
+ * the same URL cannot be seen there. expo-file-system's streamed uploads use their own clients;
+ * see `uploadWebdavFileWithFileSystem` and `uploadCloudFileWithFileSystem`.
  */
 const NO_REDIRECT_METHODS = new Set(['PUT', 'POST', 'PATCH', 'DELETE']);
 /** The statuses undici refuses under `redirect: 'error'`. */
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** Logs a refused write redirect (method and status only, never the URL) and throws what
+ *  undici throws under `redirect: 'error'`, so every platform fails the same way. */
+export const refuseWriteRedirect = (context: { releaseCheck: string; method: string; status: number }): never => {
+    logWarn('Write request redirect refused', { scope: 'http', category: 'network', context });
+    throw new TypeError('fetch failed: unexpected redirect');
+};
+
+const decodePercentEscapes = (text: string): string => {
+    try {
+        return decodeURIComponent(text);
+    } catch {
+        return text;
+    }
+};
+
+/** RFC 3986 dot-segment removal: OkHttp applies it to every URL it reports. */
+const removeDotSegments = (path: string): string => {
+    const segments = path.split('/');
+    const kept: string[] = [];
+    segments.forEach((segment, index) => {
+        if (segment === '.' || segment === '..') {
+            if (segment === '..' && kept.length > 1) kept.pop();
+            if (index === segments.length - 1) kept.push('');
+            return;
+        }
+        kept.push(segment);
+    });
+    return kept.join('/') || '/';
+};
+
+/** An http(s) URL cut down to what a redirect changes: scheme, host, port, path and query.
+ *  A native client reports a URL it did not redirect in its own spelling (host case, default
+ *  port, userinfo, fragment, percent-encoding, dot segments, punycode), and each of those is
+ *  evened out here by string, since React Native's URL class normalizes none of them. A
+ *  non-ASCII or punycode host is left out: this side cannot punycode it. */
+const comparableHttpUrl = (rawUrl: string): string | null => {
+    const match = rawUrl.trim().match(/^(https?):\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?/i);
+    if (!match) return null;
+    const scheme = match[1].toLowerCase();
+    const authority = match[2].slice(match[2].lastIndexOf('@') + 1).toLowerCase();
+    const portMatch = authority.match(/:(\d*)$/);
+    const host = portMatch ? authority.slice(0, -portMatch[0].length) : authority;
+    const port = portMatch?.[1] ?? '';
+    const comparableHost = /[^\x20-\x7e]|(?:^|\.)xn--/.test(host) ? '' : host;
+    const comparablePort = port === (scheme === 'https' ? '443' : '80') ? '' : port;
+    const path = removeDotSegments(decodePercentEscapes(match[3] || '/'));
+    const query = decodePercentEscapes(match[4] ?? '');
+    return `${scheme}://${comparableHost}:${comparablePort}${path}?${query}`;
+};
+
+/** Whether a response names a URL other than the one asked for. An answer without a URL
+ *  (undici hides none, test doubles and some polyfills report '') is never a redirect. */
+const isAnsweredFromAnotherUrl = (requestedUrl: string, answeredUrl: unknown): boolean => {
+    if (typeof answeredUrl !== 'string' || !answeredUrl) return false;
+    const requested = comparableHttpUrl(requestedUrl);
+    const answered = comparableHttpUrl(answeredUrl);
+    return requested !== null && answered !== null && requested !== answered;
+};
 
 /** Appended to a timeout message when the timer fired far later than its delay:
  *  the app was suspended by the OS with the request in flight. Sync treats it
@@ -504,18 +566,16 @@ export const fetchWithTimeoutAndConsume = async <T>(
             requestInit.duplex = 'half';
         }
         const response = await waitForAbort(fetcher(url, requestInit), signal);
-        if (requestInit.redirect === 'error' && REDIRECT_STATUSES.has(response.status)) {
-            cancelUnlockedResponseBody(response);
-            logWarn('Write request redirect refused', {
-                scope: 'http',
-                category: 'network',
-                context: {
-                    releaseCheck: 'v1.3.3/fetch-redirect-refused',
+        if (requestInit.redirect === 'error') {
+            const handedBack = REDIRECT_STATUSES.has(response.status);
+            if (handedBack || isAnsweredFromAnotherUrl(url, response.url)) {
+                cancelUnlockedResponseBody(response);
+                refuseWriteRedirect({
+                    releaseCheck: handedBack ? 'v1.3.3/fetch-redirect-refused' : 'v1.3.4/fetch-redirect-refused-ios',
                     method: (init.method ?? 'GET').toUpperCase(),
                     status: response.status,
-                },
-            });
-            throw new TypeError('fetch failed: unexpected redirect');
+                });
+            }
         }
         try {
             return await waitForAbort(
