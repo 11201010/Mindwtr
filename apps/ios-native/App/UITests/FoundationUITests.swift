@@ -5845,12 +5845,34 @@ final class FoundationUITests: XCTestCase {
         boardEnabled(app.buttons["tab-menu"], timeout: 30); boardOpen(app)
         boardTap(app, "board-filter-open"); boardTap(app, "board-picker-tokens")
         let query = app.textFields["board-picker-search"]
-        func search(_ text: String) {
+        func search(_ text: String, submit: Bool = true) {
             boardEnabled(query); XCTAssertGreaterThanOrEqual(query.frame.height, 44 - 0.001)
             query.tap()
             let value = query.value as? String ?? ""
-            if value != query.placeholderValue { query.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count)) }
-            query.typeText(text + "\n")
+            if !value.isEmpty && value != query.placeholderValue {
+                query.press(forDuration: 1)
+                let selectAll = app.descendants(matching: .any)["Select All"].firstMatch
+                for _ in 0..<3 {
+                    if selectAll.waitForExistence(timeout: 1), selectAll.isHittable { break }
+                    let next = app.buttons["Next Page"]
+                    guard next.exists else { break }
+                    next.tap()
+                }
+                if selectAll.exists { selectAll.tap() }
+                else {
+                    // A long single word may already be fully selected by the press.
+                    XCTAssertTrue(app.menuItems["Cut"].exists || app.buttons["Cut"].exists)
+                }
+                query.typeText(XCUIKeyboardKey.delete.rawValue)
+            }
+            XCTAssertTrue((query.value as? String ?? "").isEmpty || query.value as? String == query.placeholderValue)
+            query.typeText(text + (submit ? "\n" : ""))
+        }
+        func projects() {
+            let button = app.buttons["board-picker-projects"]
+            boardEnabled(button); XCTAssertTrue(button.isHittable)
+            button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            boardEnabled(query)
         }
         func option(_ id: String) -> XCUIElement {
             let row = app.buttons[id]
@@ -5875,27 +5897,31 @@ final class FoundationUITests: XCTestCase {
         }
         search("task78-10"); _ = option("board-filter-token-@task78-102")
         XCTAssertFalse(app.buttons["board-more-tokens"].exists)
-        boardTap(app, "board-picker-back"); boardTap(app, "board-picker-projects")
+        boardTap(app, "board-picker-back"); projects()
+        boardEnabled(query)
         XCTAssertEqual(query.value as? String, query.placeholderValue)
         search("  TASK78 PROJECT 102  ")
         let project = option("board-filter-project-task78-project-102")
         XCTAssertFalse(app.buttons["board-filter-project-task78-project-000"].exists)
         project.tap(); boardEnabled(project); XCTAssertTrue(project.isSelected)
-        search(String(repeating: "x", count: 501))
+        search(String(repeating: "x", count: 501), submit: false)
         XCTAssertTrue(app.staticTexts["board-error"].waitForExistence(timeout: 10))
-        search("task78 project 102"); boardEnabled(project); XCTAssertTrue(project.isSelected)
+        // Correct the rejected query while its caret is still at the end.
+        query.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 501) + "task78 project 102\n"); boardEnabled(project); XCTAssertTrue(project.isSelected)
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Board searched Project picker"; shot.lifetime = .keepAlways; add(shot)
         boardTap(app, "board-filter-close"); boardEnabled(app.buttons["board-filter-open"])
         XCTAssertEqual(app.staticTexts["board-count-next"].label, "1")
         boardTap(app, "search-open"); boardTap(app, "search-close"); boardEnabled(app.buttons["board-filter-open"])
         XCTAssertEqual(app.staticTexts["board-count-next"].label, "1")
-        boardTap(app, "board-filter-open"); boardTap(app, "board-picker-projects")
+        boardTap(app, "board-filter-open"); projects()
+        boardEnabled(query)
         XCTAssertEqual(query.value as? String, query.placeholderValue)
         search("task78 project 102"); XCTAssertTrue(option("board-filter-project-task78-project-102").isSelected)
         boardTap(app, "board-filter-clear"); boardEnabled(app.buttons["board-filter-clear"])
         boardTap(app, "board-filter-close"); boardEnabled(app.buttons["board-filter-open"])
         app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30); boardOpen(app)
         boardTap(app, "board-filter-open"); boardTap(app, "board-picker-tokens")
+        boardEnabled(query)
         XCTAssertEqual(query.value as? String, query.placeholderValue)
         search("task78-102"); XCTAssertFalse(option("board-filter-token-@task78-102").isSelected)
         boardTap(app, "board-filter-close"); app.terminate()
