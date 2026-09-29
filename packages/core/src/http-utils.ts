@@ -580,38 +580,73 @@ const parseIpv6Groups = (text: string): number[] | null => {
     return groups;
 };
 
-/** An IPv6 literal (without brackets) as eight groups in shortest hex, so every spelling of one
- *  address (`2001:0db8:0:0::1`, `2001:db8::1`, an embedded IPv4 tail) compares equal. The zone
+/** An IPv6 literal (without brackets) as bracketed groups in shortest hex, so every spelling of
+ *  one address (`2001:0db8:0:0::1`, `2001:db8::1`, an embedded IPv4 tail) compares equal. The zone
  *  after `%` is kept as written. Anything that does not parse is compared as written. */
 const canonicalIpv6 = (literal: string): string => {
     const zoneAt = literal.indexOf('%');
     const address = zoneAt < 0 ? literal : literal.slice(0, zoneAt);
     const zone = zoneAt < 0 ? '' : literal.slice(zoneAt);
     const halves = address.split('::');
-    if (halves.length > 2) return literal;
+    if (halves.length > 2) return `[${literal}]`;
     const head = parseIpv6Groups(halves[0]);
     const tail = halves.length === 2 ? parseIpv6Groups(halves[1]) : [];
-    if (!head || !tail) return literal;
+    if (!head || !tail) return `[${literal}]`;
     const missing = 8 - head.length - tail.length;
-    if (halves.length === 2 ? missing < 1 : missing !== 0) return literal;
+    if (halves.length === 2 ? missing < 1 : missing !== 0) return `[${literal}]`;
     const groups = [...head, ...new Array<number>(missing).fill(0), ...tail];
-    return `${groups.map((group) => group.toString(16)).join(':')}${zone}`;
+    // OkHttp reports an IPv4-mapped address (`::ffff:192.168.1.5`) as the plain IPv4 host.
+    if (!zone && groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+        return [groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255].join('.');
+    }
+    return `[${groups.map((group) => group.toString(16)).join(':')}${zone}]`;
+};
+
+/** A host the WHATWG URL parser (the url crate under Tauri) reads as IPv4 (`127.1`,
+ *  `0x7f.0.0.1`, `0177.0.0.1`, `2130706433`) as a dotted quad; null for any other host. */
+const numericIpv4Host = (host: string): string | null => {
+    const parts = host.split('.');
+    if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+    if (parts.length > 4 || !/^(0x[0-9a-f]*|\d+)$/.test(parts[parts.length - 1])) return null;
+    const values = parts.map((part) => {
+        if (/^0x[0-9a-f]*$/.test(part)) return parseInt(part.slice(2) || '0', 16);
+        if (/^0[0-7]+$/.test(part)) return parseInt(part, 8);
+        return /^(0|[1-9]\d*)$/.test(part) ? Number(part) : NaN;
+    });
+    const last = values.pop() ?? NaN;
+    if (values.some((value) => !(value <= 255)) || !(last < 256 ** (4 - values.length))) return null;
+    const address = values.reduce((sum, value, index) => sum + value * 256 ** (3 - index), last);
+    return [3, 2, 1, 0].map((shift) => Math.floor(address / 256 ** shift) % 256).join('.');
 };
 
 /** An http(s) URL cut down to what a redirect changes: scheme, host, port, path and query.
  *  A native client reports a URL it did not redirect in its own spelling (host case, default
- *  port, userinfo, fragment, percent-encoding, dot segments, punycode, IPv6 zeros), and each
- *  of those is evened out here by string, since React Native's URL class normalizes none of
- *  them. Nothing that a redirect can change is dropped. */
+ *  port, userinfo, fragment, percent-encoding, dot segments, punycode, IPv6 zeros, IPv4-mapped
+ *  and shorthand IPv4 hosts, host escapes, `\` for `/`), and each of those is evened out here by
+ *  string, since React Native's URL class normalizes none of them. Nothing that a redirect can
+ *  change is dropped. */
 const comparableHttpUrl = (rawUrl: string): string | null => {
-    const match = rawUrl.trim().match(/^(https?):\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?/i);
+    // In an http(s) URL a `\` before the query is a `/` (WHATWG), as the url crate reports it.
+    const trimmed = rawUrl.trim();
+    const queryAt = trimmed.search(/[?#]/);
+    const url = queryAt < 0
+        ? trimmed.replace(/\\/g, '/')
+        : `${trimmed.slice(0, queryAt).replace(/\\/g, '/')}${trimmed.slice(queryAt)}`;
+    const match = url.match(/^(https?):\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?/i);
     if (!match) return null;
     const scheme = match[1].toLowerCase();
     const authority = match[2].slice(match[2].lastIndexOf('@') + 1).toLowerCase();
     const portMatch = authority.match(/:(\d*)$/);
-    const host = portMatch ? authority.slice(0, -portMatch[0].length) : authority;
-    const ipv6 = host.match(/^\[(.*)\]$/);
-    const comparableHost = ipv6 ? `[${canonicalIpv6(ipv6[1])}]` : asciiHostname(host);
+    const encodedHost = portMatch ? authority.slice(0, -portMatch[0].length) : authority;
+    const ipv6 = encodedHost.match(/^\[(.*)\]$/);
+    // OkHttp and the url crate percent-decode a host before reporting it.
+    let host = encodedHost;
+    try {
+        host = decodeURIComponent(encodedHost).toLowerCase();
+    } catch {
+        // An escape that is not UTF-8 is compared as written.
+    }
+    const comparableHost = ipv6 ? canonicalIpv6(ipv6[1]) : numericIpv4Host(host) ?? asciiHostname(host);
     const port = portMatch?.[1] ? Number(portMatch[1]) : null;
     const comparablePort = port === null || port === (scheme === 'https' ? 443 : 80) ? '' : String(port);
     const path = removeDotSegments(normalizePercentEncoding(match[3] || '/'));

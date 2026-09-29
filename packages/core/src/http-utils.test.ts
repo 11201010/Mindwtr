@@ -426,6 +426,10 @@ describe('fetchWithTimeout', () => {
         ['https://bücher.example/dav/data.json', 'https://xn--mnchen-3ya.example/dav/data.json'],
         ['https://dav.example.com/dav/a%2Fb.json', 'https://dav.example.com/dav/a/b.json'],
         ['https://cloud.example.com/v1/data?a=1%26b=2', 'https://cloud.example.com/v1/data?a=1&b=2'],
+        ['https://[::ffff:192.168.1.5]/dav/data.json', 'https://192.168.1.6/dav/data.json'],
+        ['http://127.1/dav/data.json', 'http://127.0.0.2/dav/data.json'],
+        ['https://%62ucher.example/dav/data.json', 'https://cucher.example/dav/data.json'],
+        ['https://cloud.example.com/v1/data?a=%5C', 'https://cloud.example.com/v1/data?a=/'],
     ])('refuses a write to %s that iOS followed to %s', async (requested, answered) => {
         // React Native on iOS follows a write redirect (a 303 as a GET) and hands back
         // the final answer; only the URL it came from tells.
@@ -470,6 +474,16 @@ describe('fetchWithTimeout', () => {
         ['https://dav.example.com/dav/%e6%97%a5.json', 'https://dav.example.com/dav/日.json'],
         ['https://dav.example.com/dav/50%.json', 'https://dav.example.com/dav/50%25.json'],
         ['https://dav.example.com/dav/[x] {y}^.json', 'https://dav.example.com/dav/%5Bx%5D%20%7By%7D%5E.json'],
+        ['https://[::ffff:192.168.1.5]:8443/dav/data.json', 'https://192.168.1.5:8443/dav/data.json'],
+        ['http://127.1/dav/data.json', 'http://127.0.0.1/dav/data.json'],
+        ['http://10.1.5/dav/data.json', 'http://10.1.0.5/dav/data.json'],
+        ['http://0x7f.0.0.1/dav/data.json', 'http://127.0.0.1/dav/data.json'],
+        ['http://0177.0.0.01/dav/data.json', 'http://127.0.0.1/dav/data.json'],
+        ['http://2130706433/dav/data.json', 'http://127.0.0.1/dav/data.json'],
+        ['https://%62ucher.example/dav/data.json', 'https://bucher.example/dav/data.json'],
+        ['https://%C3%BCber.example/dav/data.json', 'https://xn--ber-goa.example/dav/data.json'],
+        ['https://dav.example.com/dav\\a\\b.json', 'https://dav.example.com/dav/a/b.json'],
+        ['https://dav.example.com\\dav/data.json', 'https://dav.example.com/dav/data.json'],
         ['https://dav.example.com/dav/data.json', ''],
     ])('accepts a write to %s answered from %s, the same URL', async (requested, answered) => {
         // OkHttp (Android) and NSURL (iOS) report a URL they did not redirect in their
