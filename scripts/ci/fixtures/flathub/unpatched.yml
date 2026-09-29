@@ -23,3 +23,5 @@ modules:
       - type: git
         url: https://github.com/dongdongbh/Mindwtr.git
         commit: 0123456789abcdef0123456789abcdef01234567
+      - type: patch
+        path: patches/mindwtr-hotfix.patch
