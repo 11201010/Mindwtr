@@ -113,8 +113,7 @@ private val READ = JSONObject().put("read", true)
  * taken, null in sandbox mode). [requests] are reads and edits with core or waiting, sent one at a time; the edits are
  * part of the durable draft and are sent again after process death. [queuedSave] is a Save tapped while they waited
  * ("save" or "edit" for Save and edit). [linesText] is an imported file's text while its several-lines question is open
- * (Create tasks sends it in place of the field's). [returnToPreviousApp]: a system capture (EntryPoints.kt) puts the app
- * behind the previous one when the popup closes.
+ * (Create tasks sends it in place of the field's).
  */
 data class CaptureDraft(
     val session: String,
@@ -133,7 +132,6 @@ data class CaptureDraft(
     val snapshot: String? = null,
     val snapshotTaken: Boolean = false,
     val linesText: String? = null,
-    val returnToPreviousApp: Boolean = false,
 ) {
     /** A read queued behind whatever is queued, unless one is already last. */
     fun reading(): CaptureDraft = if (requests.lastOrNull() === READ) this else copy(requests = requests + READ)
@@ -143,7 +141,7 @@ data class CaptureDraft(
         .put("confirm", confirm ?: JSONObject.NULL).put("lineIds", lineIds.joinToString(","))
         .put("edits", org.json.JSONArray().apply { requests.forEach { request -> request.optJSONObject("edit")?.let(::put) } })
         .put("snapshot", snapshot ?: JSONObject.NULL).put("snapshotTaken", snapshotTaken)
-        .put("linesText", linesText ?: JSONObject.NULL).put("returnToPreviousApp", returnToPreviousApp)
+        .put("linesText", linesText ?: JSONObject.NULL)
         .put("pending", pending?.let { JSONObject().put("kind", it.kind).put("id", it.id).put("title", it.title).put("patch", JSONObject(it.patch)) } ?: JSONObject.NULL)
 
     companion object {
@@ -162,7 +160,6 @@ data class CaptureDraft(
             requests = saved.optJSONArray("edits")?.let { edits -> List(edits.length()) { JSONObject().put("edit", edits.getJSONObject(it)) } }.orEmpty(),
             snapshot = if (saved.isNull("snapshot")) null else saved.optString("snapshot"), snapshotTaken = saved.optBoolean("snapshotTaken"),
             linesText = if (saved.isNull("linesText")) null else saved.optString("linesText").ifEmpty { null },
-            returnToPreviousApp = saved.optBoolean("returnToPreviousApp"),
         )
     }
 }

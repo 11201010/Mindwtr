@@ -2261,10 +2261,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, contract\.resolveNativeEntryPoint\(input\)\),$/m);
     assert.match(hostEntry, /^\s+captureImport: \(input\) => contract\.planQuickCaptureImport\(input\),$/m);
     assert.ok(hostEntry.includes("releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome }"));
-    // A system capture (RN's origin=system) puts the app behind the previous one when the popup closes; Save and edit stays.
-    assert.match(model, /private fun endCapture\(\) \{\s+val back = capture\?\.returnToPreviousApp == true\s+keepCapture\(null\)\s+if \(back\) leaveApp = true/);
-    assert.equal(code(model).match(/endCapture\(\)/g).length, 4, 'Close, a saved capture that closes, and saved lines end the popup');
-    assert.match(captureUi, /\.put\("linesText", linesText \?: JSONObject\.NULL\)\.put\("returnToPreviousApp", returnToPreviousApp\)/);
+    // A system capture (RN's origin=system) opens the capture screen, which puts the app behind the previous one; the popup opens
+    // only in the app (the + button, the capture feature), so it carries no such flag.
+    assert.doesNotMatch(code(captureUi + model + entryKt), /returnToPreviousApp(?!"\))/, 'the popup has no return-to-previous-app path');
+    assert.doesNotMatch(readFileSync(resolve(app, '../../packages/core/src/native-host-contract-entry-points.ts'), 'utf8'), /returnToPreviousApp/);
     // Import .txt: RN's text/plain picker; the file is read inside the action (off the main thread) and core plans it; Create tasks
     // sends the file's text, on disk with the question.
     assert.match(captureUi, /rememberLauncherForActivityResult\(ActivityResultContracts\.OpenDocument\(\)\) \{ uri -> uri\?\.let\(::importCaptureText\) \}/);

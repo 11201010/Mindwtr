@@ -233,7 +233,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val captureModal = CaptureModalModel(this, saved, File(app.noBackupFilesDir, "capture-modal"))
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
     val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
-    /** A system capture ended: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
+    /** A system capture's screen closed: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
     var leaveApp by mutableStateOf(false); internal set
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
@@ -912,29 +912,22 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (capture != null) return
         perform { runtime ->
             val view = runtime.openQuickCapture()
-            ui { openedCapture(view, "", returnToPreviousApp = false) }
+            ui { openedCapture(view, "") }
         }
     }
 
     /** The popup on core's [view] with [text] (an entry's draft, EntryPoints.kt, replaces an open one), then RN's sticky "Add another". */
-    internal fun openedCapture(view: JSONObject, text: String, returnToPreviousApp: Boolean) {
+    internal fun openedCapture(view: JSONObject, text: String) {
         captureInFlight = null
-        keepCapture(CaptureDraft.opened(view).copy(text = text, returnToPreviousApp = returnToPreviousApp))
+        keepCapture(CaptureDraft.opened(view).copy(text = text))
         val addAnother = view.getJSONObject("addAnother")
         if (prefs.getString(ADD_ANOTHER_KEY, null) == "true" && !addAnother.getBoolean("value")) editCapture(addAnother.getJSONObject("edit"))
     }
 
     /** RN's Close (and the backdrop, and Back): the draft goes, as RN's popup discards it. */
     fun closeCapture() {
-        endCapture()
-        captureInFlight = null
-    }
-
-    /** The popup closes; a system capture then puts the app behind the previous one (RN's finishCapture, #1169). */
-    private fun endCapture() {
-        val back = capture?.returnToPreviousApp == true
         keepCapture(null)
-        if (back) leaveApp = true
+        captureInFlight = null
     }
 
     fun leftApp() { leaveApp = false }
@@ -1091,7 +1084,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     keepCapture(fresh.copy(text = reset.getString("text"), options = reset.getJSONObject("options"), picker = null, confirm = null).reading())
                     pumpCapture()
                 }
-                else -> endCapture()
+                else -> keepCapture(null)
             }
             "refused" -> {
                 reply.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
@@ -1183,7 +1176,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         acknowledged(action)
         ui {
             val current = capture ?: return@ui
-            if (reply.getString("kind") == "saved") endCapture() else {
+            if (reply.getString("kind") == "saved") keepCapture(null) else {
                 reply.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
                 keepCapture(current.copy(pending = null, confirm = null, lineIds = emptyList(), linesText = null, snapshot = null, snapshotTaken = false))
             }

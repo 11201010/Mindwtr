@@ -163,7 +163,7 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
         // RN's capture screen replaces the screen it opens over; this popup shows over the tabs.
         closeSearch()
         menu.toTabs()
-        view?.let { openedCapture(it, capture.getString("text"), capture.getBoolean("returnToPreviousApp")) }
+        view?.let { openedCapture(it, capture.getString("text")) }
     }
 
     /**

@@ -173,7 +173,7 @@ describe('native host contract: resolveNativeEntryPoint', () => {
                     : { ...none, route: '/projects-screen', projectId: route.params?.projectId ?? null };
             } else if (call) {
                 const route = call[1] as string;
-                expected = route.startsWith('/capture-quick') ? { ...none, route: '/inbox', capture: { text: '', options: fresh(), returnToPreviousApp: false } } : { ...none, route };
+                expected = route.startsWith('/capture-quick') ? { ...none, route: '/inbox', capture: { text: '', options: fresh() } } : { ...none, route };
             } else if (redirectCold === '/capture-modal?origin=system') {
                 expected = { ...none, captureModal: { params: { origin: 'system' } } };
             } else if (redirectCold.startsWith('/settings')) expected = { ...none, route: '/settings' };

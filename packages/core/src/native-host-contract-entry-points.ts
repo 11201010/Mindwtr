@@ -68,11 +68,8 @@ export type NativeEntryPoint = {
     projectId: string | null;
     /** React Native's global search, open with this query and these filters (null: core's defaults). */
     search: { query: string; filters: GlobalSearchFilterState | null } | null;
-    /**
-     * The capture popup, open with this text and these options. `returnToPreviousApp`: a system capture (a widget's, the
-     * tile's, or a shortcut's) puts the app behind the previous one once the popup closes (#1169).
-     */
-    capture: { text: string; options: QuickCaptureOptions; returnToPreviousApp: boolean } | null;
+    /** The capture popup, open with this text and these options (the capture feature, as React Native's tab route opens it). */
+    capture: { text: string; options: QuickCaptureOptions } | null;
     /** React Native's capture confirmation screen, with the route params React Native pushes to it (openCaptureModal's `params`). */
     captureModal: { params: CaptureModalParams } | null;
     /** React Native's toast. */
@@ -127,7 +124,7 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
             projects: state.projects,
             defaultAreaId: resolveQuickCaptureDefaultAreaId(state.settings, state.areas),
         });
-        return { text: '', options, returnToPreviousApp: false };
+        return { text: '', options };
     };
 
     /**
