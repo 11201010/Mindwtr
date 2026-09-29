@@ -1014,6 +1014,33 @@ globalThis.MindwtrHost = {
     projectTaskSortCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectTaskSort(JSON.parse(json))));
     },
+    focusSavedFilterOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getFocusSavedFilterOptions(JSON.parse(json)));
+        });
+    },
+    focusSavedFilterWrite(_json: string): string {
+        return submit(async () => { throw new Error('INVALID_INPUT: Focus saved filter writes require a durable host journal'); });
+    },
+    focusSavedFilterRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeFocusSavedFilterOutcome(JSON.parse(json)));
+        });
+    },
+    focusSavedFilterPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareFocusSavedFilter(JSON.parse(json)));
+        });
+    },
+    focusSavedFilterValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedFocusSavedFilter(JSON.parse(json))));
+    },
+    focusSavedFilterCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedFocusSavedFilter(JSON.parse(json))));
+    },
     focusOrderOptions(json: string): string {
         return submit(async () => {
             requireSaved();

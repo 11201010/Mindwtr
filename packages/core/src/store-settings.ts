@@ -6,6 +6,8 @@ import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
 import type { AppData, SavedFilter } from './types';
 import type { DerivedCache, TaskStore } from './store-types';
+import type { FocusControlState } from './focus-controls';
+import { buildFocusControlsModel } from './focus-controls';
 import {
     computeProjectDerivedState,
     computeTaskDerivedState,
@@ -72,13 +74,13 @@ const consumeDocumentReplacementMark = (): boolean => {
 
 const settingsValueChanged = (left: unknown, right: unknown): boolean => JSON.stringify(left ?? null) !== JSON.stringify(right ?? null);
 
-const timestampAtLeastAfter = (floor: string, ...knownValues: Array<string | undefined>): string => {
+export const timestampAtLeastAfter = (floor: string, ...knownValues: Array<string | undefined>): string => {
     const floorMs = Date.parse(floor);
     const beforeFloor = Number.isFinite(floorMs) ? new Date(floorMs - 1).toISOString() : undefined;
     return advanceLatestSyncTimestamp(beforeFloor, ...knownValues) ?? floor;
 };
 
-const prepareLocalSavedFilterUpdates = (
+export const prepareLocalSavedFilterUpdates = (
     previous: readonly SavedFilter[] | undefined,
     next: SavedFilter[],
     nowIso: string,
@@ -100,6 +102,21 @@ const prepareLocalSavedFilterUpdates = (
             ...(filter.deletedAt ? { deletedAt: operationAt } : {}),
         };
     });
+};
+
+/** Stable ordinal-key JSON for a single raw saved-filter compare-and-swap witness. */
+export const focusSavedFilterToken = (value: unknown): string => JSON.stringify(value, function (_key, item: unknown) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    return Object.fromEntries(Object.keys(item).sort().map((key) => [key, (item as Record<string, unknown>)[key]]));
+});
+
+export const focusSavedFilterCreation = (state: TaskStore, controls: FocusControlState) => {
+    const model = buildFocusControlsModel({ state: controls, tasks: state.tasks, projects: state.projects,
+        areas: state.areas, sections: state.sections, settings: state.settings, now: new Date(), t: (key) => key });
+    return { canSave: model.perspective.canSavePerspective,
+        currentCriteria: model.filter.currentCriteria,
+        effectiveSortBy: model.perspective.effectiveSortBy,
+        effectiveGroupBy: model.perspective.effectiveGroupBy };
 };
 
 const mergeSettingsUpdates = (
@@ -143,7 +160,7 @@ type SettingsActionContext = {
     getStorage: () => StorageAdapter;
 };
 
-type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
+type SettingsActions = Pick<TaskStore, 'fetchData' | 'seedGettingStarted' | 'updateSettings' | 'commitPreparedFocusSavedFilter' | 'persistSnapshot' | 'getDerivedState' | 'getFocusedCount' | 'setHighlightTask'>;
 
 export const createSettingsActions = ({
     set,
@@ -675,6 +692,38 @@ export const createSettingsActions = ({
                 lastDataChangeAt: shouldTrackChange ? getNextDataChangeAt(state.lastDataChangeAt) : state.lastDataChangeAt,
             };
         });
+    },
+
+    commitPreparedFocusSavedFilter: async (input) => {
+        let result: import('./store-types').PreparedTaskEditResult = {
+            success: false, reason: 'conflict', error: 'Prepared Focus saved filter conflicts with current data',
+        };
+        set((state) => {
+            const filters = state.settings.savedFilters ?? [];
+            const matches = filters.filter((filter) => filter.id === input.after.id);
+            if (matches.length > 1) return state;
+            // The exact target row is the durable receipt, even after unrelated settings change.
+            if (matches.length === 1 && focusSavedFilterToken(matches[0]) === focusSavedFilterToken(input.after)) {
+                result = { success: true, outcome: 'replayed' };
+                return state;
+            }
+            if (!state.settings.deviceId
+                || (input.scope.before === null ? matches.length !== 0
+                    : matches.length !== 1 || focusSavedFilterToken(matches[0]) !== focusSavedFilterToken(input.scope.before))
+                || (input.request.operation.type === 'save'
+                    && focusSavedFilterToken(focusSavedFilterCreation(state, input.request.controls))
+                        !== focusSavedFilterToken(input.scope.creation))) return state;
+            const savedFilters = input.scope.before === null
+                ? [...filters, input.after]
+                : filters.map((filter) => filter.id === input.after.id ? input.after : filter);
+            const syncPreferencesUpdatedAt = { ...(state.settings.syncPreferencesUpdatedAt ?? {}),
+                savedFilters: timestampAtLeastAfter(input.preparedAt, state.settings.syncPreferencesUpdatedAt?.savedFilters) };
+            const settings = { ...state.settings, savedFilters, syncPreferencesUpdatedAt };
+            persist(set, debouncedSave, state, { settings });
+            result = { success: true, outcome: 'applied' };
+            return { settings, lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
     },
 
     persistSnapshot: async () => {

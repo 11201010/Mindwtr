@@ -101,14 +101,18 @@ struct InboxScreen: View {
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(model.morePresented ? .isModal : [])
-            .disabled(model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
+            .disabled(model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
-            .accessibilityHidden(model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
+            .accessibilityHidden(model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
                 || (model.selectedSurface == .review && (model.reviewGuidePresented || model.reviewPickerPresented)))
             if model.selectedSurface == .board && model.boardFiltersPresented {
                 BoardFiltersSheet(model: model, palette: palette)
             }
-            if !model.focusPanel.isEmpty { FocusControlsPanel(model: model, palette: palette) }
+            if !model.focusPanel.isEmpty {
+                FocusControlsPanel(model: model, palette: palette)
+                    .disabled(model.focusSavedFilterPresented).accessibilityHidden(model.focusSavedFilterPresented)
+            }
+            if model.focusSavedFilterPresented { FocusSavedFilterDialog(model: model, palette: palette) }
             if model.selectedSurface == .review && model.reviewGuidePresented {
                 ReviewGuideScreen(model: model, palette: palette)
                     .disabled(model.mindSweepPresented || model.processInboxPresented)
@@ -369,9 +373,7 @@ struct InboxScreen: View {
                         let entries = saved.object("chips").objects("items")
                         ForEach(entries.indices, id: \.self) { index in
                             let item = entries[index]
-                            focusFilterChip(item.text("label"), selected: item.flag("selected"), id: "focus-saved-" + item.text("id")) {
-                                model.selectFocusSavedFilter(item.text("id"))
-                            }
+                            focusSavedFilterChip(item)
                         }
                         if entries.count < saved.object("chips").number("total") {
                             focusFilterChip(model.label("common.more"), selected: false, id: "focus-saved-more") {
@@ -379,7 +381,7 @@ struct InboxScreen: View {
                             }
                         }
                     }.padding(.vertical, 8)
-                }.fixedSize(horizontal: false, vertical: true)
+                }.fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("focus-saved-strip")
             }
             let active = controls.object("activeChips")
             if !active.isEmpty {
@@ -397,6 +399,30 @@ struct InboxScreen: View {
                 }.fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func focusSavedFilterChip(_ item: CoreObject) -> some View {
+        let selected = item.flag("selected")
+        let remove = { Task { await model.openFocusSavedFilter(["type": "delete", "id": item.text("id")], message: item.text("label")) } }
+        return HStack(spacing: 0) {
+            Button { model.selectFocusSavedFilter(item.text("id")) } label: {
+                Text(item.text("label")).rnFont(12, .semibold).fixedSize()
+                    .padding(.leading, 12).padding(.trailing, 8).frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityIdentifier("focus-saved-" + item.text("id"))
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .onLongPressGesture { _ = remove() }
+            .accessibilityAction(named: item.text("deleteLabel")) { _ = remove() }
+            Button { _ = remove() } label: {
+                AppIcon(name: "x", size: 12).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityLabel(item.text("deleteLabel"))
+            .accessibilityIdentifier("focus-saved-delete-" + item.text("id"))
+        }
+        .foregroundStyle(selected ? palette.onTint : palette.text)
+        .background(selected ? palette.tint : palette.filter, in: Capsule())
+        .overlay(Capsule().stroke(selected ? palette.tint : palette.border, lineWidth: 1))
+        .disabled(!model.focusControlsEnabled)
     }
 
     private func focusFilterChip(_ title: String, selected: Bool, excluded: Bool = false, removable: Bool = false,

@@ -99,6 +99,12 @@ final class CoreModel: ObservableObject {
     @Published private(set) var focusOrderError: String?
     private var focusOrderCurrent = false
     private var focusOrderRequest: String?
+    @Published private(set) var focusSavedFilterOperation: CoreObject = [:]
+    @Published private(set) var focusSavedFilterDialog: CoreObject = [:]
+    @Published var focusSavedFilterName = ""
+    @Published private(set) var focusSavedFilterError: String?
+    private var focusSavedFilterOptions: CoreObject = [:]
+    private var focusSavedFilterRequest: String?
     @Published private(set) var focusGroupError: String?
     private var focusGroupRequest: String?
     private var focusGroupExpectedResult: CoreObject?
@@ -582,7 +588,12 @@ final class CoreModel: ObservableObject {
     private var initialAddAnother = false
 
     var focusControlsEnabled: Bool {
-        ready && selectedSurface == .focus && !focus.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented && !focusOrderPresented
+        ready && selectedSurface == .focus && !focus.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented && !focusOrderPresented && !focusSavedFilterPresented
+    }
+    var focusSavedFilterPresented: Bool { !focusSavedFilterOperation.isEmpty }
+    var focusSavedFilterCanConfirm: Bool {
+        !busy && !retryNeeded && focusSavedFilterRequest == nil && !focusSavedFilterOptions.isEmpty
+            && (focusSavedFilterOperation.text("type") != "save" || !focusSavedFilterName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
     var focusOrderInputEnabled: Bool {
         ready && selectedSurface == .focus && focusOrderPresented && focusOrderCurrent
@@ -1278,6 +1289,9 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
+            } else if recovery.text("method") == "focusSavedFilterCommit" {
+                selectedSurface = .focus
+                focusState = recovery.object("result").object("controls")
             } else if ["taskFocusCommit", "focusGroupWrite", "focusOrderCommit"].contains(recovery.text("method")) {
                 selectedSurface = .focus
             } else if recovery.text("method") == "inboxPreparedCommit" {
@@ -10488,6 +10502,14 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = focusSavedFilterRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("focusSavedFilterRetryOutcome", [request]) }
+                try acknowledgeFocusSavedFilter(result)
+                await readFocus(ownsOperation: true)
+                return
+            }
             if let request = focusOrderRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -10699,6 +10721,10 @@ final class CoreModel: ObservableObject {
                 await handleProjectNotesWriteError(error)
                 return
             }
+            if focusSavedFilterRequest != nil {
+                await handleFocusSavedFilterError(error)
+                return
+            }
             if focusOrderRequest != nil {
                 await handleFocusOrderError(error)
                 return
@@ -10814,6 +10840,117 @@ final class CoreModel: ObservableObject {
 
     private func readInbox() async throws {
         inbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])])
+    }
+
+    func openFocusSavedFilter(_ operation: CoreObject, message: String = "") async {
+        guard focusControlsEnabled, focusSavedFilterRequest == nil else { return }
+        let controls = focus.object("controls")
+        let saving = operation.text("type") == "save"
+        var dialog = saving ? controls.object("filterSheet").object("save").object("dialog")
+            : operation.text("type") == "delete" ? controls.object("savedFilters").object("deleteConfirm")
+            : controls.object("filterSheet").object("removeConfirm")
+        guard !dialog.isEmpty else { return }
+        dialog["message"] = message
+        focusSavedFilterOperation = operation
+        focusSavedFilterDialog = dialog
+        focusSavedFilterName = saving ? dialog.text("defaultName") : ""
+        await readFocusSavedFilterOptions()
+    }
+
+    func closeFocusSavedFilter() {
+        guard !busy, !retryNeeded, focusSavedFilterRequest == nil else { return }
+        focusSavedFilterOperation = [:]
+        focusSavedFilterDialog = [:]
+        focusSavedFilterOptions = [:]
+        focusSavedFilterName = ""
+        focusSavedFilterError = nil
+    }
+
+    private func readFocusSavedFilterOptions() async {
+        guard !busy, !retryNeeded, focusSavedFilterPresented, focusSavedFilterRequest == nil else { return }
+        busy = true
+        focusSavedFilterError = nil
+        focusSavedFilterOptions = [:]
+        defer { finishOperation() }
+        do {
+            focusReadTask?.cancel()
+            focusGeneration += 1
+            await readFocus(ownsOperation: true)
+            guard focusCurrent else { throw CocoaError(.fileReadUnknown) }
+            let options = try await query("focusSavedFilterOptions", [try json([
+                "controls": focusState, "operation": focusSavedFilterOperation])])
+            guard options.count == 3, !options.text("revision").isEmpty, !options.text("expected").isEmpty,
+                  try json(options.object("controls")).utf8.elementsEqual(json(focusState).utf8) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            focusSavedFilterOptions = options
+            // A refreshed conflict needs a confirmation showing the current target label.
+            let operation = focusSavedFilterOperation
+            let offered = operation.text("type") == "delete"
+                ? focus.object("controls").object("savedFilters").object("chips").objects("items")
+                    .first(where: { $0.text("id") == operation.text("id") })
+                : focus.object("controls").object("filterSheet").objects("advancedChips")
+                    .first(where: { $0.text("criterionId") == operation.text("criterionId") })
+            if let offered, operation.text("type") != "save" { focusSavedFilterDialog["message"] = offered.text("label") }
+        } catch { focusSavedFilterError = label("settings.feedback.actionFailed") }
+    }
+
+    func confirmFocusSavedFilter() async {
+        guard focusSavedFilterCanConfirm else { return }
+        busy = true
+        focusSavedFilterError = nil
+        focusReadTask?.cancel()
+        focusGeneration += 1
+        defer { finishOperation() }
+        do {
+            focusSavedFilterRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                "controls": focusSavedFilterOptions.object("controls"), "operation": focusSavedFilterOperation,
+                "name": focusSavedFilterOperation.text("type") == "save" ? focusSavedFilterName as Any : NSNull(),
+                "expected": focusSavedFilterOptions.text("expected")])
+            try acknowledgeFocusSavedFilter(await query("focusSavedFilterWrite", [focusSavedFilterRequest!]))
+            await readFocus(ownsOperation: true)
+        } catch { await handleFocusSavedFilterError(error) }
+    }
+
+    private func acknowledgeFocusSavedFilter(_ result: CoreObject) throws {
+        guard let request = focusSavedFilterRequest, let data = request.data(using: .utf8),
+              let input = try NativeJSON.jsonObject(with: data) as? CoreObject else { throw CocoaError(.coderReadCorrupt) }
+        let operation = input.object("operation")
+        let kind = operation.text("type")
+        let expectedID = kind == "save" ? input.text("requestId")
+            : kind == "delete" ? operation.text("id") : input.object("controls").text("savedFilterId")
+        let controls = result.object("controls")
+        guard result.count == 2, !expectedID.isEmpty, result.text("id").utf8.elementsEqual(expectedID.utf8),
+              controls.count == 3, !controls.object("filters").isEmpty, !controls.text("sortBy").isEmpty,
+              controls["savedFilterId"] is String || controls["savedFilterId"] is NSNull else { throw CocoaError(.coderReadCorrupt) }
+        focusState = controls
+        focusLoadedDepth = [:]
+        focusCurrent = false
+        focusNeedsRead = true
+        focusSavedFilterRequest = nil
+        retryNeeded = false
+        error = nil
+        focusSavedFilterOperation = [:]
+        focusSavedFilterDialog = [:]
+        focusSavedFilterOptions = [:]
+        focusSavedFilterName = ""
+        focusSavedFilterError = nil
+        if kind == "save" { focusPanel = ""; closeFocusPicker() }
+    }
+
+    private func handleFocusSavedFilterError(_ failure: Error) async {
+        if focusSavedFilterRequest != nil && isDefiniteRejection(failure) {
+            focusSavedFilterRequest = nil
+            focusSavedFilterOptions = [:]
+            retryNeeded = false
+            await readFocus(ownsOperation: true)
+        } else { retryNeeded = focusSavedFilterRequest != nil }
+        focusSavedFilterError = label("settings.feedback.actionFailed")
+    }
+
+    func retryFocusSavedFilter() async {
+        if retryNeeded { await retry() }
+        else { await readFocusSavedFilterOptions() }
     }
 
     func openFocusOrder() async {
@@ -10936,7 +11073,7 @@ final class CoreModel: ObservableObject {
     }
 
     func closeFocusPanel() {
-        guard !busy, !retryNeeded, focusGroupRequest == nil else { return }
+        guard !busy, !retryNeeded, focusGroupRequest == nil, !focusSavedFilterPresented else { return }
         focusPanel = ""
         closeFocusPicker()
     }

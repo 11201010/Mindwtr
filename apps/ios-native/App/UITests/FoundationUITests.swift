@@ -5697,6 +5697,99 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testFocusSavedFiltersNormal() { focusSavedFilterFlow(library: "0d96fc3d-f11b-4d95-b97d-ba470755e7f6") }
+    func testFocusSavedFiltersLargestText() { focusSavedFilterFlow(library: "7483ade0-876f-4f71-9452-e686cdf4fe56") }
+
+    private func openFocusSavedFilterTest(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+        boardEnabled(app.buttons["focus-view-options"])
+    }
+
+    private func beginFocusFilterSave(_ app: XCUIApplication, name: String) {
+        boardTap(app, "focus-filters-open")
+        let scroll = app.scrollViews["focus-controls-scroll"]
+        revealPagedElement(app, app.buttons["focus-filter-more"], in: scroll)
+        boardTap(app, "focus-filter-more")
+        revealPagedElement(app, app.buttons["focus-filter-priority-high"], in: scroll)
+        boardTap(app, "focus-filter-priority-high")
+        boardEnabled(app.buttons["focus-filter-save"]); boardTap(app, "focus-filter-save")
+        let field = app.textFields["focus-saved-name"]
+        boardEnabled(field); replaceTextView(field, with: name)
+        boardEnabled(app.buttons["focus-saved-confirm"])
+    }
+
+    private func savedFilterTap(_ app: XCUIApplication, _ target: XCUIElement) {
+        for _ in 0..<8 {
+            if target.exists && target.isHittable { break }
+            app.scrollViews["focus-saved-strip"].swipeLeft()
+        }
+        boardEnabled(target); XCTAssertTrue(target.isHittable); target.tap()
+    }
+
+    private func focusSavedFilterFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openFocusSavedFilterTest(app)
+        beginFocusFilterSave(app, name: "Native saved filter")
+        let name = app.textFields["focus-saved-name"]
+        replaceTextView(name, with: " ")
+        XCTAssertFalse(app.buttons["focus-saved-confirm"].isEnabled)
+        replaceTextView(name, with: "Native saved filter")
+        let card = app.descendants(matching: .any).matching(identifier: "focus-saved-card").firstMatch
+        XCTAssertTrue(card.exists); XCTAssertLessThan(card.frame.height, app.frame.height * 0.85)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Save Focus filter"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "focus-saved-confirm")
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "focus-saved-", "Native saved filter")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 15)); boardEnabled(saved)
+        XCTAssertTrue(saved.isSelected)
+        let id = String(saved.identifier.dropFirst("focus-saved-".count))
+        boardTap(app, "tab-inbox"); boardTap(app, "tab-focus"); XCTAssertTrue(saved.isSelected)
+        app.terminate(); app.launch(); openFocusSavedFilterTest(app)
+        savedFilterTap(app, app.buttons["focus-saved-" + id]); XCTAssertTrue(app.buttons["focus-saved-" + id].isSelected)
+        savedFilterTap(app, app.buttons["focus-saved-delete-" + id])
+        boardTap(app, "focus-saved-cancel"); XCTAssertTrue(app.buttons["focus-saved-" + id].exists)
+        savedFilterTap(app, app.buttons["focus-saved-delete-" + id]); boardTap(app, "focus-saved-confirm")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["focus-saved-" + id]); waitForExpectations(timeout: 15)
+        app.scrollViews["focus-saved-strip"].swipeRight()
+        savedFilterTap(app, app.buttons["focus-saved-task73-advanced"])
+        boardTap(app, "focus-filters-open")
+        let criterion = app.buttons["focus-filter-advanced-advanced:dueDateRange"]
+        revealPagedElement(app, criterion, in: app.scrollViews["focus-controls-scroll"])
+        boardEnabled(criterion); criterion.tap(); boardTap(app, "focus-saved-cancel")
+        XCTAssertTrue(criterion.exists); criterion.tap(); boardTap(app, "focus-saved-confirm")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: criterion); waitForExpectations(timeout: 15)
+        XCTAssertFalse(app.staticTexts["focus-saved-error"].exists)
+        boardTap(app, "focus-controls-close")
+        app.terminate(); app.launch(); openFocusSavedFilterTest(app)
+        savedFilterTap(app, app.buttons["focus-saved-task73-advanced"]); boardTap(app, "focus-filters-open")
+        XCTAssertFalse(criterion.exists); boardTap(app, "focus-controls-close"); app.terminate()
+    }
+
+    func testFocusSavedFilterFailureKeepsExactRequest() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "6e30400b-1516-4735-8e08-74d3efc004f0"]
+        app.launch(); openFocusSavedFilterTest(app); beginFocusFilterSave(app, name: "Native recovered filter")
+        boardTap(app, "focus-saved-confirm")
+        XCTAssertTrue(app.staticTexts["focus-saved-error"].waitForExistence(timeout: 15))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["focus-saved-cancel"].isEnabled)
+            XCTAssertFalse(app.textFields["focus-saved-name"].isEnabled)
+            XCTAssertEqual(app.textFields["focus-saved-name"].value as? String, "Native recovered filter")
+            let retry = app.buttons["focus-saved-retry"]
+            boardEnabled(retry); XCTAssertTrue(retry.isHittable); XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            retry.tap(); boardEnabled(retry)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Saved filter exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testFocusSavedFilterColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "6e30400b-1516-4735-8e08-74d3efc004f0"]
+        app.launch(); boardEnabled(app.buttons["focus-view-options"], timeout: 30)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "focus-saved-", "Native recovered filter")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 15)); XCTAssertTrue(saved.isSelected)
+        XCTAssertFalse(app.staticTexts["focus-saved-error"].exists)
+        app.terminate(); app.launch(); openFocusSavedFilterTest(app); XCTAssertTrue(saved.exists); app.terminate()
+    }
+
     func testFocusOrderNormal() { focusOrderFlow(library: "d617ac56-809d-4509-b8a6-e0bcc3f403d7") }
     func testFocusOrderLargestText() { focusOrderFlow(library: "6d5cd93a-7fad-4ecb-b9fe-b7cf84406e24") }
 

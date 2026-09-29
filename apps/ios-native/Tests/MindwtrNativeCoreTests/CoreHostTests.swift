@@ -15567,4 +15567,348 @@ final class CoreHostTests: XCTestCase {
             directory = parent
         }
     }
+
+    private func seedFocusSavedFilterTask() async throws {
+        try await seedCalendarPreferenceTask()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET status = 'next' WHERE title LIKE 'Preserved preference task%'")
+        sqlite.close()
+    }
+
+    private func writeFocusSavedFilterSettings(_ settings: [String: Any]) throws {
+        let sqlite = try SQLiteBridge(url: database)
+        defer { sqlite.close() }
+        _ = try sqlite.execute("BEGIN IMMEDIATE")
+        do {
+            _ = try sqlite.execute("UPDATE settings SET data = ? WHERE id = 1", parametersJSON: json([json(settings)]))
+            _ = try sqlite.execute("DELETE FROM saved_filters")
+            for filter in settings["savedFilters"] as? [[String: Any]] ?? [] {
+                _ = try sqlite.execute("INSERT INTO saved_filters (id, name, icon, view, criteria, sortBy, sortOrder, groupBy, createdAt, updatedAt, deletedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                       parametersJSON: json([
+                                           try XCTUnwrap(filter["id"]), try XCTUnwrap(filter["name"]), filter["icon"] ?? NSNull(),
+                                           try XCTUnwrap(filter["view"]), json(filter["criteria"] ?? [String: Any]()),
+                                           filter["sortBy"] ?? NSNull(), filter["sortOrder"] ?? NSNull(), filter["groupBy"] ?? NSNull(),
+                                           try XCTUnwrap(filter["createdAt"]), try XCTUnwrap(filter["updatedAt"]), filter["deletedAt"] ?? NSNull(),
+                                       ]))
+            }
+            _ = try sqlite.execute("COMMIT")
+        } catch {
+            _ = try? sqlite.execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func focusSavedFilterControls(_ core: CoreHost, savedFilterID: String? = nil,
+                                          token: String? = nil) async throws -> [String: Any] {
+        var input: [String: Any] = ["limit": 50, "controls": savedFilterID.map { ["savedFilterId": $0] } ?? [:]]
+        if let token { input["controlEdit"] = ["type": "filter", "edit": ["type": "toggleToken", "value": token]] }
+        let focus = try object(await core.call("menuRead", argumentsJSON: json(["focus", json(input)])))
+        return try XCTUnwrap((focus["controls"] as? [String: Any])?["state"] as? [String: Any])
+    }
+
+    private func focusSavedFilterOptions(_ core: CoreHost, controls: [String: Any],
+                                         operation: [String: Any]) async throws -> [String: Any] {
+        try object(await core.call("focusSavedFilterOptions", argumentsJSON: json([json([
+            "controls": controls, "operation": operation,
+        ])])))
+    }
+
+    private func focusSavedFilterRequest(_ options: [String: Any], operation: [String: Any],
+                                         name: Any = NSNull(), id: String = UUID().uuidString.lowercased()) throws -> [String: Any] {
+        ["requestId": id, "controls": try XCTUnwrap(options["controls"]), "operation": operation,
+         "name": name, "expected": try XCTUnwrap(options["expected"])]
+    }
+
+    private func focusSavedFilterEnvelope() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "focusSavedFilterCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        return try object(XCTUnwrap(args.first))
+    }
+
+    func testFocusSavedFilterSavesSortOnlyPerspective() async throws {
+        try await seedFocusSavedFilterTask()
+        let core = host()
+        _ = try await core.start()
+        var controls = try await focusSavedFilterControls(core)
+        controls["sortBy"] = "due"
+        let operation: [String: Any] = ["type": "save"]
+        let options = try await focusSavedFilterOptions(core, controls: controls, operation: operation)
+        let request = try focusSavedFilterRequest(options, operation: operation, name: "Due perspective")
+        let before = try calendarPreferenceTasks()
+        let result = try object(await core.call("focusSavedFilterWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["id"] as? String, request["requestId"] as? String)
+        let saved = try XCTUnwrap((calendarPreferenceSettings()["savedFilters"] as? [[String: Any]])?.last)
+        XCTAssertEqual(saved["sortBy"] as? String, "due")
+        XCTAssertTrue(try XCTUnwrap(saved["criteria"] as? [String: Any]).isEmpty)
+        XCTAssertEqual(try calendarPreferenceTasks(), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testFocusSavedFilterSaveDeleteAndCriterionRemovalPreserveUnknownFields() async throws {
+        try await seedFocusSavedFilterTask()
+        let faults = HostIOFaults()
+        var logged = 0
+        faults.commandDiagnostic = { if $0 == "focusSavedFilterSaved" { logged += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let controls = try await focusSavedFilterControls(core, token: "@office")
+        let save: [String: Any] = ["type": "save"]
+        let saveOptions = try await focusSavedFilterOptions(core, controls: controls, operation: save)
+        XCTAssertNotNil(saveOptions["revision"] as? String)
+        let create = try focusSavedFilterRequest(saveOptions, operation: save, name: " Office ")
+        let tasks = try calendarPreferenceTasks()
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("focusSavedFilterRetryOutcome", argumentsJSON: json([json(create)]))
+        }
+        let created = try object(await core.call("focusSavedFilterWrite", argumentsJSON: json([json(create)])))
+        let id = try XCTUnwrap(create["requestId"] as? String)
+        XCTAssertEqual(created["id"] as? String, id)
+        XCTAssertEqual((created["controls"] as? [String: Any])?["savedFilterId"] as? String, id)
+        XCTAssertEqual((try XCTUnwrap(calendarPreferenceSettings()["savedFilters"] as? [[String: Any]])).last?["name"] as? String, "Office")
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertEqual(logged, 1)
+
+        await core.close()
+        var settings = try calendarPreferenceSettings()
+        var filters = try XCTUnwrap(settings["savedFilters"] as? [[String: Any]])
+        filters[0]["futureField"] = ["keep": "raw"]
+        var criteria = try XCTUnwrap(filters[0]["criteria"] as? [String: Any])
+        criteria["dueDateRange"] = ["from": "2036-01-01", "to": "2036-01-04"]
+        criteria["futureCriterion"] = ["keep": 7]
+        filters[0]["criteria"] = criteria
+        filters.append(["id": "sibling", "name": "Sibling", "view": "focus", "criteria": [:],
+                        "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+                        "futureField": "sibling raw"])
+        settings["savedFilters"] = filters
+        try writeFocusSavedFilterSettings(settings)
+        let reopened = host(faults)
+        _ = try await reopened.start()
+        let applied = try await focusSavedFilterControls(reopened, savedFilterID: id)
+        let remove: [String: Any] = ["type": "removeCriterion", "criterionId": "dueDateRange"]
+        let removeOptions = try await focusSavedFilterOptions(reopened, controls: applied, operation: remove)
+        let removeRequest = try focusSavedFilterRequest(removeOptions, operation: remove)
+        let removed = try object(await reopened.call("focusSavedFilterWrite", argumentsJSON: json([json(removeRequest)])))
+        XCTAssertEqual(removed["id"] as? String, id)
+        let afterRemoval = try calendarPreferenceSettings()
+        let removedFilters = try XCTUnwrap(afterRemoval["savedFilters"] as? [[String: Any]])
+        XCTAssertEqual((removedFilters[0]["futureField"] as? [String: String])?["keep"], "raw")
+        XCTAssertNotNil((removedFilters[0]["criteria"] as? [String: Any])?["futureCriterion"])
+        XCTAssertNil((removedFilters[0]["criteria"] as? [String: Any])?["dueDateRange"])
+        XCTAssertEqual(try json(removedFilters[1]), try json(filters[1]))
+
+        let delete: [String: Any] = ["type": "delete", "id": id]
+        let deleteOptions = try await focusSavedFilterOptions(reopened, controls: applied, operation: delete)
+        let deleteRequest = try focusSavedFilterRequest(deleteOptions, operation: delete)
+        let deleted = try object(await reopened.call("focusSavedFilterWrite", argumentsJSON: json([json(deleteRequest)])))
+        XCTAssertEqual(deleted["id"] as? String, id)
+        XCTAssertTrue((deleted["controls"] as? [String: Any])?["savedFilterId"] is NSNull)
+        let finalFilters = try XCTUnwrap(calendarPreferenceSettings()["savedFilters"] as? [[String: Any]])
+        XCTAssertNotNil(finalFilters[0]["deletedAt"] as? String)
+        XCTAssertEqual(try json(finalFilters[1]), try json(filters[1]))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        XCTAssertEqual(logged, 3)
+    }
+
+    func testFocusSavedFilterFailedCommitColdRecoveryAndExactResult() async throws {
+        try await seedFocusSavedFilterTask()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let controls = try await focusSavedFilterControls(writer, token: "@office")
+        let operation: [String: Any] = ["type": "save"]
+        let request = try focusSavedFilterRequest(await focusSavedFilterOptions(writer, controls: controls, operation: operation),
+                                                 operation: operation, name: "Office")
+        let before = try json(calendarPreferenceSettings())
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus saved filter COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("focusSavedFilterWrite", argumentsJSON: json([json(request)]))
+        }
+        XCTAssertEqual(try json(calendarPreferenceSettings()), before)
+        XCTAssertEqual((try focusSavedFilterEnvelope()["request"] as? [String: Any])?["requestId"] as? String,
+                       request["requestId"] as? String)
+        await writer.close()
+        let reopened = host()
+        let startup = try object(await reopened.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "focusSavedFilterCommit")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, request["requestId"] as? String)
+        XCTAssertEqual((try XCTUnwrap(calendarPreferenceSettings()["savedFilters"] as? [[String: Any]])).last?["id"] as? String,
+                       request["requestId"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+    }
+
+    func testFocusSavedFilterFailedCommitExactRetryUsesFrozenID() async throws {
+        try await seedFocusSavedFilterTask()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let controls = try await focusSavedFilterControls(writer, token: "@office")
+        let operation: [String: Any] = ["type": "save"]
+        let request = try focusSavedFilterRequest(await focusSavedFilterOptions(writer, controls: controls, operation: operation),
+                                                 operation: operation, name: "Office")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus saved filter COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("focusSavedFilterWrite", argumentsJSON: json([json(request)]))
+        }
+        let frozen = try focusSavedFilterEnvelope()
+        faults.beforeSQL = nil
+        let retried = try await writer.retryPending()
+        let result = try object(XCTUnwrap(retried))
+        XCTAssertEqual(try json(result), try json(XCTUnwrap((frozen["prepared"] as? [String: Any])?["result"])))
+        XCTAssertEqual(result["id"] as? String, request["requestId"] as? String)
+        let filters = try XCTUnwrap(calendarPreferenceSettings()["savedFilters"] as? [[String: Any]])
+        XCTAssertEqual(filters.filter { $0["id"] as? String == request["requestId"] as? String }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await writer.close()
+    }
+
+    func testFocusSavedFilterDurableReceiptSurvivesSiblingAndSettingsEditWithoutRewrite() async throws {
+        try await seedFocusSavedFilterTask()
+        var settings = try calendarPreferenceSettings()
+        settings["savedFilters"] = [["id": "delete-me", "name": "Target", "view": "focus",
+                                      "criteria": ["contexts": ["@office"]],
+                                      "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"]]
+        try writeFocusSavedFilterSettings(settings)
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let controls = try await focusSavedFilterControls(writer, savedFilterID: "delete-me")
+        let operation: [String: Any] = ["type": "delete", "id": "delete-me"]
+        let request = try focusSavedFilterRequest(await focusSavedFilterOptions(writer, controls: controls, operation: operation),
+                                                 operation: operation)
+        var journalWrites = 0
+        faults.journalWrite = {
+            journalWrites += 1
+            if journalWrites == 2 { throw HostFailure("Injected Focus saved filter lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") {
+            _ = try await writer.call("focusSavedFilterWrite", argumentsJSON: json([json(request)]))
+        }
+        let frozen = try focusSavedFilterEnvelope()
+        let expected = try XCTUnwrap((frozen["prepared"] as? [String: Any])?["result"])
+        await writer.close()
+        settings = try calendarPreferenceSettings()
+        var filters = try XCTUnwrap(settings["savedFilters"] as? [[String: Any]])
+        XCTAssertNotNil(filters[0]["deletedAt"] as? String)
+        filters.append(["id": "new-sibling", "name": "Other", "view": "focus", "criteria": [:],
+                        "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"])
+        settings["savedFilters"] = filters
+        settings["timeFormat"] = "24h"
+        try writeFocusSavedFilterSettings(settings)
+        let before = try json(calendarPreferenceSettings())
+        let replayFaults = HostIOFaults()
+        var writes = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { writes += 1 } }
+        let replay = host(replayFaults)
+        let startup = try object(await replay.start())
+        let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "focusSavedFilterCommit")
+        XCTAssertEqual(try json(XCTUnwrap(recovery["result"])), try json(expected))
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await replay.close()
+    }
+
+    func testFocusSavedFilterColdDeleteConflictsAfterTargetRenameDeleteAndABA() async throws {
+        for kind in ["rename", "delete", "aba"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedFocusSavedFilterTask()
+            var settings = try calendarPreferenceSettings()
+            settings["savedFilters"] = [["id": "delete-me", "name": "Target", "view": "focus",
+                                          "criteria": ["contexts": ["@office"]],
+                                          "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"]]
+            try writeFocusSavedFilterSettings(settings)
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let controls = try await focusSavedFilterControls(writer, savedFilterID: "delete-me")
+            let operation: [String: Any] = ["type": "delete", "id": "delete-me"]
+            let request = try focusSavedFilterRequest(await focusSavedFilterOptions(writer, controls: controls, operation: operation),
+                                                     operation: operation)
+            faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus saved filter pending") } }
+            await expectFailure("SAVE_FAILED") {
+                _ = try await writer.call("focusSavedFilterWrite", argumentsJSON: json([json(request)]))
+            }
+            await writer.close()
+            settings = try calendarPreferenceSettings()
+            var filters = try XCTUnwrap(settings["savedFilters"] as? [[String: Any]])
+            if kind == "delete" {
+                filters[0]["deletedAt"] = "2037-01-01T00:00:00.000Z"
+                filters[0]["updatedAt"] = "2037-01-01T00:00:00.000Z"
+            } else {
+                filters[0]["name"] = kind == "rename" ? "New name" : "Target"
+                filters[0]["updatedAt"] = "2037-01-01T00:00:00.000Z"
+            }
+            settings["savedFilters"] = filters
+            try writeFocusSavedFilterSettings(settings)
+            let before = try json(calendarPreferenceSettings())
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") { writes += 1 } }
+            let replay = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+            XCTAssertEqual(writes, 0, kind)
+            XCTAssertEqual(try json(calendarPreferenceSettings()), before, kind)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+            await replay.close()
+            directory = parent
+        }
+    }
+
+    func testFocusSavedFilterForgedColdJournalRejectedBeforeSQLite() async throws {
+        try await seedFocusSavedFilterTask()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let controls = try await focusSavedFilterControls(writer, token: "@office")
+        let operation: [String: Any] = ["type": "save"]
+        let request = try focusSavedFilterRequest(await focusSavedFilterOptions(writer, controls: controls, operation: operation),
+                                                 operation: operation, name: "Office")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus saved filter pending") } }
+        await expectFailure("SAVE_FAILED") {
+            _ = try await writer.call("focusSavedFilterWrite", argumentsJSON: json([json(request)]))
+        }
+        let original = try focusSavedFilterEnvelope()
+        let saved = try object(String(contentsOf: journal))
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for kind in ["request", "result", "after", "terminal"] {
+            var envelope = original
+            var forged = saved
+            if kind == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["name"] = "Forged"
+                envelope["request"] = changed
+            } else if kind == "result" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["result"] = ["id": "forged", "controls": [:]]
+                envelope["prepared"] = prepared
+            } else if kind == "after" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var after = try XCTUnwrap(prepared["after"] as? [String: Any])
+                after["name"] = "Forged"
+                prepared["after"] = after
+                envelope["prepared"] = prepared
+            } else {
+                forged["terminal"] = ["success": ["_0": try json(["id": "forged", "controls": [:]])]]
+            }
+            forged["argumentsJSON"] = try json([json(envelope)])
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, kind)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, kind)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, kind)
+            await blocked.close()
+        }
+    }
 }

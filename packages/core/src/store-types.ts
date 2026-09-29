@@ -1,6 +1,6 @@
 import type { ProjectTaskSummary } from './project-row-meta';
 import type { FocusStarAction } from './focus-star';
-import type { AppData, Area, Person, Project, Section, Task, TaskStatus } from './types';
+import type { AppData, Area, FilterCriteria, FocusGroupBy, Person, Project, SavedFilter, Section, SortField, Task, TaskStatus } from './types';
 import type { TaskQueryOptions } from './storage';
 import type { TaskDateCoherenceIssue } from './task-date-coherence';
 import type { TaskTokenUsage } from './task-token-usage';
@@ -59,6 +59,23 @@ export type PreparedFocusOrder = {
     deviceIdToInitialize: string | null;
     preparedAt: string;
     result: { ids: string[] };
+};
+
+export type FocusSavedFilterOperation = { type: 'save' } | { type: 'delete'; id: string }
+    | { type: 'removeCriterion'; criterionId: string };
+export type FocusSavedFilterRequest = { requestId: string; controls: FocusControlState;
+    operation: FocusSavedFilterOperation; name: string | null; expected: string };
+export type FocusSavedFilterResult = { controls: FocusControlState; id: string };
+export type PreparedFocusSavedFilter = {
+    version: 1;
+    request: FocusSavedFilterRequest;
+    scope: { before: SavedFilter | null; creation: {
+        canSave: boolean; currentCriteria: FilterCriteria; effectiveSortBy: SortField;
+        effectiveGroupBy: FocusGroupBy;
+    } | null };
+    after: SavedFilter;
+    preparedAt: string;
+    result: FocusSavedFilterResult;
 };
 
 /** One frozen project-only creation. The full project row is its durable receipt. */
@@ -438,6 +455,7 @@ export interface TaskStore {
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
+    commitPreparedFocusSavedFilter: (input: PreparedFocusSavedFilter) => Promise<PreparedTaskEditResult>;
     /** Native validates the action-specific envelope before this atomic guarded write. */
     commitPreparedBoardTask: (input: PreparedBoardTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;

@@ -84,8 +84,14 @@ struct FocusControlsPanel: View {
     @ViewBuilder private var headerActions: some View {
         if model.focusPanel == "filters" {
             if !sheet.object("save").isEmpty {
-                Button(sheet.object("save").text("label")) {}.rnFont(13, .semibold).frame(minWidth: 44, minHeight: 44)
-                    .disabled(true).opacity(0.5).accessibilityIdentifier("focus-filter-save")
+                Button { endInput(); Task { await model.openFocusSavedFilter(["type": "save"]) } } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bookmark").font(.system(size: 14))
+                        Text(sheet.object("save").text("label")).rnFont(13, .semibold)
+                    }.frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.focusControlsEnabled)
+                .accessibilityIdentifier("focus-filter-save")
             }
             if sheet.object("clear").flag("visible") || model.focusLocationRefused {
                 Button { apply(sheet.object("clear").object("edit")) } label: {
@@ -170,7 +176,11 @@ struct FocusControlsPanel: View {
                 ForEach(advanced.indices, id: \.self) { index in
                     let item = advanced[index]
                     chip(item.text("label"), selected: true, removable: true,
-                         id: "focus-filter-advanced-" + item.text("id"), enabled: false) {}
+                         id: "focus-filter-advanced-" + item.text("id")) {
+                        endInput()
+                        Task { await model.openFocusSavedFilter(["type": "removeCriterion", "criterionId": item.text("criterionId")], message: item.text("label")) }
+                    }
+                    .accessibilityLabel(text.text("removeFilter") + ": " + item.text("label"))
                 }
             }
         }
@@ -337,6 +347,98 @@ struct FocusControlsPanel: View {
     private func close() { endInput(); model.closeFocusPanel() }
     private func endInput() {
         focusedField = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+/// RN's save-name overlay and destructive confirmations share exact-retry state.
+struct FocusSavedFilterDialog: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @FocusState private var nameFocused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var labels: CoreObject { model.focusSavedFilterDialog }
+    private var saving: Bool { model.focusSavedFilterOperation.text("type") == "save" }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Button { close() } label: { Color.black.opacity(0.4).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).ignoresSafeArea().disabled(model.busy || model.retryNeeded)
+                    .accessibilityLabel(labels.text("cancelLabel")).accessibilityIdentifier("focus-saved-dialog-dismiss")
+                ViewThatFits(in: .vertical) {
+                    content.fixedSize(horizontal: false, vertical: true)
+                    ScrollView { content }.scrollDismissesKeyboard(.interactively)
+                }
+                .frame(maxWidth: 440, maxHeight: geometry.size.height - 24)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
+                .accessibilityElement(children: .contain).accessibilityIdentifier("focus-saved-card")
+                .padding(.horizontal, 24)
+            }
+        }
+        .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+        .accessibilityIdentifier("focus-saved-dialog")
+        .accessibilityAction(.escape) { close() }
+        .task(id: model.busy) {
+            if saving && !model.busy && !model.retryNeeded && model.focusSavedFilterError == nil { nameFocused = true }
+        }
+    }
+
+    private var content: some View {
+    VStack(alignment: .leading, spacing: 16) {
+        Text(labels.text("title")).rnFont(18, .semibold).foregroundStyle(palette.text)
+            .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+        if saving {
+            TextField(labels.text("placeholder"), text: $model.focusSavedFilterName)
+                .rnFont(15).foregroundStyle(palette.text).focused($nameFocused)
+                .submitLabel(.done).onSubmit { submit() }
+                .padding(12).frame(minHeight: 44).background(palette.bg, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border, lineWidth: 1))
+                .contentShape(Rectangle()).onTapGesture { nameFocused = true }
+                .disabled(model.busy || model.retryNeeded)
+                .accessibilityLabel(labels.text("placeholder")).accessibilityIdentifier("focus-saved-name")
+        } else {
+            Text(labels.text("message")).rnFont(15).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let error = model.focusSavedFilterError {
+            Text(error).rnFont(14).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("focus-saved-error")
+            Button { endInput(); Task { await model.retryFocusSavedFilter() } } label: {
+                Text(model.label("common.retry")).rnFont(14, .semibold).frame(minHeight: 44)
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy)
+            .accessibilityIdentifier("focus-saved-retry")
+        }
+        if dynamicTypeSize.isAccessibilitySize { VStack(spacing: 8) { actions } }
+        else { HStack(spacing: 12) { Spacer(); actions } }
+    }.padding(20)
+    }
+
+    @ViewBuilder private var actions: some View {
+        Button { close() } label: {
+            Text(labels.text("cancelLabel")).rnFont(14, .semibold).frame(minHeight: 44)
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(model.busy || model.retryNeeded)
+        .accessibilityIdentifier("focus-saved-cancel")
+        Button { submit() } label: {
+            Text(labels.text(saving ? "saveLabel" : "confirmLabel")).rnFont(14, .semibold)
+                .padding(.horizontal, 20).frame(minHeight: 44)
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
+                .foregroundStyle(palette.onTint).background(saving ? palette.tint : palette.danger, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.focusSavedFilterCanConfirm)
+        .opacity(model.focusSavedFilterCanConfirm ? 1 : 0.5).accessibilityIdentifier("focus-saved-confirm")
+    }
+
+    private func submit() { endInput(); Task { await model.confirmFocusSavedFilter() } }
+    private func close() { endInput(); model.closeFocusSavedFilter() }
+    private func endInput() {
+        nameFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
