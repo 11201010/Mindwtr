@@ -131,7 +131,15 @@ vi.mock('./task-edit/TaskEditViewTab', () => ({
 }));
 
 vi.mock('./task-edit/TaskEditFormTab', () => ({
-  TaskEditFormTab: (props: any) => React.createElement('TaskEditFormTab', props),
+  // The Focus star sits in the form's Title row; render it so tests can press it.
+  TaskEditFormTab: (props: any) => React.createElement('TaskEditFormTab', props, props.focusStar
+    ? React.createElement('FocusStar', {
+      testID: 'task-edit-focus-star',
+      onPress: props.focusStar.onToggle,
+      accessibilityLabel: props.focusStar.label,
+      accessibilityState: { disabled: props.focusStar.disabled, selected: props.focusStar.focused },
+    })
+    : null),
 }));
 
 vi.mock('./completed-at-picker', () => ({

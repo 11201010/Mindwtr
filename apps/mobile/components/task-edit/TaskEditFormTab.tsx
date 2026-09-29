@@ -27,6 +27,7 @@ import { FieldHeading } from './FieldHeading';
 import type { CopilotPart } from './use-task-edit-copilot';
 import { SomedaySectionPicker } from '../someday-section-picker';
 import { ContextualHelp } from '../ContextualHelp';
+import { FocusStarIcon } from '../FocusStarIcon';
 
 type TaskEditFormTabProps = {
     t: (key: string) => string;
@@ -65,6 +66,7 @@ type TaskEditFormTabProps = {
     containerWidth: number;
     textDirectionStyle: Record<string, any>;
     titleDraft: string;
+    focusStar?: { focused: boolean; disabled: boolean; label: string; onToggle: () => void };
     titleInputRef?: React.RefObject<TextInput | null>;
     onTitleDraftChange: (text: string) => void;
     onTitleSelectionChange?: (selection: { start: number; end: number }) => void;
@@ -117,6 +119,7 @@ function TaskEditFormTabComponent({
     containerWidth,
     textDirectionStyle,
     titleDraft,
+    focusStar,
     titleInputRef,
     onTitleDraftChange,
     onTitleSelectionChange,
@@ -358,6 +361,24 @@ function TaskEditFormTabComponent({
                                     labelStyle={[styles.label, { color: tc.secondaryText, marginBottom: 0 }]}
                                     rowStyle={{ marginBottom: 0 }}
                                 />
+                                <View style={styles.titleActions}>
+                                {focusStar ? (
+                                    <TouchableOpacity
+                                        onPress={focusStar.onToggle}
+                                        disabled={focusStar.disabled}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={focusStar.label}
+                                        accessibilityState={{ disabled: focusStar.disabled, selected: focusStar.focused }}
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                        style={[
+                                            styles.fieldHelpButton,
+                                            { backgroundColor: tc.filterBg, borderColor: tc.border },
+                                        ]}
+                                        testID="task-edit-focus-star"
+                                    >
+                                        <FocusStarIcon focused={focusStar.focused} disabled={focusStar.disabled} inactiveColor={tc.secondaryText} size={18} />
+                                    </TouchableOpacity>
+                                ) : null}
                                 <TouchableOpacity
                                     accessibilityLabel={taskEditorLayoutHelpLabel}
                                     accessibilityRole="button"
@@ -370,6 +391,7 @@ function TaskEditFormTabComponent({
                                 >
                                     <Ionicons name="help-circle-outline" size={18} color={tc.secondaryText} />
                                 </TouchableOpacity>
+                                </View>
                             </View>
                             <TextInput
                             ref={titleInputRef}
