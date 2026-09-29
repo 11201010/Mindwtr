@@ -636,6 +636,11 @@ const storedCalendarDateValid = (value: unknown): value is string => instantVali
     || (typeof value === 'string' && DAY_KEY_PATTERN.test(value)
         && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`))
         && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value);
+// The composer a prepared journal froze: the view's composer, with the selected task's
+// revision (receipts' compare-and-set) or, journaled before that field, without it.
+const PREPARED_COMPOSER_KEYS = ['date', 'startTimeValue', 'startAt', 'endTimeValue', 'durationMinutes', 'mode', 'title', 'query', 'selectedTaskId', 'error'] as const;
+const preparedComposerKeysValid = (composer: Record<string, unknown>) => calendarKeys(composer, PREPARED_COMPOSER_KEYS)
+    || (calendarKeys(composer, [...PREPARED_COMPOSER_KEYS, 'taskRevision']) && (composer.taskRevision === null || isRevision(composer.taskRevision)));
 const calendarUpdates = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item === undefined ? null : item]));
 const projectProjection = (project: Project | undefined): ResolverProject | null => project ? {
     id: project.id, status: project.status, deletedAt: project.deletedAt ?? null, purgedAt: project.purgedAt ?? null,
@@ -739,7 +744,7 @@ export const validatePreparedCalendarCreate = (input: unknown): NativeHostResult
         if (!calendarKeys(input.request, ['requestId', 'composer']) || !CALENDAR_UUID.test(request.requestId)
             || request.requestId !== request.requestId.toLowerCase()
             || !calendarRecord(composer)
-            || !calendarKeys(composer, ['date', 'startTimeValue', 'startAt', 'endTimeValue', 'durationMinutes', 'mode', 'title', 'query', 'selectedTaskId', 'error'])
+            || !preparedComposerKeysValid(composer)
             || composer.mode !== 'new' || !instantValid(composer.date) || !instantValid(composer.startAt)
             || typeof composer.startTimeValue !== 'string' || composer.startTimeValue.length > 64
             || typeof composer.endTimeValue !== 'string' || composer.endTimeValue.length > 64
@@ -837,7 +842,7 @@ export const validatePreparedCalendarSchedule = (input: unknown): NativeHostResu
         const projection = prepared.projection;
         if (!calendarKeys(input.request, ['requestId', 'composer']) || typeof request.requestId !== 'string'
             || !CALENDAR_UUID.test(request.requestId) || !calendarRecord(composer)
-            || !calendarKeys(composer, ['date', 'startTimeValue', 'startAt', 'endTimeValue', 'durationMinutes', 'mode', 'title', 'query', 'selectedTaskId', 'error'])
+            || !preparedComposerKeysValid(composer)
             || composer.mode !== 'existing' || typeof composer.selectedTaskId !== 'string' || !composer.selectedTaskId
             || !instantValid(composer.startAt) || !instantValid(composer.date)
             || typeof composer.startTimeValue !== 'string' || composer.startTimeValue.length > 64
@@ -1747,7 +1752,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                     return fail('INVALID_INPUT', 'A New composer day and bounded timeline minute are required');
                 }
                 const start = getCalendarMovedStart(day.getTime(), snapCalendarTimelineMinutes(input.rawMinutes));
-                return { ok: true, value: { composer: composerView(ctx, toCalendarViewComposer(openComposerAt(start, { mode: 'new' }, openDeps), start)), toast: null } };
+                return { ok: true, value: { composer: composerView(ctx, { ...toCalendarViewComposer(openComposerAt(start, { mode: 'new' }, openDeps), start), taskRevision: null }), toast: null } };
             }
             if (input.scheduleTaskId !== undefined) {
                 const task = ctx.schedulableTasks.find((candidate) => candidate.id === input.scheduleTaskId);
