@@ -19,6 +19,13 @@
      "push: the managed calendar, a new color, then off: a second tap on #059669 (a step added to the scenario) writes nothing, shows no toast and keeps the Mindwtr calendar created-1.",
      "feeds: the synced list wins over the device copy: tapping Holidays feed's color #059669, which it already has, writes no settings."
     ]
+   },
+   {
+    "base": "32a65a41d",
+    "command": "The observation below was written by hand, then React Native was fixed until the harness replayed it; every other observation matched the frozen one. Before the fix the harness recorded a success toast, Loaded 0 events, for a subscription that answered HTTP 404.",
+    "observations": [
+     "feeds: stored on the device only: Test, with the only subscription failing to load, shows Error / Failed to load events (warning)."
+    ]
    }
   ]
  },
@@ -9868,9 +9875,9 @@
     "prompts": 0,
     "toasts": [
      [
-      "Success",
-      "Loaded 0 events",
-      "success",
+      "Error",
+      "Failed to load events",
+      "warning",
       null
      ]
     ]

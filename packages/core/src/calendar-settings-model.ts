@@ -351,6 +351,10 @@ export const calendarSettingsToasts = (tr: TranslateText, t: Translate) => ({
         tone: 'success',
         durationMs: 3500,
     }),
+    /** Test's answer: the events loaded, or a failure when a subscription could not be read. */
+    testResult: (count: number, failedFeeds: number, language: string): CalendarSettingsToast => (
+        failedFeeds > 0 ? calendarSettingsToasts(tr, t).testFailed() : calendarSettingsToasts(tr, t).testLoaded(count, language)
+    ),
     testLoaded: (count: number, language: string): CalendarSettingsToast => ({
         title: tr('common.success'),
         message: isChineseCalendarSettingsLanguage(language) ? `已加载 ${count} 个日程` : `Loaded ${count} events`,

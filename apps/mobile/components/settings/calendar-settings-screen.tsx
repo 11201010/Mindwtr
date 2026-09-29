@@ -464,8 +464,11 @@ export function CalendarSettingsScreen() {
     const handleTestFetch = async () => {
         try {
             const range = getCalendarTestRange(new Date());
-            const { events } = await fetchExternalCalendarEvents(range.start, range.end);
-            showToast(calendarSettingsToasts(tr, t).testLoaded(events.length, language));
+            let failedFeeds = 0;
+            const { events } = await fetchExternalCalendarEvents(range.start, range.end, {
+                onFeedError: () => { failedFeeds += 1; },
+            });
+            showToast(calendarSettingsToasts(tr, t).testResult(events.length, failedFeeds, language));
         } catch (error) {
             console.error(error);
             showToast(calendarSettingsToasts(tr, t).testFailed());

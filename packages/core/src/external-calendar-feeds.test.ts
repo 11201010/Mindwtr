@@ -108,6 +108,22 @@ describe('external calendar feeds behind the host ports', () => {
         expect(result.calendars.map((calendar) => calendar.id)).toEqual(['team', 'local', 'broken', 'off']);
     });
 
+    it('names each enabled feed that failed to load, for the Test button', async () => {
+        const { feeds } = device({
+            storage: { [EXTERNAL_CALENDARS_KEY]: JSON.stringify([
+                feed('team', 'https://example.com/team.ics'),
+                feed('broken', 'https://example.com/broken.ics'),
+                feed('missing-file', 'file:///gone.ics'),
+                feed('off', 'https://example.com/off.ics', { enabled: false }),
+            ]) },
+            feeds: { 'https://example.com/team.ics': ics([['t1', '20260910T090000Z', 'Planning']]) },
+        });
+        const failed: string[] = [];
+        const result = await feeds.fetchExternalCalendarEvents(...SEPT, { onFeedError: (calendarId) => { failed.push(calendarId); } });
+        expect(result.events).toHaveLength(1);
+        expect(failed).toEqual(['broken', 'missing-file']);
+    });
+
     it('gives up on a feed after 15 s without failing the others', async () => {
         vi.useFakeTimers();
         const { feeds } = device({

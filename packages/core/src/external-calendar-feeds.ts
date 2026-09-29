@@ -6,7 +6,7 @@
  * the same rules; each host binds its device through `ExternalCalendarFeedsHost`.
  *
  * Fetching: each enabled feed is read with a 15 s timeout, and a feed that fails
- * drops out of the result without failing the others. The caller's `signal`
+ * drops out of the result without failing the others (`onFeedError` names it). The caller's `signal`
  * cancels every read, and `timeoutMs` bounds the whole fetch. The device
  * calendars are read only while they are on and access is granted; the calendar
  * the app pushes tasks to (a "Mindwtr" calendar) and every event it pushed are
@@ -52,6 +52,8 @@ export interface SystemCalendarInfo {
 export type ExternalCalendarFetchOptions = {
     signal?: AbortSignal;
     timeoutMs?: number;
+    /** Called for each enabled subscription that could not be read or parsed (it drops out of the result). */
+    onFeedError?: (calendarId: string) => void;
 };
 
 /** A device calendar as expo-calendar describes it (Android: a CalendarContract.Calendars row). */
@@ -442,7 +444,12 @@ export function createExternalCalendarFeeds(host: ExternalCalendarFeedsHost) {
         }
     };
 
-    const fetchIcsCalendarEvents = async (rangeStart: Date, rangeEnd: Date, signal?: AbortSignal): Promise<ExternalCalendarSourceResult> => {
+    const fetchIcsCalendarEvents = async (
+        rangeStart: Date,
+        rangeEnd: Date,
+        signal?: AbortSignal,
+        onFeedError?: (calendarId: string) => void,
+    ): Promise<ExternalCalendarSourceResult> => {
         throwIfAborted(signal);
         const calendars = await getExternalCalendars();
         const enabled = calendars.filter((c) => c.enabled);
@@ -468,8 +475,11 @@ export function createExternalCalendarFeeds(host: ExternalCalendarFeedsHost) {
         const splitCalendarIds = new Set<string>();
         const icsSources: ExternalCalendarSourceResult[] = [];
         for (const [index, result] of results.entries()) {
-            if (result.status !== 'fulfilled') continue;
             const calendar = enabled[index];
+            if (result.status !== 'fulfilled') {
+                onFeedError?.(calendar.id);
+                continue;
+            }
             const contributed = expandCategoryCalendars(
                 calendar,
                 result.value.events,
@@ -692,7 +702,7 @@ export function createExternalCalendarFeeds(host: ExternalCalendarFeedsHost) {
 
         try {
             const [icsData, systemData] = await Promise.all([
-                fetchIcsCalendarEvents(rangeStart, rangeEnd, signal),
+                fetchIcsCalendarEvents(rangeStart, rangeEnd, signal, options.onFeedError),
                 fetchSystemCalendarEvents(rangeStart, rangeEnd, signal),
             ]);
 
