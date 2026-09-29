@@ -5697,6 +5697,77 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testFocusOrderNormal() { focusOrderFlow(library: "d617ac56-809d-4509-b8a6-e0bcc3f403d7") }
+    func testFocusOrderLargestText() { focusOrderFlow(library: "6d5cd93a-7fad-4ecb-b9fe-b7cf84406e24") }
+
+    private func openFocusOrderTest(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+        let toggle = app.buttons["focus-reorder-toggle"]
+        revealPagedElement(app, toggle, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        boardEnabled(toggle); toggle.tap(); boardEnabled(app.buttons["focus-reorder-done"])
+    }
+
+    private func focusOrderRow(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "focus-reorder-row-" + id).firstMatch
+    }
+
+    private func dragFocusOrder(_ app: XCUIApplication, _ source: String, below destination: String) {
+        let a = focusOrderRow(app, source); let b = focusOrderRow(app, destination)
+        XCTAssertTrue(a.waitForExistence(timeout: 15)); XCTAssertTrue(b.exists)
+        let list = app.descendants(matching: .any).matching(identifier: "focus-reorder-list").firstMatch
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        origin.withOffset(CGVector(dx: list.frame.maxX - 24, dy: a.frame.midY))
+            .press(forDuration: 0.8, thenDragTo: origin.withOffset(CGVector(dx: list.frame.maxX - 24, dy: b.frame.maxY - 5)))
+    }
+
+    private func focusOrderFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openFocusOrderTest(app)
+        let a = "acc031d9-9cac-4296-8420-840bcd17a562"
+        let b = "dd5c836f-26ad-47a6-8d1e-d22f178db1c4"
+        let c = "e6b85a73-6e89-4a98-826d-f8d109805591"
+        XCTAssertFalse(focusOrderRow(app, "a007e3b4-2789-43b0-8e79-86617f91c5c5").exists)
+        func position(_ id: String, _ number: Int) {
+            let row = focusOrderRow(app, id)
+            expectation(for: NSPredicate(format: "label CONTAINS %@", "Position \(number) of 3"), evaluatedWith: row)
+            waitForExpectations(timeout: 15)
+            boardEnabled(app.buttons["focus-reorder-done"])
+        }
+        position(a, 1); dragFocusOrder(app, a, below: c); position(a, 3)
+        dragFocusOrder(app, b, below: c); position(c, 1); position(b, 2)
+        XCTAssertFalse(app.staticTexts["focus-reorder-error"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Focus reorder"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "focus-reorder-done")
+        boardTap(app, "tab-inbox"); openFocusOrderTest(app); position(c, 1)
+        boardTap(app, "tab-inbox"); XCTAssertFalse(app.buttons["focus-reorder-done"].exists)
+        app.terminate(); app.launch(); openFocusOrderTest(app); position(c, 1); position(a, 3)
+        boardTap(app, "focus-reorder-done"); app.terminate()
+    }
+
+    func testFocusOrderFailureKeepsExactRequest() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "8e7e47b0-bbe8-4187-827e-d78e41ae68a0"]
+        app.launch(); openFocusOrderTest(app)
+        dragFocusOrder(app, "acc031d9-9cac-4296-8420-840bcd17a562", below: "e6b85a73-6e89-4a98-826d-f8d109805591")
+        XCTAssertTrue(app.staticTexts["focus-reorder-error"].waitForExistence(timeout: 15))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["focus-reorder-done"].isEnabled)
+            XCTAssertFalse(app.buttons["tab-inbox"].isEnabled)
+            let retry = app.buttons["focus-reorder-retry"]
+            boardEnabled(retry); XCTAssertTrue(retry.isHittable); XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            retry.tap(); boardEnabled(retry)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Focus order exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testFocusOrderColdRecovery() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "8e7e47b0-bbe8-4187-827e-d78e41ae68a0"]
+        app.launch(); openFocusOrderTest(app)
+        XCTAssertTrue(focusOrderRow(app, "acc031d9-9cac-4296-8420-840bcd17a562").label.contains("Position 3 of 3"))
+        XCTAssertFalse(app.staticTexts["focus-reorder-error"].exists)
+        boardTap(app, "focus-reorder-done"); app.terminate()
+    }
+
     func testFocusGroupingNormal() { focusGroupingFlow(library: "200e5e94-1e41-4b90-a43f-190ae4d55bdc", largest: false) }
     func testFocusGroupingLargestText() { focusGroupingFlow(library: "b7dc20b6-14a0-4240-b9cb-bee8dbf63c10", largest: true) }
 
@@ -5791,7 +5862,7 @@ final class FoundationUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(heading.frame.height, 44)
         XCTAssertLessThanOrEqual(heading.frame.height, 60)
         let reorder = app.buttons["focus-reorder-toggle"]
-        XCTAssertTrue(reorder.exists); XCTAssertFalse(reorder.isEnabled)
+        XCTAssertTrue(reorder.exists); XCTAssertTrue(reorder.isEnabled)
         XCTAssertLessThanOrEqual(heading.frame.maxX, reorder.frame.minX)
         let title = app.buttons["task-title-acc031d9-9cac-4296-8420-840bcd17a562"]
         boardEnabled(title)

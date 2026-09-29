@@ -93,6 +93,12 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectCreateAreaID: String?
     @Published private(set) var projectCreateError: String?
     @Published private(set) var projectCreateReadError: String?
+    @Published private(set) var focusOrderPresented = false
+    @Published private(set) var focusOrderShowHint = true
+    @Published private(set) var focusOrderView: CoreObject = [:]
+    @Published private(set) var focusOrderError: String?
+    private var focusOrderCurrent = false
+    private var focusOrderRequest: String?
     @Published private(set) var focusGroupError: String?
     private var focusGroupRequest: String?
     private var focusGroupExpectedResult: CoreObject?
@@ -576,7 +582,12 @@ final class CoreModel: ObservableObject {
     private var initialAddAnother = false
 
     var focusControlsEnabled: Bool {
-        ready && selectedSurface == .focus && !focus.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented
+        ready && selectedSurface == .focus && !focus.isEmpty && !busy && !retryNeeded && !taskPresented && !areaPickerPresented && !focusOrderPresented
+    }
+    var focusOrderInputEnabled: Bool {
+        ready && selectedSurface == .focus && focusOrderPresented && focusOrderCurrent
+            && focusOrderView.flag("canReorder") && !busy && !retryNeeded && focusOrderRequest == nil
+            && !taskPresented && !capturePresented && !areaPickerPresented && !morePresented
     }
     var reviewActionsEnabled: Bool {
         ready && selectedSurface == .review && reviewCurrent && !busy && !retryNeeded
@@ -1267,7 +1278,7 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
-            } else if ["taskFocusCommit", "focusGroupWrite"].contains(recovery.text("method")) {
+            } else if ["taskFocusCommit", "focusGroupWrite", "focusOrderCommit"].contains(recovery.text("method")) {
                 selectedSurface = .focus
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
@@ -1358,6 +1369,8 @@ final class CoreModel: ObservableObject {
         guard selectedSurface != surface else { return }
         projectTaskOrderPresented = false
         projectTaskOrderCurrent = false
+        focusOrderPresented = false
+        focusOrderCurrent = false
         selectedSurface = surface
         await refresh()
     }
@@ -10475,6 +10488,14 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = focusOrderRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("focusOrderRetryOutcome", [request]) }
+                try acknowledgeFocusOrder(result)
+                await readFocus(ownsOperation: true)
+                return
+            }
             if let request = focusGroupRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -10678,6 +10699,10 @@ final class CoreModel: ObservableObject {
                 await handleProjectNotesWriteError(error)
                 return
             }
+            if focusOrderRequest != nil {
+                await handleFocusOrderError(error)
+                return
+            }
             if focusGroupRequest != nil {
                 await handleFocusGroupWriteError(error)
                 return
@@ -10789,6 +10814,120 @@ final class CoreModel: ObservableObject {
 
     private func readInbox() async throws {
         inbox = try await query("inboxView", [try json(["offset": 0, "limit": pageSize])])
+    }
+
+    func openFocusOrder() async {
+        guard focusActionsEnabled, !focus.object("controls").object("reorder").isEmpty else { return }
+        busy = true
+        focusOrderError = nil
+        defer { finishOperation() }
+        focusReadTask?.cancel()
+        focusGeneration += 1
+        await readFocus(ownsOperation: true)
+        guard focusCurrent else { return }
+        focusOrderPresented = true
+        focusOrderShowHint = true
+        await readFocusOrder(generation: focusGeneration, ownsOperation: true)
+    }
+
+    func closeFocusOrder() {
+        guard !busy, !retryNeeded, focusOrderRequest == nil else { return }
+        focusOrderPresented = false
+        focusOrderCurrent = false
+        focusOrderView = [:]
+        focusOrderError = nil
+    }
+
+    private func readFocusOrder(generation: Int, ownsOperation: Bool) async {
+        guard focusOrderPresented, focusOrderRequest == nil else { return }
+        focusOrderCurrent = false
+        do {
+            let next = try await query("focusOrderOptions", [try json(["controls": focusState])])
+            guard focusReadAllowed(generation, ownsOperation: ownsOperation), focusOrderPresented,
+                  focusOrderRequest == nil else { return }
+            let rows = next.objects("rows")
+            guard next.count == 5, !next.text("revision").isEmpty,
+                  next["canReorder"] is Bool, next["rows"] is [CoreObject],
+                  rows.count <= 100, Set(rows.map { $0.text("id") }).count == rows.count,
+                  rows.allSatisfy({ !$0.text("id").isEmpty }),
+                  try json(next.object("controls")).utf8.elementsEqual(json(focusState).utf8),
+                  !next.flag("canReorder") || (!rows.isEmpty && !next.text("expectedOrder").isEmpty) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            focusOrderView = next
+            focusOrderCurrent = true
+            focusOrderError = nil
+            if !next.flag("canReorder") { focusOrderPresented = false }
+        } catch {
+            guard focusReadAllowed(generation, ownsOperation: ownsOperation), focusOrderPresented else { return }
+            focusOrderError = label("settings.feedback.actionFailed")
+        }
+    }
+
+    func retryFocusOrder() async {
+        if retryNeeded { await retry(); return }
+        guard !busy, focusOrderPresented, selectedSurface == .focus else { return }
+        busy = true
+        defer { finishOperation() }
+        focusReadTask?.cancel()
+        focusGeneration += 1
+        await readFocus(ownsOperation: true)
+    }
+
+    func moveFocusTask(from source: IndexSet, to destination: Int) async {
+        guard focusOrderInputEnabled, source.count == 1, let index = source.first else { return }
+        var ids = focusOrderView.objects("rows").map { $0.text("id") }
+        guard ids.indices.contains(index), (0...ids.count).contains(destination),
+              destination != index, destination != index + 1 else { return }
+        ids.move(fromOffsets: source, toOffset: destination)
+        await saveFocusOrder(ids)
+    }
+
+    func moveFocusTask(_ row: CoreObject, up: Bool) async {
+        guard focusOrderInputEnabled, let ids = row[up ? "moveUp" : "moveDown"] as? [String] else { return }
+        await saveFocusOrder(ids)
+    }
+
+    private func saveFocusOrder(_ ids: [String]) async {
+        guard focusOrderInputEnabled else { return }
+        focusOrderShowHint = false
+        busy = true
+        focusOrderError = nil
+        focusReadTask?.cancel()
+        focusGeneration += 1
+        defer { finishOperation() }
+        do {
+            focusOrderRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                "controls": focusOrderView.object("controls"), "ids": ids,
+                "expectedOrder": focusOrderView.text("expectedOrder")])
+            try acknowledgeFocusOrder(await query("focusOrderWrite", [focusOrderRequest!]))
+            UISelectionFeedbackGenerator().selectionChanged()
+            await readFocus(ownsOperation: true)
+        } catch { await handleFocusOrderError(error) }
+    }
+
+    private func acknowledgeFocusOrder(_ result: CoreObject) throws {
+        guard let request = focusOrderRequest, let data = request.data(using: .utf8),
+              let input = try NativeJSON.jsonObject(with: data) as? CoreObject,
+              result.count == 1, let ids = result["ids"] as? [String],
+              let requested = input["ids"] as? [String],
+              try json(ids).utf8.elementsEqual(json(requested).utf8) else { throw CocoaError(.coderReadCorrupt) }
+        focusOrderRequest = nil
+        focusOrderCurrent = false
+        focusOrderError = nil
+        focusCurrent = false
+        focusLoadedDepth = [:]
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleFocusOrderError(_ failure: Error) async {
+        if focusOrderRequest != nil && isDefiniteRejection(failure) {
+            focusOrderRequest = nil
+            retryNeeded = false
+            await readFocus(ownsOperation: true)
+        } else { retryNeeded = focusOrderRequest != nil }
+        focusOrderError = label("settings.feedback.actionFailed")
     }
 
     func openFocusPanel(_ name: String) {
@@ -10994,6 +11133,7 @@ final class CoreModel: ObservableObject {
         focusGeneration += 1
         focusReadTask?.cancel()
         focusCurrent = false
+        focusOrderCurrent = false
         focusPickerCurrent = false
         focusLoading = true
         focusError = nil
@@ -11060,6 +11200,7 @@ final class CoreModel: ObservableObject {
         let loaded = focusLoadedDepth
         focusNeedsRead = false
         focusCurrent = false
+        focusOrderCurrent = false
         focusPickerCurrent = false
         focusLoading = true
         focusError = nil
@@ -11153,6 +11294,7 @@ final class CoreModel: ObservableObject {
                     focusPickerPublishedQuery = pickerQuery
                     focusPickerCurrent = true
                 }
+                if focusOrderPresented { await readFocusOrder(generation: generation, ownsOperation: ownsOperation) }
                 return
             } catch {
                 guard focusReadAllowed(generation, ownsOperation: ownsOperation) else { return }

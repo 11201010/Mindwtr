@@ -15356,4 +15356,215 @@ final class CoreHostTests: XCTestCase {
             directory = parent
         }
     }
+
+    private func seedFocusOrderRows() async throws {
+        try await seedTaskFocusRows()
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET isFocusedToday = 1, focusOrder = 0 WHERE id = 'task-focus-target'")
+        _ = try sqlite.execute("UPDATE tasks SET isFocusedToday = 1, focusOrder = 1 WHERE id = 'task-focus-sibling'")
+        sqlite.close()
+    }
+
+    private func focusOrderOptions(_ core: CoreHost) async throws -> [String: Any] {
+        try object(await core.call("focusOrderOptions", argumentsJSON: json([json(["controls": [String: Any]()])])))
+    }
+
+    private func focusOrderRequest(_ options: [String: Any]) throws -> [String: Any] {
+        let rows = try XCTUnwrap(options["rows"] as? [[String: Any]])
+        let ids = try rows.map { try XCTUnwrap($0["id"] as? String) }
+        return ["requestId": UUID().uuidString.lowercased(),
+                "controls": try XCTUnwrap(options["controls"]),
+                "ids": Array(ids.reversed()),
+                "expectedOrder": try XCTUnwrap(options["expectedOrder"] as? String)]
+    }
+
+    private func focusOrderEnvelope() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "focusOrderCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        return try object(XCTUnwrap(args.first))
+    }
+
+    func testFocusOrderAppliedNoopAndExactRows() async throws {
+        try await seedFocusOrderRows()
+        let faults = HostIOFaults()
+        var logged = 0
+        faults.commandDiagnostic = { if $0 == "focusOrderSaved" { logged += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await focusOrderOptions(core)
+        XCTAssertEqual(options["canReorder"] as? Bool, true)
+        XCTAssertEqual((options["rows"] as? [[String: Any]])?.count, 2)
+        let request = try focusOrderRequest(options)
+        let ids = try XCTUnwrap(request["ids"] as? [String])
+        var duplicate = request
+        duplicate["ids"] = [ids[0], ids[0]]
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("focusOrderWrite", argumentsJSON: json([json(duplicate)]))
+        }
+        await expectFailure("INVALID_INPUT") {
+            _ = try await core.call("focusOrderOptions", argumentsJSON: json([json(["controls": ["bad": true]])]))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let before = try Dictionary(uniqueKeysWithValues: ids.map { ($0, try storedTask($0)) })
+        let hidden = try json(storedTask("task-focus-unrelated"))
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("focusOrderRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        let result = try object(await core.call("focusOrderWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["ids"] as? [String], ids)
+        XCTAssertEqual(logged, 1)
+        for (index, id) in ids.enumerated() {
+            let after = try storedTask(id)
+            XCTAssertEqual(after["focusOrder"] as? Int, index)
+            XCTAssertEqual(after["rev"] as? Int, (before[id]?["rev"] as? Int ?? 0) + 1)
+            for (field, value) in try XCTUnwrap(before[id]) where !["focusOrder", "rev", "revBy", "updatedAt"].contains(field) {
+                XCTAssertEqual(try json([after[field] ?? NSNull()]), try json([value]), field)
+            }
+        }
+        XCTAssertEqual(try json(storedTask("task-focus-unrelated")), hidden)
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") { writes += 1 } }
+        faults.journalWrite = { journals += 1 }
+        let next = try await focusOrderOptions(core)
+        var noop = try focusOrderRequest(next)
+        noop["ids"] = try XCTUnwrap(next["rows"] as? [[String: Any]]).compactMap { $0["id"] as? String }
+        let unchanged = try object(await core.call("focusOrderWrite", argumentsJSON: json([json(noop)])))
+        XCTAssertEqual(unchanged["ids"] as? [String], noop["ids"] as? [String])
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertEqual(logged, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testFocusOrderFailedCommitColdApplyAndLostAckParentChange() async throws {
+        for kind in ["failed-commit", "lost-ack"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedFocusOrderRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try focusOrderRequest(await focusOrderOptions(writer))
+            let ids = try XCTUnwrap(request["ids"] as? [String])
+            if kind == "failed-commit" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus order COMMIT failure") } }
+                await expectFailure("SAVE_FAILED") { _ = try await writer.call("focusOrderWrite", argumentsJSON: json([json(request)])) }
+            } else {
+                var journalWrites = 0
+                faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Focus order lost acknowledgment") } }
+                await expectFailure("lost acknowledgment") { _ = try await writer.call("focusOrderWrite", argumentsJSON: json([json(request)])) }
+            }
+            XCTAssertEqual((try focusOrderEnvelope()["request"] as? [String: Any])?["requestId"] as? String,
+                           request["requestId"] as? String)
+            await writer.close()
+            if kind == "lost-ack" {
+                let edit = try SQLiteBridge(url: database)
+                _ = try edit.execute("UPDATE projects SET title = 'Later parent rename', rev = rev + 1 WHERE id = 'focus-target'")
+                edit.close()
+            }
+            let before = try ids.map { try json(storedTask($0)) }
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") { writes += 1 } }
+            let reopened = host(replayFaults)
+            let startup = try object(await reopened.start())
+            XCTAssertEqual((startup["recovery"] as? [String: Any])?["method"] as? String, "focusOrderCommit")
+            XCTAssertEqual(((startup["recovery"] as? [String: Any])?["result"] as? [String: Any])?["ids"] as? [String], ids)
+            XCTAssertEqual(try ids.enumerated().map { try storedTask($0.element)["focusOrder"] as? Int }, [0, 1])
+            if kind == "lost-ack" {
+                XCTAssertEqual(writes, 0)
+                XCTAssertEqual(try ids.map { try json(storedTask($0)) }, before)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await reopened.close()
+            directory = parent
+        }
+    }
+
+    func testFocusOrderMalformedColdJournalRefusesBeforeSQLite() async throws {
+        try await seedFocusOrderRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try focusOrderRequest(await focusOrderOptions(writer))
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Focus order pending") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("focusOrderWrite", argumentsJSON: json([json(request)])) }
+        let original = try focusOrderEnvelope()
+        let saved = try object(String(contentsOf: journal))
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for kind in ["request", "result", "effect", "terminal"] {
+            var envelope = original
+            var forged = saved
+            if kind == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["ids"] = ["task-focus-target"]
+                envelope["request"] = changed
+            } else if kind == "result" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["result"] = ["ids": ["task-focus-target"]]
+                envelope["prepared"] = prepared
+            } else if kind == "effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["effect"] = ["tasks": []]
+                envelope["prepared"] = prepared
+            } else {
+                forged["terminal"] = ["success": ["_0": try json(["ids": ["task-focus-target"]])]]
+            }
+            forged["argumentsJSON"] = try json([json(envelope)])
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, kind)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, kind)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, kind)
+            await blocked.close()
+        }
+    }
+
+    func testFocusOrderLaterEditAndABADoNotReuseColdReceipt() async throws {
+        for kind in ["reordered", "aba", "renamed"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedFocusOrderRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try focusOrderRequest(await focusOrderOptions(writer))
+            let target = try XCTUnwrap((request["ids"] as? [String])?.first)
+            var journalWrites = 0
+            faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Focus order lost acknowledgment") } }
+            await expectFailure("lost acknowledgment") { _ = try await writer.call("focusOrderWrite", argumentsJSON: json([json(request)])) }
+            await writer.close()
+            let edit = try SQLiteBridge(url: database)
+            if kind == "renamed" {
+                _ = try edit.execute("UPDATE tasks SET title = 'Later title', rev = rev + 1 WHERE id = ?", parametersJSON: json([target]))
+            } else {
+                _ = try edit.execute("UPDATE tasks SET focusOrder = 9, rev = rev + 1 WHERE id = ?", parametersJSON: json([target]))
+                if kind == "aba" {
+                    _ = try edit.execute("UPDATE tasks SET focusOrder = 0, rev = rev + 1 WHERE id = ?", parametersJSON: json([target]))
+                }
+            }
+            let before = try nineTableSnapshot(edit)
+            edit.close()
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") { writes += 1 } }
+            let reopened = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await reopened.start() }
+            XCTAssertEqual(writes, 0, kind)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before, kind)
+            check.close()
+            XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+            await reopened.close()
+            directory = parent
+        }
+    }
 }

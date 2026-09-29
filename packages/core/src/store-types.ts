@@ -7,6 +7,7 @@ import type { TaskTokenUsage } from './task-token-usage';
 import type { ProcessInboxPlan } from './process-inbox-plan';
 import type { AreaOrderIntent } from './area-ordering';
 import type { ProjectTaskOrderAnchor, ProjectTaskOrderIdentity } from './project-task-reorder';
+import type { FocusControlState } from './focus-controls';
 
 export type StoreActionResult = {
     success: boolean;
@@ -47,6 +48,17 @@ export type PreparedTaskFocus = {
     boundaryOffsetMinutes: number;
     futureBoundary: string;
     dates: import('./task-utils').FocusDateProjection[];
+};
+
+/** Frozen visible Focus rows and the sparse, stamped order change. */
+export type PreparedFocusOrder = {
+    request: { requestId: string; controls: FocusControlState; ids: string[]; expectedOrder: string };
+    scope: { tasks: Task[] };
+    effect: { tasks: Array<{ before: Task; after: Task }> };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    preparedAt: string;
+    result: { ids: string[] };
 };
 
 /** One frozen project-only creation. The full project row is its durable receipt. */
@@ -425,6 +437,7 @@ export interface TaskStore {
     /** Internal prepared edit; native validates the journal before this atomic guarded overlay. */
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
     commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
+    commitPreparedFocusOrder: (input: PreparedFocusOrder) => Promise<PreparedTaskEditResult>;
     /** Native validates the action-specific envelope before this atomic guarded write. */
     commitPreparedBoardTask: (input: PreparedBoardTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;

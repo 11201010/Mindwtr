@@ -61,6 +61,8 @@ struct InboxScreen: View {
                             menuListHeader
                             ReferenceScreen(model: model, palette: palette)
                                 .accessibilityAction(.escape) { Task { await model.closeReference() } }
+                        } else if model.selectedSurface == .focus && model.focusOrderPresented {
+                            focusOrderContent
                         } else {
                             header
                             if model.ready {
@@ -505,7 +507,7 @@ struct InboxScreen: View {
             .accessibilityIdentifier("focus-section-" + key)
             let reorder = model.focus.object("controls").object("reorder")
             if key == "focus" && !reorder.isEmpty {
-                Button {} label: {
+                Button { Task { await model.openFocusOrder() } } label: {
                     HStack(spacing: 4) {
                         // Lucide GripVertical paths from RN.
                         Path { path in
@@ -520,13 +522,84 @@ struct InboxScreen: View {
                         .accessibilityHidden(true)
                         Text(reorder.text("label")).rnFont(11, .bold, maxScale: 1.2)
                     }
-                    .foregroundStyle(palette.secondary).frame(minHeight: 36).padding(.horizontal, 6)
+                    .foregroundStyle(palette.secondary).frame(minHeight: 44).padding(.horizontal, 6)
                 }
-                .buttonStyle(.plain).disabled(true)
+                .buttonStyle(.plain).disabled(!model.focusActionsEnabled)
                 .accessibilityIdentifier("focus-reorder-toggle")
             }
         }
         .padding(.top, first ? 8 : 18).padding(.bottom, 10)
+    }
+
+    private var focusOrderContent: some View {
+        let labels = model.focus.object("controls").object("reorder")
+        return VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(labels.text("title").uppercased()).rnFont(13, .bold, maxScale: 1.2).tracking(1).lineLimit(1)
+                    .foregroundStyle(palette.text).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 4)
+                Button { model.closeFocusOrder() } label: {
+                    Text(model.label("common.done")).rnFont(14, .bold)
+                        .foregroundStyle(palette.onTint).padding(.horizontal, 18).frame(minHeight: 44)
+                        .background(palette.tint).clipShape(RoundedRectangle(cornerRadius: 20))
+                }
+                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded)
+                .accessibilityIdentifier("focus-reorder-done")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 12)
+            .overlay(alignment: .bottom) { Rectangle().fill(palette.border).frame(height: 1) }
+            if let error = model.focusOrderError {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(error).rnFont(13).foregroundStyle(palette.danger)
+                        .accessibilityIdentifier("focus-reorder-error")
+                    Button { Task { await model.retryFocusOrder() } } label: {
+                        Text(model.label("common.retry")).rnFont(14, .semibold).frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy)
+                    .accessibilityIdentifier("focus-reorder-retry")
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+            }
+            List {
+                ForEach(model.focusOrderView.objects("rows").map { FocusOrderItem(row: $0) }) { item in
+                    let row = item.row
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.text("title")).rnFont(15, .semibold).foregroundStyle(palette.text).lineLimit(1)
+                        if !row.text("secondaryLabel").isEmpty {
+                            Text(row.text("secondaryLabel")).rnFont(12).foregroundStyle(palette.secondary).lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 26, bottom: 4, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(RoundedRectangle(cornerRadius: 12).fill(palette.card)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 0.5))
+                        .padding(.horizontal, 12).padding(.vertical, 4))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(row.text("positionLabel"))
+                    .accessibilityHint(labels.text("hint"))
+                    .accessibilityIdentifier("focus-reorder-row-" + row.text("id"))
+                    .accessibilityActions {
+                        if row["moveUp"] is [String] {
+                            Button(labels.text("moveUpLabel")) { Task { await model.moveFocusTask(row, up: true) } }
+                        }
+                        if row["moveDown"] is [String] {
+                            Button(labels.text("moveDownLabel")) { Task { await model.moveFocusTask(row, up: false) } }
+                        }
+                    }
+                    .moveDisabled(!model.focusOrderInputEnabled)
+                }
+                .onMove { source, destination in Task { await model.moveFocusTask(from: source, to: destination) } }
+                if model.focusOrderShowHint {
+                    Text(labels.text("hint")).rnFont(12).foregroundStyle(palette.secondary)
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.plain).scrollContentBackground(.hidden)
+            .environment(\.editMode, .constant(.active))
+            .accessibilityIdentifier("focus-reorder-list")
+            .disabled(!model.focusOrderInputEnabled)
+        }
+        .accessibilityAction(.escape) { model.closeFocusOrder() }
     }
 
     private func focusReviewProject(_ project: CoreObject) -> some View {
@@ -1098,4 +1171,9 @@ struct FailureBanner: View {
         .frame(maxWidth: .infinity, alignment: .leading).padding(16)
         .background(palette.card)
     }
+}
+
+private struct FocusOrderItem: Identifiable {
+    let row: CoreObject
+    var id: String { row.text("id") }
 }

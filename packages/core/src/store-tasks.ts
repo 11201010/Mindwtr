@@ -12,7 +12,8 @@ import {
 import type { AppData, PendingRemoteAttachmentDelete, Section, Task, TaskStatus } from './types';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
-import type { PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
+import type { PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedFocusOrder, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
+import { buildFocusControlsModel } from './focus-controls';
 import {
     applyTaskProjectReactivationTransition,
     applyTaskUpdates,
@@ -127,6 +128,7 @@ type TaskActions = Pick<
     | 'commitPreparedCapture'
     | 'commitPreparedTaskEdit'
     | 'commitPreparedTaskFocus'
+    | 'commitPreparedFocusOrder'
     | 'commitPreparedBoardTask'
     | 'commitPreparedCalendarTask'
     | 'commitPreparedCalendarCreate'
@@ -279,6 +281,40 @@ export const mutateTasks = async (
         };
     });
     return missing ? actionFail(options.missingMessage ?? 'Task not found') : actionOk();
+};
+
+/** Full visible-row identity, with sorted object keys but untouched array and raw date values. */
+export const focusOrderToken = (tasks: readonly Task[]): string => JSON.stringify(tasks, (_key, value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
+
+const focusOrderTargets = (orderedIds: readonly string[]) =>
+    new Map(Array.from(new Set(orderedIds)).map((id, index) => [id, index]));
+const changedFocusOrder = (task: Task, targets: ReadonlyMap<string, number>): number | undefined => {
+    const target = targets.get(task.id);
+    return target !== undefined && task.focusOrder !== target ? target : undefined;
+};
+
+/** Exactly the task stamps used by reorderFocusedTasks through mutateTasks. */
+export const focusOrderEffect = (scope: PreparedFocusOrder['scope'], ids: readonly string[],
+    deviceId: string, preparedAt: string): PreparedFocusOrder['effect'] => {
+    const byId = new Map(scope.tasks.map((task) => [task.id, task]));
+    const targets = focusOrderTargets(ids);
+    return { tasks: ids.flatMap((id) => {
+        const before = byId.get(id);
+        const target = before && changedFocusOrder(before, targets);
+        return before && target !== undefined ? [{ before, after: compactPurgedTaskForLocalStorage({
+            ...before, focusOrder: target, updatedAt: preparedAt,
+            rev: nextRevision(before.rev), revBy: deviceId,
+        }) }] : [];
+    }) };
+};
+
+const currentFocusOrder = (state: TaskStore, controls: PreparedFocusOrder['request']['controls']) => {
+    const model = buildFocusControlsModel({ state: controls, tasks: state.tasks,
+        projects: state.projects, areas: state.areas, sections: state.sections,
+        settings: state.settings, now: new Date(), t: (key) => key });
+    return { canReorder: model.canReorder, tasks: model.lists.focusedTasks };
 };
 
 export const sanitizeRestoredTaskContainerReferences = (
@@ -1270,6 +1306,48 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return result;
     },
 
+    commitPreparedFocusOrder: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared Focus order conflicts with current data' };
+        set((state) => {
+            const affected = input.effect.tasks;
+            const currentById = new Map(state._allTasks.map((task) => [task.id, task]));
+            if (affected.length === 0 || currentById.size !== state._allTasks.length
+                || new Set(input.request.ids).size !== input.request.ids.length
+                || new Set(affected.map(({ before }) => before.id)).size !== affected.length) return state;
+            // A complete durable receipt wins before mutable membership, parent, or clock checks.
+            if (affected.every(({ after }) => {
+                const current = currentById.get(after.id);
+                return current && sameTaskSqliteRow(current, after) && sameSectionDeleteJson(current, after);
+            })) {
+                result = { success: true, outcome: 'replayed' };
+                return state;
+            }
+            const live = currentFocusOrder(state, input.request.controls);
+            if (!live.canReorder || live.tasks.length > 100
+                || focusOrderToken(live.tasks) !== input.request.expectedOrder
+                || !sameSectionDeleteJson(live.tasks, input.scope.tasks)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || affected.some(({ before }) => {
+                    const current = currentById.get(before.id);
+                    return !current || !sameTaskSqliteRow(current, before) || !sameSectionDeleteJson(current, before);
+                })) return state;
+            const planned = focusOrderEffect(input.scope, input.request.ids,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.preparedAt);
+            if (!sameSectionDeleteJson(planned, input.effect)) return state;
+            const tasks = replaceEntitiesInArray(state._allTasks, affected.map(({ after }) => after));
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, outcome: 'applied' };
+            return { _allTasks: tasks, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
     /**
      * Update an existing task.
      * @param id Task ID
@@ -2253,12 +2331,11 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
 
     reorderFocusedTasks: async (orderedIds: string[]) => {
         if (orderedIds.length === 0) return actionOk();
-        const targetOrderById = new Map(Array.from(new Set(orderedIds)).map((id, index) => [id, index]));
+        const targetOrderById = focusOrderTargets(orderedIds);
         return mutateTasks({ set, debouncedSave }, {
             selectTasks: (state) => state._allTasks.filter((task) => {
                 if (task.deletedAt) return false;
-                const targetOrder = targetOrderById.get(task.id);
-                return targetOrder !== undefined && task.focusOrder !== targetOrder;
+                return changedFocusOrder(task, targetOrderById) !== undefined;
             }),
             buildUpdates: (task) => ({ focusOrder: targetOrderById.get(task.id) as number }),
         });

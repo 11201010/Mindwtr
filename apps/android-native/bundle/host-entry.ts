@@ -1014,6 +1014,33 @@ globalThis.MindwtrHost = {
     projectTaskSortCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectTaskSort(JSON.parse(json))));
     },
+    focusOrderOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getFocusOrderOptions(JSON.parse(json)));
+        });
+    },
+    focusOrderWrite(_json: string): string {
+        return submit(async () => { throw new Error('INVALID_INPUT: Focus order writes require a durable host journal'); });
+    },
+    focusOrderRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeFocusOrderOutcome(JSON.parse(json)));
+        });
+    },
+    focusOrderPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareFocusOrder(JSON.parse(json)));
+        });
+    },
+    focusOrderValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedFocusOrder(JSON.parse(json))));
+    },
+    focusOrderCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedFocusOrder(JSON.parse(json))));
+    },
     projectTaskOrderWrite(_json: string): string {
         return submit(async () => { throw new Error('INVALID_INPUT: Project task order writes require a durable host journal'); });
     },
