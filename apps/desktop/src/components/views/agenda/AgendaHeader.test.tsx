@@ -36,7 +36,7 @@ describe('AgendaHeader', () => {
     it('shows direct Sort and Group controls and highlights each non-default value independently', () => {
         const view = renderHeader();
         const sort = view.getByRole('combobox', { name: 'Sort' });
-        const group = view.getByRole('combobox', { name: 'Group next actions by' });
+        const group = view.getByRole('combobox', { name: 'Group' });
 
         expect(view.queryByRole('button', { name: 'common.viewOptions' })).not.toBeInTheDocument();
         expect(sort).toHaveClass('bg-card');
@@ -85,6 +85,7 @@ describe('AgendaHeader', () => {
         );
         expect(sort).toHaveClass('bg-card');
         expect(group).toHaveClass('bg-primary/10');
+        expect(group).toHaveTextContent(/Group.*Project/);
 
         view.rerender(
             <AgendaHeader
@@ -113,7 +114,7 @@ describe('AgendaHeader', () => {
         const onChangeGroupBy = vi.fn();
         renderHeader({ onChangeGroupBy });
 
-        selectToolbarOption('Group next actions by', 'Tags');
+        selectToolbarOption('Group', 'Tags');
 
         expect(onChangeGroupBy).toHaveBeenCalledWith('tag');
     });
@@ -191,10 +192,10 @@ describe('AgendaHeader', () => {
     it('renders its controls in the shared list-toolbar style', () => {
         const { container, getByRole, getByText } = renderHeader();
 
-        const groupTrigger = getByRole('combobox', { name: 'Group next actions by' });
+        const groupTrigger = getByRole('combobox', { name: 'Group' });
         expect(groupTrigger.className).toContain('h-9');
         expect(groupTrigger.className).toContain('rounded-lg');
-        expect(getByText('Group next actions by')).toBeInTheDocument();
+        expect(getByText('Group')).toBeInTheDocument();
 
         const buttons = [...container.querySelectorAll('button')];
         expect(buttons.length).toBeGreaterThan(0);
