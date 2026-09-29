@@ -8,6 +8,7 @@ struct SomedayScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             if !model.someday.isEmpty { stats }
+            if !model.somedayMoveNotice.isEmpty || model.somedayMoveUndoError != nil { moveNotice }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if let error = model.somedayError {
@@ -23,9 +24,13 @@ struct SomedayScreen: View {
                         ForEach(items.indices, id: \.self) { index in
                             let item = items[index]
                             if item.text("type") == "task" {
-                                TaskCard(row: item.object("row"), model: model, palette: palette,
-                                         showDetails: model.someday.flag("showDetails"))
-                                    .id(item.object("row").text("id"))
+                                let row = item.object("row")
+                                TaskCard(row: row, model: model, palette: palette,
+                                         showDetails: model.someday.flag("showDetails"),
+                                         onMoveToSection: row.text("status") == "someday" && !row.flag("readOnly")
+                                            ? { Task { await model.openSomedaySectionMove(row) } } : nil,
+                                         moveToSectionLabel: model.someday.object("text").text("moveToSection"))
+                                    .id(row.text("id"))
                             } else if item.text("type") == "heading" {
                                 HStack(spacing: 8) {
                                     Text(item.text("title")).rnFont(13, .bold)
@@ -107,6 +112,45 @@ struct SomedayScreen: View {
             .accessibilityLabel(model.someday.object("menu").text("moreLabel")).accessibilityIdentifier("someday-overflow-button")
         }
         .padding(16).background(palette.card).overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+    }
+
+    private var moveNotice: some View {
+        HStack(spacing: 10) {
+            if model.somedayMoveUndoError != nil {
+                Text(model.somedayMoveUndoFailureLabel.isEmpty
+                     ? model.someday.object("text").text("undoFailed") : model.somedayMoveUndoFailureLabel).rnFont(13)
+                    .foregroundStyle(palette.danger).frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("someday-section-undo-error")
+                if model.somedayMoveUndoCanRetry {
+                    Button { Task { await model.retrySomedayMoveUndo() } } label: {
+                        Text(model.label("common.retry")).rnFont(13, .semibold)
+                            .padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy)
+                    .accessibilityIdentifier("someday-section-undo-retry")
+                } else {
+                    Button { model.dismissSomedayMoveUndoError() } label: {
+                        Text(model.label("common.close")).rnFont(13, .semibold)
+                            .padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy)
+                    .accessibilityIdentifier("someday-section-undo-dismiss")
+                }
+            } else {
+                Text(model.somedayMoveNotice.text("message")).rnFont(13)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button { Task { await model.undoSomedaySectionMove() } } label: {
+                    Text(model.somedayMoveNotice.text("undoLabel")).rnFont(13, .semibold)
+                        .padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.somedayMoveUndoEnabled)
+                .accessibilityIdentifier("someday-section-move-undo")
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 4)
+        .background(palette.card)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("someday-section-move-notice")
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -202,6 +246,7 @@ struct SomedayPanel: View {
     private var isFilter: Bool { model.somedayPanel == "filters" }
     private var isCreate: Bool { model.somedayPanel == "newSection" }
     private var isTaskCreate: Bool { model.somedayPanel == "newSectionTask" }
+    private var isMove: Bool { model.somedayPanel == "moveSection" }
     private var isPicker: Bool { !model.somedayPickerName.isEmpty }
 
     var body: some View {
@@ -210,7 +255,9 @@ struct SomedayPanel: View {
                 Button { close() } label: { Color.black.opacity(isFilter ? 0.35 : 0.28).contentShape(Rectangle()) }
                     .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
                     .accessibilityIdentifier("someday-panel-dismiss")
-                    .disabled(model.somedaySectionCreatePending || model.somedaySectionTaskPending || model.busy || model.retryNeeded)
+                    .disabled(model.somedaySectionCreatePending || model.somedaySectionTaskPending
+                              || model.somedayMovePending || model.somedayMoveAwaitingRefresh
+                              || model.busy || model.retryNeeded)
                 VStack(alignment: .leading, spacing: 0) {
                     if isCreate {
                         ViewThatFits(in: .vertical) {
@@ -221,6 +268,11 @@ struct SomedayPanel: View {
                         ViewThatFits(in: .vertical) {
                             taskCreateContent.fixedSize(horizontal: false, vertical: true)
                             ScrollView { taskCreateContent }.scrollDismissesKeyboard(.interactively)
+                        }
+                    } else if isMove {
+                        ViewThatFits(in: .vertical) {
+                            moveContent(scrollChoices: false).fixedSize(horizontal: false, vertical: true)
+                            moveContent(scrollChoices: true)
                         }
                     } else if isFilter { filterControls } else {
                         panelHeader
@@ -476,10 +528,87 @@ struct SomedayPanel: View {
         .padding(.vertical, 8)
     }
 
+    private var moveChoices: some View {
+        let choices = model.somedayMoveOptions.object("choices")
+        let items = choices.objects("items")
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(items.indices, id: \.self) { index in
+                let choice = items[index]
+                Button { Task { await model.chooseSomedayMoveSection(index) } } label: {
+                    HStack(spacing: 8) {
+                        Text(choice.text("title")).rnFont(15, .medium)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if choice.flag("selected") {
+                            Image(systemName: "checkmark").font(.system(size: 16))
+                                .foregroundStyle(palette.tint).accessibilityHidden(true)
+                        }
+                    }
+                    .padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.somedayMoveActionsEnabled)
+                .accessibilityLabel(choice.text("title"))
+                .accessibilityAddTraits(choice.flag("selected") ? .isSelected : [])
+                .accessibilityIdentifier("someday-section-move-choice-\(index)")
+            }
+            if items.count < choices.number("total") {
+                Button { Task { await model.loadMoreSomedayMoveChoices() } } label: {
+                    Text(model.label("common.more")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.somedayMoveActionsEnabled)
+                .accessibilityIdentifier("someday-section-move-more")
+            }
+        }
+    }
+
+    private func moveContent(scrollChoices: Bool) -> some View {
+        let items = model.somedayMoveOptions.object("choices").objects("items")
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(model.somedayMoveOptions.text("title").isEmpty
+                 ? model.someday.object("text").text("moveToSection") : model.somedayMoveOptions.text("title"))
+                .rnFont(17, .bold).fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader).accessibilityIdentifier("someday-section-move-title")
+            if model.somedayMoveError != nil || model.somedayMoveReadError != nil {
+                Text(model.somedayMoveOptions.text("moveFailed").isEmpty
+                     ? model.someday.object("text").text("moveFailed") : model.somedayMoveOptions.text("moveFailed")).rnFont(13)
+                    .foregroundStyle(palette.danger).accessibilityAddTraits(.updatesFrequently)
+                    .accessibilityIdentifier("someday-section-move-error")
+                Button { Task { await model.retrySomedayMove() } } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy)
+                .accessibilityIdentifier("someday-section-move-retry")
+            } else if model.busy && items.isEmpty {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+            if scrollChoices {
+                ScrollView { moveChoices }
+                    .accessibilityIdentifier("someday-section-move-scroll")
+            } else {
+                moveChoices
+            }
+            Button { close() } label: {
+                Text(model.somedayMoveOptions.text("cancelLabel").isEmpty
+                     ? model.label("common.cancel") : model.somedayMoveOptions.text("cancelLabel"))
+                    .rnFont(14, .semibold).frame(maxWidth: .infinity, minHeight: 44)
+                    .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.somedayMovePending || model.somedayMoveAwaitingRefresh || model.busy || model.retryNeeded)
+            .opacity(model.somedayMovePending || model.somedayMoveAwaitingRefresh || model.busy || model.retryNeeded ? 0.5 : 1)
+            .accessibilityIdentifier("someday-section-move-cancel")
+        }
+        .frame(maxWidth: .infinity, maxHeight: scrollChoices ? .infinity : nil, alignment: .topLeading)
+    }
+
     private func close() { focusedField = nil; model.closeSomedayPanel() }
     private func backOrClose() {
         focusedField = nil
-        if isCreate || isTaskCreate { close() }
+        if isCreate || isTaskCreate || isMove { close() }
         else if isPicker { model.closeSomedayPicker() }
         else if !isFilter && model.somedayPanel != "menu" { model.somedayPanel = "menu" }
         else { close() }

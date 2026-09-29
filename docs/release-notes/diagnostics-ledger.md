@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-someday-section-move`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Someday section move saved` with `operation=move|undo` and `outcome=confirmed` follows durable acknowledgement and journal cleanup. Move a Someday task to a section, optionally Undo, and relaunch; only its section assignment and revision metadata may change. Failed saves retain the exact move or Undo for Retry, including after restart. No task content, section names or identifiers are logged.
+
 - **`v1.3.4/ios-someday-section-task`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Someday section task saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Add a task from a Someday section heading and relaunch; its literal title, section and default Area must remain. Failed saves retain the original prepared task for Retry. No task content, identifiers or Area names are logged.
 
 - **`v1.3.4/ios-focus-order-revision`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Focus order options validated` with `outcome=accepted` proves Swift accepted the shared row-revision contract. Open Today’s Focus reorder with at least one Task; its cards must appear. No revisions, identifiers or Task content are logged.

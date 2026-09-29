@@ -961,6 +961,33 @@ globalThis.MindwtrHost = {
     somedaySectionTaskRetryOutcome(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.probeSomedaySectionTaskOutcome(JSON.parse(json))); });
     },
+    somedaySectionMoveOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getSomedaySectionMoveOptions(JSON.parse(json))); });
+    },
+    somedaySectionMovePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareSomedaySectionMove(JSON.parse(json))); });
+    },
+    somedaySectionMoveValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedSomedaySectionMove(JSON.parse(json))));
+    },
+    somedaySectionMoveCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedSomedaySectionMove(JSON.parse(json))));
+    },
+    somedaySectionMoveRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeSomedaySectionMoveOutcome(JSON.parse(json))); });
+    },
+    somedaySectionMoveUndoPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.prepareSomedaySectionMoveUndo(JSON.parse(json))); });
+    },
+    somedaySectionMoveUndoValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedSomedaySectionMoveUndo(JSON.parse(json))));
+    },
+    somedaySectionMoveUndoCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedSomedaySectionMoveUndo(JSON.parse(json))));
+    },
+    somedaySectionMoveUndoRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeSomedaySectionMoveUndoOutcome(JSON.parse(json))); });
+    },
     focusGroupOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getFocusGroupOptions(JSON.parse(json))); });
     },

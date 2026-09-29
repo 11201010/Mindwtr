@@ -98,6 +98,8 @@ private final class Engine: @unchecked Sendable {
     private var pending: PendingCommand?
     // Authorizes one interactive Commit; after journaling, the journal owns exact replay.
     private var preparedSomedaySectionTaskEnvelope: Data?
+    private var confirmedSomedaySectionMoveEnvelope: String?
+    private var confirmedSomedaySectionUndoEnvelope: String?
     private var boardReadLogged = false
     private var boardActionLogged = false
     private var startupBoardResult: String?
@@ -132,6 +134,8 @@ private final class Engine: @unchecked Sendable {
     private var startupTaskListSortResult: String?
     private var startupSomedaySectionCreateResult: String?
     private var startupSomedaySectionTaskResult: String?
+    private var startupSomedaySectionMoveResult: String?
+    private var startupSomedaySectionUndoResult: String?
     #if DEBUG
     var faults: HostIOFaults?
     #endif
@@ -155,6 +159,8 @@ private final class Engine: @unchecked Sendable {
         "taskListSortOptions": 1, "taskListSortWrite": 1, "taskListSortRetryOutcome": 1,
         "somedaySectionCreateOptions": 1, "somedaySectionCreateWrite": 1, "somedaySectionCreateRetryOutcome": 1,
         "somedaySectionTaskOptions": 1, "somedaySectionTaskPrepare": 1, "somedaySectionTaskCommit": 1, "somedaySectionTaskRetryOutcome": 1,
+        "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
+        "somedaySectionMoveRetryOutcome": 1, "somedaySectionMoveUndoRetryOutcome": 1,
         "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
         "focusOrderOptions": 1, "focusOrderWrite": 1, "focusOrderRetryOutcome": 1,
         "focusSavedFilterOptions": 1, "focusSavedFilterWrite": 1, "focusSavedFilterRetryOutcome": 1,
@@ -174,7 +180,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "somedaySectionCreateWrite", "somedaySectionTaskCommit", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "areaColor", "areaRename", "areaOrder", "areaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "somedaySectionCreateWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "areaColor", "areaRename", "areaOrder", "areaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -351,6 +357,10 @@ private final class Engine: @unchecked Sendable {
                 try validateSomedaySectionTaskJournal(command)
                 if case .success(let value) = command.terminal { try validateSomedaySectionTaskAcknowledgment(command, value: value) }
             }
+            if let command = pending, ["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(command.method) {
+                try validateSomedaySectionMoveJournal(command)
+                if case .success(let value) = command.terminal { try validateSomedaySectionMoveAcknowledgment(command, value: value) }
+            }
             let legacy = try legacyStorage?.bootState()
             if let legacy {
                 _ = try invoke("legacyCheck", arguments: [legacy.stateJSON, legacy.backupJSON])
@@ -417,6 +427,8 @@ private final class Engine: @unchecked Sendable {
         let recoveringTaskListSort = pending?.method == "taskListSortWrite"
         let recoveringSomedaySectionCreate = pending?.method == "somedaySectionCreateWrite"
         let recoveringSomedaySectionTask = pending?.method == "somedaySectionTaskCommit"
+        let recoveringSomedaySectionMove = pending?.method == "somedaySectionMoveCommit"
+        let recoveringSomedaySectionUndo = pending?.method == "somedaySectionMoveUndoCommit"
         let terminal = try resolvePending()
         if recoveringBoard, let terminal, case .success(let value) = terminal { startupBoardResult = value }
         if recoveringCalendarMethod != nil, let terminal, case .success(let value) = terminal { startupCalendarResult = value }
@@ -450,6 +462,8 @@ private final class Engine: @unchecked Sendable {
         if recoveringTaskListSort, let terminal, case .success(let value) = terminal { startupTaskListSortResult = value }
         if recoveringSomedaySectionCreate, let terminal, case .success(let value) = terminal { startupSomedaySectionCreateResult = value }
         if recoveringSomedaySectionTask, let terminal, case .success(let value) = terminal { startupSomedaySectionTaskResult = value }
+        if recoveringSomedaySectionMove, let terminal, case .success(let value) = terminal { startupSomedaySectionMoveResult = value }
+        if recoveringSomedaySectionUndo, let terminal, case .success(let value) = terminal { startupSomedaySectionUndoResult = value }
         try resumeActivationIfNeeded()
         let value = try invoke("window", arguments: [0, 50, ""])
         let recoveredAreas = startupAreaCreateResult ?? startupAreaColorResult ?? startupAreaRenameResult
@@ -464,6 +478,7 @@ private final class Engine: @unchecked Sendable {
             ?? startupFocusGroupResult
         let recoveredLists = startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
             ?? startupSomedaySectionCreateResult ?? startupSomedaySectionTaskResult
+            ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         guard let recovered = startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
             ?? recoveredProjects ?? recoveredFocus ?? recoveredLists else { return value }
         guard var window = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
@@ -500,7 +515,9 @@ private final class Engine: @unchecked Sendable {
                 : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
                 : startupTaskListSortResult != nil ? "taskListSortWrite"
                 : startupSomedaySectionCreateResult != nil ? "somedaySectionCreateWrite"
-                : startupSomedaySectionTaskResult != nil ? "somedaySectionTaskCommit" : "focusGroupWrite"),
+                : startupSomedaySectionTaskResult != nil ? "somedaySectionTaskCommit"
+                : startupSomedaySectionMoveResult != nil ? "somedaySectionMoveCommit"
+                : startupSomedaySectionUndoResult != nil ? "somedaySectionMoveUndoCommit" : "focusGroupWrite"),
                               "result": try NativeJSON.jsonObject(with: Data(recovered.utf8))]
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
         startupBoardResult = nil
@@ -534,6 +551,8 @@ private final class Engine: @unchecked Sendable {
         startupTaskListSortResult = nil
         startupSomedaySectionCreateResult = nil
         startupSomedaySectionTaskResult = nil
+        startupSomedaySectionMoveResult = nil
+        startupSomedaySectionUndoResult = nil
         return encoded
     }
 
@@ -543,6 +562,10 @@ private final class Engine: @unchecked Sendable {
         let args: [Any]
         do { args = try arguments(method, argumentsJSON) }
         catch {
+            if ["somedaySectionMoveOptions", "somedaySectionMoveWrite", "somedaySectionMoveUndo",
+                "somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method), pending == nil {
+                throw CoreHostRejection(message: error.localizedDescription)
+            }
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
@@ -551,6 +574,17 @@ private final class Engine: @unchecked Sendable {
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
         guard Self.mutations.contains(method) else {
+            if ["somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method) {
+                let envelope = try confirmedSomedayMoveEnvelope(for: method, publicArguments: args)
+                do {
+                    let value = try invoke(method, arguments: [envelope])
+                    try validateSomedaySectionMoveAcknowledgment(arguments: [envelope], method: method, value: value)
+                    return value
+                } catch let failure as HostFailure {
+                    guard failure.message.hasPrefix("STALE_REVISION:") || failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
+                    throw CoreHostRejection(message: failure.message)
+                }
+            }
             if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
                 do {
                     let value = try invoke(method, arguments: args)
@@ -671,7 +705,14 @@ private final class Engine: @unchecked Sendable {
             preparedSomedaySectionTaskEnvelope = nil
         }
         let command: PendingCommand
-        if method == "projectFocusWrite" {
+        if ["somedaySectionMoveWrite", "somedaySectionMoveUndo"].contains(method) {
+            do {
+                switch try prepareSomedaySectionMove(method: method, arguments: args) {
+                case .noop(let value): return value
+                case .command(let prepared): command = prepared
+                }
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "projectFocusWrite" {
             do {
                 let value = try invoke("projectFocusPrepare", arguments: args)
                 guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
@@ -1624,15 +1665,19 @@ private final class Engine: @unchecked Sendable {
                isDefiniteRejection(failure.message, method: command.method) { terminal = .rejected(failure.message) }
             else { throw error }
         }
-        return try publicValue(finish(command, with: terminal), method: command.method)
+        let finished = try finish(command, with: terminal)
+        if case .success = finished { rememberConfirmedSomedayMove(command) }
+        return try publicValue(finished, method: command.method)
     }
 
     func retryPending() throws -> String? {
         dispatchPrecondition(condition: .onQueue(queue))
-        let method = pending?.method
+        let command = pending
+        let method = command?.method
         let terminal = try resolvePending()
         try resumeActivationIfNeeded()
         guard let terminal else { return nil }
+        if case .success = terminal, let command { rememberConfirmedSomedayMove(command) }
         return try publicValue(terminal, method: method)
     }
 
@@ -1663,6 +1708,13 @@ private final class Engine: @unchecked Sendable {
                 let probed = try invoke("somedaySectionTaskRetryOutcome", arguments: journalArguments(command))
                 try validateSomedaySectionTaskAcknowledgment(command, value: probed)
                 try validateSomedaySectionTaskAcknowledgment(command, value: value)
+            }
+            if ["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(command.method), case .success(let value) = terminal {
+                let probed = try invoke(command.method == "somedaySectionMoveCommit"
+                    ? "somedaySectionMoveRetryOutcome" : "somedaySectionMoveUndoRetryOutcome",
+                    arguments: journalArguments(command))
+                try validateSomedaySectionMoveAcknowledgment(command, value: probed)
+                try validateSomedaySectionMoveAcknowledgment(command, value: value)
             }
             return try finish(command, with: terminal)
         }
@@ -1802,6 +1854,10 @@ private final class Engine: @unchecked Sendable {
         if command.method == "somedaySectionTaskCommit" {
             try validateSomedaySectionTaskJournal(command)
             if case .success(let value) = terminal { try validateSomedaySectionTaskAcknowledgment(command, value: value) }
+        }
+        if ["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(command.method) {
+            try validateSomedaySectionMoveJournal(command)
+            if case .success(let value) = terminal { try validateSomedaySectionMoveAcknowledgment(command, value: value) }
         }
         var finished = command
         finished.terminal = terminal
@@ -2012,12 +2068,26 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Someday section task saved releaseCheck=v1.3.4/ios-someday-section-task outcome=confirmed")
         }
+        if command.method == "somedaySectionMoveCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("somedaySectionMoveSaved")
+#endif
+            NSLog("Native iOS Someday section move saved releaseCheck=v1.3.4/ios-someday-section-move operation=move outcome=confirmed")
+        }
+        if command.method == "somedaySectionMoveUndoCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("somedaySectionMoveUndoSaved")
+#endif
+            NSLog("Native iOS Someday section move saved releaseCheck=v1.3.4/ios-someday-section-move operation=undo outcome=confirmed")
+        }
         return terminal
     }
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "somedaySectionCreateWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "areaColorCommit", "areaRenameCommit", "areaOrderCommit", "areaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
+                && message.hasPrefix("STALE_REVISION:"))
     }
 
     private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -2798,6 +2868,124 @@ private final class Engine: @unchecked Sendable {
         }
     }
 
+    private enum SomedayMovePreparation {
+        case noop(String)
+        case command(PendingCommand)
+    }
+
+    private func confirmedSomedayMoveEnvelope(for method: String, publicArguments: [Any]) throws -> String {
+        let stored = method == "somedaySectionMoveUndoRetryOutcome"
+            ? confirmedSomedaySectionUndoEnvelope : confirmedSomedaySectionMoveEnvelope
+        guard let stored, let inputJSON = publicArguments.first as? String,
+              let input = try NativeJSON.jsonObject(with: Data(inputJSON.utf8)) as? [String: Any],
+              let envelope = try NativeJSON.jsonObject(with: Data(stored.utf8)) as? [String: Any],
+              Self.equalJSON(input, envelope["request"]) else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Someday move retry needs the confirmed request")
+        }
+        return stored
+    }
+
+    private func validateSomedaySectionMoveResult(_ value: String, expected: [String: Any]) throws {
+        guard Set(expected.keys) == Set(["id", "changed", "sectionId"]),
+              let expectedID = expected["id"] as? String, !expectedID.isEmpty,
+              Self.isBoolean(expected["changed"]),
+              expected["sectionId"] is NSNull || expected["sectionId"] is String,
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["id", "changed", "sectionId"]),
+              let resultID = result["id"] as? String, resultID.utf8.elementsEqual(expectedID.utf8),
+              Self.isBoolean(result["changed"]), result["changed"] as? Bool == expected["changed"] as? Bool,
+              Self.equalJSON(result["sectionId"], expected["sectionId"]) else {
+            throw HostFailure("Malformed Someday section move acknowledgment")
+        }
+    }
+
+    private func validateSomedaySectionMoveAcknowledgment(arguments: [Any], method: String, value: String) throws {
+        let validator = method == "somedaySectionMoveUndoCommit" || method == "somedaySectionMoveUndoRetryOutcome"
+            ? "somedaySectionMoveUndoValidate" : "somedaySectionMoveValidate"
+        let validated = try invoke(validator, arguments: arguments)
+        guard let expected = try NativeJSON.jsonObject(with: Data(validated.utf8)) as? [String: Any] else {
+            throw HostFailure("Malformed Someday section move validation")
+        }
+        try validateSomedaySectionMoveResult(value, expected: expected)
+    }
+
+    private func validateSomedaySectionMoveAcknowledgment(_ command: PendingCommand, value: String) throws {
+        try validateSomedaySectionMoveAcknowledgment(arguments: journalArguments(command), method: command.method, value: value)
+    }
+
+    private func validateSomedaySectionMoveJournal(_ command: PendingCommand) throws {
+        _ = try invoke(command.method == "somedaySectionMoveUndoCommit" ? "somedaySectionMoveUndoValidate" : "somedaySectionMoveValidate",
+                       arguments: journalArguments(command))
+    }
+
+    private func prepareSomedaySectionMove(method: String, arguments: [Any]) throws -> SomedayMovePreparation {
+        guard let raw = arguments.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
+            throw HostFailure("INVALID_INPUT: Someday move needs one request")
+        }
+        let undo = method == "somedaySectionMoveUndo"
+        let prepareArguments: [Any]
+        var confirmedMove: [String: Any]?
+        if undo {
+            guard let moveJSON = confirmedSomedaySectionMoveEnvelope,
+                  let move = try NativeJSON.jsonObject(with: Data(moveJSON.utf8)) as? [String: Any],
+                  let moveRequest = move["request"] as? [String: Any],
+                  Self.equalJSON(request["moveRequestId"], moveRequest["requestId"]) else {
+                throw HostFailure("INVALID_INPUT: Undo needs the last confirmed Someday move")
+            }
+            confirmedMove = move
+            prepareArguments = [String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "move": move], options: [.sortedKeys]), as: UTF8.self)]
+        } else { prepareArguments = arguments }
+        let responseText = try invoke(undo ? "somedaySectionMoveUndoPrepare" : "somedaySectionMovePrepare",
+                                      arguments: prepareArguments)
+        guard let response = try NativeJSON.jsonObject(with: Data(responseText.utf8)) as? [String: Any],
+              let kind = response["kind"] as? String else {
+            throw HostFailure("Malformed Someday move preparation")
+        }
+        if kind == "noop" {
+            guard Set(response.keys) == Set(["kind", "result"]),
+                  let result = response["result"] as? [String: Any],
+                  let expectedID = (undo ? confirmedMove?["request"] as? [String: Any] : request),
+                  let taskID = expectedID["taskId"] as? String,
+                  result["id"] as? String == taskID,
+                  Self.isBoolean(result["changed"]), result["changed"] as? Bool == false else {
+                throw HostFailure("Malformed Someday move no-op")
+            }
+            let original = ((confirmedMove?["prepared"] as? [String: Any])?["before"] as? [String: Any])?["viewSectionIds"] as? [String: Any]
+            let expectedSection: Any = undo
+                ? original?["someday"] ?? NSNull()
+                : request["sectionId"] ?? NSNull()
+            guard Self.equalJSON(result["sectionId"], expectedSection) else { throw HostFailure("Malformed Someday move no-op") }
+            let value = String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+            try validateSomedaySectionMoveResult(value, expected: result)
+            if undo { confirmedSomedaySectionMoveEnvelope = nil }
+            return .noop(value)
+        }
+        guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+              let prepared = response["prepared"] as? [String: Any],
+              Self.equalJSON(prepared["request"], request) else {
+            throw HostFailure("Malformed prepared Someday move")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 1_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Someday move is too large") }
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        let command = PendingCommand(version: 2, method: undo ? "somedaySectionMoveUndoCommit" : "somedaySectionMoveCommit", argumentsJSON: encoded)
+        try validateSomedaySectionMoveJournal(command)
+        return .command(command)
+    }
+
+    private func rememberConfirmedSomedayMove(_ command: PendingCommand) {
+        guard ["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(command.method),
+              let arguments = try? journalArguments(command), let envelope = arguments.first as? String else { return }
+        if command.method == "somedaySectionMoveCommit" {
+            confirmedSomedaySectionMoveEnvelope = envelope
+            confirmedSomedaySectionUndoEnvelope = nil
+        } else {
+            confirmedSomedaySectionMoveEnvelope = nil
+            confirmedSomedaySectionUndoEnvelope = envelope
+        }
+    }
+
     private static func validProjectAreaToken(_ token: [String: Any], includesID: Bool) -> Bool {
         let fields: Set<String> = ["title", "status", "areaId", "areaTitle", "order", "rev", "revBy", "updatedAt"]
         guard Set(token.keys) == (includesID ? fields.union(["id"]) : fields),
@@ -3351,6 +3539,25 @@ private final class Engine: @unchecked Sendable {
             // must not be reparsed/reprepared under a different clock or zone.
             return try arguments(command.method, command.argumentsJSON, allowPreparedDates: false)
         }
+        if ["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(command.method) {
+            guard command.argumentsJSON.utf8.count <= 2_100_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 1_000_000,
+                  let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(envelope.keys) == Set(["request", "prepared"]),
+                  let request = envelope["request"] as? [String: Any],
+                  let prepared = envelope["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  prepared["kind"] as? String == (command.method == "somedaySectionMoveCommit" ? "move" : "undo"),
+                  Self.equalJSON(prepared["request"], request) else {
+                throw HostFailure("INVALID_INPUT: Malformed prepared Someday move journal")
+            }
+            let publicMethod = command.method == "somedaySectionMoveCommit" ? "somedaySectionMoveWrite" : "somedaySectionMoveUndo"
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self)
+            _ = try arguments(publicMethod, encoded)
+            return args
+        }
         if command.method == "boardCommit" {
             guard let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
                   let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
@@ -3499,6 +3706,11 @@ private final class Engine: @unchecked Sendable {
             && json.utf8.count > 2_100_000 {
             throw HostFailure("INVALID_INPUT: Someday section task transport is too large")
         }
+        if ["somedaySectionMoveOptions", "somedaySectionMoveWrite", "somedaySectionMoveUndo",
+            "somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method)
+            && json.utf8.count > 2_100_000 {
+            throw HostFailure("INVALID_INPUT: Someday section move transport is too large")
+        }
         if method == "projectNotes" && json.utf8.count > 2_000_000 {
             throw HostFailure("INVALID_INPUT: Project Notes read is too large")
         }
@@ -3639,6 +3851,39 @@ private final class Engine: @unchecked Sendable {
                       title.utf16.count <= 10_000, !title.contains("\0"),
                       request["sectionId"] is NSNull || (request["sectionId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 && !$0.contains("\0") }) == true else {
                     throw HostFailure("INVALID_INPUT: Someday task needs an exact title, section, and lowercase UUID")
+                }
+            }
+        }
+        if ["somedaySectionMoveOptions", "somedaySectionMoveWrite", "somedaySectionMoveUndo",
+            "somedaySectionMoveRetryOutcome", "somedaySectionMoveUndoRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 1_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
+                throw HostFailure("INVALID_INPUT: Someday move needs a bounded request")
+            }
+            if method == "somedaySectionMoveOptions" {
+                guard Set(input.keys).isSubset(of: Set(["taskId", "offset", "limit", "revision"])),
+                      let id = input["taskId"] as? String, !id.isEmpty, id.utf16.count <= 500, !id.contains("\0"),
+                      input["offset"] == nil || (Self.isInteger(input["offset"])
+                        && (input["offset"] as? NSNumber).map({ $0.intValue >= 0 }) == true),
+                      input["limit"] == nil || (Self.isInteger(input["limit"])
+                        && (input["limit"] as? NSNumber).map({ (1...100).contains($0.intValue) }) == true),
+                      input["revision"] == nil || (input["revision"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 && !$0.contains("\0") }) == true else {
+                    throw HostFailure("INVALID_INPUT: Someday move needs a bounded task and window")
+                }
+            } else if ["somedaySectionMoveWrite", "somedaySectionMoveRetryOutcome"].contains(method) {
+                guard Set(input.keys) == Set(["requestId", "taskId", "taskRevision", "sectionId"]),
+                      let id = input["requestId"] as? String, id == UUID(uuidString: id)?.uuidString.lowercased(),
+                      let taskID = input["taskId"] as? String, !taskID.isEmpty, taskID.utf16.count <= 500, !taskID.contains("\0"),
+                      let revision = input["taskRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200, !revision.contains("\0"),
+                      input["sectionId"] is NSNull || (input["sectionId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 500 && !$0.contains("\0") }) == true else {
+                    throw HostFailure("INVALID_INPUT: Someday move needs an exact task, revision, destination, and lowercase UUID")
+                }
+            } else {
+                guard Set(input.keys) == Set(["requestId", "moveRequestId"]),
+                      let id = input["requestId"] as? String, id == UUID(uuidString: id)?.uuidString.lowercased(),
+                      let moveID = input["moveRequestId"] as? String, moveID == UUID(uuidString: moveID)?.uuidString.lowercased(),
+                      id != moveID else {
+                    throw HostFailure("INVALID_INPUT: Someday Undo needs two distinct lowercase UUIDs")
                 }
             }
         }

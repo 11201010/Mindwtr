@@ -158,6 +158,7 @@ export * from './menu-views-model';
 export * from './someday-sections-model';
 export * from './native-host-contract-someday-section-create';
 export * from './native-host-contract-someday-section-task';
+export * from './native-host-contract-someday-section-move';
 export * from './settings-menu-model';
 export * from './general-settings-model';
 export * from './manage-settings-model';

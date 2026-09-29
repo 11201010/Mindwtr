@@ -83,7 +83,9 @@ struct InboxScreen: View {
                         }
                         if model.error != nil && !model.capturePresented && !model.areaPickerPresented && !model.morePresented && !model.mindSweepPresented && !model.processInboxPresented
                             && !(model.somedayPanel == "newSection" && model.somedaySectionCreateError != nil)
-                            && !(model.somedayPanel == "newSectionTask" && model.somedaySectionTaskError != nil) {
+                            && !(model.somedayPanel == "newSectionTask" && model.somedaySectionTaskError != nil)
+                            && !(model.somedayPanel == "moveSection" && model.somedayMoveError != nil)
+                            && !(model.selectedSurface == .someday && model.somedayMoveUndoError != nil) {
                             FailureBanner(model: model, palette: palette)
                         }
                     }
@@ -984,6 +986,8 @@ struct TaskCard: View {
     var onProject: ((CoreObject) -> Void)? = nil
     var onToken: ((String) -> Void)? = nil
     var beforeAction: (() -> Void)? = nil
+    var onMoveToSection: (() -> Void)? = nil
+    var moveToSectionLabel: String = ""
     @State private var statusMenu = false
     private var meta: CoreObject { row.object("meta") }
     private var statusColor: Color {
@@ -1087,6 +1091,12 @@ struct TaskCard: View {
         .confirmationDialog(meta.text("statusLabel"), isPresented: $statusMenu, titleVisibility: .visible) {
             Button(model.label("common.done")) { Task { await model.complete(row.text("id")) } }
                 .accessibilityIdentifier("task-complete")
+            if let onMoveToSection, !moveToSectionLabel.isEmpty {
+                Button(moveToSectionLabel) { onMoveToSection() }
+                    .disabled(model.busy || model.retryNeeded || readOnly || row.flag("readOnly")
+                              || model.somedayMoveUndoAwaitingRefresh || model.somedayMoveUndoError != nil)
+                    .accessibilityIdentifier("task-move-section-" + row.text("id"))
+            }
             Button(model.label("common.cancel"), role: .cancel) {}
         }
     }

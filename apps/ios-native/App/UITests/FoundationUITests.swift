@@ -882,7 +882,8 @@ final class FoundationUITests: XCTestCase {
         func fullyVisible(_ item: XCUIElement) -> Bool {
             guard item.exists, item.isHittable else { return false }
             let frame = visibleViewport()
-            return item.frame.minY >= frame.minY && item.frame.maxY <= frame.maxY
+            // Accessibility frames can differ by floating-point rounding at a shared edge.
+            return item.frame.minY >= frame.minY - 0.001 && item.frame.maxY <= frame.maxY + 0.001
         }
         for _ in 0..<120 {
             if fullyVisible(element) { break }
@@ -3073,6 +3074,194 @@ final class FoundationUITests: XCTestCase {
         app.terminate(); app.launch(); task79OpenSomeday(app)
         task80AssertTask(app, title: "Task80 Retry")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Task80 Retry")).count, 1)
+        app.terminate()
+    }
+
+    func testSomedaySectionMoveNormal() {
+        somedaySectionMoveFlow(library: "f2d2eb36-2153-4033-a94e-0930365cc748")
+    }
+
+    func testSomedaySectionMoveLargestText() {
+        somedaySectionMoveFlow(library: "b8a5eb4b-1a86-4850-b958-161f02a549a4")
+    }
+
+    private func task81OpenMove(_ app: XCUIApplication) {
+        let status = app.buttons["task-status-task81-move"]
+        revealPagedElement(app, status, in: app.scrollViews["someday-scroll"], more: "someday-more",
+                           ready: app.buttons["someday-overflow-button"])
+        boardTap(app, "task-status-task81-move")
+        boardTap(app, "task-move-section-task81-move")
+        XCTAssertTrue(app.staticTexts["someday-section-move-title"].waitForExistence(timeout: 10))
+        boardEnabled(app.buttons["someday-section-move-cancel"])
+    }
+
+    private func task81Choice(_ app: XCUIApplication, title: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "someday-section-move-choice-", title)).firstMatch
+    }
+
+    private func task81Choose(_ app: XCUIApplication, title: String) {
+        let choice = task81Choice(app, title: title)
+        XCTAssertTrue(choice.waitForExistence(timeout: 10))
+        boardEnabled(choice)
+        XCTAssertGreaterThanOrEqual(choice.frame.height, 44 - 0.001)
+        choice.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+    }
+
+    private func task81NoticeGone(_ app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["someday-section-move-undo"].waitForNonExistence(timeout: 12))
+        boardEnabled(app.buttons["someday-overflow-button"])
+    }
+
+    private func somedaySectionMoveFlow(library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        task79OpenSomeday(app)
+        task81OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        XCTAssertTrue(task81Choice(app, title: "No section").exists)
+        app.buttons["someday-section-move-cancel"].coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+        XCTAssertFalse(app.staticTexts["someday-section-move-title"].exists)
+        task81OpenMove(app)
+        let picker = XCTAttachment(screenshot: app.screenshot())
+        picker.name = "Someday section move picker"; picker.lifetime = .keepAlways; add(picker)
+        task81Choose(app, title: "Imported ideas")
+        let notice = XCTAttachment(screenshot: app.screenshot())
+        notice.name = "Someday first move notice"; notice.lifetime = .keepAlways; add(notice)
+        XCTAssertTrue(app.buttons["someday-section-move-undo"].waitForExistence(timeout: 3))
+        app.buttons["someday-section-move-undo"].tap()
+        task81NoticeGone(app)
+        XCTAssertFalse(app.staticTexts["someday-section-undo-error"].exists)
+        task81OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        task81Choose(app, title: "No section")
+        boardEnabled(app.buttons["someday-section-move-undo"], timeout: 20)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Someday moved with Undo"; shot.lifetime = .keepAlways; add(shot)
+        task81NoticeGone(app)
+        // Selecting the existing assignment must not write or offer another Undo.
+        task81OpenMove(app); task81Choose(app, title: "No section")
+        boardEnabled(app.buttons["someday-overflow-button"])
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        XCTAssertFalse(app.staticTexts["someday-section-move-error"].exists)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        task81OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "No section").isSelected)
+        boardTap(app, "someday-section-move-cancel")
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        app.terminate()
+    }
+
+    func testSomedaySectionUndoReadFailureRetainsRecoveryAfterRefresh() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "d1bcfaec-16c8-4d87-9f23-e32d177d5e71",
+                               "--native-someday-undo-read-failure"]
+        app.launch(); task79OpenSomeday(app); task81OpenMove(app)
+        task81Choose(app, title: "Imported ideas")
+        XCTAssertTrue(app.buttons["someday-section-move-undo"].waitForExistence(timeout: 3))
+        app.buttons["someday-section-move-undo"].tap()
+        XCTAssertTrue(app.staticTexts["someday-section-undo-error"].waitForExistence(timeout: 10))
+        boardEnabled(app.buttons["someday-section-undo-retry"])
+        let scroll = app.scrollViews["someday-scroll"]
+        scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).press(forDuration: 0.05,
+            thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)))
+        boardEnabled(app.buttons["task-status-task81-move"])
+        boardTap(app, "task-status-task81-move")
+        XCTAssertTrue(app.buttons["task-complete"].waitForExistence(timeout: 5))
+        let moveAction = app.buttons["task-move-section-task81-move"]
+        // Some iOS versions omit disabled confirmation-dialog actions entirely.
+        XCTAssertTrue(!moveAction.exists || !moveAction.isEnabled)
+        if app.buttons["Cancel"].exists { app.buttons["Cancel"].tap() }
+        else { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap() }
+        XCTAssertTrue(app.staticTexts["someday-section-undo-error"].exists)
+        XCTAssertFalse(app.staticTexts["someday-section-move-title"].exists)
+        boardTap(app, "someday-section-undo-retry")
+        task81NoticeGone(app)
+        XCTAssertFalse(app.staticTexts["someday-section-undo-error"].exists)
+        task81OpenMove(app)
+        XCTAssertTrue(task81Choice(app, title: "Books").isSelected)
+        task81Choose(app, title: "No section")
+        XCTAssertTrue(app.buttons["someday-section-move-undo"].waitForExistence(timeout: 3))
+        task81NoticeGone(app)
+        boardTap(app, "someday-back")
+        XCTAssertTrue(app.staticTexts["inbox-title"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    func testSomedaySectionMovePagedChoices() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "539d1607-3362-4516-956c-aea7f95f4d4a"]
+        app.launch(); task79OpenSomeday(app); task81OpenMove(app)
+        let target = task81Choice(app, title: "Task81 Last section")
+        revealPagedElement(app, target, in: app.scrollViews["someday-section-move-scroll"],
+                           more: "someday-section-move-more", ready: app.buttons["someday-section-move-cancel"])
+        task81Choose(app, title: "Task81 Last section")
+        boardEnabled(app.buttons["someday-section-move-undo"], timeout: 20)
+        task81NoticeGone(app)
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        app.terminate()
+    }
+
+    func testSomedaySectionMoveSaveFailureKeepsExactRequest() {
+        somedaySectionMoveFailure(undo: false, library: "6c1cf42a-e406-45fa-ac8a-7b768341c699")
+    }
+
+    func testSomedaySectionUndoSaveFailureKeepsExactRequest() {
+        somedaySectionMoveFailure(undo: true, library: "bafaf283-393c-49ff-b0d1-c613edbe7b8b")
+    }
+
+    private func somedaySectionMoveFailure(undo: Bool, library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task79OpenSomeday(app); task81OpenMove(app)
+        task81Choose(app, title: "Imported ideas")
+        if undo {
+            boardEnabled(app.buttons["someday-section-move-undo"], timeout: 20)
+            app.buttons["someday-section-move-undo"].tap()
+        }
+        let prefix = undo ? "someday-section-undo-" : "someday-section-move-"
+        let failure = app.staticTexts[prefix + "error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        for _ in 0..<2 {
+            if !undo {
+                XCTAssertFalse(app.buttons["someday-section-move-cancel"].isEnabled)
+                XCTAssertFalse(app.buttons["someday-panel-dismiss"].isEnabled)
+            }
+            let back = app.buttons["someday-back"]
+            XCTAssertTrue(!back.exists || !back.isEnabled)
+            boardTap(app, prefix + "retry")
+            boardEnabled(app.buttons[prefix + "retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+            XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = undo ? "Someday Undo exact retry" : "Someday move exact retry"
+        shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testSomedaySectionMoveColdRecovery() {
+        somedaySectionMoveColdRecovery(library: "6c1cf42a-e406-45fa-ac8a-7b768341c699")
+    }
+
+    func testSomedaySectionUndoColdRecovery() {
+        somedaySectionMoveColdRecovery(library: "bafaf283-393c-49ff-b0d1-c613edbe7b8b")
+    }
+
+    private func somedaySectionMoveColdRecovery(library: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); task79OpenSomeday(app, recovered: true)
+        XCTAssertFalse(app.staticTexts["someday-section-move-error"].exists)
+        XCTAssertFalse(app.staticTexts["someday-section-undo-error"].exists)
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
+        task81OpenMove(app); boardTap(app, "someday-section-move-cancel")
+        app.terminate(); app.launch(); task79OpenSomeday(app)
+        XCTAssertFalse(app.buttons["someday-section-move-undo"].exists)
         app.terminate()
     }
 

@@ -17,7 +17,16 @@ extension Dictionary where Key == String, Value == Any {
 final class CoreModel: ObservableObject {
     enum Surface: Equatable { case inbox, focus, review, calendar, board, search, projects, project, waiting, someday, reference, history, trash, contexts }
 
-    @Published private(set) var selectedSurface: Surface = .inbox
+    @Published private(set) var selectedSurface: Surface = .inbox {
+        didSet {
+            if oldValue == .someday && selectedSurface != .someday && !somedayMovePending
+                && !somedayMoveAwaitingRefresh && !somedayMoveUndoAwaitingRefresh {
+                clearSomedayMoveNotice()
+                somedayMoveUndoError = nil
+                somedayMoveUndoFailureLabel = ""
+            }
+        }
+    }
     @Published private(set) var inbox: CoreObject = [:]
     @Published private(set) var processInboxPresented = false
     @Published private(set) var processInboxView: CoreObject = [:]
@@ -273,6 +282,14 @@ final class CoreModel: ObservableObject {
     @Published private(set) var somedaySectionTaskError: String?
     @Published private(set) var somedaySectionTaskReadError: String?
     @Published private(set) var somedaySectionTaskAwaitingRefresh = false
+    @Published private(set) var somedayMoveOptions: CoreObject = [:]
+    @Published private(set) var somedayMoveReadError: String?
+    @Published private(set) var somedayMoveError: String?
+    @Published private(set) var somedayMoveAwaitingRefresh = false
+    @Published private(set) var somedayMoveNotice: CoreObject = [:]
+    @Published private(set) var somedayMoveUndoError: String?
+    @Published private(set) var somedayMoveUndoAwaitingRefresh = false
+    @Published private(set) var somedayMoveUndoFailureLabel = ""
     @Published private(set) var reference: CoreObject = [:]
     @Published private(set) var referenceCurrent = false
     @Published private(set) var referenceError: String?
@@ -461,6 +478,7 @@ final class CoreModel: ObservableObject {
     private var referenceViewTestReadFailures = 0
     private var historyViewTestReadFailures = 0
     private var boardPickerTestReadFailures = 0
+    private var somedayUndoTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -592,6 +610,17 @@ final class CoreModel: ObservableObject {
     private var somedaySectionTaskSectionID: String?
     private var somedaySectionTaskEnvelope: String?
     private var somedaySectionTaskRequestID: String?
+    private var somedayMoveTaskID = ""
+    private var somedayMoveChoiceSectionID: Any = NSNull()
+    private var somedayMoveChoiceToast = ""
+    private var somedayMoveRequest: String?
+    private var somedayMoveRequestID: String?
+    private var somedayMoveAcknowledgedID: String?
+    private var somedayMoveAcknowledgedChanged = false
+    private var somedayMoveUndoRequest: String?
+    private var somedayMoveUndoRequestID: String?
+    private var somedayMoveUndoTaskID = ""
+    private var somedayMoveNoticeExpiry: Task<Void, Never>?
     private var referenceCaller: Surface = .inbox
     private var referenceParams: CoreObject = [:]
     private var referenceCollapsedGroups: [String: [String]] = [:]
@@ -1139,6 +1168,16 @@ final class CoreModel: ObservableObject {
             && !somedaySectionTaskPending
             && !somedaySectionTaskDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    var somedayMovePending: Bool { somedayMoveRequest != nil || somedayMoveUndoRequest != nil }
+    var somedayMoveActionsEnabled: Bool {
+        somedayActionsEnabled && somedayPanel == "moveSection" && !somedayMoveOptions.isEmpty
+            && somedayMoveReadError == nil && !somedayMoveAwaitingRefresh && !somedayMovePending
+    }
+    var somedayMoveUndoEnabled: Bool {
+        somedayActionsEnabled && !somedayMoveNotice.isEmpty && somedayMoveUndoError == nil
+            && !somedayMoveUndoAwaitingRefresh && !somedayMovePending
+    }
+    var somedayMoveUndoCanRetry: Bool { somedayMoveUndoRequest != nil || somedayMoveUndoAwaitingRefresh }
     var referenceActionsEnabled: Bool {
         ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
     }
@@ -1263,6 +1302,7 @@ final class CoreModel: ObservableObject {
                     referenceViewTestReadFailures = arguments.contains("--native-reference-view-read-failure") ? 2 : 0
                     historyViewTestReadFailures = arguments.contains("--native-history-view-read-failure") ? 2 : 0
                     boardPickerTestReadFailures = arguments.contains("--native-board-picker-read-failure") ? 2 : 0
+                    somedayUndoTestReadFailures = arguments.contains("--native-someday-undo-read-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1400,7 +1440,8 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
-            } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit"].contains(recovery.text("method")) {
+            } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit", "somedaySectionMoveCommit",
+                       "somedaySectionMoveUndoCommit"].contains(recovery.text("method")) {
                 selectedSurface = .someday
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
@@ -6315,14 +6356,19 @@ final class CoreModel: ObservableObject {
 
     func closeSomeday() async {
         guard selectedSurface == .someday, !busy, !retryNeeded, !taskPresented,
-              !somedaySectionCreatePending, !somedaySectionTaskPending else { return }
+              !somedaySectionCreatePending, !somedaySectionTaskPending, !somedayMovePending,
+              !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh else { return }
         closeSomedayPicker()
+        clearSomedayMoveNotice()
+        somedayMoveUndoError = nil
+        somedayMoveUndoFailureLabel = ""
         selectedSurface = somedayCaller
         await refresh()
     }
 
     func closeSomedayPanel() {
-        guard !busy, !retryNeeded, !somedaySectionCreatePending, !somedaySectionTaskPending else { return }
+        guard !busy, !retryNeeded, !somedaySectionCreatePending, !somedaySectionTaskPending,
+              !somedayMovePending, !somedayMoveAwaitingRefresh else { return }
         somedayPanel = ""
         closeSomedayPicker()
         somedaySectionCreateDraft = ""
@@ -6336,6 +6382,12 @@ final class CoreModel: ObservableObject {
         somedaySectionTaskError = nil
         somedaySectionTaskReadError = nil
         somedaySectionTaskAwaitingRefresh = false
+        somedayMoveTaskID = ""
+        somedayMoveOptions = [:]
+        somedayMoveReadError = nil
+        somedayMoveError = nil
+        somedayMoveChoiceSectionID = NSNull()
+        somedayMoveChoiceToast = ""
     }
 
     func openSomedaySectionCreate() async {
@@ -6604,6 +6656,294 @@ final class CoreModel: ObservableObject {
             somedaySectionTaskError = nil
             await readSomedaySectionTaskOptions()
         }
+    }
+
+    func openSomedaySectionMove(_ row: CoreObject) async {
+        guard somedayActionsEnabled, somedayPanel.isEmpty, row.text("status") == "someday",
+              !row.flag("readOnly"), !row.text("id").isEmpty,
+              !capturePresented, !areaPickerPresented, !somedayMovePending,
+              !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
+              somedayMoveUndoError == nil else { return }
+        clearSomedayMoveNotice()
+        somedayMoveUndoError = nil
+        somedayMoveUndoFailureLabel = ""
+        somedayMoveTaskID = row.text("id")
+        somedayMoveOptions = [:]
+        somedayMoveReadError = nil
+        somedayMoveError = nil
+        somedayMoveChoiceSectionID = NSNull()
+        somedayMoveChoiceToast = ""
+        somedayPanel = "moveSection"
+        await readSomedayMoveOptions()
+    }
+
+    private func fetchSomedayMovePage(offset: Int, revision: String? = nil) async throws -> CoreObject {
+        var input: CoreObject = ["taskId": somedayMoveTaskID, "offset": offset, "limit": 25]
+        if let revision { input["revision"] = revision }
+        let page = try await query("somedaySectionMoveOptions", [try json(input)])
+        let choices = page.object("choices")
+        let items = choices.objects("items")
+        guard Set(page.keys) == Set(["revision", "taskId", "taskRevision", "title", "choices", "cancelLabel",
+                                    "undoLabel", "errorTitle", "moveFailed", "undoFailed"]),
+              !page.text("revision").isEmpty, page.text("taskId") == somedayMoveTaskID,
+              !page.text("taskRevision").isEmpty, !page.text("title").isEmpty,
+              !page.text("cancelLabel").isEmpty, !page.text("undoLabel").isEmpty,
+              !page.text("errorTitle").isEmpty, !page.text("moveFailed").isEmpty,
+              !page.text("undoFailed").isEmpty, Set(choices.keys) == Set(["total", "items"]),
+              choices.number("total") > 0, choices.number("total") >= offset,
+              items.count == min(25, choices.number("total") - offset),
+              items.allSatisfy({ item in
+                  Set(item.keys) == Set(["sectionId", "title", "selected", "toast"])
+                      && (item["sectionId"] is NSNull || item["sectionId"] is String)
+                      && !item.text("title").isEmpty && !item.text("toast").isEmpty
+                      && item["selected"] is Bool
+              }) else { throw CocoaError(.coderReadCorrupt) }
+        return page
+    }
+
+    private func readSomedayMoveOptions() async {
+        guard selectedSurface == .someday, somedayPanel == "moveSection", !busy, !retryNeeded,
+              !somedayMovePending else { return }
+        busy = true
+        somedayMoveOptions = [:]
+        somedayMoveReadError = nil
+        defer { finishOperation() }
+        do { somedayMoveOptions = try await fetchSomedayMovePage(offset: 0) }
+        catch { somedayMoveReadError = error.localizedDescription }
+    }
+
+    func loadMoreSomedayMoveChoices() async {
+        guard somedayMoveActionsEnabled, !busy else { return }
+        let choices = somedayMoveOptions.object("choices")
+        let entries = choices.objects("items")
+        guard entries.count < choices.number("total") else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let page = try await fetchSomedayMovePage(offset: entries.count, revision: somedayMoveOptions.text("revision"))
+            guard page.text("revision") == somedayMoveOptions.text("revision"),
+                  page.text("taskRevision") == somedayMoveOptions.text("taskRevision"),
+                  page.object("choices").number("total") == choices.number("total"),
+                  page.text("title") == somedayMoveOptions.text("title"),
+                  page.text("cancelLabel") == somedayMoveOptions.text("cancelLabel"),
+                  page.text("undoLabel") == somedayMoveOptions.text("undoLabel"),
+                  page.text("errorTitle") == somedayMoveOptions.text("errorTitle"),
+                  page.text("moveFailed") == somedayMoveOptions.text("moveFailed"),
+                  page.text("undoFailed") == somedayMoveOptions.text("undoFailed") else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            var mergedChoices = choices
+            mergedChoices["items"] = entries + page.object("choices").objects("items")
+            somedayMoveOptions["choices"] = mergedChoices
+        } catch {
+            somedayMoveOptions = [:]
+            somedayMoveReadError = error.localizedDescription
+        }
+    }
+
+    func chooseSomedayMoveSection(_ index: Int) async {
+        guard somedayMoveActionsEnabled else { return }
+        let entries = somedayMoveOptions.object("choices").objects("items")
+        guard entries.indices.contains(index), let sectionID = entries[index]["sectionId"],
+              sectionID is NSNull || sectionID is String else { return }
+        somedayMoveChoiceSectionID = sectionID
+        somedayMoveChoiceToast = entries[index].text("toast")
+        let requestID = UUID().uuidString.lowercased()
+        do {
+            let request = try json(["requestId": requestID, "taskId": somedayMoveTaskID,
+                                    "taskRevision": somedayMoveOptions.text("taskRevision"),
+                                    "sectionId": sectionID])
+            somedayMoveRequest = request
+            somedayMoveRequestID = requestID
+            somedayMoveError = nil
+            busy = true
+            defer { finishOperation() }
+            do {
+                let result = try await query("somedaySectionMoveWrite", [request])
+                try acknowledgeSomedayMove(result)
+                await refreshSomedayAfterMove()
+            } catch { await handleSomedayMoveError(error) }
+        } catch { somedayMoveError = error.localizedDescription }
+    }
+
+    private func acknowledgeSomedayMove(_ result: CoreObject) throws {
+        let actualSection = try json(["sectionId": result["sectionId"] ?? "missing"])
+        let requestedSection = try json(["sectionId": somedayMoveChoiceSectionID])
+        guard somedayMoveRequest != nil, let requestID = somedayMoveRequestID,
+              Set(result.keys) == Set(["id", "changed", "sectionId"]),
+              result.text("id") == somedayMoveTaskID,
+              let changed = result["changed"] as? NSNumber,
+              CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              actualSection == requestedSection else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedayMoveRequest = nil
+        somedayMoveRequestID = nil
+        somedayMoveAcknowledgedID = requestID
+        somedayMoveAcknowledgedChanged = changed.boolValue
+        somedayMoveError = nil
+        somedayMoveReadError = nil
+        somedayMoveAwaitingRefresh = true
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshSomedayAfterMove() async {
+        guard selectedSurface == .someday, somedayMoveAwaitingRefresh else { return }
+        if await readSomeday() {
+            let undoLabel = somedayMoveOptions.text("undoLabel")
+            let undoFailed = somedayMoveOptions.text("undoFailed")
+            somedayMoveAwaitingRefresh = false
+            somedayPanel = ""
+            somedayMoveOptions = [:]
+            somedayMoveReadError = nil
+            somedayMoveError = nil
+            if somedayMoveAcknowledgedChanged, let requestID = somedayMoveAcknowledgedID {
+                showSomedayMoveNotice(requestID: requestID, taskID: somedayMoveTaskID,
+                                      message: somedayMoveChoiceToast,
+                                      undoLabel: undoLabel, undoFailed: undoFailed)
+            }
+            somedayMoveAcknowledgedID = nil
+            somedayMoveAcknowledgedChanged = false
+            somedayMoveTaskID = ""
+            somedayMoveChoiceSectionID = NSNull()
+            somedayMoveChoiceToast = ""
+        } else {
+            somedayMoveReadError = somedayError ?? label("settings.feedback.actionFailed")
+        }
+    }
+
+    private func handleSomedayMoveError(_ failure: Error) async {
+        if somedayMoveRequest != nil && isDefiniteRejection(failure) {
+            somedayMoveRequest = nil
+            somedayMoveRequestID = nil
+            somedayMoveOptions = [:]
+            retryNeeded = false
+            error = nil
+            somedayMoveError = failure.localizedDescription
+            do { somedayMoveOptions = try await fetchSomedayMovePage(offset: 0) }
+            catch { somedayMoveReadError = error.localizedDescription }
+        } else {
+            retryNeeded = somedayMoveRequest != nil
+            somedayMoveError = failure.localizedDescription
+            if retryNeeded { error = failure.localizedDescription }
+        }
+    }
+
+    func retrySomedayMove() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .someday, somedayPanel == "moveSection", !busy,
+              !somedayMovePending else { return }
+        if somedayMoveAwaitingRefresh {
+            busy = true
+            defer { finishOperation() }
+            await refreshSomedayAfterMove()
+        } else {
+            somedayMoveError = nil
+            await readSomedayMoveOptions()
+        }
+    }
+
+    private func showSomedayMoveNotice(requestID: String, taskID: String, message: String,
+                                       undoLabel: String, undoFailed: String) {
+        clearSomedayMoveNotice()
+        somedayMoveUndoFailureLabel = undoFailed
+        somedayMoveNotice = ["requestId": requestID, "taskId": taskID, "message": message,
+                             "undoLabel": undoLabel]
+        somedayMoveNoticeExpiry = Task {
+            do { try await Task.sleep(nanoseconds: 5_200_000_000) } catch { return }
+            if somedayMoveNotice.text("requestId") == requestID && somedayMoveUndoRequest == nil {
+                somedayMoveNotice = [:]
+                somedayMoveNoticeExpiry = nil
+            }
+        }
+    }
+
+    private func clearSomedayMoveNotice() {
+        somedayMoveNoticeExpiry?.cancel()
+        somedayMoveNoticeExpiry = nil
+        somedayMoveNotice = [:]
+    }
+
+    func undoSomedaySectionMove() async {
+        guard somedayMoveUndoEnabled, !busy,
+              let moveRequestID = somedayMoveNotice["requestId"] as? String,
+              let taskID = somedayMoveNotice["taskId"] as? String else { return }
+        somedayMoveNoticeExpiry?.cancel()
+        somedayMoveNoticeExpiry = nil
+        let requestID = UUID().uuidString.lowercased()
+        do {
+            let request = try json(["requestId": requestID, "moveRequestId": moveRequestID])
+            somedayMoveUndoRequest = request
+            somedayMoveUndoRequestID = requestID
+            somedayMoveUndoTaskID = taskID
+            somedayMoveUndoError = nil
+            busy = true
+            defer { finishOperation() }
+            do {
+                let result = try await query("somedaySectionMoveUndo", [request])
+                try acknowledgeSomedayMoveUndo(result)
+                await refreshSomedayAfterUndo()
+            } catch { handleSomedayMoveUndoError(error) }
+        } catch { somedayMoveUndoError = error.localizedDescription }
+    }
+
+    private func acknowledgeSomedayMoveUndo(_ result: CoreObject) throws {
+        guard somedayMoveUndoRequest != nil, somedayMoveUndoRequestID != nil,
+              Set(result.keys) == Set(["id", "changed", "sectionId"]),
+              result.text("id") == somedayMoveUndoTaskID,
+              let changed = result["changed"] as? NSNumber,
+              CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              result["sectionId"] is NSNull || result["sectionId"] is String else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedayMoveUndoRequest = nil
+        somedayMoveUndoRequestID = nil
+        somedayMoveUndoError = nil
+        somedayMoveUndoAwaitingRefresh = true
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshSomedayAfterUndo() async {
+        guard selectedSurface == .someday, somedayMoveUndoAwaitingRefresh else { return }
+        if await readSomeday() {
+            somedayMoveUndoAwaitingRefresh = false
+            somedayMoveUndoTaskID = ""
+            somedayMoveUndoError = nil
+            clearSomedayMoveNotice()
+        } else {
+            somedayMoveUndoError = somedayError ?? label("settings.feedback.actionFailed")
+        }
+    }
+
+    private func handleSomedayMoveUndoError(_ failure: Error) {
+        if somedayMoveUndoRequest != nil && isDefiniteRejection(failure) {
+            somedayMoveUndoRequest = nil
+            somedayMoveUndoRequestID = nil
+            somedayMoveUndoTaskID = ""
+            retryNeeded = false
+            error = nil
+            clearSomedayMoveNotice()
+        } else {
+            retryNeeded = somedayMoveUndoRequest != nil
+            if retryNeeded { error = failure.localizedDescription }
+        }
+        somedayMoveUndoError = failure.localizedDescription
+    }
+
+    func retrySomedayMoveUndo() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .someday, !busy, somedayMoveUndoAwaitingRefresh else { return }
+        busy = true
+        defer { finishOperation() }
+        await refreshSomedayAfterUndo()
+    }
+
+    func dismissSomedayMoveUndoError() {
+        guard !busy, !retryNeeded, !somedayMovePending, !somedayMoveUndoAwaitingRefresh else { return }
+        somedayMoveUndoError = nil
+        somedayMoveUndoFailureLabel = ""
     }
 
     func setSomedayOption(_ key: String, value: Any) async {
@@ -11196,6 +11536,22 @@ final class CoreModel: ObservableObject {
                 await refreshSomedayAfterSectionTask()
                 return
             }
+            if let request = somedayMoveRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("somedaySectionMoveRetryOutcome", [request]) }
+                try acknowledgeSomedayMove(result)
+                await refreshSomedayAfterMove()
+                return
+            }
+            if let request = somedayMoveUndoRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("somedaySectionMoveUndoRetryOutcome", [request]) }
+                try acknowledgeSomedayMoveUndo(result)
+                await refreshSomedayAfterUndo()
+                return
+            }
             if let request = focusGroupRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -11421,6 +11777,14 @@ final class CoreModel: ObservableObject {
             }
             if somedaySectionTaskEnvelope != nil {
                 await handleSomedaySectionTaskError(error)
+                return
+            }
+            if somedayMoveRequest != nil {
+                await handleSomedayMoveError(error)
+                return
+            }
+            if somedayMoveUndoRequest != nil {
+                handleSomedayMoveUndoError(error)
                 return
             }
             if focusGroupRequest != nil {
@@ -12219,6 +12583,11 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", args.first as? String == "boardList",
            boardPendingEdit != nil, boardPickerTestReadFailures > 0 {
             boardPickerTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "someday",
+           somedayMoveUndoAwaitingRefresh, somedayUndoTestReadFailures > 0 {
+            somedayUndoTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if projectAreaCreatedID != nil {

@@ -5214,6 +5214,344 @@ final class CoreHostTests: XCTestCase {
         return try json([json(["request": request, "prepared": prepared])])
     }
 
+    private func seedSomedayMoveTask() async throws -> String {
+        let writer = host()
+        _ = try await writer.start()
+        let id = UUID().uuidString.lowercased()
+        let payload = try await somedaySectionTaskPayload(writer, title: "Move candidate", id: id)
+        _ = try await writer.call("somedaySectionTaskCommit", argumentsJSON: payload)
+        await writer.close()
+        return id
+    }
+
+    private func somedayMoveOptions(_ core: CoreHost, taskId: String) async throws -> [String: Any] {
+        try object(await core.call("somedaySectionMoveOptions", argumentsJSON: json([json(["taskId": taskId])])))
+    }
+
+    private func somedayMoveRequest(_ options: [String: Any], sectionId: String?,
+                                    id: String = UUID().uuidString.lowercased()) throws -> String {
+        try json([json(["requestId": id, "taskId": XCTUnwrap(options["taskId"]),
+                       "taskRevision": XCTUnwrap(options["taskRevision"]),
+                       "sectionId": (sectionId as Any?) ?? NSNull()])])
+    }
+
+    func testSomedaySectionMoveNamedNoSectionAndUndoPreserveOtherScopes() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "none", "title": "Imported None", "order": 0],
+                            ["id": "no-section", "title": "Named No section", "order": 1]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let sqlite = try SQLiteBridge(url: database)
+        _ = try sqlite.execute("UPDATE tasks SET viewSectionIds = ? WHERE id = ?",
+                               parametersJSON: json([json(["futureScope": "keep"]), id]))
+        sqlite.close()
+        let original = try storedTask(id)
+        let faults = HostIOFaults()
+        var saved: [String] = []
+        faults.commandDiagnostic = { saved.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        await expectFailure("unavailable") {
+            _ = try await core.call("somedaySectionMoveCommit", argumentsJSON: json(["{}"]))
+        }
+        await expectFailure("unavailable") {
+            _ = try await core.call("somedaySectionMoveUndoCommit", argumentsJSON: json(["{}"]))
+        }
+        let options = try await somedayMoveOptions(core, taskId: id)
+        let choices = try XCTUnwrap((options["choices"] as? [String: Any])?["items"] as? [[String: Any]])
+        XCTAssertTrue(choices.contains { $0["sectionId"] is NSNull })
+        XCTAssertTrue(choices.contains { $0["sectionId"] as? String == "none" })
+        XCTAssertTrue(choices.contains { $0["sectionId"] as? String == "no-section" })
+        let namedRequestID = UUID().uuidString.lowercased()
+        let named = try somedayMoveRequest(options, sectionId: "none", id: namedRequestID)
+        let moved = try object(await core.call("somedaySectionMoveWrite", argumentsJSON: named))
+        XCTAssertEqual(moved["id"] as? String, id)
+        XCTAssertEqual(moved["changed"] as? Bool, true)
+        XCTAssertEqual(moved["sectionId"] as? String, "none")
+        let namedTask = try storedTask(id)
+        let namedMap = try object(XCTUnwrap(namedTask["viewSectionIds"] as? String))
+        XCTAssertEqual(namedMap["someday"] as? String, "none")
+        XCTAssertEqual(namedMap["futureScope"] as? String, "keep")
+        for key in ["title", "status", "projectId", "areaId", "orderNum"] {
+            XCTAssertEqual(try json([original[key] ?? NSNull()]), try json([namedTask[key] ?? NSNull()]), key)
+        }
+        let same = try somedayMoveRequest(try await somedayMoveOptions(core, taskId: id), sectionId: "none")
+        var writes = 0, journals = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") { writes += 1 } }
+        faults.journalWrite = { journals += 1 }
+        let unchanged = try object(await core.call("somedaySectionMoveWrite", argumentsJSON: same))
+        XCTAssertEqual(unchanged["changed"] as? Bool, false)
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0)
+        let clearID = UUID().uuidString.lowercased()
+        let clear = try somedayMoveRequest(try await somedayMoveOptions(core, taskId: id), sectionId: nil, id: clearID)
+        let cleared = try object(await core.call("somedaySectionMoveWrite", argumentsJSON: clear))
+        XCTAssertEqual(cleared["changed"] as? Bool, true)
+        XCTAssertTrue(cleared["sectionId"] is NSNull)
+        let clearedMap = try object(XCTUnwrap(try storedTask(id)["viewSectionIds"] as? String))
+        XCTAssertNil(clearedMap["someday"])
+        XCTAssertEqual(clearedMap["futureScope"] as? String, "keep")
+        _ = try await core.call("saveDraft", argumentsJSON: json([json([
+            "id": id, "base": ["title": "Move candidate"], "patch": ["title": "Edited after move"],
+        ])]))
+        let undo = try json([json(["requestId": UUID().uuidString.lowercased(), "moveRequestId": clearID])])
+        let restored = try object(await core.call("somedaySectionMoveUndo", argumentsJSON: undo))
+        XCTAssertEqual(restored["changed"] as? Bool, true)
+        XCTAssertEqual(restored["sectionId"] as? String, "none")
+        let restoredMap = try object(XCTUnwrap(try storedTask(id)["viewSectionIds"] as? String))
+        XCTAssertEqual(restoredMap["someday"] as? String, "none")
+        XCTAssertEqual(restoredMap["futureScope"] as? String, "keep")
+        XCTAssertEqual(try storedTask(id)["title"] as? String, "Edited after move")
+        XCTAssertEqual(saved.filter { $0 == "somedaySectionMoveSaved" }.count, 2)
+        XCTAssertEqual(saved.filter { $0 == "somedaySectionMoveUndoSaved" }.count, 1)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionMoveRetryProbeRefusesLaterTargetAndWrongRequest() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "later", "title": "Later", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let moveID = UUID().uuidString.lowercased()
+        let payload = try somedayMoveRequest(try await somedayMoveOptions(core, taskId: id), sectionId: "later", id: moveID)
+        _ = try await core.call("somedaySectionMoveWrite", argumentsJSON: payload)
+        let wrong = try somedayMoveRequest(try await somedayMoveOptions(core, taskId: id), sectionId: "later")
+        do { _ = try await core.call("somedaySectionMoveRetryOutcome", argumentsJSON: wrong); XCTFail("Wrong request accepted") }
+        catch { XCTAssertTrue(error is CoreHostRejection) }
+        _ = try await core.call("complete", argumentsJSON: json([id]))
+        do { _ = try await core.call("somedaySectionMoveRetryOutcome", argumentsJSON: payload); XCTFail("Changed target accepted") }
+        catch {
+            XCTAssertTrue(error is CoreHostRejection)
+            XCTAssertTrue(error.localizedDescription.contains("STALE_REVISION"), error.localizedDescription)
+        }
+        var journals = 0
+        faults.journalWrite = { journals += 1 }
+        let undo = try json([json(["requestId": UUID().uuidString.lowercased(), "moveRequestId": moveID])])
+        let skipped = try object(await core.call("somedaySectionMoveUndo", argumentsJSON: undo))
+        XCTAssertEqual(skipped["changed"] as? Bool, false)
+        XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionMoveFailedSaveTwiceThenColdFirstApply() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "cold-move", "title": "Cold move", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let before = try storedTask(id)
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try somedayMoveRequest(try await somedayMoveOptions(writer, taskId: id), sectionId: "cold-move")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Someday move COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("somedaySectionMoveWrite", argumentsJSON: request) }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let frozen = try Data(contentsOf: journal)
+        let pending = try object(String(decoding: frozen, as: UTF8.self))
+        XCTAssertEqual(pending["method"] as? String, "somedaySectionMoveCommit")
+        let pendingArgs = try XCTUnwrap(pending["argumentsJSON"] as? String)
+        let innerArgs = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(pendingArgs.utf8)) as? [String])
+        let inner = try object(XCTUnwrap(innerArgs.first))
+        let rawArgs = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(request.utf8)) as? [String])
+        let rawRequest = try object(XCTUnwrap(rawArgs.first))
+        XCTAssertEqual((inner["request"] as? [String: Any])?["requestId"] as? String, rawRequest["requestId"] as? String)
+        XCTAssertEqual(try json(storedTask(id)), try json(before))
+        await writer.close()
+        let recoveryFaults = HostIOFaults()
+        var diagnostics: [String] = []
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        let replay = host(recoveryFaults)
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionMoveCommit")
+        XCTAssertEqual((window["recovery"] as? [String: Any]).flatMap { ($0["result"] as? [String: Any])?["id"] as? String }, id)
+        XCTAssertEqual(try object(XCTUnwrap(storedTask(id)["viewSectionIds"] as? String))["someday"] as? String, "cold-move")
+        XCTAssertEqual(diagnostics.filter { $0 == "somedaySectionMoveSaved" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionMoveUndoFailedSaveTwiceThenColdFirstApply() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "undo-zone", "title": "Undo zone", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let moveID = UUID().uuidString.lowercased()
+        let move = try somedayMoveRequest(try await somedayMoveOptions(writer, taskId: id), sectionId: "undo-zone", id: moveID)
+        _ = try await writer.call("somedaySectionMoveWrite", argumentsJSON: move)
+        let beforeUndo = try storedTask(id)
+        let undo = try json([json(["requestId": UUID().uuidString.lowercased(), "moveRequestId": moveID])])
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Someday Undo COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("somedaySectionMoveUndo", argumentsJSON: undo) }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertEqual((try object(String(decoding: frozen, as: UTF8.self)))["method"] as? String, "somedaySectionMoveUndoCommit")
+        XCTAssertEqual(try json(storedTask(id)), try json(beforeUndo))
+        await writer.close()
+        let replay = host()
+        let window = try object(await replay.start())
+        XCTAssertEqual((window["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionMoveUndoCommit")
+        XCTAssertEqual((window["recovery"] as? [String: Any]).flatMap { ($0["result"] as? [String: Any])?["id"] as? String }, id)
+        let restoredMap = try object(XCTUnwrap(storedTask(id)["viewSectionIds"] as? String))
+        XCTAssertNil(restoredMap["someday"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionMoveColdMalformedAndForgedAckRefuseBeforeSQLite() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "witness", "title": "Witness", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try somedayMoveRequest(try await somedayMoveOptions(writer, taskId: id), sectionId: "witness")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Someday move COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("somedaySectionMoveWrite", argumentsJSON: request) }
+        let valid = try object(String(contentsOf: journal))
+        await writer.close()
+        let arguments = try XCTUnwrap(valid["argumentsJSON"] as? String)
+        let innerArgs = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String])
+        var envelope = try object(XCTUnwrap(innerArgs.first))
+        var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+        prepared["changes"] = ["viewSectionIds": ["someday": "other"]]
+        envelope["prepared"] = prepared
+        var malformed = valid
+        malformed["argumentsJSON"] = try json([json(envelope)])
+        let malformedData = Data(try json(malformed).utf8)
+        try malformedData.write(to: journal)
+        let blockedFaults = HostIOFaults()
+        var sql = 0
+        blockedFaults.beforeSQL = { _ in sql += 1 }
+        let blocked = host(blockedFaults)
+        await expectFailure("INVALID_INPUT") { _ = try await blocked.start() }
+        XCTAssertEqual(sql, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), malformedData)
+        await blocked.close()
+        var forged = valid
+        forged["terminal"] = ["success": ["_0": try json(["id": id, "changed": true, "sectionId": "other"])]]
+        let forgedData = Data(try json(forged).utf8)
+        try forgedData.write(to: journal)
+        let ackFaults = HostIOFaults()
+        var ackSQL = 0
+        ackFaults.beforeSQL = { _ in ackSQL += 1 }
+        let ack = host(ackFaults)
+        await expectFailure("acknowledgment") { _ = try await ack.start() }
+        XCTAssertEqual(ackSQL, 0)
+        XCTAssertEqual(try Data(contentsOf: journal), forgedData)
+    }
+
+    func testSomedaySectionMoveAndUndoLostAcknowledgmentsRecoverWithoutSecondWrite() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "return-to", "title": "Return to", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let firstFaults = HostIOFaults()
+        let first = host(firstFaults)
+        _ = try await first.start()
+        let firstMove = try somedayMoveRequest(try await somedayMoveOptions(first, taskId: id), sectionId: "return-to")
+        var firstJournalWrites = 0
+        firstFaults.journalWrite = {
+            firstJournalWrites += 1
+            if firstJournalWrites == 2 { throw HostFailure("Injected Someday Move lost acknowledgment") }
+        }
+        await expectFailure("lost acknowledgment") { _ = try await first.call("somedaySectionMoveWrite", argumentsJSON: firstMove) }
+        XCTAssertNil((try object(String(contentsOf: journal)))["terminal"])
+        XCTAssertEqual(try object(XCTUnwrap(storedTask(id)["viewSectionIds"] as? String))["someday"] as? String, "return-to")
+        await first.close()
+        let secondFaults = HostIOFaults()
+        var secondTaskWrites = 0
+        secondFaults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") || $0.hasPrefix("INSERT INTO tasks") { secondTaskWrites += 1 } }
+        let second = host(secondFaults)
+        let recoveredMove = try object(await second.start())
+        XCTAssertEqual((recoveredMove["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionMoveCommit")
+        XCTAssertEqual(secondTaskWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        let clearID = UUID().uuidString.lowercased()
+        let clear = try somedayMoveRequest(try await somedayMoveOptions(second, taskId: id), sectionId: nil, id: clearID)
+        _ = try await second.call("somedaySectionMoveWrite", argumentsJSON: clear)
+        secondTaskWrites = 0
+        var undoJournalWrites = 0
+        secondFaults.journalWrite = {
+            undoJournalWrites += 1
+            if undoJournalWrites == 2 { throw HostFailure("Injected Someday Undo lost acknowledgment") }
+        }
+        let undo = try json([json(["requestId": UUID().uuidString.lowercased(), "moveRequestId": clearID])])
+        await expectFailure("lost acknowledgment") { _ = try await second.call("somedaySectionMoveUndo", argumentsJSON: undo) }
+        XCTAssertNil((try object(String(contentsOf: journal)))["terminal"])
+        XCTAssertEqual(try object(XCTUnwrap(storedTask(id)["viewSectionIds"] as? String))["someday"] as? String, "return-to")
+        await second.close()
+        let thirdFaults = HostIOFaults()
+        var thirdTaskWrites = 0
+        thirdFaults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") || $0.hasPrefix("INSERT INTO tasks") { thirdTaskWrites += 1 } }
+        let third = host(thirdFaults)
+        let recoveredUndo = try object(await third.start())
+        XCTAssertEqual((recoveredUndo["recovery"] as? [String: Any])?["method"] as? String, "somedaySectionMoveUndoCommit")
+        XCTAssertEqual(thirdTaskWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testSomedaySectionMoveColdFirstApplyRefusesChangedDestination() async throws {
+        let id = try await seedSomedayMoveTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var views = gtd["viewSections"] as? [String: Any] ?? [:]
+        views["someday"] = [["id": "choice", "title": "Original", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let move = try somedayMoveRequest(try await somedayMoveOptions(writer, taskId: id), sectionId: "choice")
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Someday move COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("somedaySectionMoveWrite", argumentsJSON: move) }
+        let frozen = try Data(contentsOf: journal)
+        await writer.close()
+        views["someday"] = [["id": "choice", "title": "Renamed", "order": 0]]
+        gtd["viewSections"] = views
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let before = try storedTask(id)
+        let blockedFaults = HostIOFaults()
+        var taskWrites = 0
+        blockedFaults.beforeSQL = { if $0.hasPrefix("UPDATE tasks") || $0.hasPrefix("INSERT INTO tasks") { taskWrites += 1 } }
+        let blocked = host(blockedFaults)
+        await expectFailure("STALE_REVISION") { _ = try await blocked.start() }
+        XCTAssertEqual(taskWrites, 0)
+        XCTAssertEqual(try json(storedTask(id)), try json(before))
+        try assertJournalContentUnchanged(frozen)
+    }
+
     func testSomedaySectionTaskCreatesLiteralTaskInNamedAndNoSection() async throws {
         try await seedCalendarPreferenceTask()
         var settings = try calendarPreferenceSettings()
