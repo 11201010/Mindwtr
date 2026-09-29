@@ -16,11 +16,14 @@ import java.io.IOException
  * synced. A temporary file left by a death mid-write was never sent, so it is removed. An entry that cannot be read, or names
  * a method that is not a write, is moved to [ASIDE], never replayed and never deleted. A journal that cannot be listed refuses
  * to open (the boot fails as a failed load does, so no write runs), and an entry never takes the name of a file on disk.
+ * [floor] is the highest sequence recorded outside the journal (DeviceWrites): a new entry is numbered above it too, so the
+ * numbering never goes back after the journal empties.
  */
 class WriteJournal(
     private val dir: File,
     private val syncDirectory: (File) -> Unit = ::syncDirectory,
     private val log: (String) -> Unit = {},
+    floor: Long = 0,
 ) {
     companion object {
         /**
@@ -72,7 +75,10 @@ class WriteJournal(
     }
 
     /** One journaled request: [text] is the file's exact contents, and two equal requests have equal texts. */
-    class Entry(val file: File, val method: String, val args: List<Any>, val text: String)
+    class Entry(val file: File, val method: String, val args: List<Any>, val text: String) {
+        /** Its place in the journal's order (the number in its name). */
+        val sequence: Long get() = file.name.substring(0, 16).toLong()
+    }
 
     private val entries = ArrayList<Entry>()
     private var next = 1L
@@ -99,6 +105,7 @@ class WriteJournal(
             }
             entries += entry
         }
+        next = maxOf(next, floor + 1)
         log("Native Android journal open entries=${entries.size} aside=$aside partial=$partial")
     }
 

@@ -30,8 +30,8 @@ class CoreHost(
     private val rnDataDir: File? = null,
     private val io: HostIo,
     private val journalDir: File,
-    /** Stores a write's deviceWrites (a setting's device-local part) durably; throws if it cannot. */
-    private val deviceWrites: (JSONArray) -> Unit,
+    /** A write's deviceWrites (a setting's device-local part), kept with the journal sequence that set each key. */
+    private val devices: DeviceWrites,
 ) {
     companion object {
         const val TAG = "MindwtrNativeDev"
@@ -97,7 +97,7 @@ class CoreHost(
     /** [legacyState] and [legacyBackup] come from LegacyRnStoreGuard; both are "" for the dev database. */
     fun start(bundle: String, legacyState: String = "", legacyBackup: String = ""): JSONObject = onEngine {
         try {
-            journal = WriteJournal(journalDir, log = { Log.i(TAG, it) })
+            journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
             val engine = QuickJSContext.create()
             context = engine
             val database = SqliteBridge(databaseFile)
@@ -389,12 +389,12 @@ class CoreHost(
 
     /**
      * Core's reply to a write, on the first send and on the journal's [replay] alike: a success's deviceWrites (a setting's
-     * device-local part) are on disk first, then [entry] settles (a replay core refuses as malformed is set aside); true once
-     * it left the journal. A device write that fails throws before the entry settles, so the entry stays for a retry or the
-     * next boot.
+     * device-local part) are on disk first (a replay's only for keys no newer write set), then [entry] settles (a replay core
+     * refuses as malformed is set aside); true once it left the journal. A device write that fails throws before the entry
+     * settles, so the entry stays for a retry or the next boot.
      */
     private fun settle(entry: WriteJournal.Entry?, result: JSONObject, replay: Boolean): Boolean {
-        result.optJSONObject("value")?.optJSONArray("deviceWrites")?.let(deviceWrites)
+        result.optJSONObject("value")?.optJSONArray("deviceWrites")?.let { devices.store(it, entry?.sequence, replay) }
         return entry != null && checkNotNull(journal).settle(entry, result.error(), replay)
     }
 

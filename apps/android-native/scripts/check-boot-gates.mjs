@@ -477,7 +477,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceWriter\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)/);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
@@ -1833,10 +1833,25 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // A setting's deviceWrites are stored in CoreHost's one call path (the first send and the journal's replay), durably, before the
     // write's journal entry settles; the Settings screen only reloads the language and theme after.
     assert.doesNotMatch(settingsModel.slice(settingsModel.indexOf('internal fun applied(')), /^\s+store\(writes\)/m);
-    assert.match(settingsModel, /fun storeDeviceWrites\(prefs: SharedPreferences, writes: JSONArray\) \{[\s\S]*?check\(edit\.commit\(\)\) \{ "Cannot store the device settings" \}/);
-    assert.match(settingsModel, /fun deviceWriter\(app: Context\): \(JSONArray\) -> Unit = \{ storeDeviceWrites\(app\.getSharedPreferences\(DEVICE_PREFS, Context\.MODE_PRIVATE\), it\) \}/);
+    // Each device key keeps the journal sequence of the write that set it (DeviceWrites, one commit with the value): a replay
+    // applies a key only when its entry is newer, so an old entry whose delete failed never undoes a newer setting; the journal
+    // numbers new entries above every recorded sequence, so the numbering never goes back after the journal empties.
+    assert.match(settingsModel, /fun deviceStore\(prefs: SharedPreferences\) = DeviceWrites\(\{ prefs\.all \}, \{ changes ->\s+prefs\.edit\(\)\.apply \{[^\n]*\}\.commit\(\)\s+\}\)/);
+    assert.match(settingsModel, /fun deviceStore\(app: Context\) = deviceStore\(app\.getSharedPreferences\(DEVICE_PREFS, Context\.MODE_PRIVATE\)\)/);
+    assert.match(settingsModel, /private fun store\(writes: JSONArray\) = deviceStore\(prefs\)\.store\(writes, null, replay = false\)/);
+    {
+        const devicesKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/DeviceWrites.kt'), 'utf8');
+        assert.match(devicesKt, /if \(replay && sequence != null && sequenceOf\(now\[key \+ SEQUENCE\]\) >= sequence\) continue\s+changes\[key\] = [^\n]+\s+if \(sequence != null\) changes\[key \+ SEQUENCE\] = sequence\.toString\(\)/);
+        assert.match(devicesKt, /if \(changes\.isNotEmpty\(\)\) check\(commit\(changes\)\) \{ "Cannot store the device settings" \}/);
+        assert.match(coreHost, /journal = WriteJournal\(journalDir, log = \{ Log\.i\(TAG, it\) \}, floor = devices\.highestSequence\(\)\)/);
+        assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournal.kt'), 'utf8'), /\n        next = maxOf\(next, floor \+ 1\)\n/);
+        const devicesTest = readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/core/DeviceWritesTest.kt'), 'utf8');
+        for (const name of ['aReplayNeverUndoesANewerSetting', 'theJournalStartsAboveEverySequenceASettingHolds', 'aFirstSendAlwaysAppliesAndAFailedCommitThrows']) {
+            assert.match(devicesTest, new RegExp(`@Test fun ${name}\\(\\)`));
+        }
+    }
     assert.match(model, /app\.getSharedPreferences\(DEVICE_PREFS, /);
-    assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject, replay: Boolean\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let\(deviceWrites\)\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\), replay\)/);
+    assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject, replay: Boolean\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let \{ devices\.store\(it, entry\?\.sequence, replay\) \}\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\), replay\)/);
     assert.equal(coreHost.match(/(?<!\.)\bsettle\(entry, /g).length, 2, 'settle(): the first send and the replay');
     assert.match(settingsModel, /runtime\.language\(prefs\.getString\(LANGUAGE_KEY, null\)\.orEmpty\(\), Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
     assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\), prefs\.getString\(LANGUAGE_KEY, null\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');
