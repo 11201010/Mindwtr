@@ -42,7 +42,7 @@ if (apkPackage !== PKG) {
     console.error(`REFUSED: ${apk} is package "${apkPackage}", not ${PKG}`);
     process.exit(2);
 }
-const ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
+const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
 // `language` is cleared so the app shows core's text for the phone's language (English on the test phone).

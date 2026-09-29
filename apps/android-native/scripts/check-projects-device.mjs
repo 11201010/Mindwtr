@@ -61,7 +61,7 @@ if (apkPackage !== PKG) {
     console.error(`REFUSED: ${apk} is package "${apkPackage}", not ${PKG}`);
     process.exit(2);
 }
-const ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
+const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
 const STAGED = '/data/local/tmp/mindwtr-native-dev-projects.db';

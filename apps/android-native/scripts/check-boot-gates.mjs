@@ -1931,6 +1931,15 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.equal(manifest.match(/category\.LAUNCHER/g).length, 1, 'one launcher entry: the alias');
     const mainActivity = manifest.match(/<activity\s[^>]*android:name="\.MainActivity"[^>]*\/>/)?.[0] ?? assert.fail('MainActivity has no filter of its own');
     assert.match(mainActivity, /android:launchMode="singleTask"/);
+    // The activity is not exported: only the alias, with its filters, can start it from another app or the shell, so the
+    // device checks launch the alias (RN's component name), never the class.
+    assert.match(mainActivity, /android:exported="false"/);
+    {
+        const { readdirSync } = await import('node:fs');
+        for (const name of readdirSync(resolve(app, 'scripts')).filter((file) => file.endsWith('.mjs'))) {
+            assert.doesNotMatch(readFileSync(resolve(app, 'scripts', name), 'utf8'), /\/tech\.dongdongbh\.mindwtr\.pilot\.MainActivity/, `${name} launches the unexported class`);
+        }
+    }
     assert.doesNotMatch(manifest, /android:process=/);
     // D6: each build type's scheme, and the scheme reaches the manifest, the shortcuts and BuildConfig from one map.
     assert.match(gradle, /val urlSchemes = mapOf\("debug" to "mindwtr-native-dev", "upgradetest" to "mindwtr-upgradetest", "release" to "mindwtr"\)/);

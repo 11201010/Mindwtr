@@ -35,7 +35,7 @@ if (!serial) {
 }
 const PKG = 'tech.dongdongbh.mindwtr.upgradetest';
 const RN_ACTIVITY = `${PKG}/${PKG}.MainActivity`;
-const NATIVE_ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
+const NATIVE_ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const harness = process.env.MINDWTR_HARNESS_DIR ?? '/home/dd/.mindwtr-harness';
 const aapt2 = process.env.AAPT2 ?? '/home/dd/Android/Sdk/build-tools/36.1.0/aapt2';
 const coreSrc = resolve(import.meta.dirname, '../../../packages/core/src');

@@ -249,7 +249,7 @@ const main = async () => {
         process.exit(2);
     }
     const port = Number(process.env.MINDWTR_NET_CHECK_PORT ?? 18765);
-    const ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
+    const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
     const TAG = 'MindwtrNativeDev';
     const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
     const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'net_check', 'net_max_bytes'];

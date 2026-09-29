@@ -18,10 +18,10 @@
             tools:node="remove" />
 
         <!-- singleTask, as RN's MainActivity: a link, share or note sent while the app runs reaches onNewIntent in the app's
-             own task. Exported with no filter so the device checks start it by name; its public identity is the alias. -->
+             own task. Not exported: only its alias below, with RN's filters, starts it from outside the app. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="Mindwtr Native Dev"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize" />
