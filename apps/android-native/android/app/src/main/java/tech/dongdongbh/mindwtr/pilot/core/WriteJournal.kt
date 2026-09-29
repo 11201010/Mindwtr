@@ -24,11 +24,28 @@ class WriteJournal(
 ) {
     companion object {
         /**
-         * CoreHost's write methods: host-entry.ts's task commands, each answered through taskResult. check-boot-gates.mjs
-         * keeps this list equal to host-entry's and to core's write commands.
+         * CoreHost's write methods (host-entry.ts's task commands, each answered through taskResult) and the arguments each takes,
+         * which an entry read at boot must still fit to be replayed: "id" non-empty text (an id, a revision, a request UUID),
+         * "text" any text, "bool" a boolean, "menu" a command of [MENU], and "{a,b[]}" a JSON object text whose `a` is non-empty
+         * text and `b` an array ("{menu}": the keys [MENU] gives the command). check-boot-gates.mjs keeps the methods and their
+         * arguments equal to host-entry's, and the methods to core's write commands.
          */
-        val WRITES = setOf("captureSubmit", "captureLines", "capturePicker", "complete", "update", "saveDraft", "resetChecklist", "taskFocus", "projectFocus",
-            "createProject", "setAreaFilter", "saveSearch", "inboxCommit", "inboxSkip", "menuCommand")
+        val SHAPES = mapOf(
+            "captureSubmit" to listOf("{captureId}"), "captureLines" to listOf("{captureIds[]}"), "capturePicker" to listOf("{requestId}"),
+            "complete" to listOf("id", "id"), "update" to listOf("{id,requestId}"), "saveDraft" to listOf("{id,requestId}"),
+            "resetChecklist" to listOf("{id,requestId,taskRevision}"), "taskFocus" to listOf("id", "bool", "id"), "projectFocus" to listOf("id", "bool", "id"),
+            "createProject" to listOf("id", "text", "id"), "setAreaFilter" to listOf("{included[],excluded[]}"), "saveSearch" to listOf("{requestId}"),
+            "inboxCommit" to listOf("{sessionId,taskId,requestId}"), "inboxSkip" to listOf("{sessionId,taskId,requestId}"), "menuCommand" to listOf("menu", "{menu}"),
+        )
+        /** host-entry.ts's MENU_COMMANDS and the keys each one's JSON input holds (check-boot-gates.mjs keeps the names equal). */
+        val MENU = mapOf(
+            "activateProject" to "{projectId,projectRevision}", "somedayMove" to "{requestId,taskIds[]}", "somedayUndo" to "{moveRequestId,requestId}",
+            "somedayTask" to "{captureId}", "somedaySection" to "{requestId}", "taskListSort" to "{sortBy}", "somedayRename" to "{id}",
+            "somedayReorder" to "{ids[]}", "somedayDelete" to "{id}",
+        ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
+            "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
+            "savedSearchDelete", "generalSetting", "gtdSetting", "manageEditor", "manageDelete").associateWith { "{requestId}" }
+        val WRITES = SHAPES.keys
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's
          * NATIVE_UNJOURNALED_COMMANDS, a payload that can carry a secret. check-boot-gates.mjs keeps it equal to core's set.
@@ -130,11 +147,34 @@ class WriteJournal(
         val text = file.readText()
         val json = JSONObject(text)
         val method = json.getString("method")
-        if (method !in WRITES) return null
         val array = json.getJSONArray("args")
         val args = List(array.length()) { array.get(it) }
-        if (args.any { it !is String && it !is Boolean && it !is Int } || key(method, args) in UNJOURNALED) return null
+        if (!fits(method, args) || key(method, args) in UNJOURNALED) return null
         return Entry(file, method, args, text)
+    }
+
+    /** Whether [args] still fit [method] as host-entry takes it ([SHAPES]): a retired write or a missing id never replays. */
+    private fun fits(method: String, args: List<Any?>): Boolean {
+        val shape = SHAPES[method] ?: return false
+        return args.size == shape.size && shape.indices.all { index ->
+            val arg = args[index]
+            when (val kind = shape[index]) {
+                "id" -> arg is String && arg.isNotEmpty()
+                "text" -> arg is String
+                "bool" -> arg is Boolean
+                "menu" -> arg in MENU
+                "{menu}" -> holds(arg, MENU[args[0]] ?: return false)
+                else -> holds(arg, kind)
+            }
+        }
+    }
+
+    /** [arg] is a JSON object text with [keys] (`{a,b[]}`): `a` non-empty text, `b` an array. */
+    private fun holds(arg: Any?, keys: String): Boolean {
+        val json = (arg as? String)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return false
+        return keys.removeSurrounding("{", "}").split(',').all { key ->
+            if (key.endsWith("[]")) json.opt(key.dropLast(2)) is JSONArray else (json.opt(key) as? String).orEmpty().isNotEmpty()
+        }
     }
 
     private fun key(method: String, args: List<Any?>): Any? = if (method == "menuCommand") args.firstOrNull() else method
@@ -144,6 +184,7 @@ class WriteJournal(
         var target = File(aside, file.name)
         var copy = 1
         while (target.exists()) target = File(aside, "${file.name}.${copy++}")
-        if (!file.renameTo(target)) log("Native Android journal entry not moved aside ${file.name}")
+        // The file's name only: its request (a task's words) never reaches the log.
+        log(if (file.renameTo(target)) "Native Android journal entry set aside ${file.name}" else "Native Android journal entry not moved aside ${file.name}")
     }
 }

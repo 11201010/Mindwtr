@@ -693,7 +693,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
 // write commands (the crash-safe table), so a new write cannot skip the journal. The fault hooks cover the same writes.
 {
     const journalKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournal.kt'), 'utf8');
-    const writes = [.../val WRITES = setOf\(([\s\S]*?)\)\n/.exec(journalKt)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
+    const shapes = Object.fromEntries([.../val SHAPES = mapOf\(([\s\S]*?)\n        \)\n/.exec(journalKt)[1].matchAll(/"(\w+)" to listOf\(([^)]*)\)/g)]
+        .map(([, name, kinds]) => [name, [...kinds.matchAll(/"([^"]+)"/g)].map((m) => m[1])]));
+    assert.match(journalKt, /val WRITES = SHAPES\.keys/);
+    const writes = Object.keys(shapes).sort();
     const host = hostEntry.slice(hostEntry.indexOf('globalThis.MindwtrHost = {'));
     const methods = [...host.matchAll(/\n    (\w+)\([^)]*\): [^{\n]+\{([\s\S]*?)\n    \},/g)].map(([, name, body]) => ({ name, body }));
     assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
@@ -716,6 +719,26 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const readCalls = [...methods.filter((m) => !writes.includes(m.name)).flatMap((m) => called(m.body)), ...called(table('MENU_READS'))];
     assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
+    // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
+    // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
+    // MENU_COMMANDS. One that does not fit is set aside intact, and the log names only its file.
+    for (const [name, kinds] of Object.entries(shapes)) {
+        const params = new RegExp(`\\n    ${name}\\(([^)]*)\\): string \\{`).exec(host)[1].split(',').map((param) => param.trim());
+        assert.equal(kinds.length, params.length, `${name} takes ${params.length} arguments`);
+        params.forEach((param, index) => {
+            const kind = kinds[index];
+            const fits = param.startsWith('json:') ? kind.startsWith('{') : /: boolean$/.test(param) ? kind === 'bool'
+                : param.startsWith('name:') ? kind === 'menu' : ['id', 'text'].includes(kind);
+            assert(fits, `${name}'s ${param} is journaled as ${kind}`);
+        });
+    }
+    {
+        const [pairs, shared] = /val MENU = mapOf\(([\s\S]*?)\) \+ listOf\(([\s\S]*?)\)\.associateWith/.exec(journalKt).slice(1);
+        const menuNames = [...[...pairs.matchAll(/"(\w+)" to /g)].map((m) => m[1]), ...[...shared.matchAll(/"(\w+)"/g)].map((m) => m[1])].sort();
+        assert.deepEqual(menuNames, [...table('MENU_COMMANDS').matchAll(/\n    (\w+): /g)].map((m) => m[1]).sort(), 'WriteJournal.MENU is host-entry\'s MENU_COMMANDS');
+    }
+    assert.match(journalKt, /if \(!fits\(method, args\) \|\| key\(method, args\) in UNJOURNALED\) return null/);
+    assert.match(journalKt, /log\(if \(file\.renameTo\(target\)\) "Native Android journal entry set aside \$\{file\.name\}" else "Native Android journal entry not moved aside \$\{file\.name\}"\)/);
     // Never journaled: a write whose core command is in core's NATIVE_UNJOURNALED_COMMANDS (a payload that can carry a secret; the
     // names are receipt payloads' first elements). Each name leads, through the core write that builds that payload, to its journal
     // key (the host method, or a Menu command's name); WriteJournal.UNJOURNALED holds exactly those keys, and append skips them.
@@ -782,7 +805,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     for (const name of ['entriesKeepTheirOrderAcrossAReopen', 'anEntryIsDurableBeforeAppendReturns', 'aWriteCutShortIsNeverAnEntry', 'anyFinalReplyDropsTheEntry',
         'saveFailedKeepsTheEntryAndItsRetryReusesIt', 'damagedOrUnknownEntriesMoveAsideAndAreNeverReplayed', 'onlyWriteMethodsAreJournaled', 'onlySaveFailedKeeps',
         'aJournalThatCannotBeListedRefusesToOpen', 'anAppendNeverReplacesAnEntryOnDisk', 'theSequenceResumesAfterTheHighestNameSeen',
-        'aDropIsDurableBeforeTheEntryLeaves', 'aDeleteThatFailsKeepsTheEntry', 'aDropWhoseFolderSyncFailsKeepsTheEntry']) {
+        'aDropIsDurableBeforeTheEntryLeaves', 'aDeleteThatFailsKeepsTheEntry', 'aDropWhoseFolderSyncFailsKeepsTheEntry', 'entriesThatNoLongerFitAWriteMoveAsideIntact']) {
         assert.match(journalTest, new RegExp(`@Test fun ${name}\\(\\)`));
     }
 }

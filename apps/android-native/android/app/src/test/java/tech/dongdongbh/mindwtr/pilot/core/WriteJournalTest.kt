@@ -35,7 +35,7 @@ class WriteJournalTest {
         // The exact request, requestId included, is what goes back to the engine.
         assertEquals(listOf("bulkAction", bulk("r-1")), reopened.pending()[1].args)
         // A later entry sorts after every entry already on disk.
-        reopened.append("update", listOf("""{"id":"t"}"""))
+        reopened.append("update", listOf("""{"id":"t","base":{},"patch":{},"requestId":"r-9"}"""))
         assertEquals(listOf("complete", "menuCommand", "taskFocus", "update"), open().pending().map { it.method })
     }
 
@@ -174,6 +174,29 @@ class WriteJournalTest {
         failing = true
         assertFalse(journal.settle(entry, null))
         assertEquals(listOf(entry), journal.pending())
+    }
+
+    // Review 4: an entry is replayed only if it still fits a write as host-entry takes it; any other one is set aside intact,
+    // and the log names the file, never its request.
+    @Test fun entriesThatNoLongerFitAWriteMoveAsideIntact() {
+        val dir = File(folder.root, "journal").apply { mkdirs() }
+        val misfits = mapOf(
+            "0000000000000001.json" to """{"method":"menuCommand","args":["retiredCommand","{\"requestId\":\"secret-title\"}"]}""",
+            "0000000000000002.json" to """{"method":"complete","args":["task-1"]}""",
+            "0000000000000003.json" to """{"method":"complete","args":["task-1",""]}""",
+            "0000000000000004.json" to """{"method":"update","args":["{\"id\":\"t\",\"base\":{},\"patch\":{}}"]}""",
+            "0000000000000005.json" to """{"method":"taskFocus","args":["t","true","3:dev:2026"]}""",
+            "0000000000000006.json" to """{"method":"menuCommand","args":["bulkAction","not json"]}""",
+            "0000000000000007.json" to """{"method":"captureLines","args":["{\"text\":\"a\",\"captureIds\":\"x\"}"]}""",
+        )
+        for ((name, text) in misfits) File(dir, name).writeText(text)
+        val fits = """{"method":"menuCommand","args":["bulkAction",${org.json.JSONObject.quote(bulk("r-3"))}]}"""
+        File(dir, "0000000000000008.json").writeText(fits)
+        val journal = open(dir)
+        assertEquals(listOf(fits), journal.pending().map { it.text })
+        for ((name, text) in misfits) assertEquals(text, File(dir, "${WriteJournal.ASIDE}/$name").readText())
+        assertTrue(logged.any { it.contains("aside=7") })
+        assertFalse(logged.any { it.contains("secret-title") || it.contains("task-1") })
     }
 
     @Test fun onlySaveFailedKeeps() {
