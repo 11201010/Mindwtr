@@ -46,7 +46,7 @@ test('the requested SDK is recorded for subsequent native build steps', () => {
 test('an unavailable requested Xcode fails instead of falling back to another SDK', () => {
   const result = fixture({ installed: ['26.4'], sdk: '26.4' }).run('27');
   expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain('Required Xcode 27 is not installed');
+  expect(result.stderr).toContain('Required any Xcode 27 is not installed');
 });
 
 test('a matching application name is insufficient if the SDK is wrong', () => {
@@ -78,10 +78,15 @@ test('iOS 27 matrix validation includes an unsigned archive and states its limit
 test('release preflight accepts validated Xcode 27.x and rejects other SDKs', () => {
   const release = parse(readFileSync('.github/workflows/release-ios-appstore.yml', 'utf8'));
   const job = release.jobs['ios-appstore'];
-  expect(job['runs-on']).toContain('mindwtr-apple');
+  expect(job['runs-on']).toBe('xcode-27');
   const step = job.steps.find((step) => step.name === 'Select release Xcode 27.x');
-  expect(step.if).toBe("runner.environment != 'self-hosted'");
-  expect(fixture({ installed: ['26.4', '27.2'], sdk: '27.2', xcodeVersion: 'Xcode 27.2\nBuild version 27B5019j' }).run('27', step.run).status).toBe(0);
+  expect(step.run).toContain('select-apple-sdk.sh 27 stable');
+  const supported = fixture({ installed: ['26.4', '27.0', '27.2_beta'], sdk: '27.0' });
+  expect(supported.run('27', step.run).status).toBe(0);
+  expect(readFileSync(join(supported.root, 'env'), 'utf8')).toContain('Xcode_27.0.app/Contents/Developer');
   expect(fixture({ sdk: '26.4' }).run('27', step.run).status).not.toBe(0);
   expect(fixture({ installed: ['26.4'] }).run('27', step.run).status).not.toBe(0);
+  const betaOnly = fixture({ installed: ['27.2_beta'], sdk: '27.2' }).run('27', step.run);
+  expect(betaOnly.status).not.toBe(0);
+  expect(betaOnly.stderr).toContain('Required stable Xcode 27 is not installed');
 });
