@@ -270,39 +270,44 @@ struct BoardFiltersSheet: View {
     let palette: AppPalette
     @State private var picker = ""
     @State private var dueExpanded = false
+    @FocusState private var pickerSearchFocused: Bool
     private var sheet: CoreObject { model.boardView.object("sheet") }
     private var filters: CoreObject { model.boardView.object("filters") }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
-                Button { model.presentBoardFilters(false) } label: { Color.black.opacity(0.35).contentShape(Rectangle()) }
+                Button { dismiss() } label: { Color.black.opacity(0.35).contentShape(Rectangle()) }
                     .buttonStyle(.plain).ignoresSafeArea().accessibilityLabel(model.label("common.close"))
                     .accessibilityIdentifier("board-filter-dismiss")
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
                         if !picker.isEmpty {
-                            BoardButton(title: model.label("common.back"), palette: palette, id: "board-picker-back") { picker = "" }
+                            BoardButton(title: model.label("common.back"), palette: palette, id: "board-picker-back") { back() }
                         }
                         Text(model.label(picker.isEmpty ? "filters.label" : picker == "tokens" ? "filters.contexts" : "filters.projects"))
                             .rnFont(16, .bold).frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                             .accessibilityIdentifier("board-filter-title")
                     }
+                    if !picker.isEmpty {
+                        pickerSearch
+                        BoardReadFailure(model: model, palette: palette)
+                    }
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             if picker.isEmpty { overview }
                             else { pickerOptions }
-                            BoardReadFailure(model: model, palette: palette)
+                            if picker.isEmpty { BoardReadFailure(model: model, palette: palette) }
                             if model.boardLoading { ProgressView().frame(maxWidth: .infinity) }
                         }.padding(.bottom, 12)
-                    }.accessibilityIdentifier("board-filter-scroll")
+                    }.accessibilityIdentifier("board-filter-scroll").scrollDismissesKeyboard(.interactively)
                     HStack {
                         BoardButton(title: model.label("filters.clear"), palette: palette, enabled: model.boardControlsEnabled,
                                     id: "board-filter-clear") { model.editBoardFilters(["type": "clear"]) }
                         Spacer(minLength: 8)
                         BoardButton(title: model.label("common.done"), palette: palette, id: "board-filter-close") {
-                            model.presentBoardFilters(false)
+                            dismiss()
                         }
                     }
                 }
@@ -313,9 +318,26 @@ struct BoardFiltersSheet: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
             .accessibilityAction(.escape) {
-                if picker.isEmpty { model.presentBoardFilters(false) } else { picker = "" }
+                if picker.isEmpty { dismiss() } else { back() }
             }
         }
+        .onDisappear { pickerSearchFocused = false; model.closeBoardPicker() }
+    }
+
+    private func openPicker(_ name: String) {
+        model.openBoardPicker(name)
+        picker = name
+    }
+
+    private func back() {
+        pickerSearchFocused = false
+        model.closeBoardPicker()
+        picker = ""
+    }
+
+    private func dismiss() {
+        pickerSearchFocused = false
+        model.presentBoardFilters(false)
     }
 
     private var overview: some View {
@@ -360,42 +382,64 @@ struct BoardFiltersSheet: View {
                     }
                 }
             }
-            BoardButton(title: model.label("filters.contexts"), palette: palette, id: "board-picker-tokens") { picker = "tokens" }
-            BoardButton(title: model.label("filters.projects"), palette: palette, id: "board-picker-projects") { picker = "projects" }
+            BoardButton(title: model.label("filters.contexts"), palette: palette, enabled: model.boardControlsEnabled,
+                        id: "board-picker-tokens") { openPicker("tokens") }
+            BoardButton(title: model.label("filters.projects"), palette: palette, enabled: model.boardControlsEnabled,
+                        id: "board-picker-projects") { openPicker("projects") }
         }
     }
 
     private var pickerOptions: some View {
         VStack(alignment: .leading, spacing: 0) {
             let options = sheet.object(picker).objects("items")
-            ForEach(options.indices, id: \.self) { index in
-                let item = options[index]
-                let token = picker == "tokens"
-                let selected = token ? item.text("state") == "included" : item.flag("selected")
-                let excluded = token && item.text("state") == "excluded"
-                let value = item.text(token ? "value" : "id")
-                Button { model.editBoardFilters(["type": token ? "toggleToken" : "toggleProject", "value": value]) } label: {
-                    HStack(spacing: 12) {
-                        Text(item.text(token ? "value" : "title")).rnFont(14).strikethrough(excluded)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if selected { Image(systemName: "checkmark").accessibilityHidden(true) }
-                        if excluded { Text(model.label("filters.excluded")).rnFont(12, .semibold) }
+            if model.boardCurrent && options.isEmpty {
+                Text(model.label("search.noResults")).rnFont(14).foregroundStyle(palette.secondary)
+                    .padding(.vertical, 28)
+                    .accessibilityIdentifier("board-picker-empty")
+            }
+            Group {
+                ForEach(options.indices, id: \.self) { index in
+                    let item = options[index]
+                    let token = picker == "tokens"
+                    let selected = token ? item.text("state") == "included" : item.flag("selected")
+                    let excluded = token && item.text("state") == "excluded"
+                    let value = item.text(token ? "value" : "id")
+                    Button { model.editBoardFilters(["type": token ? "toggleToken" : "toggleProject", "value": value]) } label: {
+                        HStack(spacing: 12) {
+                            Text(item.text(token ? "value" : "title")).rnFont(14).strikethrough(excluded)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if selected { Image(systemName: "checkmark").accessibilityHidden(true) }
+                            if excluded { Text(model.label("filters.excluded")).rnFont(12, .semibold) }
+                        }
+                        .foregroundStyle(excluded ? palette.danger : selected ? palette.tint : palette.text)
+                        .padding(.horizontal, 4).padding(.vertical, 8).frame(minHeight: 52).contentShape(Rectangle())
+                        .overlay(alignment: .bottom) { palette.border.frame(height: 0.5) }
                     }
-                    .foregroundStyle(excluded ? palette.danger : selected ? palette.tint : palette.text)
-                    .padding(.horizontal, 4).padding(.vertical, 8).frame(minHeight: 52).contentShape(Rectangle())
-                    .overlay(alignment: .bottom) { palette.border.frame(height: 0.5) }
+                    .buttonStyle(.plain).disabled(!model.boardControlsEnabled)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityValue(excluded ? model.label("filters.excluded") : selected ? "1" : "0")
+                    .accessibilityIdentifier("board-filter-" + (token ? "token-" : "project-") + value)
                 }
-                .buttonStyle(.plain).disabled(!model.boardControlsEnabled)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-                .accessibilityValue(excluded ? model.label("filters.excluded") : selected ? "1" : "0")
-                .accessibilityIdentifier("board-filter-" + (token ? "token-" : "project-") + value)
-            }
-            more(picker)
-            if picker == "tokens" {
-                if sheet.flag("showContextMatchMode") { matchMode("context") }
-                if sheet.flag("showTagMatchMode") { matchMode("tag") }
-            }
+                more(picker)
+                if picker == "tokens" {
+                    if sheet.flag("showContextMatchMode") { matchMode("context") }
+                    if sheet.flag("showTagMatchMode") { matchMode("tag") }
+                }
+            }.disabled(!model.boardCurrent)
         }
+    }
+
+    private var pickerSearch: some View {
+        TextField(model.label("common.search"), text: Binding(
+            get: { model.boardPickerQuery }, set: { model.setBoardPickerQuery($0) }))
+            .rnFont(15).textInputAutocapitalization(.never).autocorrectionDisabled()
+            .submitLabel(.search).focused($pickerSearchFocused).onSubmit { pickerSearchFocused = false }
+            .padding(.horizontal, 12).frame(minHeight: 44)
+            .background(palette.bg, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+            .disabled(model.retryNeeded || model.boardActionPending)
+            .accessibilityLabel(model.label("common.search") + " " + model.label(picker == "tokens" ? "filters.contexts" : "filters.projects"))
+            .accessibilityIdentifier("board-picker-search")
     }
 
     @ViewBuilder private func more(_ list: String) -> some View {

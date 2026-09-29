@@ -55,6 +55,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var boardError: String?
     @Published private(set) var boardSearchText = ""
     @Published private(set) var boardFiltersPresented = false
+    @Published private(set) var boardPickerQuery = ""
     @Published private(set) var boardScrollGeneration = 0
     var boardScrollAnchor = "board-top"
     @Published private(set) var calendarView: CoreObject = [:]
@@ -350,6 +351,7 @@ final class CoreModel: ObservableObject {
     @Published private var boardActionRequest: String?
     private var boardRecoveredResult: CoreObject?
     private var boardDepth: [String: Int] = [:]
+    private var boardPickerName = ""
     private var boardGeneration = 0
     private var boardReadTask: Task<Void, Never>?
     private var boardNeedsRead = false
@@ -448,6 +450,7 @@ final class CoreModel: ObservableObject {
     private var referenceSortTestReadFailure = false
     private var referenceViewTestReadFailures = 0
     private var historyViewTestReadFailures = 0
+    private var boardPickerTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -1230,6 +1233,7 @@ final class CoreModel: ObservableObject {
                     referenceSortTestReadFailure = arguments.contains("--native-reference-sort-read-failure")
                     referenceViewTestReadFailures = arguments.contains("--native-reference-view-read-failure") ? 2 : 0
                     historyViewTestReadFailures = arguments.contains("--native-history-view-read-failure") ? 2 : 0
+                    boardPickerTestReadFailures = arguments.contains("--native-board-picker-read-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -4947,7 +4951,33 @@ final class CoreModel: ObservableObject {
     func presentBoardFilters(_ presented: Bool) {
         guard selectedSurface == .board, !retryNeeded, !taskPresented else { return }
         if presented { guard boardControlsEnabled else { return } }
+        if !presented { closeBoardPicker() }
         boardFiltersPresented = presented
+    }
+
+    func openBoardPicker(_ name: String) {
+        guard boardFiltersPresented, boardControlsEnabled, ["tokens", "projects"].contains(name) else { return }
+        boardPickerName = name
+        boardPickerQuery = ""
+        boardDepth.removeValue(forKey: name)
+        requestBoardRead(delay: 0)
+    }
+
+    func closeBoardPicker() {
+        guard !boardPickerName.isEmpty else { return }
+        let needsRead = !boardPickerQuery.isEmpty
+        boardDepth.removeValue(forKey: boardPickerName)
+        boardPickerName = ""
+        boardPickerQuery = ""
+        if needsRead { requestBoardRead(delay: 0) }
+    }
+
+    func setBoardPickerQuery(_ text: String) {
+        guard boardFiltersPresented, !boardPickerName.isEmpty, !retryNeeded, !boardActionPending,
+              !text.utf8.elementsEqual(boardPickerQuery.utf8) else { return }
+        boardPickerQuery = text
+        boardDepth.removeValue(forKey: boardPickerName)
+        requestBoardRead()
     }
 
     func setBoardSearch(_ text: String) {
@@ -5084,6 +5114,8 @@ final class CoreModel: ObservableObject {
     private func readBoard(ownsOperation: Bool = false) async {
         let generation = boardGeneration
         let search = boardSearchText
+        let picker = boardPickerName
+        let pickerQuery = boardPickerQuery
         let edit = boardPendingEdit
         let depth = boardDepth
         boardNeedsRead = false
@@ -5134,7 +5166,18 @@ final class CoreModel: ObservableObject {
                     let index = columns.firstIndex(where: { $0.text("status") == status })
                     let first: CoreObject
                     if let index { first = ["total": columns[index].number("count"), "items": columns[index].objects("cards")] }
-                    else { first = sheet.object(list) }
+                    else if key == picker && !pickerQuery.isEmpty {
+                        let params: CoreObject = ["filters": resolved, "revision": revision,
+                            "list": list, "query": pickerQuery, "offset": 0, "limit": 100]
+                        let page = try await query("menuRead", ["boardList", try json(params)])
+                        guard boardReadAllowed(generation, ownsOperation: ownsOperation) else { return }
+                        guard page.number("version") == 1, page.text("revision") == revision,
+                              page.text("list") == list, page.number("total") >= 0,
+                              page.objects("items").count == min(100, page.number("total")) else {
+                            throw CocoaError(.coderReadCorrupt)
+                        }
+                        first = page
+                    } else { first = sheet.object(list) }
                     var entries = first.objects("items")
                     let total = first.number("total")
                     guard total >= 0, entries.count == min(list == "cards" ? pageSize : 100, total) else {
@@ -5146,6 +5189,7 @@ final class CoreModel: ObservableObject {
                         var params: CoreObject = ["filters": resolved, "revision": revision,
                             "list": list, "offset": entries.count, "limit": limit]
                         if !status.isEmpty { params["status"] = status }
+                        if key == picker && !pickerQuery.isEmpty { params["query"] = pickerQuery }
                         let page = try await query("menuRead", ["boardList", try json(params)])
                         guard boardReadAllowed(generation, ownsOperation: ownsOperation) else { return }
                         guard page.number("version") == 1, page.text("revision") == revision,
@@ -5154,7 +5198,9 @@ final class CoreModel: ObservableObject {
                         entries += page.objects("items")
                     }
                     let ids = entries.map { list == "cards" ? $0.object("row").text("id") : $0.text(list == "tokens" ? "value" : "id") }
-                    guard !ids.contains(""), Set(ids).count == ids.count else { throw CocoaError(.coderReadCorrupt) }
+                    guard !ids.contains(""), Set(ids.map { Data($0.utf8) }).count == ids.count else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
                     if let index { columns[index]["cards"] = entries }
                     else { sheet[list] = ["total": total, "items": entries] }
                 }
@@ -5178,7 +5224,11 @@ final class CoreModel: ObservableObject {
                 // Retrying starts from the unchanged pre-edit state, so a pure
                 // toggle is never applied twice after a stale nested page.
                 if attempt == 1 {
-                    boardPendingEdit = nil
+                    // The edit is pure and the published filters are unchanged.
+                    // Keep it for Retry if a later picker/page read fails.
+                    if edit != nil {
+                        NSLog("Native iOS Board filter retry releaseCheck=v1.3.4/ios-board-filter-retry outcome=retained")
+                    }
                     boardError = error.localizedDescription
                 }
             }
@@ -11827,6 +11877,11 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", ["done", "archive"].contains(args.first as? String ?? ""),
            historyViewPreferencePending.contains(args.first as? String ?? ""), historyViewTestReadFailures > 0 {
             historyViewTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "boardList",
+           boardPendingEdit != nil, boardPickerTestReadFailures > 0 {
+            boardPickerTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if projectAreaCreatedID != nil {

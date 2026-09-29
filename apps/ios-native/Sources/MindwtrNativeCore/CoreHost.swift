@@ -4269,7 +4269,7 @@ private final class Engine: @unchecked Sendable {
             }
             if name == "board" || name == "boardList" {
                 let fields: Set<String> = name == "board" ? ["filters", "filterEdit", "limit"]
-                    : ["filters", "list", "status", "offset", "limit", "revision"]
+                    : ["filters", "list", "status", "query", "offset", "limit", "revision"]
                 guard json.utf8.count <= 1_048_576, Set(input.keys).isSubset(of: fields),
                       Self.isInteger(input["limit"]), let limit = input["limit"] as? NSNumber,
                       (1.0...100.0).contains(limit.doubleValue) else {
@@ -4306,6 +4306,10 @@ private final class Engine: @unchecked Sendable {
                           input["status"] == nil || (input["status"] as? String).map({ $0.utf16.count <= 500 }) == true,
                           list != "cards" || input["status"] is String else {
                         throw HostFailure("Unsupported native Board list input")
+                    }
+                    if let query = input["query"] {
+                        guard ["tokens", "projects"].contains(list), let text = query as? String,
+                              text.utf16.count <= 500 else { throw HostFailure("Unsupported native Board picker query") }
                     }
                 }
             }

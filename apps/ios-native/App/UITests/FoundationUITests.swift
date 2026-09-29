@@ -5701,6 +5701,86 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testBoardPickerReadFailureRetainsPendingSelection() {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", "e03b0d55-4423-4023-ab9e-a044d79934ee", "--native-board-picker-read-failure"]; app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardOpen(app)
+        boardTap(app, "board-filter-open"); boardTap(app, "board-picker-tokens")
+        let input = app.textFields["board-picker-search"]; boardEnabled(input); input.tap(); input.typeText("task78-102\n")
+        let token = app.buttons["board-filter-token-@task78-102"]; boardEnabled(token); token.tap()
+        XCTAssertTrue(app.staticTexts["board-error"].waitForExistence(timeout: 10))
+        XCTAssertFalse(token.isEnabled)
+        boardTap(app, "board-retry"); boardEnabled(token)
+        XCTAssertTrue(token.isSelected, "Retry must apply the original pending toggle once")
+        XCTAssertEqual(input.value as? String, "task78-102")
+        boardTap(app, "board-filter-close"); boardEnabled(app.buttons["board-filter-open"])
+        XCTAssertEqual(app.staticTexts["board-count-next"].label, "1")
+        app.terminate()
+    }
+
+    func testBoardPickerSearchNormal() { boardPickerSearch(paging: true, library: "91c4c2c2-5336-49ea-a239-d61598f0607e") }
+    func testBoardPickerSearchLargestText() { boardPickerSearch(library: "ed788ee8-1487-4130-ad4e-827d3cae93ca") }
+
+    private func boardPickerSearch(paging: Bool = false, library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]; app.launch()
+        boardEnabled(app.buttons["tab-menu"], timeout: 30); boardOpen(app)
+        boardTap(app, "board-filter-open"); boardTap(app, "board-picker-tokens")
+        let query = app.textFields["board-picker-search"]
+        func search(_ text: String) {
+            boardEnabled(query); XCTAssertGreaterThanOrEqual(query.frame.height, 44 - 0.001)
+            query.tap()
+            let value = query.value as? String ?? ""
+            if value != query.placeholderValue { query.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count)) }
+            query.typeText(text + "\n")
+        }
+        func option(_ id: String) -> XCUIElement {
+            let row = app.buttons[id]
+            revealPagedElement(app, row, in: app.scrollViews["board-filter-scroll"])
+            boardEnabled(row); XCTAssertGreaterThanOrEqual(row.frame.height, 44 - 0.001); return row
+        }
+        search("  TASK78-102  ")
+        let token = option("board-filter-token-@task78-102")
+        XCTAssertFalse(app.buttons["board-filter-token-@task78-000"].exists)
+        token.tap(); boardEnabled(token); XCTAssertTrue(token.isSelected)
+        token.tap(); boardEnabled(token); XCTAssertEqual(token.value as? String, "Excluded")
+        token.tap(); boardEnabled(token); XCTAssertFalse(token.isSelected); XCTAssertEqual(token.value as? String, "0")
+        search("no-such-task78-option")
+        XCTAssertTrue(app.staticTexts["board-picker-empty"].waitForExistence(timeout: 10))
+        if paging {
+            search("task78-")
+            let more = app.buttons["board-more-tokens"]
+            revealPagedElement(app, more, in: app.scrollViews["board-filter-scroll"])
+            boardTap(app, "board-more-tokens")
+            _ = option("board-filter-token-@task78-102")
+            XCTAssertFalse(app.buttons["board-more-tokens"].exists)
+        }
+        search("task78-10"); _ = option("board-filter-token-@task78-102")
+        XCTAssertFalse(app.buttons["board-more-tokens"].exists)
+        boardTap(app, "board-picker-back"); boardTap(app, "board-picker-projects")
+        XCTAssertEqual(query.value as? String, query.placeholderValue)
+        search("  TASK78 PROJECT 102  ")
+        let project = option("board-filter-project-task78-project-102")
+        XCTAssertFalse(app.buttons["board-filter-project-task78-project-000"].exists)
+        project.tap(); boardEnabled(project); XCTAssertTrue(project.isSelected)
+        search(String(repeating: "x", count: 501))
+        XCTAssertTrue(app.staticTexts["board-error"].waitForExistence(timeout: 10))
+        search("task78 project 102"); boardEnabled(project); XCTAssertTrue(project.isSelected)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Board searched Project picker"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "board-filter-close"); boardEnabled(app.buttons["board-filter-open"])
+        XCTAssertEqual(app.staticTexts["board-count-next"].label, "1")
+        boardTap(app, "search-open"); boardTap(app, "search-close"); boardEnabled(app.buttons["board-filter-open"])
+        XCTAssertEqual(app.staticTexts["board-count-next"].label, "1")
+        boardTap(app, "board-filter-open"); boardTap(app, "board-picker-projects")
+        XCTAssertEqual(query.value as? String, query.placeholderValue)
+        search("task78 project 102"); XCTAssertTrue(option("board-filter-project-task78-project-102").isSelected)
+        boardTap(app, "board-filter-clear"); boardEnabled(app.buttons["board-filter-clear"])
+        boardTap(app, "board-filter-close"); boardEnabled(app.buttons["board-filter-open"])
+        app.terminate(); app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30); boardOpen(app)
+        boardTap(app, "board-filter-open"); boardTap(app, "board-picker-tokens")
+        XCTAssertEqual(query.value as? String, query.placeholderValue)
+        search("task78-102"); XCTAssertFalse(option("board-filter-token-@task78-102").isSelected)
+        boardTap(app, "board-filter-close"); app.terminate()
+    }
+
     func testDeferredProjectActivationNormal() { deferredProjectActivation(library: "a54438a9-d7f7-4931-b30b-7b8c61a4be93") }
     func testDeferredProjectActivationLargestText() { deferredProjectActivation(library: "2381a180-a4ed-4e48-8d73-4fbb22e2995f") }
 

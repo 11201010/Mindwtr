@@ -5610,6 +5610,65 @@ final class CoreHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
+    func testBoardPickerQueryPagesWithoutWritesAndRejectsInvalidTransport() async throws {
+        let source = try await seedBoardReadFixture()
+        let faults = HostIOFaults()
+        let core = host(faults, bundleURL: source)
+        _ = try await core.start()
+        _ = try await core.call("language", argumentsJSON: json(["en", "en-US"]))
+        let before = try reviewReadSnapshot()
+        var statements = 0, journalWrites = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        let view = try object(await core.call("menuRead", argumentsJSON: json(["board", json(["limit": 1])])))
+        let revision = try XCTUnwrap(view["revision"] as? String)
+        let filters = try XCTUnwrap(view["filters"])
+        func page(_ list: String, _ query: String, offset: Int = 0) async throws -> [String: Any] {
+            try object(await core.call("menuRead", argumentsJSON: json(["boardList", json([
+                "filters": filters, "list": list, "query": query, "offset": offset, "limit": 100, "revision": revision
+            ])])))
+        }
+        let token = try await page("tokens", "  BOARD-102  ")
+        XCTAssertEqual(token["total"] as? Int, 1)
+        XCTAssertEqual((token["items"] as? [[String: Any]])?.first?["value"] as? String, "@board-102")
+        let project = try await page("projects", " PROJECT 102 ")
+        XCTAssertEqual(project["total"] as? Int, 1)
+        XCTAssertEqual((project["items"] as? [[String: Any]])?.first?["id"] as? String, "review-project-102")
+        for (list, query) in [("tokens", "board"), ("projects", "Review project")] {
+            let first = try await page(list, query)
+            let tail = try await page(list, query, offset: 100)
+            XCTAssertEqual(first["total"] as? Int, 103)
+            XCTAssertEqual((first["items"] as? [Any])?.count, 100)
+            XCTAssertEqual(tail["total"] as? Int, 103)
+            XCTAssertEqual((tail["items"] as? [Any])?.count, 3)
+            let empty = try await page(list, "no-such-picker-value")
+            XCTAssertEqual(empty["total"] as? Int, 0)
+            XCTAssertEqual((empty["items"] as? [Any])?.count, 0)
+        }
+        for query in [true, NSNull(), 7, String(repeating: "x", count: 501), String(repeating: "😀", count: 251)] as [Any] {
+            await expectFailure("Board") {
+                _ = try await core.call("menuRead", argumentsJSON: json(["boardList", json([
+                    "list": "tokens", "query": query, "offset": 0, "limit": 100, "revision": revision
+                ])]))
+            }
+        }
+        for list in ["cards", "chips"] {
+            await expectFailure("Board") {
+                _ = try await core.call("menuRead", argumentsJSON: json(["boardList", json([
+                    "list": list, "status": "next", "query": "board", "offset": 0, "limit": 100, "revision": revision
+                ])]))
+            }
+        }
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("menuRead", argumentsJSON: json(["boardList", json([
+                "list": "tokens", "query": "board", "offset": 0, "limit": 100, "revision": "stale"
+            ])]))
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertEqual(try reviewReadSnapshot(), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
     func testBoardTransportAndRawMutationRoutesRefuseBeforeSQLite() async throws {
         let source = try await seedBoardReadFixture(count: 1)
         let faults = HostIOFaults()
