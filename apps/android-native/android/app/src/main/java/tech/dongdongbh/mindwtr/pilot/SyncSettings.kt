@@ -312,7 +312,7 @@ internal fun SyncSettings(model: InboxViewModel, view: JSONObject) {
         Column(Modifier.padding(16.dp)) {
             Text(backend.getString("title"), style = rnText(16, 500, 21), color = c.text)
             Text(backend.getString("current"), style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp))
-            Text(backend.getString("hint"), style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 10.dp))
+            Text(backend.getString("hint"), style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 8.dp))
             FlowRow(Modifier.padding(top = 10.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (option in backend.menuObjects("options")) BackendChip(sync, option)
             }
