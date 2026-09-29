@@ -38,6 +38,16 @@ final class CoreHostTests: XCTestCase {
         try XCTUnwrap(NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any])
     }
 
+    private func assertJournalContentUnchanged(_ saved: Data) throws {
+        let before = try object(String(decoding: saved, as: UTF8.self))
+        let after = try object(String(contentsOf: journal))
+        // Recovery can re-encode the outer envelope; JSON object order is not
+        // part of the contract. The embedded request must remain byte-exact.
+        XCTAssertEqual(try json(after), try json(before))
+        XCTAssertEqual(Data(try XCTUnwrap(after["argumentsJSON"] as? String).utf8),
+                       Data(try XCTUnwrap(before["argumentsJSON"] as? String).utf8))
+    }
+
     private func storedTask(_ id: String) throws -> [String: Any] {
         let sqlite = try SQLiteBridge(url: database)
         defer { sqlite.close() }
@@ -4920,7 +4930,7 @@ final class CoreHostTests: XCTestCase {
         let replay = host(recoveryFaults)
         await expectFailure("STALE_REVISION") { _ = try await replay.start() }
         XCTAssertEqual(writes, 0)
-        XCTAssertEqual(try Data(contentsOf: journal), frozenJournal)
+        try assertJournalContentUnchanged(frozenJournal)
         XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
 
         if let original = (options["expected"] as? [String: Any])?["groupBy"] as? String {
@@ -4934,7 +4944,7 @@ final class CoreHostTests: XCTestCase {
         try writeCalendarPreferenceSettings(settings)
         await expectFailure("STALE_REVISION") { _ = try await replay.start() }
         XCTAssertEqual(writes, 0)
-        XCTAssertEqual(try Data(contentsOf: journal), frozenJournal)
+        try assertJournalContentUnchanged(frozenJournal)
         XCTAssertEqual(try json(calendarPreferenceSettings()), try json(settings))
     }
 
@@ -5120,7 +5130,7 @@ final class CoreHostTests: XCTestCase {
         let replay = host(replayFaults)
         await expectFailure("STALE_REVISION") { _ = try await replay.start() }
         XCTAssertEqual(writes, 0)
-        XCTAssertEqual(try Data(contentsOf: journal), frozen)
+        try assertJournalContentUnchanged(frozen)
         XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
     }
 
