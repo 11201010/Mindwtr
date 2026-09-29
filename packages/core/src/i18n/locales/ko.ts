@@ -2001,6 +2001,7 @@ export const koOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': '할 일이 더 이상 캘린더로 내보내지지 않습니다. 기존 일정은 유지되었습니다.',
         'settings.calendarMobile.test': '테스트',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Mindwtr 캘린더와 모든 일정이 제거되었습니다.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Mindwtr 캘린더를 삭제했습니다. 선택한 캘린더에 이미 보낸 일정은 그대로 남아 있습니다.',
         'settings.gtdMobile.autoStartBreaks': '휴식 자동 시작',
         'settings.gtdMobile.autoStartFocus': '집중 자동 시작',
         'settings.gtdMobile.captureDefaults': '기본 수집 설정',

@@ -2140,6 +2140,7 @@ export const esOverrides: Record<string, string> = {
 'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': "Ya no se enviarán tareas a tu calendario. Se conservaron los eventos existentes.",
 'settings.calendarMobile.test': "Probar",
 'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': "Se han eliminado el calendario de Mindwtr y todos sus eventos.",
+'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': "Se eliminó el calendario de Mindwtr. Los eventos ya enviados al calendario que elegiste se quedan allí.",
 'settings.gtdMobile.autoStartBreaks': "Iniciar descansos automáticamente",
 'settings.gtdMobile.autoStartFocus': "Iniciar enfoque automáticamente",
 'settings.gtdMobile.captureDefaults': "Valores predeterminados de captura",

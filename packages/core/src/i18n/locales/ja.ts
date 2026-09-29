@@ -2211,6 +2211,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'タスクはカレンダーに書き出されなくなります。すでに書き出した予定はそのまま残ります。',
         'settings.calendarMobile.test': 'テスト',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Mindwtr のカレンダーと、その中のすべての予定を削除しました。',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Mindwtr のカレンダーを削除しました。選んだカレンダーに送信済みの予定はそのまま残ります。',
         'settings.gtdMobile.autoStartBreaks': '休憩を自動で開始',
         'settings.gtdMobile.autoStartFocus': '集中を自動で開始',
         'settings.gtdMobile.captureDefaults': 'キャプチャの初期設定',

@@ -2332,6 +2332,7 @@ export const daOverrides: Record<string, string> = {
     'settings.calendarMobile.test': 'Test',
     'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved':
         'Mindwtr-kalenderen og alle dens begivenheder er blevet fjernet.',
+    'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Mindwtr-kalenderen blev fjernet. Begivenheder, der allerede er sendt til den kalender, du valgte, bliver der.',
     'settings.gtdMobile.autoStartBreaks': 'Auto-start pauser',
     'settings.gtdMobile.autoStartFocus': 'Autostart fokus',
     'settings.gtdMobile.captureDefaults': 'Standardindstillinger for registrering',

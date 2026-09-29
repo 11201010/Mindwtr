@@ -2105,6 +2105,7 @@ export const deOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'Aufgaben werden nicht mehr in Deinen Kalender übertragen. Vorhandene Ereignisse wurden beibehalten.',
         'settings.calendarMobile.test': 'Testen',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Der Mindwtr-Kalender und alle seine Ereignisse wurden entfernt.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Der Mindwtr-Kalender wurde entfernt. Bereits in den gewählten Kalender übertragene Ereignisse bleiben dort.',
         'settings.calendarName': 'Name',
         'settings.calendarPushDesc': 'Schreibt geplante Aufgaben und Aufgaben mit Fälligkeitsdatum in einen ausgewählten Systemkalender. Nur in eine Richtung.',
         'settings.calendarPushEnable': 'System-Kalenderübertragung aktivieren',

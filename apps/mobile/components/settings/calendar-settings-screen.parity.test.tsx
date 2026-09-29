@@ -331,6 +331,8 @@ const scenarios: Scenario[] = [
       ['press', 'alex@gmail.com. k:settings.calendarMobile.sharedAccountCalendar · alex@gmail.com'],
       ['press', 'Phone. k:settings.calendarMobile.sharedLocalCalendar · local account'],
       ['press', 'k:settings.calendarMobile.refreshCalendars'],
+      ['press', 'k:settings.calendarMobile.deleteMindwtrCalendar'],
+      ['alert', 'k:common.delete'],
     ],
   },
   {

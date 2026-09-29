@@ -2172,6 +2172,7 @@ export const faOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'کارها دیگر به تقویم شما ارسال نمی‌شوند. رویدادهای موجود نگه داشته شدند.',
         'settings.calendarMobile.test': 'آزمایش',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'تقویم Mindwtr و همه رویدادهای آن حذف شدند.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'تقویم Mindwtr حذف شد. رویدادهایی که قبلاً به تقویم انتخابی شما فرستاده شده‌اند همان‌جا می‌مانند.',
         'settings.gtdMobile.autoStartBreaks': 'شروع خودکار استراحت',
         'settings.gtdMobile.autoStartFocus': 'شروع خودکار تمرکز',
         'settings.gtdMobile.captureDefaults': 'پیش‌فرض‌های ثبت',

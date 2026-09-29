@@ -1894,6 +1894,7 @@ export const frOverrides: Record<string, string> = {
 'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'Les tâches ne seront plus envoyées vers votre calendrier. Les événements existants ont été conservés.',
 'settings.calendarMobile.test': 'Tester',
 'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Le calendrier Mindwtr et tous ses événements ont été supprimés.',
+'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Le calendrier Mindwtr a été supprimé. Les événements déjà envoyés vers le calendrier choisi y restent.',
 
 'settings.gtdMobile.autoStartBreaks': 'Démarrage automatique des pauses',
 'settings.gtdMobile.autoStartFocus': 'Démarrage automatique du focus',

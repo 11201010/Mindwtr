@@ -70,6 +70,7 @@ import {
     getCalendarPushColorLabel,
     getCalendarPushColorOptions,
     getCalendarTestRange,
+    keptPushTargetEvents,
     maskCalendarFeedUrl,
     nextDeviceCalendarSelection,
     planCalendarPushColor,
@@ -502,7 +503,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
         const areas = useTaskStore.getState().areas;
         const themePreset = themeDescriptor(settings.theme)?.statusPreset ?? 'default';
         const { push } = current;
-        const choices = buildCalendarPushTargetChoices({ targets: push.targets, targetId: push.targetId, color: push.color, tr });
+        const choices = buildCalendarPushTargetChoices({ targets: push.targets, targetId: push.targetId, color: push.color, tr, platform: current.host.platform.os });
         const deviceSettings = current.device.settings;
         const deviceEdit = (value: SystemCalendarSettings): NativeCalendarSettingsEdit => ({
             type: 'deviceCalendars',
@@ -775,10 +776,12 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                     await push.setCalendarPushEnabled(false);
                     current.push.enabled = false;
                     push.stopCalendarPushSync();
+                    const target = await push.getCalendarPushTargetCalendarId();
                     await push.deleteMindwtrCalendar();
+                    const keptTargetEvents = keptPushTargetEvents(target, await push.getCalendarPushTargetCalendarId());
                     current.push.targetId = null;
                     await loadPushTargets(current);
-                    showToast(toastsOf.mindwtrCalendarDeleted());
+                    showToast(toastsOf.mindwtrCalendarDeleted(keptTargetEvents));
                 } catch (error) {
                     logError(current, error);
                     showToast(toastsOf.loadWritableCalendarsFailed());

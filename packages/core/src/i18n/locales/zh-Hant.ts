@@ -2140,6 +2140,7 @@ export const zhHant: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': '任務將不再推送到您的日曆。已創建的日程已保留。',
         'settings.calendarMobile.test': '測試',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Mindwtr 日曆及其所有日程已刪除。',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Mindwtr 日曆已刪除。已推送到你所選日曆的日程會保留在那裡。',
         'settings.gtdMobile.autoStartBreaks': '自動開始休息',
         'settings.gtdMobile.autoStartFocus': '自動開始專注',
         'settings.gtdMobile.captureDefaults': '收集預設值',

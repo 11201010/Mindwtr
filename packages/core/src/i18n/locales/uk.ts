@@ -2136,6 +2136,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting": "Завдання більше не надсилатимуться у ваш календар. Існуючі події збережено.",
     "settings.calendarMobile.test": "Тест",
     "settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved": "Календар Mindwtr і всі його події видалено.",
+    "settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept": "Календар Mindwtr видалено. Події, уже надіслані до вибраного вами календаря, залишаються там.",
     "settings.gtdMobile.autoStartBreaks": "Автозапуск перерв",
     "settings.gtdMobile.autoStartFocus": "Автоматичний запуск фокусу",
     "settings.gtdMobile.captureDefaults": "Параметри швидкого запису",

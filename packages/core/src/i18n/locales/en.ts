@@ -2206,6 +2206,7 @@ export const en: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'Tasks will no longer be pushed to your calendar. Existing events were kept.',
         'settings.calendarMobile.test': 'Test',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'The Mindwtr calendar and all its events have been removed.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'The Mindwtr calendar was removed. Events already pushed to the calendar you chose stay there.',
         'settings.gtdMobile.autoStartBreaks': 'Auto-start breaks',
         'settings.gtdMobile.autoStartFocus': 'Auto-start focus',
         'settings.gtdMobile.captureDefaults': 'Capture defaults',

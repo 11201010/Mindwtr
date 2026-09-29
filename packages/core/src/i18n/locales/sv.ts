@@ -2171,6 +2171,7 @@ export const svOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'Uppgifter skickas inte längre till din kalender. Befintliga händelser behölls.',
         'settings.calendarMobile.test': 'Testa',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Mindwtr-kalendern och alla dess händelser har tagits bort.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Mindwtr-kalendern togs bort. Händelser som redan skickats till kalendern du valde finns kvar där.',
         'settings.gtdMobile.autoStartBreaks': 'Starta pauser automatiskt',
         'settings.gtdMobile.autoStartFocus': 'Starta fokus automatiskt',
         'settings.gtdMobile.captureDefaults': 'Standardvärden för inspelning',

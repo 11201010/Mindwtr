@@ -1913,6 +1913,7 @@ export const csOverrides: Record<string, string> = {
         'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'Úkoly se už nebudou odesílat do kalendáře. Existující události byly ponechány.',
         'settings.calendarMobile.test': 'Otestovat',
         'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'Kalendář Mindwtr a všechny jeho události byly odstraněny.',
+        'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'Kalendář Mindwtr byl odstraněn. Události už odeslané do vybraného kalendáře v něm zůstávají.',
         'settings.gtdMobile.autoStartBreaks': 'Automaticky spouštět pauzy',
         'settings.gtdMobile.autoStartFocus': 'Automaticky spouštět fokus',
         'settings.gtdMobile.captureDefaults': 'Výchozí nastavení zachycení',

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -17,6 +17,7 @@ import {
     getCalendarTestRange,
     getDocsGuideUrl,
     generateUUID,
+    keptPushTargetEvents,
     nextDeviceCalendarSelection,
     planCalendarPushColor,
     pruneDeviceCalendarSelection,
@@ -229,10 +230,12 @@ export function CalendarSettingsScreen() {
             await setCalendarPushEnabled(false);
             setCalendarPushEnabledState(false);
             stopCalendarPushSync();
+            const target = await getCalendarPushTargetCalendarId();
             await deleteMindwtrCalendar();
+            const keptTargetEvents = keptPushTargetEvents(target, await getCalendarPushTargetCalendarId());
             setCalendarPushTargetCalendarIdState(null);
             await loadCalendarPushTargetState();
-            showToast(calendarSettingsToasts(tr, t).mindwtrCalendarDeleted());
+            showToast(calendarSettingsToasts(tr, t).mindwtrCalendarDeleted(keptTargetEvents));
         } catch (error) {
             console.error(error);
             showToast(calendarSettingsToasts(tr, t).loadWritableCalendarsFailed());
@@ -486,6 +489,7 @@ export function CalendarSettingsScreen() {
         targetId: calendarPushTargetCalendarId,
         color: calendarPushColor,
         tr,
+        platform: Platform.OS,
     });
 
     return (

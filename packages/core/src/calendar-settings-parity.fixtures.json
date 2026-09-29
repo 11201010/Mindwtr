@@ -26,6 +26,14 @@
     "observations": [
      "feeds: stored on the device only: Test, with the only subscription failing to load, shows Error / Failed to load events (warning)."
     ]
+   },
+   {
+    "base": "f19456565",
+    "command": "cd apps/mobile && MINDWTR_DUMP_CALENDAR_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/calendar-settings-screen.parity.test.tsx, with the React Native fix in place; only the observations below were replaced, and every other observation matched the frozen one. Before the fix, the two added steps recorded the toast The Mindwtr calendar and all its events have been removed.",
+    "observations": [
+     "Android makes the Mindwtr calendar on an account: the Mindwtr calendar option reads Dedicated account calendar (with its account once the app made it, as Dedicated account calendar · alex@gmail.com), and the Local calendar targets stay on this device hint no longer shows for it. Only these texts and the option's accessibility label changed, in push: turn on, choose targets, refresh (steps 1 to 4), push: the managed calendar, a new color, then off (steps 1 to 3), push: a local dedicated calendar and an odd stored color (step 1) and in Chinese: push on and a test (steps 1 to 3).",
+     "push: turn on, choose targets, refresh gains two steps: Delete Mindwtr calendar and the alert's Delete, with Phone (a shared calendar) chosen. The toast says The Mindwtr calendar was removed. Events already pushed to the calendar you chose stay there."
+    ]
    }
   ]
  },
@@ -253,6 +261,14 @@
     [
      "press",
      "k:settings.calendarMobile.refreshCalendars"
+    ],
+    [
+     "press",
+     "k:settings.calendarMobile.deleteMindwtrCalendar"
+    ],
+    [
+     "alert",
+     "k:common.delete"
     ]
    ]
   },
@@ -1092,9 +1108,8 @@
      "▾",
      "Sync target",
      "Choose an account calendar if your calendar app hides local calendars.",
-     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -1124,7 +1139,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar",
       true,
       false
      ],
@@ -1268,7 +1283,7 @@
      "Choose an account calendar if your calendar app hides local calendars.",
      "For a separate color in Google Calendar, select a dedicated account calendar named Mindwtr. Shared calendars still use a Mindwtr title prefix.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -1296,7 +1311,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar",
       false,
       false
      ],
@@ -1389,7 +1404,7 @@
      "Choose an account calendar if your calendar app hides local calendars.",
      "For a separate color in Google Calendar, select a dedicated account calendar named Mindwtr. Shared calendars still use a Mindwtr title prefix.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -1417,7 +1432,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar",
       false,
       false
      ],
@@ -1503,7 +1518,7 @@
      "Choose an account calendar if your calendar app hides local calendars.",
      "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -1531,7 +1546,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar",
       false,
       false
      ],
@@ -1720,6 +1735,213 @@
     "calendarWrites": [],
     "prompts": 0,
     "toasts": []
+   },
+   {
+    "texts": [
+     "External Calendar",
+     "Push tasks to calendar",
+     "Scheduled tasks and tasks with due dates are added to your selected device calendar.",
+     "▾",
+     "Sync target",
+     "Choose an account calendar if your calendar app hides local calendars.",
+     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
+     "alex@gmail.com",
+     "Shared account calendar · alex@gmail.com",
+     "Phone",
+     "Shared local calendar · local account",
+     "Refresh calendars",
+     "Reload the list after adding a calendar in Google Calendar.",
+     "Delete Mindwtr calendar",
+     "Remove the dedicated calendar and its pushed events from this device.",
+     "Device calendars",
+     "Read events from calendars already synced on this device (DAVx5, iCloud, Outlook, etc.).",
+     "▸",
+     "ICS subscriptions",
+     "Connect external calendars (ICS subscription URLs or local .ics files).",
+     "Calendar integration guide",
+     "Name",
+     "ICS URL",
+     "Add calendar",
+     "Test",
+     "Choose local .ics file"
+    ],
+    "controls": [
+     [
+      "Push tasks to calendar|Scheduled tasks and tasks with due dates are added to your selected device calendar.|▾",
+      null,
+      false
+     ],
+     [
+      "alex@gmail.com. Shared account calendar · alex@gmail.com",
+      false,
+      false
+     ],
+     [
+      "Phone. Shared local calendar · local account",
+      true,
+      false
+     ],
+     [
+      "Refresh calendars",
+      null,
+      false
+     ],
+     [
+      "Delete Mindwtr calendar",
+      null,
+      false
+     ],
+     [
+      "Device calendars|Read events from calendars already synced on this device (DAVx5, iCloud, Outlook, etc.).|▸",
+      null,
+      false
+     ],
+     [
+      "Calendar integration guide. Setup notes for device calendars, push-to-calendar, and ICS subscriptions.",
+      null,
+      false
+     ],
+     [
+      "Add calendar",
+      null,
+      true
+     ],
+     [
+      "Test",
+      null,
+      false
+     ],
+     [
+      "Choose local .ics file",
+      null,
+      false
+     ]
+    ],
+    "switches": [
+     true,
+     false
+    ],
+    "inputs": [
+     [
+      "Optional",
+      ""
+     ],
+     [
+      "https://example.com/calendar.ics",
+      ""
+     ]
+    ],
+    "busy": 0,
+    "alert": [
+     "Delete Mindwtr calendar",
+     "Remove the dedicated calendar and its pushed events from this device.",
+     [
+      [
+       "Cancel",
+       "cancel"
+      ],
+      [
+       "Delete",
+       "destructive"
+      ]
+     ]
+    ],
+    "storage": {
+     "mindwtr:calendar-push-sync:enabled": "1",
+     "mindwtr:calendar-push-sync:calendar-id": "created-1",
+     "mindwtr:calendar-push-sync:target-calendar-id": "local-phone"
+    },
+    "writes": [],
+    "calendarWrites": [],
+    "prompts": 0,
+    "toasts": []
+   },
+   {
+    "texts": [
+     "External Calendar",
+     "Push tasks to calendar",
+     "Scheduled tasks and tasks with due dates are added to your selected device calendar.",
+     "▾",
+     "Device calendars",
+     "Read events from calendars already synced on this device (DAVx5, iCloud, Outlook, etc.).",
+     "▸",
+     "ICS subscriptions",
+     "Connect external calendars (ICS subscription URLs or local .ics files).",
+     "Calendar integration guide",
+     "Name",
+     "ICS URL",
+     "Add calendar",
+     "Test",
+     "Choose local .ics file"
+    ],
+    "controls": [
+     [
+      "Push tasks to calendar|Scheduled tasks and tasks with due dates are added to your selected device calendar.|▾",
+      null,
+      false
+     ],
+     [
+      "Device calendars|Read events from calendars already synced on this device (DAVx5, iCloud, Outlook, etc.).|▸",
+      null,
+      false
+     ],
+     [
+      "Calendar integration guide. Setup notes for device calendars, push-to-calendar, and ICS subscriptions.",
+      null,
+      false
+     ],
+     [
+      "Add calendar",
+      null,
+      true
+     ],
+     [
+      "Test",
+      null,
+      false
+     ],
+     [
+      "Choose local .ics file",
+      null,
+      false
+     ]
+    ],
+    "switches": [
+     false,
+     false
+    ],
+    "inputs": [
+     [
+      "Optional",
+      ""
+     ],
+     [
+      "https://example.com/calendar.ics",
+      ""
+     ]
+    ],
+    "busy": 0,
+    "alert": null,
+    "storage": {
+     "mindwtr:calendar-push-sync:enabled": "0",
+     "mindwtr:calendar-push-sync:target-calendar-id": "local-phone"
+    },
+    "writes": [],
+    "calendarWrites": [
+     [
+      "deleteCalendar",
+      "created-1"
+     ]
+    ],
+    "prompts": 0,
+    "toasts": [
+     [
+      "Calendar deleted",
+      "The Mindwtr calendar was removed. Events already pushed to the calendar you chose stay there.",
+      "success",
+      3500
+     ]
+    ]
    }
   ],
   "push: access denied": [
@@ -2185,9 +2407,8 @@
      "▾",
      "Sync target",
      "Choose an account calendar if your calendar app hides local calendars.",
-     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar · alex@gmail.com",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -2217,7 +2438,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar · alex@gmail.com",
       true,
       false
      ],
@@ -2341,9 +2562,8 @@
      "▾",
      "Sync target",
      "Choose an account calendar if your calendar app hides local calendars.",
-     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar · alex@gmail.com",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -2373,7 +2593,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar · alex@gmail.com",
       true,
       false
      ],
@@ -2527,9 +2747,8 @@
      "▾",
      "Sync target",
      "Choose an account calendar if your calendar app hides local calendars.",
-     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar · alex@gmail.com",
      "alex@gmail.com",
      "Shared account calendar · alex@gmail.com",
      "Phone",
@@ -2559,7 +2778,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar · alex@gmail.com",
       true,
       false
      ],
@@ -2919,9 +3138,8 @@
      "▾",
      "Sync target",
      "Choose an account calendar if your calendar app hides local calendars.",
-     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
      "Mindwtr calendar",
-     "Dedicated local calendar",
+     "Dedicated account calendar",
      "Mindwtr",
      "Dedicated local calendar · local account",
      "alex@gmail.com",
@@ -2951,7 +3169,7 @@
       false
      ],
      [
-      "Mindwtr calendar. Dedicated local calendar",
+      "Mindwtr calendar. Dedicated account calendar",
       true,
       false
      ],
@@ -10088,9 +10306,8 @@
      "▾",
      "同步目标",
      "如果日历应用隐藏本地日历，请选择账户日历。",
-     "本地日历目标只保存在此设备。如需同步到 Google 日历网页端，请选择 Google 账户日历。",
      "Mindwtr 日历",
-     "专用本地日历",
+     "专用账户日历",
      "alex@gmail.com",
      "共享账户日历 · alex@gmail.com",
      "Phone",
@@ -10129,7 +10346,7 @@
       false
      ],
      [
-      "Mindwtr 日历. 专用本地日历",
+      "Mindwtr 日历. 专用账户日历",
       true,
       false
      ],
@@ -10385,9 +10602,8 @@
      "▾",
      "同步目标",
      "如果日历应用隐藏本地日历，请选择账户日历。",
-     "本地日历目标只保存在此设备。如需同步到 Google 日历网页端，请选择 Google 账户日历。",
      "Mindwtr 日历",
-     "专用本地日历",
+     "专用账户日历",
      "alex@gmail.com",
      "共享账户日历 · alex@gmail.com",
      "Phone",
@@ -10426,7 +10642,7 @@
       false
      ],
      [
-      "Mindwtr 日历. 专用本地日历",
+      "Mindwtr 日历. 专用账户日历",
       true,
       false
      ],
@@ -10670,9 +10886,8 @@
      "▾",
      "同步目标",
      "如果日历应用隐藏本地日历，请选择账户日历。",
-     "本地日历目标只保存在此设备。如需同步到 Google 日历网页端，请选择 Google 账户日历。",
      "Mindwtr 日历",
-     "专用本地日历",
+     "专用账户日历",
      "alex@gmail.com",
      "共享账户日历 · alex@gmail.com",
      "Phone",
@@ -10717,7 +10932,7 @@
       false
      ],
      [
-      "Mindwtr 日历. 专用本地日历",
+      "Mindwtr 日历. 专用账户日历",
       true,
       false
      ],

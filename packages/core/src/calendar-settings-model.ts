@@ -58,20 +58,31 @@ export function describeCalendarPushTarget(calendar: CalendarPushTargetCalendar,
  * (the one the app makes; `id` null) unless an account calendar named Mindwtr
  * exists, then the writable calendars, without the managed one or a local
  * Mindwtr calendar beside an account one unless it is the chosen target.
+ *
+ * "Mindwtr calendar" says where that calendar is: where the one the app made
+ * lives, else where the app will make it (calendar-push-service.ts): on Android
+ * on the account of the first calendar the phone owns, on iOS on the local source.
  */
 export function buildCalendarPushTargetChoices(input: {
     targets: readonly CalendarPushTargetCalendar[];
     targetId: string | null;
     color: string;
     tr: TranslateText;
+    /** 'android' or 'ios'. */
+    platform: string;
 }): CalendarPushTargetChoices {
     const { targets, targetId, color, tr } = input;
     const selected = targetId ? targets.find((calendar) => calendar.id === targetId) : null;
     const hasDedicatedAccount = targets.some((calendar) => calendar.isMindwtrDedicated && !calendar.isLocalOnly);
+    const managed = targets.find((calendar) => calendar.isMindwtrManaged);
+    const managedLocalOnly = managed ? managed.isLocalOnly : input.platform !== 'android';
+    const managedKind = managedLocalOnly
+        ? tr('settings.calendarMobile.dedicatedLocalCalendar')
+        : tr('settings.calendarMobile.dedicatedAccountCalendar');
     const defaultLocal: CalendarPushTargetOption = {
         id: null,
         name: tr('settings.calendarMobile.mindwtrCalendar'),
-        description: tr('settings.calendarMobile.dedicatedLocalCalendar'),
+        description: managed?.sourceName ? `${managedKind} · ${managed.sourceName}` : managedKind,
         color,
     };
     return {
@@ -92,7 +103,7 @@ export function buildCalendarPushTargetChoices(input: {
                     color: calendar.color,
                 })),
         ],
-        localHint: targetId === null || Boolean(selected?.isLocalOnly),
+        localHint: targetId === null ? managedLocalOnly : Boolean(selected?.isLocalOnly),
         sharedAccountHint: Boolean(selected && !selected.isMindwtrDedicated && !selected.isLocalOnly),
         showColors: targetId === null || selected?.isMindwtrManaged === true,
     };
@@ -102,6 +113,12 @@ export function buildCalendarPushTargetChoices(input: {
 export const planCalendarPushColor = (current: string, picked: string): string | null => (
     normalizeCalendarPushColor(picked) === normalizeCalendarPushColor(current) ? null : picked
 );
+
+/**
+ * Whether Delete Mindwtr calendar left the chosen push calendar (and the events pushed to it):
+ * the stored choice before the delete and after it. The delete clears a choice it removed.
+ */
+export const keptPushTargetEvents = (before: string | null, after: string | null): boolean => before !== null && after === before;
 
 export const getCalendarPushColorLabel = (t: Translate): string => (
     tFallback(t, 'settings.calendarMobile.mindwtrCalendarColor', 'Mindwtr calendar color')
@@ -333,9 +350,12 @@ export const calendarSettingsToasts = (tr: TranslateText, t: Translate) => ({
         tone: 'success',
         durationMs: 3000,
     }),
-    mindwtrCalendarDeleted: (): CalendarSettingsToast => ({
+    /** After Delete Mindwtr calendar; `keptTargetEvents` (keptPushTargetEvents): the chosen calendar, not the app's, kept its pushed events. */
+    mindwtrCalendarDeleted: (keptTargetEvents: boolean): CalendarSettingsToast => ({
         title: tr('settings.calendarMobile.calendarDeleted'),
-        message: tr('settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved'),
+        message: keptTargetEvents
+            ? tr('settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept')
+            : tr('settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved'),
         tone: 'success',
         durationMs: 3500,
     }),

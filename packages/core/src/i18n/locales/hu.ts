@@ -2140,6 +2140,7 @@ export const huOverrides: Record<string, string> = {
     'settings.calendarMobile.tasksWillNoLongerBePushedToYourCalendarExisting': 'A feladatok többé nem kerülnek elküldésre a naptárba. A meglévő események megmaradtak.',
     'settings.calendarMobile.test': 'Teszt',
     'settings.calendarMobile.theMindwtrCalendarAndAllItsEventsHaveBeenRemoved': 'A Mindwtr naptár és az összes eseménye eltávolításra került.',
+    'settings.calendarMobile.mindwtrCalendarRemovedPushedEventsKept': 'A Mindwtr naptár törölve. A kiválasztott naptárba már elküldött események ott maradnak.',
     'settings.gtdMobile.autoStartBreaks': 'Szünetek automatikus indítása',
     'settings.gtdMobile.autoStartFocus': 'Fókusz automatikus indítása',
     'settings.gtdMobile.captureDefaults': 'Rögzítés alapértelmezései',
