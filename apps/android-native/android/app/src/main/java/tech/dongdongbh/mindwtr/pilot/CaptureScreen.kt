@@ -184,7 +184,7 @@ private fun JSONObject.text(name: String): String? = if (!has(name) || isNull(na
 private fun JSONObject.child(name: String): JSONObject? = if (!has(name) || isNull(name)) null else getJSONObject(name)
 private fun JSONObject.items(name: String): List<JSONObject> = optJSONArray(name)?.let { list -> List(list.length()) { list.getJSONObject(it) } }.orEmpty()
 
-/** RN's Switch at a call site with RN's [props] (MindwtrTheme's *Switch), and its 48dp touch target. */
+/** RN's Switch at a call site with RN's [props] (MindwtrTheme's *Switch); its touch area is the switch, as RN's. */
 @Composable
 internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, props: RnSwitchProps, toggle: () -> Unit) {
     Box(Modifier.toggleable(on, enabled = enabled, role = Role.Switch) { toggle() }.semantics { contentDescription = label }) {
@@ -193,16 +193,17 @@ internal fun RnSwitch(on: Boolean, enabled: Boolean, label: String, props: RnSwi
 }
 
 /**
- * RN's Switch on Android (SwitchCompat) as drawn: a 34x14dp track in RN's track color, solid, and a raised 20dp thumb in RN's
- * thumb color, or AppCompat's where RN sets none. A disabled switch changes only AppCompat's thumb, as in RN.
+ * RN's Switch on Android (SwitchCompat) as drawn, measured on the test phone: a 46.67x27dp view, a 24x14dp track in RN's track
+ * color, solid, and a raised 20dp thumb 10dp either side of the center, in RN's thumb color or AppCompat's where RN sets none.
+ * A disabled switch changes only AppCompat's thumb, as in RN.
  */
 @Composable
 internal fun RnSwitchGraphic(on: Boolean, enabled: Boolean, props: RnSwitchProps) {
     val theme = LocalTheme.current
-    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(34.dp, 14.dp).clip(CircleShape).background(if (on) props.trackOn else props.trackOff))
+    Box(Modifier.size(46.67.dp, 27.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(24.dp, 14.dp).clip(CircleShape).background(if (on) props.trackOn else props.trackOff))
         val thumb = theme.switchThumbShade((if (on) props.thumbOn else props.thumbOff) ?: theme.switchThumb(on, enabled, isSystemInDarkTheme()))
-        Box(Modifier.offset(x = if (on) 7.dp else (-7).dp).size(20.dp).shadow(2.dp, CircleShape).clip(CircleShape).background(thumb))
+        Box(Modifier.offset(x = if (on) 10.dp else (-10).dp).size(20.dp).shadow(2.dp, CircleShape).clip(CircleShape).background(thumb))
     }
 }
 

@@ -2391,6 +2391,11 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(themeKt, /Color\(red = color\.red \* THUMB_IMAGE, green = color\.green \* THUMB_IMAGE, blue = color\.blue \* THUMB_IMAGE, alpha = color\.alpha\)/);
     const rnSwitch = code(captureUi.slice(captureUi.indexOf('internal fun RnSwitch('), graphicAt));
     assert.doesNotMatch(rnSwitch + graphic, /fade\(|alpha/, 'RN never fades a disabled switch');
+    // RN's SwitchCompat as measured on the S23 (3x, parity pairs popup-another and popup-empty): a 140x81px view, a 71px x 42px
+    // track, a 60px thumb whose center moves 59px.
+    assert.match(graphic, /Box\(Modifier\.size\(46\.67\.dp, 27\.dp\), contentAlignment = Alignment\.Center\)/);
+    assert.match(graphic, /Box\(Modifier\.size\(24\.dp, 14\.dp\)/);
+    assert.match(graphic, /offset\(x = if \(on\) 10\.dp else \(-10\)\.dp\)\.size\(20\.dp\)/);
     // Each call site passes its RN props: General's three, the capture popup, Reference's sheet; GTD and Data take the default.
     const settingsUiKt = code(source('SettingsScreen.kt'));
     assert.equal(settingsUiKt.match(/theme\.generalSwitch/g)?.length, 3);

@@ -104,8 +104,8 @@ const switchColors = (nodes, on) => {
     writeFileSync(file, adbRaw('exec-out', 'screencap', '-p'));
     const at = (dp) => execFileSync('magick', [file, '-format', `%[hex:p{${Math.round((l + r) / 2 + dp * density)},${Math.round((t + b) / 2)}}]`, 'info:'],
         { encoding: 'utf8' }).trim().slice(0, 6).toUpperCase();
-    // The 34dp track and the 20dp thumb 7dp off center (RnSwitch): the track shows 12dp to the thumb's other side.
-    return { track: at(on ? -12 : 12), thumb: at(on ? 7 : -7) };
+    // RN's 24dp track and 20dp thumb 10dp off center (RnSwitchGraphic): the track shows 6dp to the thumb's other side.
+    return { track: at(on ? -6 : 6), thumb: at(on ? 10 : -10) };
 };
 const near = (hex, want) => [0, 2, 4].every((i) => Math.abs(parseInt(hex.slice(i, i + 2), 16) - parseInt(want.slice(i, i + 2), 16)) <= 3);
 const expectSwitch = (nodes, on, step) => {
