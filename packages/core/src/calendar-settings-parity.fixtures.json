@@ -41,6 +41,13 @@
     "observations": [
      "A subscription URL shows its scheme and host only: https://calendar.example.com/...ic.ics now reads https://calendar.example.com/..., and so for every listed subscription (content:/...42 now reads content://com.android.providers.downloads.documents/...). In feeds: add, test, toggle, color, areas, remove; feeds: a local file, a cancelled pick, a failed test; feeds: stored on the device only; feeds: the synced list wins over the device copy; and in Chinese: push on and a test."
     ]
+   },
+   {
+    "base": "0c2782b76",
+    "command": "cd apps/mobile && MINDWTR_DUMP_CALENDAR_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/calendar-settings-screen.parity.test.tsx, with the React Native fix in place; only the calendar writes below changed, and every other observation matched the frozen one",
+    "observations": [
+     "Android's new Mindwtr calendar carries this install's marker as its internal name, mindwtr:<uuid> (the harness records the uuid as <marker>), in place of mindwtr. In push: turn on, choose targets, refresh (step 1), push: the managed calendar, a new color, then off (step 2) and in Chinese: push on and a test (step 1)."
+    ]
    }
   ]
  },
@@ -1264,7 +1271,7 @@
        "title": "Mindwtr",
        "color": "#3B82F6",
        "entityType": "event",
-       "name": "mindwtr",
+       "name": "mindwtr:<marker>",
        "ownerAccount": "alex@gmail.com",
        "accessLevel": "owner",
        "source": {
@@ -2723,7 +2730,7 @@
        "title": "Mindwtr",
        "color": "#059669",
        "entityType": "event",
-       "name": "mindwtr",
+       "name": "mindwtr:<marker>",
        "ownerAccount": "alex@gmail.com",
        "accessLevel": "owner",
        "source": {
@@ -10585,7 +10592,7 @@
        "title": "Mindwtr",
        "color": "#3B82F6",
        "entityType": "event",
-       "name": "mindwtr",
+       "name": "mindwtr:<marker>",
        "ownerAccount": "alex@gmail.com",
        "accessLevel": "owner",
        "source": {

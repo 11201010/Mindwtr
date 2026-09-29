@@ -153,7 +153,8 @@ vi.mock('expo-calendar', () => {
     createCalendarAsync: async (details: Record<string, unknown>) => {
       harness.nextCalendar += 1;
       const id = `created-${harness.nextCalendar}`;
-      harness.calendarWrites.push(['createCalendar', details]);
+      // The internal name carries a random install marker (mindwtr:<uuid>); it is recorded as <marker>.
+      harness.calendarWrites.push(['createCalendar', { ...details, ...(typeof details.name === 'string' ? { name: details.name.replace(/[0-9a-f-]{36}$/, '<marker>') } : {}) }]);
       harness.calendars.push({ ...(details as DeviceCalendar), id, allowsModifications: true });
       return id;
     },

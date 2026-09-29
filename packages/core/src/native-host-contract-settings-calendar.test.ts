@@ -140,7 +140,8 @@ function phone(device: Device) {
             createCalendar: async (details) => {
                 state.nextCalendar += 1;
                 const id = `created-${state.nextCalendar}`;
-                state.calendarWrites.push(['createCalendar', details]);
+                // The harness records the random install marker in the internal name as <marker>.
+                state.calendarWrites.push(['createCalendar', { ...details, ...(typeof details.name === 'string' ? { name: details.name.replace(/[0-9a-f-]{36}$/, '<marker>') } : {}) }]);
                 state.calendars.push({ ...(details as DeviceCalendar), id, allowsModifications: true });
                 return id;
             },

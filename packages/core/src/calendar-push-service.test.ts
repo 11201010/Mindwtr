@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     CALENDAR_PUSH_CALENDAR_ID_KEY,
+    CALENDAR_PUSH_PENDING_KEY,
     CALENDAR_PUSH_ENABLED_KEY,
     CALENDAR_PUSH_TARGET_ID_KEY,
     createCalendarPushService,
@@ -179,6 +180,35 @@ describe('calendar push behind the host ports', () => {
         // The chosen calendar was not the one deleted: it stays chosen.
         expect(phone.storage.get(CALENDAR_PUSH_TARGET_ID_KEY)).toBe('app-made');
         expect([...phone.entries.keys()]).toEqual(['t2']);
+    });
+
+    it('makes exactly one Mindwtr calendar however its creation is cut short', async () => {
+        await everyDeath(
+            () => device(),
+            (service) => service.ensureMindwtrCalendar(),
+            (phone, dieAt) => {
+                const made = phone.calendars.filter((calendar) => calendar.title === 'Mindwtr');
+                expect({ dieAt, made: made.length }).toEqual({ dieAt, made: 1 });
+                expect({ dieAt, saved: phone.storage.get(CALENDAR_PUSH_CALENDAR_ID_KEY), pending: phone.storage.has(CALENDAR_PUSH_PENDING_KEY) })
+                    .toEqual({ dieAt, saved: made[0].id, pending: false });
+                expect(made[0].name).toMatch(/^mindwtr:[0-9a-f-]{36}$/);
+            },
+        );
+    });
+
+    it('deletes a calendar a cut-short creation made, and no other install\'s', async () => {
+        const token = '11111111-1111-4111-8111-111111111111';
+        const phone = device({
+            calendars: [
+                PRIMARY,
+                { id: 'made-here', title: 'Mindwtr', name: `mindwtr:${token}`, accessLevel: 'owner', source: google },
+                { id: 'made-elsewhere', title: 'Mindwtr', name: 'mindwtr:22222222-2222-4222-8222-222222222222', accessLevel: 'owner', source: google },
+            ],
+            storage: { [CALENDAR_PUSH_PENDING_KEY]: token },
+        });
+        await createCalendarPushService(phone.host).deleteMindwtrCalendar();
+        expect(phone.calendars.map((calendar) => calendar.id)).toEqual(['primary', 'made-elsewhere']);
+        expect(Object.fromEntries(phone.storage)).toEqual({});
     });
 
     it('keeps the saved ID, the chosen calendar and the pushed events when the delete fails', async () => {

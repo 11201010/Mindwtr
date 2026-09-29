@@ -405,7 +405,8 @@ describe('ensureMindwtrCalendar', () => {
         expect(id).toBe('cal-android');
         expect(mockCreateCalendarAsync).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Mindwtr',
-            name: 'mindwtr',
+            // The internal name carries this install's marker, so a create cut short is recognized.
+            name: expect.stringMatching(/^mindwtr:[0-9a-f-]{36}$/),
             ownerAccount: 'me@gmail.com',
             accessLevel: 'owner',
             isVisible: true,

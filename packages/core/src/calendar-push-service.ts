@@ -31,11 +31,18 @@ import type { CalendarSyncEntry } from './sqlite-adapter';
 import type { useTaskStore } from './store';
 import { nameNotifyListener } from './store-notify-profiler';
 import type { Task } from './types';
+import { generateUUID } from './uuid';
 
 export const CALENDAR_PUSH_ENABLED_KEY = 'mindwtr:calendar-push-sync:enabled';
 export const CALENDAR_PUSH_CALENDAR_ID_KEY = 'mindwtr:calendar-push-sync:calendar-id';
 export const CALENDAR_PUSH_TARGET_ID_KEY = 'mindwtr:calendar-push-sync:target-calendar-id';
 export const CALENDAR_PUSH_COLOR_KEY = 'mindwtr:calendar-push-sync:color';
+/**
+ * Android: the marker of a Mindwtr calendar being created, written before the create.
+ * The calendar's internal name carries it (`mindwtr:<marker>`), so a creation cut short
+ * between the create and saving the ID is found and adopted, never made twice.
+ */
+export const CALENDAR_PUSH_PENDING_KEY = 'mindwtr:calendar-push-sync:pending-calendar';
 const MANAGED_CALENDAR_TITLE = 'Mindwtr';
 const MANAGED_CALENDAR_NAME = 'mindwtr';
 export const DEFAULT_CALENDAR_PUSH_COLOR = '#3B82F6';
@@ -222,6 +229,9 @@ function isStoredMindwtrManagedCalendar(calendar: DeviceCalendar, storedCalendar
     return Boolean(storedCalendarId && calendar.id === storedCalendarId);
 }
 
+/** The internal name of a Mindwtr calendar this install made (Android): its ownership marker. */
+const managedCalendarName = (marker: string): string => `${MANAGED_CALENDAR_NAME}:${marker}`;
+
 function getAndroidManagedCalendarSeed(
     calendars: DeviceCalendar[],
     color: string
@@ -400,6 +410,21 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
     const setStoredCalendarId = (id: string): Promise<void> =>
         storage.setItem(CALENDAR_PUSH_CALENDAR_ID_KEY, id);
 
+    /**
+     * A creation cut short after the create (Android): the calendar carrying this install's
+     * pending marker is the app's own; its ID is saved now. Null when there is none.
+     */
+    const adoptPendingCalendar = async (calendars: DeviceCalendar[]): Promise<string | null> => {
+        const marker = await storage.getItem(CALENDAR_PUSH_PENDING_KEY);
+        if (!marker) return null;
+        const made = calendars.find((calendar) => calendar.name === managedCalendarName(marker));
+        if (!made) return null;
+        await setStoredCalendarId(made.id);
+        await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
+        void log.info('Recovered Mindwtr calendar', { scope: 'calendar-push', extra: { calendarId: made.id } });
+        return made.id;
+    };
+
     const getCalendarPushTargetCalendars = async (): Promise<CalendarPushTargetCalendar[]> => {
         if (isSandboxMode()) return [];
         try {
@@ -446,9 +471,17 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             const storedId = await getStoredCalendarId();
             const allCalendars = await device.getCalendars();
             if (storedId) {
-                if (allCalendars.some((c) => c.id === storedId)) return storedId;
+                if (allCalendars.some((c) => c.id === storedId)) {
+                    // A death after saving the ID left the marker: the creation is done.
+                    if (host.os() === 'android' && await storage.getItem(CALENDAR_PUSH_PENDING_KEY)) {
+                        await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
+                    }
+                    return storedId;
+                }
                 // Calendar was deleted externally — fall through to recreate
             }
+            const adoptedId = await adoptPendingCalendar(allCalendars);
+            if (adoptedId) return adoptedId;
 
             const color = await getCalendarPushColor();
             let calendarDetails: DeviceCalendarDetails;
@@ -489,9 +522,19 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
                 };
             }
 
+            // Android: the marker goes on disk before the create and into the calendar's
+            // internal name, so a death before the ID is saved leaves a calendar the next
+            // run adopts. EventKit (iOS) has no such field: there only the saved ID counts.
+            const marked = host.os() === 'android';
+            if (marked) {
+                const marker = await storage.getItem(CALENDAR_PUSH_PENDING_KEY) ?? generateUUID();
+                await storage.setItem(CALENDAR_PUSH_PENDING_KEY, marker);
+                calendarDetails = { ...calendarDetails, name: managedCalendarName(marker) };
+            }
             const newId = await device.createCalendar(calendarDetails);
 
             await setStoredCalendarId(newId);
+            if (marked) await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
             void log.info('Created Mindwtr calendar', {
                 scope: 'calendar-push',
                 extra: { calendarId: newId },
@@ -540,10 +583,13 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
      */
     const deleteMindwtrCalendar = async (): Promise<void> => {
         if (isSandboxMode()) return;
-        const storedId = await getStoredCalendarId();
+        const savedId = await getStoredCalendarId();
         const selectedTargetId = await getCalendarPushTargetCalendarId();
+        // A creation cut short left a calendar with this install's marker: it is the app's own.
+        const storedId = savedId ?? await adoptPendingCalendar(await device.getCalendars().catch(() => []));
 
         if (!storedId) {
+            await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
             await storage.removeItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
             if (selectedTargetId) {
                 const targets = await getCalendarPushTargetCalendars();
@@ -588,6 +634,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
         if (selectedTargetId === storedId) {
             await setCalendarPushTargetCalendarId(null);
         }
+        await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
         await storage.removeItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
 
         void log.info('Deleted Mindwtr calendar', {
@@ -821,8 +868,9 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             if (typeof device.updateCalendar !== 'function') return false;
             const storedCalendarId = await getStoredCalendarId();
             const calendars = await device.getCalendars();
-            // Only the calendar the app saved is its own (never one found by its title).
-            const target = calendars.find((calendar) => storedCalendarId && calendar.id === storedCalendarId);
+            // Only the calendar the app saved (or one it made with its marker) is its own, never one found by its title.
+            const ownId = storedCalendarId ?? await adoptPendingCalendar(calendars);
+            const target = calendars.find((calendar) => ownId && calendar.id === ownId);
             if (!target || !isWritableCalendar(target)) return false;
 
             // Android's CalendarProvider only stores a calendar's color at creation
