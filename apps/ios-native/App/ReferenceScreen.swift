@@ -29,11 +29,13 @@ struct ReferenceScreen: View {
 // Grouped tag lists may contain the same task in several sections.
 struct ListRowEntry: Identifiable {
     let item: CoreObject
-    var id: String {
+    var id: Data {
+        let raw: String
         switch item.text("type") {
-        case "task": return "task:" + item.text("groupId") + ":" + item.object("row").text("id")
-        default: return item.text("type") + ":" + item.text("id")
+        case "task": raw = "task:" + item.text("groupId") + ":" + item.object("row").text("id")
+        default: raw = item.text("type") + ":" + item.text("id")
         }
+        return Data(raw.utf8)
     }
 }
 
@@ -92,6 +94,7 @@ struct StatusListContent: View {
                 }
                 .padding(16)
             }
+            .accessibilityIdentifier(prefix + "-scroll")
             .refreshable { await model.refresh() }
         }
     }

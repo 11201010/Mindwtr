@@ -221,6 +221,9 @@ final class CoreModel: ObservableObject {
     private var initialFocusShowDetails = false
     private var focusExpandedSectionsPreference = "nativeFoundation.focus.expandedSections"
     private var initialFocusExpandedSections: [String: Bool] = [:]
+    private var referenceViewPreference = "nativeFoundation.reference.view"
+    private var initialReferenceGroupBy: String?
+    private var initialReferenceCollapsedGroups: [String: [String]] = [:]
     private let focusSectionKeys = ["focus", "schedule", "next", "upcoming", "reviewDue", "reviewProjects"]
     @Published private(set) var projectNotes: CoreObject = [:]
     @Published private(set) var projectNotesExpanded = false
@@ -440,6 +443,7 @@ final class CoreModel: ObservableObject {
     private var projectViewTestReadFailures = 0
     private var projectFilterTestReadFailures = 0
     private var referenceSortTestReadFailure = false
+    private var referenceViewTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -568,6 +572,8 @@ final class CoreModel: ObservableObject {
     private var somedayPickerNeedsRead = false
     private var referenceCaller: Surface = .inbox
     private var referenceParams: CoreObject = [:]
+    private var referenceCollapsedGroups: [String: [String]] = [:]
+    private var referenceViewPreferencePending = false
     private var referenceLoadedDepth = 50
     private var referenceTextEdits: [String: CoreObject] = [:]
     private var referencePendingEdit: CoreObject?
@@ -1216,6 +1222,7 @@ final class CoreModel: ObservableObject {
                     projectViewTestReadFailures = arguments.contains("--native-project-view-read-failure") ? 2 : 0
                     projectFilterTestReadFailures = arguments.contains("--native-project-filter-read-failure") ? 2 : 0
                     referenceSortTestReadFailure = arguments.contains("--native-reference-sort-read-failure")
+                    referenceViewTestReadFailures = arguments.contains("--native-reference-view-read-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1236,6 +1243,7 @@ final class CoreModel: ObservableObject {
                     projectShowCompletedPreference = "nativeRNRehearsal.project.showCompleted"
                     focusShowDetailsPreference = "nativeRNRehearsal.focus.showDetails"
                     focusExpandedSectionsPreference = "nativeRNRehearsal.focus.expandedSections"
+                    referenceViewPreference = "nativeRNRehearsal.reference.view"
                     initialFocusShowDetails = false
                     initialFocusExpandedSections = [:]
                     if let raw = try legacy.value(forKey: "mindwtr:view:focus:v1"),
@@ -1259,6 +1267,12 @@ final class CoreModel: ObservableObject {
                             }
                         }
                     }
+                    initialReferenceGroupBy = try legacy.value(forKey: "mindwtr:view:reference:groupBy:v1")
+                    if let raw = try legacy.value(forKey: "mindwtr:view:group-collapse:reference:v1"),
+                       let data = raw.data(using: .utf8),
+                       let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                        initialReferenceCollapsedGroups = referenceFoldMap(parsed, preserveEmpty: false)
+                    }
                     host = CoreHost(databaseURL: database, bundleURL: bundle, legacyStorage: legacy)
                 }
                 #endif
@@ -1281,6 +1295,18 @@ final class CoreModel: ObservableObject {
                 }
             }
             collapsedFocusSections = Set(focusSectionKeys.filter { expanded[$0] == false })
+            if let stored = preferenceDefaults.object(forKey: referenceViewPreference) {
+                let view = stored as? [String: Any] ?? [:]
+                initialReferenceGroupBy = view["groupBy"] as? String
+                initialReferenceCollapsedGroups = referenceFoldMap(view["collapsedGroups"], preserveEmpty: true)
+            }
+            referenceCollapsedGroups = initialReferenceCollapsedGroups
+            if let groupBy = initialReferenceGroupBy, validReferenceGroup(groupBy) {
+                referenceParams["groupBy"] = groupBy
+            }
+            // An omitted groupBy lets core choose its default, currently Area.
+            referenceParams["collapsedGroupIds"] = referenceCollapsedGroups[referenceParams.text("groupBy").isEmpty
+                ? "area" : referenceParams.text("groupBy")] ?? []
             let startup = try decode(await host!.start())
             let recovery = startup.object("recovery")
             if recovery.text("method") == "boardCommit" {
@@ -6487,9 +6513,34 @@ final class CoreModel: ObservableObject {
         else { await readReferenceSortOptions() }
     }
 
+    private func validReferenceGroup(_ value: String) -> Bool {
+        ["none", "context", "area", "project", "tag"].contains(value)
+    }
+
+    private func referenceFoldMap(_ value: Any?, preserveEmpty: Bool) -> [String: [String]] {
+        guard let axes = value as? [String: Any] else { return [:] }
+        var folds: [String: [String]] = [:]
+        for (axis, value) in axes {
+            guard let values = value as? [Any] else { continue }
+            let ids = values.compactMap { $0 as? String }
+            if preserveEmpty || !ids.isEmpty { folds[axis] = ids }
+        }
+        return folds
+    }
+
     func setReferenceOption(_ key: String, value: Any) async {
         guard referenceActionsEnabled, ["groupBy", "includeArchivedProjects", "collapsedGroupIds"].contains(key) else { return }
-        referenceParams[key] = value
+        if key == "groupBy" {
+            guard let groupBy = value as? String, validReferenceGroup(groupBy) else { return }
+            referenceParams["groupBy"] = groupBy
+            referenceParams["collapsedGroupIds"] = referenceCollapsedGroups[groupBy] ?? []
+            referenceViewPreferencePending = true
+        } else if key == "collapsedGroupIds" {
+            guard let ids = value as? [String] else { return }
+            referenceCollapsedGroups[referenceParams.text("groupBy")] = ids
+            referenceParams[key] = ids
+            referenceViewPreferencePending = true
+        } else { referenceParams[key] = value }
         if key != "collapsedGroupIds" { referenceLoadedDepth = pageSize }
         busy = true
         defer { finishOperation() }
@@ -6498,11 +6549,11 @@ final class CoreModel: ObservableObject {
 
     func toggleReferenceSection(_ id: String) async {
         guard referenceActionsEnabled, let section = reference.objects("items").first(where: {
-            $0.text("type") == "section" && $0.text("id") == id && $0.flag("collapsible")
+            $0.text("type") == "section" && $0.text("id").utf8.elementsEqual(id.utf8) && $0.flag("collapsible")
         }) else { return }
         var ids = reference["collapsedGroupIds"] as? [String] ?? []
-        if section.flag("collapsed") { ids.removeAll { $0 == id } }
-        else if !ids.contains(id) { ids.append(id) }
+        if section.flag("collapsed") { ids.removeAll { $0.utf8.elementsEqual(id.utf8) } }
+        else if !ids.contains(where: { $0.utf8.elementsEqual(id.utf8) }) { ids.append(id) }
         await setReferenceOption("collapsedGroupIds", value: ids)
     }
 
@@ -6610,6 +6661,15 @@ final class CoreModel: ObservableObject {
                 guard next.text("kind") == "reference", !next.text("revision").isEmpty, next.number("total") >= 0,
                       next.objects("items").count == min(pageSize, next.number("total")) else { throw CocoaError(.coderReadCorrupt) }
                 let params = effectiveReferenceParams(next)
+                if referenceViewPreferencePending {
+                    let requested = referenceParams["collapsedGroupIds"] as? [String] ?? []
+                    let returned = params["collapsedGroupIds"] as? [String] ?? []
+                    guard params.text("groupBy") == referenceParams.text("groupBy"),
+                          requested.count == returned.count,
+                          zip(requested, returned).allSatisfy({ $0.0.utf8.elementsEqual($0.1.utf8) }) else {
+                        throw CocoaError(.coderReadCorrupt)
+                    }
+                }
                 var items = next.objects("items")
                 let target = min(referenceLoadedDepth, next.number("total"))
                 while items.count < target {
@@ -6629,6 +6689,12 @@ final class CoreModel: ObservableObject {
                 referenceParams = params
                 referencePendingEdit = nil
                 reference = next
+                if referenceViewPreferencePending {
+                    preferenceDefaults.set(["groupBy": params.text("groupBy"),
+                                            "collapsedGroups": referenceCollapsedGroups], forKey: referenceViewPreference)
+                    referenceViewPreferencePending = false
+                    NSLog("Native iOS Reference view preference updated releaseCheck=v1.3.4/ios-reference-view outcome=updated")
+                }
                 syncReferenceText()
                 referenceCurrent = referenceTextEdits.isEmpty
                 if !referencePickerName.isEmpty { referencePickerNeedsRead = true }
@@ -11606,6 +11672,11 @@ final class CoreModel: ObservableObject {
         if method == "menuRead", args.first as? String == "projects",
            pendingProjectTagFilter != nil, projectTagTestReadFailure {
             projectTagTestReadFailure = false
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "reference",
+           referenceViewPreferencePending, referenceViewTestReadFailures > 0 {
+            referenceViewTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
         }
         if projectAreaCreatedID != nil {

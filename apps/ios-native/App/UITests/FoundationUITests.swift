@@ -5697,6 +5697,82 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testReferenceViewRestorationNormal() { referenceViewRestoration(library: "f45c2e81-bddd-43db-9c44-e283995fae77") }
+    func testReferenceViewRestorationLargestText() { referenceViewRestoration(library: "e29a5610-c098-4687-8f87-c3fa1093dc75") }
+
+    private func referenceGroup(_ app: XCUIApplication, _ group: String, failed: Bool = false) {
+        boardTap(app, "reference-overflow-button"); boardTap(app, "reference-group-action")
+        referenceSortTap(app, "reference-group-" + group)
+        boardEnabled(app.buttons[failed ? "reference-retry" : "reference-overflow-button"])
+    }
+
+    private func referenceFold(_ app: XCUIApplication, _ id: String, open: Bool, toggle: Bool = false) {
+        let identifier = "reference-section-" + id
+        let matches = app.buttons.matching(identifier: identifier)
+        // XCTest's identifier matcher uses Unicode equivalence; core IDs do not.
+        let button = matches.allElementsBoundByIndex.first { $0.identifier.utf8.elementsEqual(identifier.utf8) } ?? matches.firstMatch
+        revealPagedElement(app, button, in: app.scrollViews["reference-scroll"])
+        boardEnabled(button); XCTAssertEqual(button.value as? String, open ? "Collapse" : "Expand")
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        if toggle { button.tap(); boardEnabled(app.buttons["reference-overflow-button"]) }
+    }
+
+    private func referenceViewRestoration(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        func restart() { app.terminate(); app.launch(); openReferenceSortTest(app) }
+        app.launch(); openReferenceSortTest(app)
+        referenceFold(app, "task75-area-a", open: true, toggle: true)
+        referenceFold(app, "task75-area-a", open: false)
+        referenceGroup(app, "tag")
+        referenceFold(app, "tag:é", open: true, toggle: true)
+        referenceFold(app, "tag:e\u{0301}", open: true)
+        referenceFold(app, "tag:é", open: false, toggle: true)
+        referenceFold(app, "tag:Task75 B", open: true, toggle: true)
+        referenceGroup(app, "area"); referenceFold(app, "task75-area-a", open: false)
+        openReferenceSortChoices(app); referenceSortTap(app, "reference-menu-close")
+        referenceFold(app, "task75-area-a", open: false)
+        boardTap(app, "reference-back"); openReferenceSortTest(app)
+        referenceFold(app, "task75-area-a", open: false)
+        restart(); referenceFold(app, "task75-area-a", open: false)
+        referenceGroup(app, "tag"); referenceFold(app, "tag:Task75 B", open: false)
+        restart(); referenceFold(app, "tag:Task75 B", open: false, toggle: true)
+        restart(); referenceFold(app, "tag:Task75 B", open: true)
+        referenceGroup(app, "area"); referenceFold(app, "task75-area-a", open: false)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Reference restored grouping and folds"
+        shot.lifetime = .keepAlways; add(shot); app.terminate()
+    }
+
+    func testReferenceViewReadFailureAndColdRestart() {
+        let app = XCUIApplication(); let args = ["--native-ui-test-library", "6ecf362c-da6c-4d5a-89ea-183d8d8a2075"]
+        app.launchArguments = args; app.launch(); openReferenceSortTest(app)
+        referenceFold(app, "task75-area-a", open: true, toggle: true); app.terminate()
+        app.launchArguments = args + ["--native-reference-view-read-failure"]; app.launch(); openReferenceSortTest(app)
+        referenceGroup(app, "tag", failed: true)
+        XCTAssertTrue(app.staticTexts["reference-error"].waitForExistence(timeout: 10))
+        app.terminate(); app.launchArguments = args; app.launch(); openReferenceSortTest(app)
+        referenceFold(app, "task75-area-a", open: false)
+        app.terminate(); app.launchArguments = args + ["--native-reference-view-read-failure"]
+        app.launch(); openReferenceSortTest(app); referenceGroup(app, "tag", failed: true)
+        boardEnabled(app.buttons["reference-retry"]); boardTap(app, "reference-retry")
+        boardEnabled(app.buttons["reference-overflow-button"])
+        referenceFold(app, "tag:Task75 B", open: true)
+        app.terminate(); app.launchArguments = args; app.launch(); openReferenceSortTest(app)
+        referenceFold(app, "tag:Task75 B", open: true); app.terminate()
+    }
+
+    func testReferenceLegacyViewImport() { referenceLegacyView(group: "tag", open: false) }
+    func testReferenceLegacyNativeEmptyOverride() { referenceLegacyView(group: "area", open: true) }
+    func testReferenceLegacyMalformedViewFallback() { referenceLegacyView(group: "area", open: true) }
+
+    private func referenceLegacyView(group: String, open: Bool) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-rn-rehearsal"]
+        let id = group == "tag" ? "tag:Task75 B" : "task75-area-a"
+        app.launch(); openReferenceSortTest(app); referenceFold(app, id, open: open)
+        referenceFold(app, id, open: open, toggle: true)
+        app.terminate(); app.launch(); openReferenceSortTest(app); referenceFold(app, id, open: !open)
+        app.terminate()
+    }
+
     func testReferenceSortNormal() { referenceSortFlow(library: "92022107-8ca9-4b05-b6b4-b1d10f405b54") }
     func testReferenceSortLargestText() { referenceSortFlow(library: "c25483f6-39b2-44d3-9e38-cb5af4cc7e78") }
 
