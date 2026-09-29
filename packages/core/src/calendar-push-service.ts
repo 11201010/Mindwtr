@@ -428,6 +428,15 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
         return made.id;
     };
 
+    /**
+     * The calendar this install owns, in a list the device answered (never a failed
+     * read taken as empty): the saved one while it exists, else the one a creation cut
+     * short made (adopted now), even when a stale saved ID points elsewhere.
+     */
+    const resolveOwnedCalendar = async (calendars: DeviceCalendar[], savedId: string | null): Promise<string | null> => (
+        savedId && calendars.some((calendar) => calendar.id === savedId) ? savedId : adoptPendingCalendar(calendars)
+    );
+
     const getCalendarPushTargetCalendars = async (): Promise<CalendarPushTargetCalendar[]> => {
         if (isSandboxMode()) return [];
         try {
@@ -473,17 +482,16 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
         try {
             const storedId = await getStoredCalendarId();
             const allCalendars = await device.getCalendars();
-            if (storedId) {
-                if (allCalendars.some((c) => c.id === storedId)) {
-                    // A death after saving the ID left the marker: the creation is done.
-                    if (host.os() === 'android' && await storage.getItem(CALENDAR_PUSH_PENDING_KEY)) {
-                        await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
-                    }
-                    return storedId;
+            if (storedId && allCalendars.some((c) => c.id === storedId)) {
+                // A death after saving the ID left the marker: the creation is done.
+                if (host.os() === 'android' && await storage.getItem(CALENDAR_PUSH_PENDING_KEY)) {
+                    await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
                 }
-                // Calendar was deleted externally — fall through to recreate
+                return storedId;
             }
-            const adoptedId = await adoptPendingCalendar(allCalendars);
+            // The saved calendar was deleted externally (or none was saved): a calendar a
+            // creation cut short made is adopted, else a new one is made.
+            const adoptedId = await resolveOwnedCalendar(allCalendars, null);
             if (adoptedId) return adoptedId;
 
             const color = withColor ?? await getCalendarPushColor();
@@ -588,42 +596,33 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
         if (isSandboxMode()) return;
         const savedId = await getStoredCalendarId();
         const selectedTargetId = await getCalendarPushTargetCalendarId();
-        // A creation cut short left a calendar with this install's marker: it is the app's own.
-        const storedId = savedId ?? await adoptPendingCalendar(await device.getCalendars().catch(() => []));
+        // A list the device could not give is an error, never an empty list: nothing is cleared.
+        const calendars = await device.getCalendars();
+        const ownedId = await resolveOwnedCalendar(calendars, savedId);
 
-        if (!storedId) {
-            await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
-            await storage.removeItem(CALENDAR_PUSH_CALENDAR_ID_KEY);
-            if (selectedTargetId) {
-                const targets = await getCalendarPushTargetCalendars();
-                if (!targets.some((target) => target.id === selectedTargetId)) {
-                    await setCalendarPushTargetCalendarId(null);
+        if (ownedId) {
+            try {
+                await device.deleteCalendar(ownedId);
+            } catch (error) {
+                // A provider may answer a calendar that is already gone with an error: gone is gone,
+                // but only a list the device gives proves it.
+                const stillThere = await device.getCalendars()
+                    .then((list) => list.some((calendar) => calendar.id === ownedId), () => true);
+                if (stillThere) {
+                    void log.warn('Failed to delete Mindwtr calendar; keeping it for a retry', {
+                        scope: 'calendar-push',
+                        extra: { releaseCheck: 'v1.3.4/calendar-push-owned-delete', error: getCalendarErrorMessage(error) },
+                    });
+                    throw error;
                 }
             }
-            void log.info('Deleted Mindwtr calendar', {
-                scope: 'calendar-push',
-                extra: { deletedCalendars: '0' },
-            });
-            return;
         }
 
-        const exists = async () => (await device.getCalendars()).some((calendar) => calendar.id === storedId);
-        try {
-            if (await exists()) await device.deleteCalendar(storedId);
-        } catch (error) {
-            // A provider may answer a calendar that is already gone with an error: gone is gone.
-            if (await exists().catch(() => true)) {
-                void log.warn('Failed to delete Mindwtr calendar; keeping it for a retry', {
-                    scope: 'calendar-push',
-                    extra: { releaseCheck: 'v1.3.4/calendar-push-owned-delete', error: getCalendarErrorMessage(error) },
-                });
-                throw error;
-            }
-        }
-
+        // Gone now (a list proved it): the deleted calendar, and a stale saved one.
+        const goneIds = new Set([ownedId, savedId].filter((id): id is string => Boolean(id)));
         try {
             const syncedEntries = await syncEntries.getAll(PLATFORM);
-            for (const entry of syncedEntries.filter((item) => item.calendarId === storedId)) {
+            for (const entry of syncedEntries.filter((item) => goneIds.has(item.calendarId))) {
                 await syncEntries.delete(entry.taskId, PLATFORM);
             }
         } catch (error) {
@@ -634,7 +633,8 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             });
         }
 
-        if (selectedTargetId === storedId) {
+        if (selectedTargetId && (goneIds.has(selectedTargetId)
+            || !calendars.some((calendar) => calendar.id === selectedTargetId && isWritableCalendar(calendar)))) {
             await setCalendarPushTargetCalendarId(null);
         }
         await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
@@ -642,7 +642,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
 
         void log.info('Deleted Mindwtr calendar', {
             scope: 'calendar-push',
-            extra: { releaseCheck: 'v1.3.4/calendar-push-owned-delete', deletedCalendars: '1' },
+            extra: { releaseCheck: 'v1.3.4/calendar-push-owned-delete', deletedCalendars: ownedId ? '1' : '0' },
         });
     };
 
@@ -892,7 +892,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             const storedCalendarId = await getStoredCalendarId();
             const calendars = await device.getCalendars();
             // Only the calendar the app saved (or one it made with its marker) is its own, never one found by its title.
-            const ownId = storedCalendarId ?? await adoptPendingCalendar(calendars);
+            const ownId = await resolveOwnedCalendar(calendars, storedCalendarId);
             const target = calendars.find((calendar) => ownId && calendar.id === ownId);
             if (!target) return await stored('stored');
             if ((target.color ?? '').trim().toUpperCase() === normalized) return await stored('already');

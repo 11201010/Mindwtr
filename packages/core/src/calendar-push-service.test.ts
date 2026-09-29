@@ -63,7 +63,10 @@ function device(options: { os?: string; calendars?: DeviceCalendar[]; storage?: 
         calendars: {
             getPermissions: async () => ({ status: 'granted' }),
             requestPermissions: async () => ({ status: 'granted' }),
-            getCalendars: async () => calendars.map((calendar) => ({ ...calendar })),
+            getCalendars: async () => {
+                if (life.failList) throw new Error('Calendar provider unavailable');
+                return calendars.map((calendar) => ({ ...calendar }));
+            },
             getEvents: async () => [],
             getSources: async () => [{ id: 'local-source', type: 'local', name: 'Default' }],
             createCalendar: async (details) => {
@@ -278,6 +281,42 @@ describe('calendar push behind the host ports', () => {
         expect(await createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).toBe(true);
         expect(phone.writes).toEqual([['updateCalendar', 'saved', '#059669']]);
         expect(phone.storage.get(CALENDAR_PUSH_COLOR_KEY)).toBe('#059669');
+    });
+
+    it('clears nothing when the device cannot list its calendars', async () => {
+        const marker = '11111111-1111-4111-8111-111111111111';
+        const setups = [
+            // A creation cut short: the marked calendar exists.
+            { calendars: [PRIMARY, { id: 'made', title: 'Mindwtr', name: `mindwtr:${marker}`, accessLevel: 'owner', source: google }], storage: { [CALENDAR_PUSH_PENDING_KEY]: marker } },
+            // Nothing saved, a chosen calendar.
+            { calendars: [PRIMARY], storage: { [CALENDAR_PUSH_TARGET_ID_KEY]: 'primary' } },
+            // A saved calendar.
+            { calendars: [PRIMARY, { id: 'saved', title: 'Mindwtr', accessLevel: 'owner', source: google }], storage: { [CALENDAR_PUSH_CALENDAR_ID_KEY]: 'saved', [CALENDAR_PUSH_TARGET_ID_KEY]: 'saved' } },
+        ];
+        for (const setup of setups) {
+            const phone = device(setup);
+            phone.life.failList = true;
+            await expect(createCalendarPushService(phone.host).deleteMindwtrCalendar()).rejects.toThrow('unavailable');
+            await expect(createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).rejects.toThrow('unavailable');
+            expect({ storage: Object.fromEntries(phone.storage), calendars: phone.calendars.length }).toEqual({ storage: setup.storage, calendars: setup.calendars.length });
+        }
+    });
+
+    it('a stale saved ID gives way to the calendar a cut-short creation made', async () => {
+        const marker = '11111111-1111-4111-8111-111111111111';
+        const setup = () => device({
+            calendars: [PRIMARY, { id: 'made', title: 'Mindwtr', name: `mindwtr:${marker}`, color: '#3B82F6', accessLevel: 'owner', allowsModifications: true, source: google }],
+            storage: { [CALENDAR_PUSH_CALENDAR_ID_KEY]: 'gone', [CALENDAR_PUSH_PENDING_KEY]: marker, [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' },
+        });
+        const deleting = setup();
+        await createCalendarPushService(deleting.host).deleteMindwtrCalendar();
+        expect(deleting.calendars.map((calendar) => calendar.id)).toEqual(['primary']);
+        expect(Object.fromEntries(deleting.storage)).toEqual({ [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' });
+        const recoloring = setup();
+        expect(await createCalendarPushService(recoloring.host).updateMindwtrCalendarColor('#059669')).toBe(true);
+        const own = recoloring.calendars.filter((calendar) => calendar.title === 'Mindwtr');
+        expect(own.map((calendar) => calendar.color)).toEqual(['#059669']);
+        expect(recoloring.storage.get(CALENDAR_PUSH_CALENDAR_ID_KEY)).toBe(own[0].id);
     });
 
     it('keeps the saved ID, the chosen calendar and the pushed events when the delete fails', async () => {

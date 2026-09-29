@@ -731,6 +731,18 @@ describe('deleteMindwtrCalendar', () => {
         expect(storage.get('mindwtr:calendar-push-sync:calendar-id')).toBe('stored-calendar');
         expect(mockDeleteCalendarSyncEntry).not.toHaveBeenCalled();
     });
+
+    it('clears nothing when the device cannot list its calendars', async () => {
+        mockGetItem.mockImplementation(async (key: string) => (
+            key === 'mindwtr:calendar-push-sync:target-calendar-id' ? 'google-primary' : null
+        ));
+        mockGetCalendarsAsync.mockRejectedValue(new Error('Calendar provider unavailable'));
+
+        await expect(deleteMindwtrCalendar()).rejects.toThrow('unavailable');
+
+        expect(mockRemoveItem).not.toHaveBeenCalled();
+        expect(mockDeleteCalendarAsync).not.toHaveBeenCalled();
+    });
 });
 
 describe('buildEventDetails — date-only calendar events stay on the intended day', () => {
