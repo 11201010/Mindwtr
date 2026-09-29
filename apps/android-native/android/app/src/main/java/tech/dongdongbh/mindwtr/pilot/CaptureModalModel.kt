@@ -169,7 +169,8 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
     fun save(openAfterSave: Boolean) {
         val current = open ?: return
         if (current.edits.isNotEmpty() || inFlight != null) { keep(current.copy(queuedSave = openAfterSave), persist = false); return }
-        val action = current.pending?.takeIf { it.kind == "captureModal" } ?: FailedAction("captureModal", current.captureId, patch = mapOf("request" to
+        // An owed request (a Save's, or Create tasks' once its question closed on the failure) is sent again exactly.
+        val action = current.pending ?: FailedAction("captureModal", current.captureId, patch = mapOf("request" to
             JSONObject().put("params", current.params).put("draft", sent(current)).put("captureId", current.captureId).put("openAfterSave", openAfterSave).toString()))
         if (shell.busy || (shell.failedAction != null && shell.failedAction != action)) return
         keep(current.copy(pending = action, queuedSave = null).drafted("failed", false))
@@ -180,7 +181,7 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
     fun createLines() {
         val current = open ?: return
         if (current.lineIds.isEmpty()) return
-        val action = current.pending?.takeIf { it.kind == "captureModalLines" } ?: FailedAction("captureModalLines", current.lineIds.first(), patch = mapOf("request" to
+        val action = current.pending ?: FailedAction("captureModalLines", current.lineIds.first(), patch = mapOf("request" to
             JSONObject().put("params", current.params).put("draft", sent(current)).put("captureIds", JSONArray(current.lineIds)).toString()))
         if (shell.busy || (shell.failedAction != null && shell.failedAction != action)) return
         keep(current.copy(pending = action, queuedSave = null).drafted("failed", false))
@@ -221,9 +222,10 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
         shell.ui { answered(reply) }
     }
 
+    /** RN's failure line on the card; the several-lines question closes, as RN's does (an owed retry stays: Save or Try again). */
     private fun failed(refused: Boolean) {
         val current = open?.drafted("failed", true) ?: return
-        keep(if (refused) current.copy(pending = null, captureId = UUID.randomUUID().toString(), confirm = null, lineIds = emptyList()) else current)
+        keep(if (refused) current.copy(pending = null, captureId = UUID.randomUUID().toString(), confirm = null, lineIds = emptyList()) else current.copy(confirm = null))
     }
 
     /**

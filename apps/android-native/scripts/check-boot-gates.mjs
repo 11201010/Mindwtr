@@ -2479,7 +2479,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Save and Create tasks: the exact request on disk before the call; a retry reuses it; a refusal frees the capture UUIDs.
     assert.match(modalKt, /private fun send\(action: FailedAction\) = shell\.perform\(action\) \{ runtime ->/);
     assert.equal(code(modalKt).match(/keep\(current\.copy\(pending = action, [^\n]*\)\)\s+send\(action\)/g)?.length, 2, 'Save and Create tasks persist their request first');
-    for (const kind of ['captureModal', 'captureModalLines']) assert.match(modalKt, new RegExp(`current\\.pending\\?\\.takeIf \\{ it\\.kind == "${kind}" \\}`), `${kind}: a retry reuses the pending request`);
+    // While a request is owed, Save and Create tasks send that exact request again, whichever it was.
+    assert.equal(code(modalKt).match(/val action = current\.pending \?: FailedAction\(/g)?.length, 2, 'a retry reuses the pending request');
+    // A failed save closes the several-lines question, as RN's does; the card shows the failure, and the banner's Try again the retry.
+    assert.match(modalKt, /keep\(if \(refused\) current\.copy\(pending = null, captureId = UUID\.randomUUID\(\)\.toString\(\), confirm = null, lineIds = emptyList\(\)\) else current\.copy\(confirm = null\)\)/);
     assert.match(modalKt, /shell\.acknowledged\(action\)/);
     assert.match(modalKt, /val refused = UPDATE_REFUSALS\.any \{ failure\.message\?\.startsWith\(it\) == true \}/);
     // A refusal wrote nothing, so a refused retry of an owed save settles it: the screen unlocks (as the popup's freeCapture).
