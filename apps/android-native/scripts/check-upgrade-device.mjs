@@ -85,7 +85,7 @@ for (const apk of Object.values(APKS)) {
 // Expo prebuild derives the Java namespace from the harness package, so the
 // harness RN activity is not the store app's `tech.dongdongbh.mindwtr.MainActivity`.
 const RN_ACTIVITY = `${PKG}/${PKG}.MainActivity`;
-const NATIVE_ACTIVITY = `${PKG}/tech.dongdongbh.mindwtr.pilot.MainActivity`;
+const NATIVE_ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const GUARD = 'releaseCheck=v1.3.3/native-android-legacy-json-ahead-guard';
 const IMPORT = 'v1.3.3/native-android-legacy-json-import';

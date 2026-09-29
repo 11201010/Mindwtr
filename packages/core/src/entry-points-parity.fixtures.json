@@ -1,0 +1,1869 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_ENTRY_POINTS=1 MINDWTR_CAPTURE_ENTRY_POINTS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run tests/entry-points.parity.test.tsx",
+  "capturedAt": "4735572f9e57eaf7460093ad2dc980a56c04c87e",
+  "sourceState": "Every file under apps/ and packages/ was at HEAD except this entry-points parity harness and its fixture.",
+  "rendering": "Platform.OS is android. useRootLayoutExternalCapture runs under react-test-renderer with canonical data ready, one delivery per link or share, and a router that cannot go back; the store holds `store`. resolveText is core's translateWithFallback over the English strings. A share is read by expo-share-intent's parseShareIntent from the payload its Android module sends for ACTION_SEND text/plain.",
+  "amendments": [
+   "shares: the email share (subject 'Subject', body 'Body with https://example.com/doc') no longer repeats the body's link in the description (RN bug fix after the capture: buildShareCaptureDraft adds the link only when the body does not hold it)."
+  ]
+ },
+ "timeZone": "UTC",
+ "now": "2026-09-28T09:00:00.000Z",
+ "store": {
+  "tasks": [
+   {
+    "id": "t-live"
+   },
+   {
+    "id": "t-deleted",
+    "deletedAt": "2026-09-01T00:00:00.000Z"
+   }
+  ],
+  "projects": [
+   {
+    "id": "p-live"
+   },
+   {
+    "id": "p-deleted",
+    "deletedAt": "2026-09-01T00:00:00.000Z"
+   }
+  ],
+  "areas": [
+   {
+    "id": "a-live"
+   },
+   {
+    "id": "a-deleted",
+    "deletedAt": "2026-09-01T00:00:00.000Z"
+   }
+  ]
+ },
+ "urls": [
+  {
+   "url": "mindwtr://capture?title=Buy%20groceries&note=From%20store&project=Shopping&tags=errands,%20home",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Buy groceries",
+    "note": "From store",
+    "project": "Shopping",
+    "tags": [
+     "errands",
+     "home"
+    ]
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Buy%20groceries",
+        "initialProps": "%7B%22description%22%3A%22From%20store%22%2C%22tags%22%3A%5B%22%23errands%22%2C%22%23home%22%5D%7D",
+        "project": "Shopping"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture?text=Pay%20bill&description=Utility",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Pay bill",
+    "note": "Utility",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Pay%20bill",
+        "initialProps": "%7B%22description%22%3A%22Utility%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture?name=Call%20dentist&description=Tomorrow",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Call dentist",
+    "note": "Tomorrow",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Call%20dentist",
+        "initialProps": "%7B%22description%22%3A%22Tomorrow%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture?thingName=Water%20plants&thingDescription=Balcony",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Water plants",
+    "note": "Balcony",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Water%20plants",
+        "initialProps": "%7B%22description%22%3A%22Balcony%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture?itemListName=Groceries&itemListElementName=Milk",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Milk",
+    "note": "List: Groceries",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Milk",
+        "initialProps": "%7B%22description%22%3A%22List%3A%20Groceries%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture?itemListName=Groceries",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Groceries",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Groceries"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://capture?title=%20Task%20&tags=%20alpha%20,%20,%20%23beta%20,Alpha",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Task",
+    "tags": [
+     "alpha",
+     "#beta",
+     "Alpha"
+    ]
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Task",
+        "initialProps": "%7B%22tags%22%3A%5B%22%23alpha%22%2C%22%23beta%22%5D%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://capture?title=Plan%20trip&project=p-live&body=Book%20flights",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Plan trip",
+    "note": "Book flights",
+    "project": "p-live",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Plan%20trip",
+        "initialProps": "%7B%22description%22%3A%22Book%20flights%22%7D",
+        "project": "p-live"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://capture?title=Plan&project=%20",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Plan",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Plan"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:capture?title=Voice%20note&source=create_note&note=Longer%20spoken%20text",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Voice note",
+    "note": "Longer spoken text",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Voice%20note",
+        "initialProps": "%7B%22description%22%3A%22Longer%20spoken%20text%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "MINDWTR://CAPTURE?title=Upper%20case",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": {
+    "title": "Upper case",
+    "tags": []
+   },
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Upper%20case"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://capture?title=&note=Only%20a%20note",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [],
+    "toasts": [
+     {
+      "title": "Capture shortcut unavailable",
+      "message": "Mindwtr could not read a task title from that shortcut link.",
+      "tone": "warning"
+     }
+    ],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://capture",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [],
+    "toasts": [
+     {
+      "title": "Capture shortcut unavailable",
+      "message": "Mindwtr could not read a task title from that shortcut link.",
+      "tone": "warning"
+     }
+    ],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture",
+   "isShortcutCaptureUrl": true,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [],
+    "toasts": [
+     {
+      "title": "Capture shortcut unavailable",
+      "message": "Mindwtr could not read a task title from that shortcut link.",
+      "tone": "warning"
+     }
+    ],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://capture-quick",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/capture-modal?origin=system",
+   "redirectWarm": "/capture-modal?origin=system",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///capture-quick?source=control",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/capture-modal?origin=system",
+   "redirectWarm": "/capture-modal?origin=system",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open-feature?feature=capture",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "capture"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/capture-quick?mode=text",
+   "redirectWarm": "/capture-quick?mode=text",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/capture-quick?mode=text"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=quick_capture",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "quick_capture"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/capture-quick?mode=text",
+   "redirectWarm": "/capture-quick?mode=text",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/capture-quick?mode=text"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=FEATURE_ADD-TASK",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "FEATURE_ADD-TASK"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/capture-quick?mode=text",
+   "redirectWarm": "/capture-quick?mode=text",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/capture-quick?mode=text"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=new%20task",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "new task"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/capture-quick?mode=text",
+   "redirectWarm": "/capture-quick?mode=text",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/capture-quick?mode=text"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=today",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "today"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/focus",
+   "redirectWarm": "/focus",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/focus"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=next_actions",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "next_actions"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/focus",
+   "redirectWarm": "/focus",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/focus"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=Waiting%20For",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "Waiting For"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/waiting",
+   "redirectWarm": "/waiting",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/waiting"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=someday%20maybe",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "someday maybe"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/someday",
+   "redirectWarm": "/someday",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/someday"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=project-list",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "project-list"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/projects",
+   "redirectWarm": "/projects",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/projects"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=weekly-review",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "weekly-review"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/review-tab",
+   "redirectWarm": "/review-tab",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/review-tab"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=schedule",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "schedule"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/calendar",
+   "redirectWarm": "/calendar",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/calendar"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=inbox",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "inbox"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=unknown",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": "unknown"
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///open-feature?feature=",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": null
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open-feature",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": true,
+   "parseOpenFeatureUrl": {
+    "feature": null
+   },
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?task=t-live",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "task",
+    "id": "t-live"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/focus",
+       "params": {
+        "taskId": "t-live",
+        "openToken": "deeplink:1790586000000",
+        "taskTab": "view"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": [
+     "t-live"
+    ]
+   }
+  },
+  {
+   "url": "mindwtr:///open?task=t-deleted",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "task",
+    "id": "t-deleted"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?task=missing",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "task",
+    "id": "missing"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?project=p-live",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "project",
+    "id": "p-live"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/projects-screen",
+       "params": {
+        "projectId": "p-live"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?project=p-deleted",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "project",
+    "id": "p-deleted"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?area=a-live",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "area",
+    "id": "a-live"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/projects-screen"
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?area=a-deleted",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "area",
+    "id": "a-deleted"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open?task=%20&project=p-live",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": {
+    "kind": "project",
+    "id": "p-live"
+   },
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/projects-screen",
+       "params": {
+        "projectId": "p-live"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://open",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": true,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "/inbox",
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      "/inbox"
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://redirect",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/settings?settingsScreen=sync",
+   "redirectWarm": "/settings?settingsScreen=sync",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://redirect?code=abc&state=xyz",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/settings?settingsScreen=sync",
+   "redirectWarm": "/settings?settingsScreen=sync",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///redirect/",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/settings?settingsScreen=sync",
+   "redirectWarm": "/settings?settingsScreen=sync",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///focus",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr:///focus",
+   "redirectWarm": "mindwtr:///focus",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://inbox",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr://inbox",
+   "redirectWarm": "mindwtr://inbox",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///global-search?q=milk",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr:///global-search?q=milk",
+   "redirectWarm": "mindwtr:///global-search?q=milk",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///calendar",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr:///calendar",
+   "redirectWarm": "mindwtr:///calendar",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://waiting",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr://waiting",
+   "redirectWarm": "mindwtr://waiting",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///review-tab",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr:///review-tab",
+   "redirectWarm": "mindwtr:///review-tab",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr:///board",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr:///board",
+   "redirectWarm": "mindwtr:///board",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr://dataUrl=mindwtrShareKey",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "/inbox",
+   "redirectWarm": "",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "https://mindwtr.app/capture?title=Test",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "https://mindwtr.app/capture?title=Test",
+   "redirectWarm": "https://mindwtr.app/capture?title=Test",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "other://capture?title=Test",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "other://capture?title=Test",
+   "redirectWarm": "other://capture?title=Test",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "url": "mindwtr-native-dev://capture?title=Other%20scheme",
+   "isShortcutCaptureUrl": false,
+   "parseShortcutCaptureUrl": null,
+   "isOpenFeatureUrl": false,
+   "parseOpenFeatureUrl": null,
+   "isEntityOpenUrl": false,
+   "parseEntityOpenUrl": null,
+   "redirectCold": "mindwtr-native-dev://capture?title=Other%20scheme",
+   "redirectWarm": "mindwtr-native-dev://capture?title=Other%20scheme",
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  }
+ ],
+ "features": [
+  {
+   "feature": null,
+   "path": "/inbox"
+  },
+  {
+   "feature": "",
+   "path": "/inbox"
+  },
+  {
+   "feature": "capture",
+   "path": "/capture-quick?mode=text"
+  },
+  {
+   "feature": "Quick-Capture",
+   "path": "/capture-quick?mode=text"
+  },
+  {
+   "feature": "feature_add_task",
+   "path": "/capture-quick?mode=text"
+  },
+  {
+   "feature": "FEATURE-NEW-TASK",
+   "path": "/capture-quick?mode=text"
+  },
+  {
+   "feature": "focus",
+   "path": "/focus"
+  },
+  {
+   "feature": "today",
+   "path": "/focus"
+  },
+  {
+   "feature": "next",
+   "path": "/focus"
+  },
+  {
+   "feature": "next actions",
+   "path": "/focus"
+  },
+  {
+   "feature": "waiting",
+   "path": "/waiting"
+  },
+  {
+   "feature": "waiting_for",
+   "path": "/waiting"
+  },
+  {
+   "feature": "someday",
+   "path": "/someday"
+  },
+  {
+   "feature": "maybe",
+   "path": "/someday"
+  },
+  {
+   "feature": "Someday Maybe",
+   "path": "/someday"
+  },
+  {
+   "feature": "projects",
+   "path": "/projects"
+  },
+  {
+   "feature": "project list",
+   "path": "/projects"
+  },
+  {
+   "feature": "review",
+   "path": "/review-tab"
+  },
+  {
+   "feature": "daily review",
+   "path": "/review-tab"
+  },
+  {
+   "feature": "weekly_review",
+   "path": "/review-tab"
+  },
+  {
+   "feature": "calendar",
+   "path": "/calendar"
+  },
+  {
+   "feature": "schedule",
+   "path": "/calendar"
+  },
+  {
+   "feature": "inbox",
+   "path": "/inbox"
+  },
+  {
+   "feature": "settings",
+   "path": "/inbox"
+  },
+  {
+   "feature": "  Focus  ",
+   "path": "/focus"
+  }
+ ],
+ "tags": [
+  {
+   "tags": [],
+   "normalized": []
+  },
+  {
+   "tags": [
+    "a"
+   ],
+   "normalized": [
+    "#a"
+   ]
+  },
+  {
+   "tags": [
+    "a",
+    "#a",
+    "A"
+   ],
+   "normalized": [
+    "#a"
+   ]
+  },
+  {
+   "tags": [
+    "  x  ",
+    "",
+    "#y",
+    "Y"
+   ],
+   "normalized": [
+    "#x",
+    "#y"
+   ]
+  },
+  {
+   "tags": [
+    "#",
+    "two words"
+   ],
+   "normalized": [
+    "#",
+    "#two words"
+   ]
+  }
+ ],
+ "shares": [
+  {
+   "share": {
+    "text": "The paragraph I selected in another app",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "The paragraph I selected in another app",
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "The%20paragraph%20I%20selected%20in%20another%20app"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "https://example.com/article",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "https://example.com/article",
+    "webUrl": "https://example.com/article",
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "https%3A%2F%2Fexample.com%2Farticle"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "Read this https://example.com/a?b=1 later",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "Read this https://example.com/a?b=1 later",
+    "webUrl": "https://example.com/a?b=1",
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Read%20this%20https%3A%2F%2Fexample.com%2Fa%3Fb%3D1%20later",
+        "initialProps": "%7B%22description%22%3A%22https%3A%2F%2Fexample.com%2Fa%3Fb%3D1%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "Two links http://one.example.com and https://two.example.org/x",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "Two links http://one.example.com and https://two.example.org/x",
+    "webUrl": "http://one.example.com",
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Two%20links%20http%3A%2F%2Fone.example.com%20and%20https%3A%2F%2Ftwo.example.org%2Fx",
+        "initialProps": "%7B%22description%22%3A%22http%3A%2F%2Fone.example.com%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "  padded text  ",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "  padded text  ",
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "padded%20text"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "Body of the email",
+    "title": null,
+    "subject": "Email subject"
+   },
+   "read": {
+    "text": "Body of the email",
+    "webUrl": null,
+    "subject": "Email subject",
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Email%20subject",
+        "initialProps": "%7B%22description%22%3A%22Body%20of%20the%20email%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "Body with https://example.com/doc",
+    "title": null,
+    "subject": "Subject"
+   },
+   "read": {
+    "text": "Body with https://example.com/doc",
+    "webUrl": "https://example.com/doc",
+    "subject": "Subject",
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Subject",
+        "initialProps": "%7B%22description%22%3A%22Body%20with%20https%3A%2F%2Fexample.com%2Fdoc%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "https://example.com/only-link",
+    "title": "Page title",
+    "subject": "Ignored subject"
+   },
+   "read": {
+    "text": "https://example.com/only-link",
+    "webUrl": "https://example.com/only-link",
+    "subject": "Page title",
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Page%20title",
+        "initialProps": "%7B%22description%22%3A%22https%3A%2F%2Fexample.com%2Fonly-link%22%7D"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "text",
+    "title": "",
+    "subject": "Subject after empty title"
+   },
+   "read": {
+    "text": "text",
+    "webUrl": null,
+    "subject": "",
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "text"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "   ",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "   ",
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [],
+    "toasts": [
+     {
+      "title": "Share unavailable",
+      "message": "Mindwtr could not read text or a URL from the shared item.",
+      "tone": "warning"
+     }
+    ],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "   ",
+    "title": null,
+    "subject": "Subject only"
+   },
+   "read": {
+    "text": "   ",
+    "webUrl": null,
+    "subject": "Subject only",
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Subject%20only"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "",
+    "title": null,
+    "subject": "Subject without text"
+   },
+   "read": {
+    "text": null,
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": false
+   },
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": null,
+    "title": null,
+    "subject": "Subject without text"
+   },
+   "read": {
+    "text": null,
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": false
+   },
+   "delivered": {
+    "router": [],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "mail me at someone@example.com",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "mail me at someone@example.com",
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "mail%20me%20at%20someone%40example.com"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "www.example.com without scheme",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "www.example.com without scheme",
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "www.example.com%20without%20scheme"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  },
+  {
+   "share": {
+    "text": "Multi\nline\nshare",
+    "title": null,
+    "subject": null
+   },
+   "read": {
+    "text": "Multi\nline\nshare",
+    "webUrl": null,
+    "subject": null,
+    "hasShareIntent": true
+   },
+   "delivered": {
+    "router": [
+     [
+      "replace",
+      {
+       "pathname": "/capture-modal",
+       "params": {
+        "initialValue": "Multi%0Aline%0Ashare"
+       }
+      }
+     ]
+    ],
+    "toasts": [],
+    "highlights": []
+   }
+  }
+ ]
+}

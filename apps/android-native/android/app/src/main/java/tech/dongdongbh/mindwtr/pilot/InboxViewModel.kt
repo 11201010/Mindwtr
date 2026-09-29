@@ -213,6 +213,10 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val menu = MenuModel(this, saved, prefs, File(app.noBackupFilesDir, "menu"))
     /** RN's app lock (AppLock.kt): core's stored value and the gate's state. */
     val lock = AppLock(this)
+    /** A link, share or assistant note waiting to open (EntryPoints.kt). */
+    val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
+    /** A system capture ended: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
+    var leaveApp by mutableStateOf(false); private set
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
@@ -849,19 +853,32 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         if (capture != null) return
         perform { runtime ->
             val view = runtime.openQuickCapture()
-            ui {
-                keepCapture(CaptureDraft.opened(view))
-                val addAnother = view.getJSONObject("addAnother")
-                if (prefs.getString(ADD_ANOTHER_KEY, null) == "true" && !addAnother.getBoolean("value")) editCapture(addAnother.getJSONObject("edit"))
-            }
+            ui { openedCapture(view, "", returnToPreviousApp = false) }
         }
+    }
+
+    /** The popup on core's [view] with [text] (an entry's draft, EntryPoints.kt, replaces an open one), then RN's sticky "Add another". */
+    internal fun openedCapture(view: JSONObject, text: String, returnToPreviousApp: Boolean) {
+        captureInFlight = null
+        keepCapture(CaptureDraft.opened(view).copy(text = text, returnToPreviousApp = returnToPreviousApp))
+        val addAnother = view.getJSONObject("addAnother")
+        if (prefs.getString(ADD_ANOTHER_KEY, null) == "true" && !addAnother.getBoolean("value")) editCapture(addAnother.getJSONObject("edit"))
     }
 
     /** RN's Close (and the backdrop, and Back): the draft goes, as RN's popup discards it. */
     fun closeCapture() {
-        keepCapture(null)
+        endCapture()
         captureInFlight = null
     }
+
+    /** The popup closes; a system capture then puts the app behind the previous one (RN's finishCapture, #1169). */
+    private fun endCapture() {
+        val back = capture?.returnToPreviousApp == true
+        keepCapture(null)
+        if (back) leaveApp = true
+    }
+
+    fun leftApp() { leaveApp = false }
 
     /**
      * After process death: the popup comes back with its draft. An answer whose outcome was unknown is sent again
@@ -1016,7 +1033,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     keepCapture(fresh.copy(text = reset.getString("text"), options = reset.getJSONObject("options"), picker = null, confirm = null).reading())
                     pumpCapture()
                 }
-                else -> keepCapture(null)
+                else -> endCapture()
             }
             "refused" -> {
                 reply.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
@@ -1029,11 +1046,33 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
     }
 
-    fun cancelCaptureLines() { capture?.let { keepCapture(it.copy(confirm = null, lineIds = emptyList())) } }
+    fun cancelCaptureLines() { capture?.let { keepCapture(it.copy(confirm = null, lineIds = emptyList(), linesText = null)) } }
 
-    /** The several lines' exact request: the text, core's options and one capture UUID per line. A retry reuses it. */
+    /**
+     * RN's Import .txt (More's panel): the picked file's text, read off the main thread, then core's plan for it: several lines
+     * ask RN's question (Create tasks sends the file's text), one line goes into the field, an empty file does nothing, and an
+     * unreadable one shows core's toast.
+     */
+    fun importCaptureText(uri: android.net.Uri) {
+        if (capture == null) return
+        perform { runtime ->
+            val text = getApplication<Application>().readPickedText(uri)
+            val plan = runtime.menuRead("captureImport", JSONObject().put("text", text ?: JSONObject.NULL).toString())
+            ui {
+                val current = capture ?: return@ui
+                when (plan.getString("kind")) {
+                    "confirmLines" -> keepCapture(current.copy(confirm = plan.getJSONObject("confirm"), linesText = plan.getString("text"),
+                        lineIds = List(plan.getInt("lineCount")) { UUID.randomUUID().toString() }))
+                    "setText" -> typeCapture(plan.getString("text"))
+                    "refused" -> plan.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+                }
+            }
+        }
+    }
+
+    /** The several lines' exact request: the text (an imported file's, else the field's), core's options and one capture UUID per line. A retry reuses it. */
     fun linesAction(current: CaptureDraft) = current.pending?.takeIf { it.kind == "captureLines" }
-        ?: FailedAction("captureLines", current.lineIds.first(), current.text,
+        ?: FailedAction("captureLines", current.lineIds.first(), current.linesText ?: current.text,
             patch = mapOf("options" to current.options.toString(), "captureIds" to current.lineIds.joinToString(",")))
 
     /** RN's Create tasks: the request is on disk before the call. */
@@ -1086,9 +1125,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         acknowledged(action)
         ui {
             val current = capture ?: return@ui
-            if (reply.getString("kind") == "saved") keepCapture(null) else {
+            if (reply.getString("kind") == "saved") endCapture() else {
                 reply.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
-                keepCapture(current.copy(pending = null, confirm = null, lineIds = emptyList(), snapshot = null, snapshotTaken = false))
+                keepCapture(current.copy(pending = null, confirm = null, lineIds = emptyList(), linesText = null, snapshot = null, snapshotTaken = false))
             }
         }
     }
@@ -1135,9 +1174,9 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         saved["search"] = value?.state()?.toString()
     }
 
-    /** RN's header search button: an empty query and RN's default filters. */
-    fun openSearch() {
-        keepSearch(SearchState())
+    /** RN's header search button: an empty query and RN's default filters; a link's search opens with core's query and filters. */
+    fun openSearch(state: SearchState = SearchState()) {
+        keepSearch(state)
         searchView = null
         readSearch()
     }

@@ -17,16 +17,50 @@
             android:name="androidx.profileinstaller.ProfileInstallReceiver"
             tools:node="remove" />
 
+        <!-- singleTask, as RN's MainActivity: a link, share or note sent while the app runs reaches onNewIntent in the app's
+             own task. Not exported: only its alias below, with RN's filters, starts it from outside the app. -->
         <activity
             android:name=".MainActivity"
+            android:exported="false"
+            android:label="Mindwtr Native Dev"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- RN's component name, <applicationId>.MainActivity: home-screen icons, pinned shortcuts and widgets launch it
+             (inventory section 6). It carries RN's entry points (plugins/android-app-shortcuts.js, app.json's share intent):
+             the launcher, links of the build's scheme, text shares (files come with the attachments pass), Google Assistant's
+             notes, and the app shortcuts. Every input is untrusted: core reads it (resolveNativeEntryPoint). -->
+        <activity-alias
+            android:name="${applicationId}.MainActivity"
             android:exported="true"
             android:label="Mindwtr Native Dev"
-            android:windowSoftInputMode="adjustResize">
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${urlScheme}" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.actions.CREATE_NOTE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.VOICE" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/mindwtr_shortcuts" />
+        </activity-alias>
     </application>
 
     <!-- RN's app lock asks BiometricPrompt (AppLock.kt), as expo-local-authentication's manifest allows. -->

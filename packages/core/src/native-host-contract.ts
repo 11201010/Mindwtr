@@ -251,6 +251,7 @@ import { createAreaColorMethods } from './native-host-contract-area-color';
 import { createAreaRenameMethods } from './native-host-contract-area-rename';
 import { createAreaOrderMethods } from './native-host-contract-area-order';
 import { createAreaDeleteMethods } from './native-host-contract-area-delete';
+import { createEntryPointMethods } from './native-host-contract-entry-points';
 import { createCalendarViewMethods } from './native-host-contract-calendar';
 import { createBoardViewMethods } from './native-host-contract-board';
 import { createInboxViewMethods } from './native-host-contract-inbox-view';
@@ -1475,6 +1476,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
         }),
+        // Links, shares, assistant notes and Import .txt: native-host-contract-entry-points.ts.
+        ...createEntryPointMethods({ readiness, t: () => translate }),
         // The Inbox tab's list, toolbar and screen parts: native-host-contract-inbox-view.ts.
         ...inboxViewMethods,
         // Selection mode on those lists: native-host-contract-bulk-actions.ts.

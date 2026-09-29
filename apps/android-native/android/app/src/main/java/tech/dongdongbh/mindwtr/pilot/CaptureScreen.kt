@@ -2,6 +2,8 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
@@ -64,10 +66,15 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -104,7 +111,9 @@ private val READ = JSONObject().put("read", true)
  * ID per line ([lineIds]); [snapshot] is the recovery snapshot the batch sends, the name as written ([snapshotTaken]:
  * taken, null in sandbox mode). [requests] are reads and edits with core or waiting, sent one at a time; the edits are
  * part of the durable draft and are sent again after process death. [queuedSave] is a Save tapped while they waited
- * ("save" or "edit" for Save and edit).
+ * ("save" or "edit" for Save and edit). [linesText] is an imported file's text while its several-lines question is open
+ * (Create tasks sends it in place of the field's). [returnToPreviousApp]: a system capture (EntryPoints.kt) puts the app
+ * behind the previous one when the popup closes.
  */
 data class CaptureDraft(
     val session: String,
@@ -122,6 +131,8 @@ data class CaptureDraft(
     val queuedSave: String? = null,
     val snapshot: String? = null,
     val snapshotTaken: Boolean = false,
+    val linesText: String? = null,
+    val returnToPreviousApp: Boolean = false,
 ) {
     /** A read queued behind whatever is queued, unless one is already last. */
     fun reading(): CaptureDraft = if (requests.lastOrNull() === READ) this else copy(requests = requests + READ)
@@ -131,6 +142,7 @@ data class CaptureDraft(
         .put("confirm", confirm ?: JSONObject.NULL).put("lineIds", lineIds.joinToString(","))
         .put("edits", org.json.JSONArray().apply { requests.forEach { request -> request.optJSONObject("edit")?.let(::put) } })
         .put("snapshot", snapshot ?: JSONObject.NULL).put("snapshotTaken", snapshotTaken)
+        .put("linesText", linesText ?: JSONObject.NULL).put("returnToPreviousApp", returnToPreviousApp)
         .put("pending", pending?.let { JSONObject().put("kind", it.kind).put("id", it.id).put("title", it.title).put("patch", JSONObject(it.patch)) } ?: JSONObject.NULL)
 
     companion object {
@@ -148,6 +160,8 @@ data class CaptureDraft(
             // Edits core had not answered go again, in order.
             requests = saved.optJSONArray("edits")?.let { edits -> List(edits.length()) { JSONObject().put("edit", edits.getJSONObject(it)) } }.orEmpty(),
             snapshot = if (saved.isNull("snapshot")) null else saved.optString("snapshot"), snapshotTaken = saved.optBoolean("snapshotTaken"),
+            linesText = if (saved.isNull("linesText")) null else saved.optString("linesText").ifEmpty { null },
+            returnToPreviousApp = saved.optBoolean("returnToPreviousApp"),
         )
     }
 }
@@ -234,6 +248,8 @@ fun CapturePopup(model: InboxViewModel, draft: CaptureDraft) = with(model) {
     // Reads and edits wait while an action runs; they go on once none does.
     LaunchedEffect(busy, failed) { if (!busy && !failed) pumpCapture() }
     val closable = !busy && !failed
+    // RN's Import .txt: the system's document picker for a text file (DocumentPicker, type text/plain).
+    val importText = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importCaptureText) }
     BackHandler(enabled = !failed) {
         if (busy) return@BackHandler
         when {
@@ -357,6 +373,7 @@ fun CapturePopup(model: InboxViewModel, draft: CaptureDraft) = with(model) {
                         Text(help, style = rnText(11, 600), color = c.secondaryText, modifier = Modifier.padding(start = 4.dp))
                     }
                     if (helpOpen) Text(copy.getString("syntaxHelpText"), style = rnText(11, 500, 15), color = c.secondaryText, modifier = Modifier.padding(top = 4.dp))
+                    ImportTextButton(!locked) { importText.launch(arrayOf("text/plain")) }
                     DueDates(view.getJSONObject("due"), !locked, { editCapture(it) }) { focusManager.clearFocus(); pickDay = true }
                 }
 
@@ -420,6 +437,21 @@ private fun NoteField(draft: CaptureDraft, placeholder: String, label: String, e
                 inner()
             }
         })
+}
+
+/** RN's Import .txt pill in More's panel: the file glyph and the label, on the filter background with a border. */
+@Composable
+private fun ImportTextButton(enabled: Boolean, pick: () -> Unit) {
+    val c = LocalTheme.current.colors
+    val pill = RoundedCornerShape(999.dp)
+    val label = t("quickAdd.bulkImportTextFileLabel")
+    Row(Modifier.padding(top = 8.dp).heightIn(min = 38.dp).clip(pill).background(c.filterBg).border(1.dp, c.border, pill)
+        .clearAndSetSemantics { contentDescription = label; role = Role.Button; testTag = "capture-import-text"; if (enabled) onClick { pick(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = pick).padding(horizontal = 10.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Lucide.FileText, null, tint = c.text, modifier = Modifier.size(16.dp))
+        Text(t("quickAdd.bulkImportTextFile"), style = rnText(12, 700), color = c.text, maxLines = 2)
+    }
 }
 
 /** RN's QuickAddPreview: core's entries as passive chips (a warning in the danger color), at most six, then "+N". */
