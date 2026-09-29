@@ -142,7 +142,12 @@ export const openScratchSqlite = (file: string) => {
  * hold one, or fail one). `restart()` is process death: nothing in memory survives
  * (the store, the receipts, the connection); the host boots again from the file.
  */
-export async function openSqliteHost(seed: Partial<AppData>, wrap: (client: SqliteClient) => SqliteClient = (client) => client) {
+export async function openSqliteHost(
+    seed: Partial<AppData>,
+    wrap: (client: SqliteClient) => SqliteClient = (client) => client,
+    /** The host's bindings (createNativeHostContract's options), such as `ai`. */
+    bindings: Omit<NonNullable<Parameters<typeof createNativeHostContract>[0]>, 'replayTokens'> = {},
+) {
     const dir = mkdtempSync(join(tmpdir(), 'mindwtr-receipts-'));
     const file = join(dir, 'mindwtr.db');
     let database = openDatabase(file);
@@ -159,7 +164,7 @@ export async function openSqliteHost(seed: Partial<AppData>, wrap: (client: Sqli
         const client = wrap(clientOf(database));
         setStorageAdapter(new NativeReceiptSqliteAdapter(client));
         await loadNativeRequestReceipts(client);
-        const host = createNativeHostContract({ replayTokens: 'required' });
+        const host = createNativeHostContract({ ...bindings, replayTokens: 'required' });
         value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
         value(await host.activate({ writeSafetyReady: true }));
         return host;

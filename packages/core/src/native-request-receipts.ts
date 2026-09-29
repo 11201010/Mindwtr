@@ -224,8 +224,9 @@ export const withRequestProject = (projects: readonly Project[], id: string, tit
  * such as one that carries a secret: their receipts stay in memory and never reach the disk.
  * calendarFeedAdd: a new calendar subscription, whose URL may carry a password
  * (native-host-contract-settings-calendar.ts addCalendarFeed).
+ * setAIKey carries an AI key (NATIVE_AI_UNJOURNALED_COMMANDS); the Sync settings pass adds its own.
  */
-export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>(['calendarFeedAdd']);
+export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>(['calendarFeedAdd', 'setAIKey']);
 
 const commandOf = (payload: string): string => /^\["([^"\\]{1,64})"/.exec(payload)?.[1] ?? '';
 /** What the disk keeps of a request: its command name and a 128-bit hash of its payload, never the payload's text. */

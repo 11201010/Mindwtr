@@ -286,6 +286,7 @@ import {
 } from './native-host-contract-focus-controls';
 import { createSettingsMethods } from './native-host-contract-settings';
 import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
+import { createAIMethods, type NativeAIHost } from './native-host-contract-ai';
 export { NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 import { createCalendarSettingsMethods, type NativeCalendarHost } from './native-host-contract-settings-calendar';
 export {
@@ -299,6 +300,7 @@ export {
     type NativeCalendarSettingsEdit,
     type NativeCalendarToast,
 } from './native-host-contract-settings-calendar';
+export { NATIVE_AI_UNJOURNALED_COMMANDS, type NativeAIHost } from './native-host-contract-ai';
 import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
@@ -857,13 +859,14 @@ const applyNativeTaskDraftEdit = (
  * One instance per serial native JS host. All reads and commands use the shared store.
  * `syncSettings` binds the host's device for Settings › Sync (native-host-contract-settings-sync.ts);
  * `calendar` binds it for the external calendars and Settings › Calendar
- * (native-host-contract-settings-calendar.ts).
+ * (native-host-contract-settings-calendar.ts); `ai` for Settings › AI and the AI actions (native-host-contract-ai.ts).
  * `replayTokens` (NativeReplayTokens, native-request-receipts.ts): 'required' for a host that
  * journals its writes; the default, 'optional', lets a write leave its replay tokens out.
  */
 export function createNativeHostContract(options: {
     syncSettings?: NativeSyncSettingsHost;
     calendar?: NativeCalendarHost;
+    ai?: NativeAIHost;
     replayTokens?: NativeReplayTokens;
 } = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
@@ -1459,14 +1462,29 @@ export function createNativeHostContract(options: {
         },
     });
 
+    // Built before the contract object: Process Inbox's Clarify reads the current step's draft.
+    const inboxProcessingMethods = createInboxProcessingMethods({
+        readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
+        revision: (now) => `${revision()}:${displayRevision(now)}`,
+    });
+
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
         ...createTaskChecklistSaveMethods({ readiness, save,
             validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
-        ...createInboxProcessingMethods({
-            readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
-            revision: (now) => `${revision()}:${displayRevision(now)}`,
+        ...inboxProcessingMethods,
+        // Settings › AI and the AI actions: native-host-contract-ai.ts.
+        ...createAIMethods({
+            readiness,
+            save,
+            t: () => translate,
+            language: () => language,
+            requestIdPattern: CAPTURE_ID_PATTERN,
+            host: () => options.ai ?? null,
+            readDraft: readTaskDraft,
+            isReadOnly: isInArchivedProject,
+            inboxStep: (input) => inboxProcessingMethods.getInboxProcessingStep(input),
         }),
         ...createListViewMethods({
             readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
