@@ -73,10 +73,10 @@ fun Context.readPickedText(uri: Uri): String? = runCatching {
 
 /**
  * The entries waiting to open, oldest first ([EntryQueue], on disk from the intent's arrival, so a process death or a
- * force-stop keeps them). The oldest opens once no command runs or is owed and nothing the user is working in covers the
- * screen (the editor, Process Inbox, Mind Sweep, a capture's save): their work stays, and the entry opens when they end. An
- * entry leaves the queue only after its screen or popup opened; a failed read keeps it for another try (after [RETRY_MS]),
- * unless core refused the input itself.
+ * force-stop keeps them). The oldest opens once no command runs or is owed and nothing the user is working in is open (the
+ * editor, Process Inbox, Mind Sweep, the capture popup, a Menu or Focus dialog, the Calendar's composer, the search's save
+ * dialog): that work stays, and the entry opens when it ends. An entry leaves the queue only after its screen or popup opened;
+ * a failed read keeps it for another try (after [RETRY_MS]), unless core refused the input itself.
  */
 class EntryRouter(private val shell: InboxViewModel, dir: File) {
     private val queue = EntryQueue(dir)
@@ -95,9 +95,10 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
         head = queue.head()?.id
     }
 
-    /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work covers the screen. */
+    /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work is open. */
     val blocked: Boolean get() = with(shell) {
-        !writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture?.pending != null
+        !writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture != null
+            || menu.dialog != null || menu.focusControls.dialog != null || menu.calendar.composer != null || search?.saveName != null
             || menu.screen == MenuScreen.MindSweep
     }
 

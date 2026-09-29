@@ -10,9 +10,10 @@
 // Someday (open-feature), the Calendar, the global search with its query, a task (the editor over Focus), a project, the
 // capture popup (open-feature capture), a capture link's title, an assistant note's name (CREATE_NOTE), and a capture link
 // without a title (core's toast); (d) a widget's quick capture link (capture-quick) opens the popup, and its Close puts the
-// app behind the previous screen (RN's #1169); (g) the closed popups stored nothing; (h) a share waiting behind the editor
-// survives a force-stop and opens after the relaunch. Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
-// (check-projects-device.mjs --prune-old removes earlier runs'). It never types, never launches over another app, and
+// app behind the previous screen (RN's #1169); (e) two shares sent together open one after the other; (f) a share arriving
+// over a typed capture draft waits until the draft closes; (g) the closed popups stored nothing; (h) a share waiting behind the
+// editor survives a force-stop and opens after the relaunch. Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
+// (check-projects-device.mjs --prune-old removes earlier runs'). It types only digits, never launches over another app, and
 // leaves the app on its Inbox. Leave the device on its home screen before running. It needs host `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
@@ -48,7 +49,8 @@ const coreSrc = resolve(app, '../../packages/core/src');
 const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 // Digits only: no keyboard is involved, and the prune shape stays simple.
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
-const titles = { shared: `77${run}1`, link: `77${run}2`, note: `77${run}3`, killed: `77${run}8` };
+const titles = { shared: `77${run}1`, link: `77${run}2`, note: `77${run}3`, typed: `77${run}4`, first: `77${run}5`, second: `77${run}6`,
+    overDraft: `77${run}7`, killed: `77${run}8` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } = device;
@@ -256,10 +258,30 @@ try {
     device.launch(ACTIVITY);
     await waitFor('the tabs again', (current) => Boolean(tab(current, en['tab.inbox'])), 30_000);
 
+    // (e) Two shares sent together open one after the other: the second waits in the queue while the first's popup is open.
+    nodes = await waitFor('the tabs', atTabs, 20_000);
+    share(titles.first);
+    share(titles.second);
+    nodes = await waitFor('the first share\'s popup', popup(titles.first), 20_000);
+    await holds(popup(titles.first), 3_000, 'the first share\'s popup');
+    await closePopup(nodes);
+    nodes = await waitFor('the second share\'s popup', popup(titles.second), 20_000);
+    await closePopup(nodes);
+    check(true, '(e) two shares open in the order they came, the second after the first\'s popup closed');
+
+    // (f) A share arriving over a capture draft waits: the typed draft stays until the user closes it, then the share opens.
+    await device.type(titles.typed);
+    share(titles.overDraft);
+    await holds(popup(titles.typed), 4_000, 'the typed capture draft');
+    nodes = await screen();
+    await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close on the capture popup'), popup(titles.overDraft), 'the waiting share\'s popup');
+    await closePopup(await screen());
+    check(true, '(f) a share never replaces an open capture draft; it opens after the draft closes');
+
     stored = core();
-    check(stored.tasks.shared.length === 1 && ['link', 'note'].every((name) => stored.tasks[name].length === 0),
+    check(stored.tasks.shared.length === 1 && ['link', 'note', 'typed', 'first', 'second', 'overDraft'].every((name) => stored.tasks[name].length === 0),
         '(g) only the shared text was stored; the closed popups stored nothing');
-    check(entries('capture') >= 5 && entries('notice') >= 1 && entries('task') >= 1 && entries('screen') >= 5,
+    check(entries('capture') >= 8 && entries('notice') >= 1 && entries('task') >= 1 && entries('screen') >= 5,
         `(g) the entry-point log lines: capture ${entries('capture')}, notice ${entries('notice')}, task ${entries('task')}, screen ${entries('screen')}`);
 
     // (h) A share that waits behind the editor survives a force-stop before it opened: the relaunch opens it.
