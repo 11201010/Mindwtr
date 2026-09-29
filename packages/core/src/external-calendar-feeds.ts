@@ -33,6 +33,17 @@ export const SYSTEM_CALENDAR_SETTINGS_KEY = 'mindwtr-system-calendar-settings';
 const SYSTEM_CALENDAR_SOURCE_PREFIX = 'system';
 /** Each feed's read, as React Native has always bounded it. */
 export const EXTERNAL_CALENDAR_FEED_TIMEOUT_MS = 15_000;
+/** The Calendar screen reloads its external calendars on focus and on return to the app, at most once a second. */
+export const EXTERNAL_CALENDAR_REFRESH_THROTTLE_MS = 1_000;
+
+/** A return to the app (from the background or inactive) reloads the Calendar screen's external calendars. */
+export function shouldRefreshExternalCalendarOnAppStateChange(
+    previousAppState: string,
+    nextAppState: string,
+): boolean {
+    const wasInactiveOrBackground = previousAppState === 'inactive' || previousAppState === 'background';
+    return wasInactiveOrBackground && nextAppState === 'active';
+}
 
 export type SystemCalendarPermissionStatus = 'undetermined' | 'granted' | 'denied';
 

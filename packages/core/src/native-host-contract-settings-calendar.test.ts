@@ -693,6 +693,29 @@ describe('native host contract: Settings › Calendar', () => {
             expect(ready.events.map((event) => event.title)).toEqual(['Planning', 'Stand-up', 'Review', 'Offsite']);
         });
 
+        it('answers a refresh within a second from the last load, and loads again after it', async () => {
+            await seed({});
+            const handset = phone({ calendars: [], storage: { [KEYS.feeds]: JSON.stringify(fixture.settings.synced.externalCalendars) } });
+            let fetches = 0;
+            const fetchFeed = handset.host.fetch;
+            handset.host.fetch = (async (...args: Parameters<typeof fetch>) => {
+                fetches += 1;
+                return fetchFeed(...args);
+            }) as typeof fetch;
+            const contract = await openHost(handset.host);
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date(fixture.now));
+            value(await contract.loadExternalCalendarFeed({ slot: 'calendar', ...range }));
+            value(await contract.loadExternalCalendarFeed({ slot: 'calendar', ...range, refresh: true }));
+            expect(fetches).toBe(2);
+            vi.setSystemTime(new Date(Date.parse(fixture.now) + 999));
+            expect(value(await contract.loadExternalCalendarFeed({ slot: 'calendar', ...range, refresh: true }))).toMatchObject({ status: 'ready' });
+            expect(fetches).toBe(2);
+            vi.setSystemTime(new Date(Date.parse(fixture.now) + 1_000));
+            value(await contract.loadExternalCalendarFeed({ slot: 'calendar', ...range, refresh: true }));
+            expect(fetches).toBe(3);
+        });
+
         it('answers an error feed when the device calendars fail, and refuses bad input', async () => {
             await seed({});
             const handset = phone({ calendars: ['primary'], failEvents: true, storage: { [KEYS.system]: JSON.stringify({ enabled: true }) } });

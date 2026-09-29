@@ -84,6 +84,7 @@ import {
 import { getDocsGuideUrl } from './docs-guidance';
 import {
     createExternalCalendarFeeds,
+    EXTERNAL_CALENDAR_REFRESH_THROTTLE_MS,
     normalizeSystemCalendarSettings,
     type DeviceCalendarReader,
     type ExternalCalendarFeeds,
@@ -317,7 +318,8 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
     const toasts: NativeCalendarToast[] = [];
     let session: Session | null = null;
     let bound: { host: NativeCalendarHost; feeds: ExternalCalendarFeeds; push: CalendarPushService } | null = null;
-    const feedLoads = new Map<NativeCalendarFeedSlot, { key: string; controller: AbortController; running: Promise<NativeHostResult<NativeCalendarFeed>> }>();
+    type FeedLoad = Promise<NativeHostResult<NativeCalendarFeed>>;
+    const feedLoads = new Map<NativeCalendarFeedSlot, { key: string; controller: AbortController; running: FeedLoad | null; last: FeedLoad; refreshedAt: number }>();
 
     /** Core's feeds and push for this host, made on first use. */
     const device = (host: NativeCalendarHost) => {
@@ -943,29 +945,39 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
          * the view's `calendar`. One load runs per `slot`: the same range again joins
          * it, another range replaces it (the replaced call answers STALE_REVISION).
          * `timeoutMs` bounds the whole load (the daily review uses 15 s); each
-         * subscription has its own 15 s.
+         * subscription has its own 15 s. Send `refresh: true` when the Calendar
+         * screen gains focus or the app returns from the background
+         * (shouldRefreshExternalCalendarOnAppStateChange): a refresh within a second
+         * of the last one answers that one's load (EXTERNAL_CALENDAR_REFRESH_THROTTLE_MS).
          */
-        loadExternalCalendarFeed(input: { slot: NativeCalendarFeedSlot; start: string; end: string; timeoutMs?: number }): Promise<NativeHostResult<NativeCalendarFeed>> {
+        loadExternalCalendarFeed(input: { slot: NativeCalendarFeedSlot; start: string; end: string; timeoutMs?: number; refresh?: boolean }): Promise<NativeHostResult<NativeCalendarFeed>> {
             const ready = deps.readiness();
             if (!ready.ok) return Promise.resolve(ready);
             const start = isObjectRecord(input) && isText(input.start, 40) ? new Date(input.start) : null;
             const end = isObjectRecord(input) && isText(input.end, 40) ? new Date(input.end) : null;
             if (!isObjectRecord(input) || !(NATIVE_CALENDAR_FEED_SLOTS as readonly unknown[]).includes(input.slot)
                 || !start || !end || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end.getTime() <= start.getTime()
-                || (input.timeoutMs !== undefined && (typeof input.timeoutMs !== 'number' || !Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0))) {
-                return Promise.resolve(fail('INVALID_INPUT', 'A screen slot, an ISO start before an ISO end, and an optional positive timeoutMs are required'));
+                || (input.timeoutMs !== undefined && (typeof input.timeoutMs !== 'number' || !Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0))
+                || (input.refresh !== undefined && typeof input.refresh !== 'boolean')) {
+                return Promise.resolve(fail('INVALID_INPUT', 'A screen slot, an ISO start before an ISO end, an optional positive timeoutMs and an optional refresh are required'));
             }
             const host = deps.host();
             if (!host) return Promise.resolve(fail('ACTION_FAILED', 'Calendars are not available on this host yet'));
             const key = JSON.stringify([start.toISOString(), end.toISOString(), input.timeoutMs ?? null]);
-            const running = feedLoads.get(input.slot);
-            if (running?.key === key) return running.running;
-            running?.controller.abort(new Error('A newer load for this screen replaced it'));
+            const previous = feedLoads.get(input.slot);
+            const now = Date.now();
+            if (previous?.key === key) {
+                if (previous.running) return previous.running;
+                if (input.refresh && now - previous.refreshedAt < EXTERNAL_CALENDAR_REFRESH_THROTTLE_MS) return previous.last;
+            }
+            previous?.controller.abort(new Error('A newer load for this screen replaced it'));
             const controller = new AbortController();
-            const load = loadFeed(host, start, end, input.timeoutMs, controller.signal).finally(() => {
-                if (feedLoads.get(input.slot)?.controller === controller) feedLoads.delete(input.slot);
+            const load: FeedLoad = loadFeed(host, start, end, input.timeoutMs, controller.signal).finally(() => {
+                const entry = feedLoads.get(input.slot);
+                if (entry?.controller === controller) entry.running = null;
             });
-            feedLoads.set(input.slot, { key, controller, running: load });
+            const refreshedAt = input.refresh ? now : previous?.key === key ? previous.refreshedAt : 0;
+            feedLoads.set(input.slot, { key, controller, running: load, last: load, refreshedAt });
             return load;
         },
     };
