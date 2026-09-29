@@ -354,7 +354,7 @@ const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
         : entry.search ? 'search' : entry.route ? 'screen' : 'nothing';
     const kind = ['link', 'share', 'createNote'].includes(input?.kind as string) ? input.kind as string : 'other';
     try {
-        logInfo('Native Android entry point', { scope: 'native-android', extra: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
+        logInfo('Native Android entry point', { scope: 'native-android', context: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
     } catch { /* a diagnostic sink must not change what the entry opens */ }
     return result;
 };
