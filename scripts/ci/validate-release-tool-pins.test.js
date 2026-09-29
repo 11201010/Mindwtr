@@ -109,16 +109,18 @@ test("Linux AppImage repair pins and verifies appimagetool and its runtime", () 
   );
   expect(workflow).not.toContain("releases/download/continuous/");
   expect(workflow).toContain(
-    'APPIMAGE_RUNTIME_COMMIT: "75849dce7cc37e4319b633df1f116ca895c71a12"',
-  );
-  expect(workflow).toContain('APPIMAGE_RUNTIME_ASSET_ID: "456065460"');
-  expect(workflow).toContain(
-    'APPIMAGE_RUNTIME_X86_64_SHA256: "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"',
+    'APPIMAGE_RUNTIME_VERSION: "20251108"',
   );
   expect(workflow).toContain(
-    "api.github.com/repos/AppImage/type2-runtime/releases/assets/${APPIMAGE_RUNTIME_ASSET_ID}",
+    'APPIMAGE_RUNTIME_COMMIT: "dd6cebedcbddde9c82f89b011e8e1d40b6e43868"',
   );
-  expect(workflow).toContain('-H "Accept: application/octet-stream"');
+  expect(workflow).toContain(
+    'APPIMAGE_RUNTIME_X86_64_SHA256: "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"',
+  );
+  expect(workflow).toContain(
+    'releases/download/${APPIMAGE_RUNTIME_VERSION}/runtime-x86_64',
+  );
+  expect(workflow).not.toContain('type2-runtime/releases/assets/');
   expect(workflow).toContain(
     "printf '%s  runtime-x86_64\\n' \"$APPIMAGE_RUNTIME_X86_64_SHA256\"",
   );
