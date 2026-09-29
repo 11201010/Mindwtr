@@ -1,0 +1,35 @@
+<en-US>
+- Waiting tasks show assigned people, and Focus planning is clearer.
+- Monthly repeats support positioned weekdays and skipping one fixed occurrence.
+- Calendar views gain Area filters and more accurate time lines.
+- Widgets follow your language and 12/24-hour setting.
+- Captures, check-offs, saved filters, sync, and recovery preserve newer edits more reliably.
+</en-US>
+<de-DE>
+- Wartende Aufgaben zeigen zugewiesene Personen; Fokus ist klarer.
+- Monatsserien unterstuetzen positionierte Wochentage und das Ueberspringen eines Termins.
+- Kalender bieten Bereichsfilter und genauere Zeitlinien.
+- Widgets folgen Sprache und 12/24-Stunden-Einstellung.
+- Erfassung, Filter, Sync und Wiederherstellung schuetzen neuere Aenderungen besser.
+</de-DE>
+<es-ES>
+- Las tareas en espera muestran la persona asignada y Enfoque es más claro.
+- Las repeticiones mensuales admiten días posicionados y omitir una fecha.
+- El calendario añade filtros por Área y líneas de tiempo más precisas.
+- Los widgets siguen el idioma y el formato de 12/24 horas.
+- Capturas, filtros, sincronización y recuperación conservan mejor los cambios nuevos.
+</es-ES>
+<fr-FR>
+- Les tâches en attente montrent la personne assignée et Focus est plus clair.
+- Les répétitions mensuelles gèrent les jours positionnés et le saut d'une occurrence.
+- Le calendrier ajoute les filtres par Domaine et des lignes de temps plus précises.
+- Les widgets suivent la langue et le format 12/24 h.
+- Capture, filtres, sync et récupération protègent mieux les changements récents.
+</fr-FR>
+<zh-CN>
+- 等待中的任务会显示负责人，聚焦规划更清晰。
+- 每月重复支持指定第几个星期几，也可跳过单次计划。
+- 日历新增按领域筛选，时间线定位更准确。
+- 小组件遵循应用语言和 12/24 小时设置。
+- 捕获、勾选、已存筛选、同步与恢复能更可靠地保留较新的更改。
+</zh-CN>

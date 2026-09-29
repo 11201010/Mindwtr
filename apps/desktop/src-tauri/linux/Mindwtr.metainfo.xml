@@ -88,6 +88,25 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
+    <release version="1.3.3" date="2026-09-29">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.3</url>
+      <description>
+        <p>Mindwtr 1.3.3 improves Focus, recurrence, calendars, storage safety, and Linux desktop integration.</p>
+        <p xml:lang="de">Mindwtr 1.3.3 verbessert Fokus, Wiederholungen, Kalender, Datensicherheit und die Linux-Desktop-Integration.</p>
+        <ul>
+          <li>See assigned people in Waiting For, select tasks with modifier-click, and keep the chosen Focus grouping visible.</li>
+          <li xml:lang="de">Sieh zugewiesene Personen in Warten, waehle Aufgaben per Modifikatorklick und behalte die gewaehlte Fokus-Gruppierung sichtbar.</li>
+          <li>Use positioned weekdays in monthly repeats, skip one fixed occurrence, and filter Calendar by Area.</li>
+          <li xml:lang="de">Nutze positionierte Wochentage in Monatsserien, ueberspringe einen einzelnen Termin und filtere den Kalender nach Bereich.</li>
+          <li>Preserve newer tasks, settings, and saved filters through concurrent saves, restore, and sync.</li>
+          <li xml:lang="de">Bewahre neuere Aufgaben, Einstellungen und gespeicherte Filter bei parallelem Speichern, Wiederherstellung und Sync.</li>
+          <li>Follow Linux portal theme changes and store Flatpak credentials through the Secret Service portal.</li>
+          <li xml:lang="de">Folge Linux-Portal-Themenaenderungen und speichere Flatpak-Zugangsdaten ueber das Secret-Service-Portal.</li>
+          <li>Keep search, recurrence controls, editor navigation, links, and accessibility behavior reliable.</li>
+          <li xml:lang="de">Halte Suche, Wiederholungsregler, Editor-Navigation, Links und Barrierefreiheit zuverlaessig.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.2" date="2026-09-22">
       <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.2</url>
       <description>

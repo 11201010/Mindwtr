@@ -2,5 +2,4 @@
 - Les répétitions mensuelles gèrent les jours positionnés et le saut d'une occurrence.
 - Le calendrier ajoute les filtres par Domaine et des lignes de temps plus précises.
 - Les widgets suivent la langue et le format 12/24 h.
-- Les Raccourcis peuvent ouvrir les listes enregistrées et lancer la capture audio dans Focus.
-- Filtres, sync, stockage et récupération protègent mieux les changements récents.
+- Capture, filtres, sync et récupération protègent mieux les changements récents.
