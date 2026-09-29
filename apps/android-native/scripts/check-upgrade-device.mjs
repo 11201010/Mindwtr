@@ -2,7 +2,7 @@
 // upgradetest build, then by a newer RN recovery build.
 //
 //   node apps/android-native/scripts/build-upgrade-harness.mjs
-//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b] [--keep]
+//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6] [--keep]
 //
 // Scenarios, each from a fresh RN v1.3.2 install:
 //   1   happy upgrade: the native app shows the RN data, captures once, keeps
@@ -711,6 +711,7 @@ const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/e
 // RN v1.3.2's English labels for its WebDAV panel (en.ts at the tag; the ones this check reads are unchanged since).
 const RN_WEBDAV = 'WebDAV';
 const RN_SAVE_WEBDAV = 'Save WebDAV';
+const RN_SKIP_ONBOARDING = 'Skip for now'; // v1.3.2's onboarding.skipForNow
 const scenarioSync = async () => {
     console.log('\n# 6 RN sync configuration');
     fresh();
@@ -723,7 +724,14 @@ const scenarioSync = async () => {
     try {
         // RN's own Sync screen (its settings link), WebDAV, the form as a user types it, Save.
         device.launch(RN_ACTIVITY);
-        await sleep(4_000);
+        // An empty RN opens on its onboarding, which holds the link back: skip it as a user would.
+        let first = [];
+        for (const deadline = Date.now() + 20_000; Date.now() < deadline && !first.some((node) => node.text === RN_SKIP_ONBOARDING); await sleep(1_000)) {
+            first = await screen();
+        }
+        const skip = first.find((node) => node.text === RN_SKIP_ONBOARDING);
+        if (skip) await tap(skip);
+        await sleep(2_000);
         openLink('mindwtr-upgradetest://settings?settingsScreen=sync');
         let nodes = await waitFor('RN Settings > Sync', (current) => current.some((node) => node.text === RN_WEBDAV), 60_000);
         await tap(nodes.find((node) => node.text === RN_WEBDAV));
