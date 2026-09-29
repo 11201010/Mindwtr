@@ -413,6 +413,10 @@ try {
     await toTabs();
     console.log('Sync device check passed');
 } catch (error) {
+    try {
+        console.log(`evidence - app log (sync):\n${logs().split('\n').filter((line) => /\[sync\]|sync state|automatic cycle|Auto-sync|task command|Core action|idle pump/.test(line))
+            .slice(-60).map((line) => line.slice(0, 300)).join('\n')}`);
+    } catch { /* the app is gone */ }
     evidenced(error);
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;

@@ -335,7 +335,10 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
             if (triggers) return state();
             triggers = createMobileSyncTriggers({
                 initialAppState: appState,
-                performSync: () => performSync(undefined, {}),
+                performSync: () => {
+                    bindings.trace('Native Android sync automatic cycle');
+                    return performSync(undefined, {});
+                },
                 abortSync: () => service.abortMobileSync(),
                 flushPendingSave: () => flushPendingSave(),
                 reconcileBackgroundSync: () => { void refreshConfigured(); },
