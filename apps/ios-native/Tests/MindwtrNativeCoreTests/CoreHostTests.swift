@@ -4969,6 +4969,182 @@ final class CoreHostTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: journal), Data(encoded.utf8))
     }
 
+    private func unassignedAreaColorOptions(_ core: CoreHost) async throws -> [String: Any] {
+        try object(await core.call("unassignedAreaColorOptions", argumentsJSON: json(["{}"])))
+    }
+
+    private func unassignedAreaColorPayload(_ options: [String: Any], color: String,
+                                            id: String = UUID().uuidString.lowercased()) throws -> String {
+        try json([" \n" + json(["requestId": id, "color": color,
+                                "expected": try XCTUnwrap(options["expected"])]) + "\n "])
+    }
+
+    func testUnassignedAreaColorExplicitDefaultNoopAndPreservesSiblings() async throws {
+        try await seedCalendarPreferenceTask()
+        var before = try calendarPreferenceSettings()
+        before["appearance"] = ["futureColor": "kept", "theme": "system"]
+        before["futureSetting"] = ["kept": true]
+        try writeCalendarPreferenceSettings(before)
+        let tasks = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        var writes = 0, journalWrites = 0, diagnostics: [String] = []
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        faults.journalWrite = { journalWrites += 1 }
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await unassignedAreaColorOptions(core)
+        XCTAssertTrue((options["expected"] as? [String: Any])?["color"] is NSNull)
+        let color = try XCTUnwrap(options["color"] as? String)
+        let payload = try unassignedAreaColorPayload(options, color: color)
+        let saved = try object(await core.call("unassignedAreaColorWrite", argumentsJSON: payload))
+        XCTAssertEqual(saved["color"] as? String, color)
+        XCTAssertEqual(saved["changed"] as? Bool, true)
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(diagnostics, ["unassignedAreaColorSaved"])
+        let after = try calendarPreferenceSettings()
+        XCTAssertEqual((after["appearance"] as? [String: Any])?["unassignedAreaColor"] as? String, color)
+        XCTAssertEqual((after["appearance"] as? [String: Any])?["futureColor"] as? String, "kept")
+        XCTAssertEqual(after["futureSetting"] as? [String: Bool], ["kept": true])
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        let same = try unassignedAreaColorPayload(try await unassignedAreaColorOptions(core), color: color)
+        let noOp = try object(await core.call("unassignedAreaColorWrite", argumentsJSON: same))
+        XCTAssertEqual(noOp["changed"] as? Bool, false)
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(journalWrites, 2)
+        XCTAssertEqual(diagnostics, ["unassignedAreaColorSaved"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(after))
+    }
+
+    func testUnassignedAreaColorFailedSaveExactRetriesAndColdRecovery() async throws {
+        try await seedCalendarPreferenceTask()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try await unassignedAreaColorOptions(core)
+        let colors = try XCTUnwrap(options["colors"] as? [String])
+        let desired = try XCTUnwrap(colors.first { $0 != (options["color"] as? String) })
+        let payload = try unassignedAreaColorPayload(options, color: desired)
+        let before = try calendarPreferenceSettings()
+        let tasks = try calendarPreferenceTasks()
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected color COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await core.call("unassignedAreaColorWrite", argumentsJSON: payload) }
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        await expectFailure("SAVE_FAILED") { _ = try await core.retryPending() }
+        let frozen = try Data(contentsOf: journal)
+        XCTAssertEqual((try object(String(decoding: frozen, as: UTF8.self)))["argumentsJSON"] as? String, payload)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(before))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        await core.close()
+
+        let recoveryFaults = HostIOFaults()
+        var diagnostics: [String] = [], writes = 0
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        recoveryFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let replay = host(recoveryFaults)
+        let window = try object(await replay.start())
+        let recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "unassignedAreaColorWrite")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["color"] as? String, desired)
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["changed"] as? Bool, true)
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(diagnostics, ["unassignedAreaColorSaved"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        let probed = try object(await replay.call("unassignedAreaColorRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(probed["color"] as? String, desired)
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testUnassignedAreaColorStaleWriteAndLaterRecolorRefuseWithoutWrite() async throws {
+        try await seedCalendarPreferenceTask()
+        let core = host()
+        _ = try await core.start()
+        let opening = try await unassignedAreaColorOptions(core)
+        let colors = try XCTUnwrap(opening["colors"] as? [String])
+        let first = try XCTUnwrap(colors.first { $0 != (opening["color"] as? String) })
+        let second = try XCTUnwrap(colors.first { $0 != first })
+        let original = try unassignedAreaColorPayload(opening, color: first)
+        await core.close()
+
+        var changed = try calendarPreferenceSettings()
+        var appearance = changed["appearance"] as? [String: Any] ?? [:]
+        appearance["unassignedAreaColor"] = second
+        changed["appearance"] = appearance
+        try writeCalendarPreferenceSettings(changed)
+        let faults = HostIOFaults()
+        var writes = 0
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        let stale = host(faults)
+        _ = try await stale.start()
+        await expectFailure("STALE_REVISION") { _ = try await stale.call("unassignedAreaColorWrite", argumentsJSON: original) }
+        XCTAssertEqual(writes, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+        await stale.close()
+
+        let writer = host()
+        _ = try await writer.start()
+        let refreshed = try await unassignedAreaColorOptions(writer)
+        let appliedRequest = try unassignedAreaColorPayload(refreshed, color: first)
+        let saved = try object(await writer.call("unassignedAreaColorWrite", argumentsJSON: appliedRequest))
+        XCTAssertEqual(saved["changed"] as? Bool, true)
+        await writer.close()
+        changed = try calendarPreferenceSettings()
+        appearance = changed["appearance"] as? [String: Any] ?? [:]
+        appearance["unassignedAreaColor"] = second
+        changed["appearance"] = appearance
+        try writeCalendarPreferenceSettings(changed)
+        let probe = host()
+        _ = try await probe.start()
+        await expectFailure("STALE_REVISION") { _ = try await probe.call("unassignedAreaColorRetryOutcome", argumentsJSON: appliedRequest) }
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+    }
+
+    func testUnassignedAreaColorMalformedJournalAndForgedAckRejectBeforeSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        let core = host()
+        _ = try await core.start()
+        let options = try await unassignedAreaColorOptions(core)
+        let colors = try XCTUnwrap(options["colors"] as? [String])
+        let desired = try XCTUnwrap(colors.first { $0 != (options["color"] as? String) })
+        let payload = try unassignedAreaColorPayload(options, color: desired)
+        await core.close()
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])
+        var request = try object(XCTUnwrap(args.first))
+        request["unexpected"] = true
+        let malformed = try json(["version": 2, "method": "unassignedAreaColorWrite",
+                                  "argumentsJSON": json([json(request)])] as [String: Any])
+        let wrong = try json(["version": 2, "method": "unassignedAreaColorWrite", "argumentsJSON": payload,
+                              "terminal": ["success": ["_0": json(["color": desired, "changed": false])]]] as [String: Any])
+        for (frozen, fragment) in [(malformed, "INVALID_INPUT"), (wrong, "acknowledgment")] {
+            try Data(frozen.utf8).write(to: journal)
+            let faults = HostIOFaults()
+            var sql = 0
+            faults.beforeSQL = { _ in sql += 1 }
+            let blocked = host(faults)
+            await expectFailure(fragment) { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0)
+            try assertJournalContentUnchanged(Data(frozen.utf8))
+            await blocked.close()
+        }
+    }
+
+    func testManageAreasReadUsesBoundedManageRevision() async throws {
+        let core = host()
+        _ = try await core.start()
+        let manage = try object(await core.call("menuRead", argumentsJSON: json(["manageSettings", json(["openSections": NSNull()])])))
+        let revision = try XCTUnwrap(manage["revision"] as? String)
+        let page = try object(await core.call("menuRead", argumentsJSON: json(["manageAreas", json(["offset": 0, "limit": 25, "revision": revision])])))
+        XCTAssertEqual(page["list"] as? String, "areas")
+        XCTAssertEqual(page["revision"] as? String, revision)
+        XCTAssertNotNil(page["items"] as? [[String: Any]])
+        await expectFailure("Unsupported native Manage Areas page") {
+            _ = try await core.call("menuRead", argumentsJSON: try json(["manageAreas", json(["offset": 0, "limit": 101, "revision": revision])]))
+        }
+    }
+
     private func taskListSortOptions(_ core: CoreHost) async throws -> [String: Any] {
         try object(await core.call("taskListSortOptions", argumentsJSON: json(["{}"])))
     }

@@ -158,6 +158,7 @@ export * from './menu-views-model';
 export * from './someday-sections-model';
 export * from './native-host-contract-someday-section-create';
 export * from './native-host-contract-someday-section-rename';
+export * from './native-host-contract-unassigned-area-color';
 export * from './native-host-contract-someday-section-delete';
 export * from './native-host-contract-someday-section-order';
 export * from './native-host-contract-someday-section-task';

@@ -10,6 +10,9 @@ private struct SimulatedSomedayDeleteRefusal: LocalizedError {
 private struct SimulatedSomedayOrderRefusal: LocalizedError {
     var errorDescription: String? { "STALE_REVISION: Someday section order changed; read it again" }
 }
+private struct SimulatedUnassignedColorRefusal: LocalizedError {
+    var errorDescription: String? { "STALE_REVISION: Unassigned Area color changed; read it again" }
+}
 #endif
 
 typealias CoreObject = [String: Any]
@@ -111,7 +114,13 @@ final class CoreModel: ObservableObject {
     @Published private(set) var manageSettings: CoreObject = [:]
     @Published private(set) var managedSomedaySections: [CoreObject] = []
     @Published private(set) var managedSomedayTotal = 0
+    @Published private(set) var managedAreas: [CoreObject] = []
+    @Published private(set) var managedAreasTotal = 0
     @Published private(set) var manageReadError: String?
+    @Published private(set) var unassignedAreaColorOptions: CoreObject = [:]
+    @Published private(set) var unassignedAreaColorDraft = ""
+    @Published private(set) var unassignedAreaColorError: String?
+    @Published private(set) var unassignedAreaColorAwaitingRefresh = false
     @Published private(set) var somedaySectionRenameOptions: CoreObject = [:]
     @Published private(set) var somedaySectionRenameIndex: Int?
     @Published private(set) var somedaySectionRenameTitle = ""
@@ -407,8 +416,20 @@ final class CoreModel: ObservableObject {
     private var settingsSearchGeneration = 0
     private var settingsSearchTask: Task<Void, Never>?
     private var managedSomedayDepth = 25
+    private var managedAreasDepth = 100
     private var managePendingCandidate: String?
     private var settingsManageRequested = false
+    private var unassignedAreaColorOpening = false
+    private var unassignedAreaColorRequest: String?
+    var unassignedAreaColorActive: Bool {
+        unassignedAreaColorOpening || !unassignedAreaColorOptions.isEmpty || unassignedAreaColorRequest != nil
+            || unassignedAreaColorAwaitingRefresh
+    }
+    var unassignedAreaColorCanSave: Bool {
+        selectedSurface == .settings && settingsManagePresented && !busy && !retryNeeded
+            && !unassignedAreaColorOptions.isEmpty && unassignedAreaColorRequest == nil
+            && !unassignedAreaColorAwaitingRefresh && manageReadError == nil
+    }
     private var somedaySectionRenameRequest: String?
     private var somedaySectionRenameID: String?
     private var somedaySectionRenameOpeningIndex: Int?
@@ -540,6 +561,9 @@ final class CoreModel: ObservableObject {
     private var somedayOrderTestReadFailures = 0
     private var somedayOrderOptionsTestReadFailures = 0
     private var somedayOrderTestRefusals = 0
+    private var unassignedColorTestReadFailures = 0
+    private var unassignedColorOptionsTestReadFailures = 0
+    private var unassignedColorTestRefusals = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -1225,11 +1249,12 @@ final class CoreModel: ObservableObject {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionDeleteID != nil
             && !busy && !retryNeeded && !somedaySectionDeletePending && !somedaySectionDeleteAwaitingRefresh
             && somedaySectionDeleteOptions.text("id") == somedaySectionDeleteID && manageReadError == nil
+            && !unassignedAreaColorActive
     }
     var somedaySectionRenameInputEnabled: Bool {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionRenameIndex != nil
             && !busy && !retryNeeded && !somedaySectionRenamePending && !somedaySectionRenameAwaitingRefresh
-            && !somedaySectionRenameOptions.isEmpty && manageReadError == nil
+            && !somedaySectionRenameOptions.isEmpty && manageReadError == nil && !unassignedAreaColorActive
     }
     var somedaySectionRenameCanSave: Bool {
         somedaySectionRenameInputEnabled && !somedaySectionRenameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1395,6 +1420,9 @@ final class CoreModel: ObservableObject {
                     somedayOrderTestReadFailures = arguments.contains("--native-someday-order-read-failure") ? 2 : 0
                     somedayOrderOptionsTestReadFailures = arguments.contains("--native-someday-order-options-failure") ? 1 : 0
                     somedayOrderTestRefusals = arguments.contains("--native-someday-order-refusal") ? 1 : 0
+                    unassignedColorTestReadFailures = arguments.contains("--native-unassigned-color-read-failure") ? 2 : 0
+                    unassignedColorOptionsTestReadFailures = arguments.contains("--native-unassigned-color-options-failure") ? 1 : 0
+                    unassignedColorTestRefusals = arguments.contains("--native-unassigned-color-refusal") ? 1 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1538,7 +1566,8 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
-            } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite"].contains(recovery.text("method")) {
+            } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite",
+                       "unassignedAreaColorWrite"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsManagePresented = true
             } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit", "somedaySectionMoveCommit",
@@ -1617,7 +1646,8 @@ final class CoreModel: ObservableObject {
               !projectRenameEditing, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !unassignedAreaColorActive else { return }
         guard !busy else { refreshRequested = true; return }
         busy = true
         defer { finishOperation() }
@@ -1636,7 +1666,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive, !unassignedAreaColorActive,
               !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
               somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
@@ -1655,7 +1685,8 @@ final class CoreModel: ObservableObject {
               !projectRenameEditing, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !unassignedAreaColorActive else { return }
         if morePresented { morePresented = false; return }
         busy = true
         defer { finishOperation() }
@@ -1674,7 +1705,7 @@ final class CoreModel: ObservableObject {
     func openSettings() async {
         guard ready, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeleteActive,
-              !somedaySectionOrderActive else { return }
+              !somedaySectionOrderActive, !unassignedAreaColorActive else { return }
         settingsCaller = selectedSurface
         morePresented = false
         settingsManagePresented = false
@@ -1691,7 +1722,8 @@ final class CoreModel: ObservableObject {
     func closeSettings() async {
         guard selectedSurface == .settings, !busy, !retryNeeded,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !unassignedAreaColorActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManagePresented = false
@@ -1730,7 +1762,8 @@ final class CoreModel: ObservableObject {
 
     func openManageSettings() async {
         guard ready, selectedSurface == .settings, !settingsManagePresented, !busy, !retryNeeded,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !unassignedAreaColorActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManageRequested = true
@@ -1746,7 +1779,8 @@ final class CoreModel: ObservableObject {
     func closeManageSettings() {
         guard settingsManagePresented, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeletePending,
-              !somedaySectionDeleteAwaitingRefresh, !somedaySectionOrderActive else { return }
+              !somedaySectionDeleteAwaitingRefresh, !somedaySectionOrderActive,
+              !unassignedAreaColorActive else { return }
         cancelSomedaySectionRename()
         cancelSomedaySectionDelete()
         settingsManagePresented = false
@@ -1763,13 +1797,19 @@ final class CoreModel: ObservableObject {
             throw CocoaError(.coderReadCorrupt)
         }
         let somedayOpen = next.objects("sections").first(where: { $0.text("key") == "somedaySections" })?.flag("open") == true
+        let areasOpen = next.objects("sections").first(where: { $0.text("key") == "areas" })?.flag("open") == true
         let pages: (rows: [CoreObject], total: Int)
         if somedayOpen { pages = try await readManagedSomedayPages(depth: managedSomedayDepth) }
         else { pages = ([], 0) }
+        let areaPages: (rows: [CoreObject], total: Int)
+        if areasOpen { areaPages = try await readManagedAreaPages(next, depth: managedAreasDepth) }
+        else { areaPages = ([], 0) }
         // Publish and persist together only after all required reads succeed.
         manageSettings = next
         managedSomedaySections = pages.rows
         managedSomedayTotal = pages.total
+        managedAreas = areaPages.rows
+        managedAreasTotal = areaPages.total
         if let write = next.object("openSectionsRestore")["value"] as? String,
            next.object("openSectionsRestore").text("key") == manageOpenSectionsKey {
             preferenceDefaults.set(write, forKey: manageOpenSectionsPreference)
@@ -1802,11 +1842,32 @@ final class CoreModel: ObservableObject {
         return (rows, total)
     }
 
+    private func readManagedAreaPages(_ manage: CoreObject, depth: Int) async throws -> (rows: [CoreObject], total: Int) {
+        let window = manage.object("areas").object("rows")
+        guard let total = window["total"] as? Int, total >= 0,
+              total == manage.objects("sections").first(where: { $0.text("key") == "areas" })?.number("count"),
+              let first = window["items"] as? [CoreObject], first.count <= 100,
+              first.count <= total, (total == 0 || !first.isEmpty),
+              !manage.text("revision").isEmpty else { throw CocoaError(.coderReadCorrupt) }
+        var rows = first
+        while rows.count < min(depth, total) {
+            let page = try await query("menuRead", ["manageAreas", try json(["offset": rows.count, "limit": 25,
+                                                                               "revision": manage.text("revision")])])
+            guard page.text("list") == "areas", page.text("revision") == manage.text("revision"),
+                  page["total"] as? Int == total, let items = page["items"] as? [CoreObject],
+                  !items.isEmpty, items.count <= 25, rows.count + items.count <= total else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            rows.append(contentsOf: items)
+        }
+        return (rows, total)
+    }
+
     func toggleManageSection(_ key: String) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive, !unassignedAreaColorActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               let row = manageSettings.objects("sections").first(where: { $0.text("key") == key }),
               row.object("toggle").text("key") == manageOpenSectionsKey else { return }
@@ -1822,7 +1883,7 @@ final class CoreModel: ObservableObject {
     func loadMoreManagedSomedaySections() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil, somedaySectionRenameIndex == nil, !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive, !unassignedAreaColorActive,
               managedSomedaySections.count < managedSomedayTotal else { return }
         busy = true
         defer { finishOperation() }
@@ -1836,8 +1897,27 @@ final class CoreModel: ObservableObject {
         } catch { manageReadError = error.localizedDescription }
     }
 
+    func loadMoreManagedAreas() async {
+        guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              manageReadError == nil, !unassignedAreaColorActive,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              managedAreas.count < managedAreasTotal else { return }
+        busy = true
+        defer { finishOperation() }
+        do {
+            let nextDepth = min(managedAreasDepth + 25, managedAreasTotal)
+            let pages = try await readManagedAreaPages(manageSettings, depth: nextDepth)
+            managedAreasDepth = nextDepth
+            managedAreas = pages.rows
+            managedAreasTotal = pages.total
+            manageReadError = nil
+        } catch { manageReadError = error.localizedDescription }
+    }
+
     func retryManageSettingsRead() async {
         guard selectedSurface == .settings, !busy, !retryNeeded,
+              !unassignedAreaColorActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
@@ -1857,8 +1937,134 @@ final class CoreModel: ObservableObject {
         }
     }
 
+    func openUnassignedAreaColor() async {
+        guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              manageReadError == nil, !unassignedAreaColorActive,
+              !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
+              somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending else { return }
+        unassignedAreaColorOpening = true
+        busy = true
+        defer { finishOperation() }
+        do {
+            let options = try await query("unassignedAreaColorOptions", ["{}"])
+            let expected = options.object("expected")
+            let colors = options["colors"] as? [String]
+            let editorColors = manageSettings.object("editor").objects("colors").map { $0.text("color") }
+            guard Set(options.keys) == Set(["revision", "color", "colors", "expected"]),
+                  !options.text("revision").isEmpty, options["color"] is String,
+                  let colors, colors == editorColors, !colors.isEmpty,
+                  Set(expected.keys) == Set(["color", "updatedAt"]),
+                  (expected["color"] is NSNull || expected["color"] is String),
+                  (expected["updatedAt"] is NSNull || expected["updatedAt"] is String) else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            unassignedAreaColorOptions = options
+            unassignedAreaColorDraft = options.text("color")
+            unassignedAreaColorError = nil
+            unassignedAreaColorOpening = false
+        } catch {
+            unassignedAreaColorOpening = false
+            await recoverUnassignedAreaColorRead(error)
+        }
+    }
+
+    func selectUnassignedAreaColor(_ color: String) {
+        guard unassignedAreaColorCanSave,
+              (unassignedAreaColorOptions["colors"] as? [String])?.contains(color) == true else { return }
+        unassignedAreaColorDraft = color
+    }
+
+    func cancelUnassignedAreaColor() {
+        guard !busy, !retryNeeded, unassignedAreaColorRequest == nil,
+              !unassignedAreaColorAwaitingRefresh else { return }
+        clearUnassignedAreaColorEditor()
+    }
+
+    private func clearUnassignedAreaColorEditor() {
+        unassignedAreaColorOptions = [:]
+        unassignedAreaColorDraft = ""
+        unassignedAreaColorError = nil
+        unassignedAreaColorOpening = false
+    }
+
+    func saveUnassignedAreaColor() async {
+        guard unassignedAreaColorCanSave else { return }
+        let expected = unassignedAreaColorOptions.object("expected")
+        guard (unassignedAreaColorOptions["colors"] as? [String])?.contains(unassignedAreaColorDraft) == true
+                || unassignedAreaColorOptions.text("color") == unassignedAreaColorDraft else { return }
+        busy = true
+        unassignedAreaColorError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(),
+                                    "color": unassignedAreaColorDraft, "expected": expected])
+            unassignedAreaColorRequest = request
+            let result = try await query("unassignedAreaColorWrite", [request])
+            try acknowledgeUnassignedAreaColor(result)
+            await refreshManageAfterUnassignedAreaColor()
+        } catch { await handleUnassignedAreaColorError(error) }
+    }
+
+    private func acknowledgeUnassignedAreaColor(_ result: CoreObject) throws {
+        guard let request = unassignedAreaColorRequest,
+              let input = try JSONSerialization.jsonObject(with: Data(request.utf8)) as? CoreObject,
+              Set(result.keys) == Set(["color", "changed"]),
+              result.text("color") == input.text("color"),
+              let changed = result["changed"] as? NSNumber,
+              CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              changed.boolValue == ((input.object("expected")["color"] as? String) != input.text("color")) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        unassignedAreaColorRequest = nil
+        unassignedAreaColorAwaitingRefresh = true
+        unassignedAreaColorError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshManageAfterUnassignedAreaColor() async {
+        guard selectedSurface == .settings, settingsManagePresented,
+              unassignedAreaColorAwaitingRefresh else { return }
+        do {
+            try await readManageSettings()
+            unassignedAreaColorAwaitingRefresh = false
+            clearUnassignedAreaColorEditor()
+            error = nil
+        } catch { unassignedAreaColorError = error.localizedDescription }
+    }
+
+    private func recoverUnassignedAreaColorRead(_ failure: Error) async {
+        clearUnassignedAreaColorEditor()
+        unassignedAreaColorAwaitingRefresh = true
+        unassignedAreaColorError = failure.localizedDescription
+    }
+
+    private func handleUnassignedAreaColorError(_ failure: Error) async {
+        if unassignedAreaColorRequest != nil && isDefiniteRejection(failure) {
+            unassignedAreaColorRequest = nil
+            retryNeeded = false
+            error = nil
+            await recoverUnassignedAreaColorRead(failure)
+        } else {
+            retryNeeded = unassignedAreaColorRequest != nil
+            unassignedAreaColorError = failure.localizedDescription
+            if retryNeeded { error = failure.localizedDescription }
+        }
+    }
+
+    func retryUnassignedAreaColor() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .settings, settingsManagePresented, !busy,
+              unassignedAreaColorAwaitingRefresh else { return }
+        busy = true
+        defer { finishOperation() }
+        await refreshManageAfterUnassignedAreaColor()
+    }
+
     func openSomedaySectionRename(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              !unassignedAreaColorActive,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               manageReadError == nil, somedaySectionRenameOpeningIndex == nil,
               somedaySectionRenameIndex == nil, !somedaySectionDeleteActive, !somedaySectionOrderActive,
@@ -1994,6 +2200,7 @@ final class CoreModel: ObservableObject {
 
     func openSomedaySectionDelete(index: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              !unassignedAreaColorActive,
               !somedaySectionDeleteActive, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, manageReadError == nil,
@@ -2111,6 +2318,7 @@ final class CoreModel: ObservableObject {
 
     func moveManagedSomedaySection(index: Int, offset: Int) async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              !unassignedAreaColorActive,
               !somedaySectionOrderActive, !somedaySectionDeleteActive,
               somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending,
               manageReadError == nil, managedSomedaySections.indices.contains(index),
@@ -11284,6 +11492,7 @@ final class CoreModel: ObservableObject {
 
     func openCapture() async {
         guard ready, !busy, !retryNeeded, !areaPickerPresented, !taskPresented,
+              !unassignedAreaColorActive,
               !projectRenameEditing,
               !calendarComposerPresented, !mindSweepPresented, !processInboxPresented else { return }
         morePresented = false
@@ -12240,6 +12449,14 @@ final class CoreModel: ObservableObject {
                 await refreshManageAfterSomedayRename()
                 return
             }
+            if let request = unassignedAreaColorRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("unassignedAreaColorRetryOutcome", [request]) }
+                try acknowledgeUnassignedAreaColor(result)
+                await refreshManageAfterUnassignedAreaColor()
+                return
+            }
             if let request = somedaySectionDeleteRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -12505,6 +12722,10 @@ final class CoreModel: ObservableObject {
             }
             if somedaySectionRenameRequest != nil {
                 await handleSomedaySectionRenameError(error)
+                return
+            }
+            if unassignedAreaColorRequest != nil {
+                await handleUnassignedAreaColorError(error)
                 return
             }
             if somedaySectionDeleteRequest != nil {
@@ -13339,6 +13560,21 @@ final class CoreModel: ObservableObject {
             throw CocoaError(.fileReadUnknown)
         }
         if method == "menuRead", args.first as? String == "manageSettings",
+           unassignedAreaColorAwaitingRefresh, unassignedColorTestReadFailures > 0 {
+            unassignedColorTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "unassignedAreaColorOptions", unassignedAreaColorOpening,
+           unassignedColorOptionsTestReadFailures > 0 {
+            unassignedColorOptionsTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "unassignedAreaColorWrite", unassignedAreaColorRequest != nil,
+           unassignedColorTestRefusals > 0 {
+            unassignedColorTestRefusals -= 1
+            throw SimulatedUnassignedColorRefusal()
+        }
+        if method == "menuRead", args.first as? String == "manageSettings",
            somedaySectionDeleteAwaitingRefresh, somedayDeleteTestReadFailures > 0 {
             somedayDeleteTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
@@ -13418,7 +13654,8 @@ final class CoreModel: ObservableObject {
     private func invalidatePreview() { previewGeneration += 1; previewTask?.cancel() }
     private func isDefiniteRejection(_ error: Error) -> Bool {
         #if DEBUG && targetEnvironment(simulator)
-        if error is SimulatedSomedayDeleteRefusal || error is SimulatedSomedayOrderRefusal { return true }
+        if error is SimulatedSomedayDeleteRefusal || error is SimulatedSomedayOrderRefusal
+            || error is SimulatedUnassignedColorRefusal { return true }
         #endif
         return error is CoreHostRejection
     }

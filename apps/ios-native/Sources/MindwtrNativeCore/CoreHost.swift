@@ -132,6 +132,7 @@ private final class Engine: @unchecked Sendable {
     private var startupChecklistResult: String?
     private var startupFocusGroupResult: String?
     private var startupTaskListSortResult: String?
+    private var startupUnassignedAreaColorResult: String?
     private var startupSomedaySectionCreateResult: String?
     private var startupSomedaySectionRenameResult: String?
     private var startupSomedaySectionDeleteResult: String?
@@ -160,6 +161,7 @@ private final class Engine: @unchecked Sendable {
         "projectFocusOptions": 1, "projectFocusWrite": 1, "projectFocusRetryOutcome": 1,
         "focusGroupOptions": 1, "focusGroupWrite": 1, "focusGroupRetryOutcome": 1,
         "taskListSortOptions": 1, "taskListSortWrite": 1, "taskListSortRetryOutcome": 1,
+        "unassignedAreaColorOptions": 1, "unassignedAreaColorWrite": 1, "unassignedAreaColorRetryOutcome": 1,
         "somedaySectionCreateOptions": 1, "somedaySectionCreateWrite": 1, "somedaySectionCreateRetryOutcome": 1,
         "somedaySectionRenameOptions": 1, "somedaySectionRenameWrite": 1, "somedaySectionRenameRetryOutcome": 1,
         "somedaySectionDeleteOptions": 1, "somedaySectionDeleteWrite": 1, "somedaySectionDeleteRetryOutcome": 1,
@@ -186,7 +188,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "areaColor", "areaRename", "areaOrder", "areaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "areaColor", "areaRename", "areaOrder", "areaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -355,6 +357,10 @@ private final class Engine: @unchecked Sendable {
                 try validateTaskListSortJournal(command)
                 if case .success(let value) = command.terminal { try validateTaskListSortAcknowledgment(command, value: value) }
             }
+            if let command = pending, command.method == "unassignedAreaColorWrite" {
+                try validateUnassignedAreaColorJournal(command)
+                if case .success(let value) = command.terminal { try validateUnassignedAreaColorAcknowledgment(command, value: value) }
+            }
             if let command = pending, command.method == "somedaySectionCreateWrite" {
                 try validateSomedaySectionCreateJournal(command)
                 if case .success(let value) = command.terminal { try validateSomedaySectionCreateAcknowledgment(command, value: value) }
@@ -443,6 +449,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringChecklist = pending?.method == "checklistPreparedCommit"
         let recoveringFocusGroup = pending?.method == "focusGroupWrite"
         let recoveringTaskListSort = pending?.method == "taskListSortWrite"
+        let recoveringUnassignedAreaColor = pending?.method == "unassignedAreaColorWrite"
         let recoveringSomedaySectionCreate = pending?.method == "somedaySectionCreateWrite"
         let recoveringSomedaySectionRename = pending?.method == "somedaySectionRenameWrite"
         let recoveringSomedaySectionDelete = pending?.method == "somedaySectionDeleteWrite"
@@ -481,6 +488,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringChecklist, let terminal, case .success(let value) = terminal { startupChecklistResult = value }
         if recoveringFocusGroup, let terminal, case .success(let value) = terminal { startupFocusGroupResult = value }
         if recoveringTaskListSort, let terminal, case .success(let value) = terminal { startupTaskListSortResult = value }
+        if recoveringUnassignedAreaColor, let terminal, case .success(let value) = terminal { startupUnassignedAreaColorResult = value }
         if recoveringSomedaySectionCreate, let terminal, case .success(let value) = terminal { startupSomedaySectionCreateResult = value }
         if recoveringSomedaySectionRename, let terminal, case .success(let value) = terminal { startupSomedaySectionRenameResult = value }
         if recoveringSomedaySectionDelete, let terminal, case .success(let value) = terminal { startupSomedaySectionDeleteResult = value }
@@ -500,9 +508,11 @@ private final class Engine: @unchecked Sendable {
             ?? startupProjectRenameResult ?? recoveredProjectMetadata
         let recoveredFocus = startupTaskFocusResult ?? startupFocusOrderResult ?? startupFocusSavedFilterResult
             ?? startupFocusGroupResult
-        let recoveredLists = startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
-            ?? startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
+        let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
+            ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
+        let recoveredLists = startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
+            ?? startupUnassignedAreaColorResult ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         guard let recovered = startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
             ?? recoveredProjects ?? recoveredFocus ?? recoveredLists else { return value }
@@ -539,6 +549,7 @@ private final class Engine: @unchecked Sendable {
                 : startupFocusSavedFilterResult != nil ? "focusSavedFilterCommit"
                 : startupInboxResult != nil ? "inboxPreparedCommit" : startupChecklistResult != nil ? "checklistPreparedCommit"
                 : startupTaskListSortResult != nil ? "taskListSortWrite"
+                : startupUnassignedAreaColorResult != nil ? "unassignedAreaColorWrite"
                 : startupSomedaySectionCreateResult != nil ? "somedaySectionCreateWrite"
                 : startupSomedaySectionRenameResult != nil ? "somedaySectionRenameWrite"
                 : startupSomedaySectionDeleteResult != nil ? "somedaySectionDeleteWrite"
@@ -577,6 +588,7 @@ private final class Engine: @unchecked Sendable {
         startupChecklistResult = nil
         startupFocusGroupResult = nil
         startupTaskListSortResult = nil
+        startupUnassignedAreaColorResult = nil
         startupSomedaySectionCreateResult = nil
         startupSomedaySectionRenameResult = nil
         startupSomedaySectionDeleteResult = nil
@@ -593,6 +605,9 @@ private final class Engine: @unchecked Sendable {
         let args: [Any]
         do { args = try arguments(method, argumentsJSON) }
         catch {
+            if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method), pending == nil {
+                throw CoreHostRejection(message: error.localizedDescription)
+            }
             if ["somedaySectionOrderOptions", "somedaySectionOrderWrite", "somedaySectionOrderRetryOutcome"].contains(method), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
@@ -619,11 +634,14 @@ private final class Engine: @unchecked Sendable {
                     throw CoreHostRejection(message: failure.message)
                 }
             }
-            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
+            if ["focusGroupRetryOutcome", "taskListSortRetryOutcome", "unassignedAreaColorRetryOutcome", "somedaySectionCreateRetryOutcome", "somedaySectionRenameRetryOutcome", "somedaySectionDeleteRetryOutcome", "somedaySectionOrderRetryOutcome", "somedaySectionTaskRetryOutcome", "projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "focusOrderRetryOutcome", "focusSavedFilterRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
                 do {
                     let value = try invoke(method, arguments: args)
                     if method == "somedaySectionCreateRetryOutcome" {
                         try validateSomedaySectionCreateAcknowledgment(arguments: args, value: value)
+                    }
+                    if method == "unassignedAreaColorRetryOutcome" {
+                        try validateUnassignedAreaColorAcknowledgment(arguments: args, value: value)
                     }
                     if method == "somedaySectionRenameRetryOutcome" {
                         try validateSomedaySectionRenameAcknowledgment(arguments: args, value: value)
@@ -644,7 +662,18 @@ private final class Engine: @unchecked Sendable {
                     throw CoreHostRejection(message: failure.message)
                 }
             }
-            let value = try invoke(method, arguments: args)
+            let value: String
+            if method == "menuRead", args.first as? String == "manageAreas" {
+                guard let page = args[1] as? String,
+                      var input = try NativeJSON.jsonObject(with: Data(page.utf8)) as? [String: Any] else {
+                    throw HostFailure("Unsupported native Manage Areas page")
+                }
+                input["list"] = "areas"
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]), as: UTF8.self)
+                value = try invoke("menuRead", arguments: ["manageList", encoded])
+            } else {
+                value = try invoke(method, arguments: args)
+            }
             if method == "focusOrderOptions" {
                 try validateFocusOrderOptions(value)
                 NSLog("Native iOS Focus order options validated releaseCheck=v1.3.4/ios-focus-order-revision outcome=accepted")
@@ -724,6 +753,19 @@ private final class Engine: @unchecked Sendable {
         if method == "taskListSortWrite" {
             do { _ = try invoke("taskListSortValidate", arguments: args) }
             catch let failure as HostFailure where failure.message.hasPrefix("INVALID_INPUT:") {
+                throw CoreHostRejection(message: failure.message)
+            }
+        }
+        if method == "unassignedAreaColorWrite" {
+            do {
+                let validated = try invoke("unassignedAreaColorValidate", arguments: args)
+                try validateUnassignedAreaColorAcknowledgment(arguments: args, value: validated)
+                if (try NativeJSON.jsonObject(with: Data(validated.utf8)) as? [String: Any])?["changed"] as? Bool == false {
+                    let value = try invoke(method, arguments: args)
+                    try validateUnassignedAreaColorAcknowledgment(arguments: args, value: value)
+                    return value
+                }
+            } catch let failure as HostFailure where failure.message.hasPrefix("INVALID_INPUT:") || failure.message.hasPrefix("STALE_REVISION:") {
                 throw CoreHostRejection(message: failure.message)
             }
         }
@@ -1782,6 +1824,11 @@ private final class Engine: @unchecked Sendable {
                 try validateSomedaySectionRenameAcknowledgment(command, value: probed)
                 try validateSomedaySectionRenameAcknowledgment(command, value: value)
             }
+            if command.method == "unassignedAreaColorWrite", case .success(let value) = terminal {
+                let probed = try invoke("unassignedAreaColorRetryOutcome", arguments: journalArguments(command))
+                try validateUnassignedAreaColorAcknowledgment(command, value: probed)
+                try validateUnassignedAreaColorAcknowledgment(command, value: value)
+            }
             if command.method == "somedaySectionDeleteWrite", case .success(let value) = terminal {
                 let probed = try invoke("somedaySectionDeleteRetryOutcome", arguments: journalArguments(command))
                 try validateSomedaySectionDeleteAcknowledgment(command, value: probed)
@@ -1934,6 +1981,10 @@ private final class Engine: @unchecked Sendable {
         if command.method == "taskListSortWrite" {
             try validateTaskListSortJournal(command)
             if case .success(let value) = terminal { try validateTaskListSortAcknowledgment(command, value: value) }
+        }
+        if command.method == "unassignedAreaColorWrite" {
+            try validateUnassignedAreaColorJournal(command)
+            if case .success(let value) = terminal { try validateUnassignedAreaColorAcknowledgment(command, value: value) }
         }
         if command.method == "somedaySectionCreateWrite" {
             try validateSomedaySectionCreateJournal(command)
@@ -2156,6 +2207,13 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS task list sort saved releaseCheck=v1.3.4/ios-reference-sort outcome=confirmed")
         }
+        if command.method == "unassignedAreaColorWrite", case .success(let value) = terminal,
+           (try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any])?["changed"] as? Bool == true {
+#if DEBUG
+            faults?.commandDiagnostic?("unassignedAreaColorSaved")
+#endif
+            NSLog("Native iOS unassigned area color saved releaseCheck=v1.3.4/ios-unassigned-area-color outcome=confirmed")
+        }
         if command.method == "somedaySectionCreateWrite", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("somedaySectionCreateSaved")
@@ -2203,7 +2261,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "areaColorCommit", "areaRenameCommit", "areaOrderCommit", "areaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "areaColorCommit", "areaRenameCommit", "areaOrderCommit", "areaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
             || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
@@ -2941,6 +2999,28 @@ private final class Engine: @unchecked Sendable {
               let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
               Set(result.keys) == Set(["sortBy"]), result["sortBy"] as? String == sortBy else {
             throw HostFailure("Malformed task list sort acknowledgment")
+        }
+    }
+
+    private func validateUnassignedAreaColorJournal(_ command: PendingCommand) throws {
+        _ = try invoke("unassignedAreaColorValidate", arguments: journalArguments(command))
+    }
+
+    private func validateUnassignedAreaColorAcknowledgment(_ command: PendingCommand, value: String) throws {
+        try validateUnassignedAreaColorAcknowledgment(arguments: journalArguments(command), value: value)
+    }
+
+    private func validateUnassignedAreaColorAcknowledgment(arguments: [Any], value: String) throws {
+        let validated = try invoke("unassignedAreaColorValidate", arguments: arguments)
+        guard let expected = try NativeJSON.jsonObject(with: Data(validated.utf8)) as? [String: Any],
+              Set(expected.keys) == Set(["color", "changed"]),
+              let color = expected["color"] as? String, Self.isBoolean(expected["changed"]),
+              let changed = expected["changed"] as? Bool,
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["color", "changed"]),
+              result["color"] as? String == color,
+              Self.isBoolean(result["changed"]), result["changed"] as? Bool == changed else {
+            throw HostFailure("Malformed unassigned area color acknowledgment")
         }
     }
 
@@ -3719,7 +3799,7 @@ private final class Engine: @unchecked Sendable {
         }
         // These commands store a final state. Text drafts also carry the exact
         // base values; core accepts an applied edit or refuses an intervening one.
-        if ["complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit"].contains(command.method) {
+        if ["complete", "setAreaFilter", "saveDraft", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit"].contains(command.method) {
             // A raw schedule intent was never a supported legacy journal. It
             // must not be reparsed/reprepared under a different clock or zone.
             return try arguments(command.method, command.argumentsJSON, allowPreparedDates: false)
@@ -3883,6 +3963,9 @@ private final class Engine: @unchecked Sendable {
         if ["taskListSortOptions", "taskListSortWrite", "taskListSortRetryOutcome"].contains(method) && json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Task list sort transport is too large")
         }
+        if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method) && json.utf8.count > 4_096 {
+            throw HostFailure("INVALID_INPUT: Unassigned area color transport is too large")
+        }
         if ["somedaySectionCreateOptions", "somedaySectionCreateWrite", "somedaySectionCreateRetryOutcome",
             "somedaySectionRenameOptions", "somedaySectionRenameWrite", "somedaySectionRenameRetryOutcome",
             "somedaySectionDeleteOptions", "somedaySectionDeleteWrite", "somedaySectionDeleteRetryOutcome"].contains(method)
@@ -3992,6 +4075,25 @@ private final class Engine: @unchecked Sendable {
                       let expected = input["expected"] as? [String: Any], Set(expected.keys) == Set(["sortBy"]),
                       expected["sortBy"] is NSNull || (expected["sortBy"] as? String).map({ $0.utf16.count <= 500 }) == true else {
                     throw HostFailure("INVALID_INPUT: Task list sort needs an exact choice, raw token, and lowercase UUID")
+                }
+            }
+        }
+        if ["unassignedAreaColorOptions", "unassignedAreaColorWrite", "unassignedAreaColorRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 4_096,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else {
+                throw HostFailure("INVALID_INPUT: Unassigned area color needs a bounded object")
+            }
+            if method == "unassignedAreaColorOptions" {
+                guard input.isEmpty else { throw HostFailure("INVALID_INPUT: Unassigned area color options need an empty object") }
+            } else {
+                guard Set(input.keys) == Set(["requestId", "color", "expected"]),
+                      let id = input["requestId"] as? String, id == UUID(uuidString: id)?.uuidString.lowercased(),
+                      let color = input["color"] as? String, color.utf16.count <= 500,
+                      let expected = input["expected"] as? [String: Any],
+                      Set(expected.keys) == Set(["color", "updatedAt"]),
+                      expected["color"] is NSNull || (expected["color"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                      expected["updatedAt"] is NSNull || (expected["updatedAt"] as? String).map({ $0.utf16.count <= 500 }) == true else {
+                    throw HostFailure("INVALID_INPUT: Unassigned area color needs an exact choice, raw token, and lowercase UUID")
                 }
             }
         }
@@ -4896,7 +4998,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "manageSettings", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "manageSettings", "manageAreas", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
@@ -4915,6 +5017,15 @@ private final class Engine: @unchecked Sendable {
                       (input["openSections"] == nil || input["openSections"] is NSNull
                         || (input["openSections"] as? String).map({ $0.utf16.count <= 2_000 && !$0.contains("\0") }) == true) else {
                     throw HostFailure("Unsupported native Manage Settings input")
+                }
+            }
+            if name == "manageAreas" {
+                guard json.utf8.count <= 4_096, Set(input.keys) == Set(["offset", "limit", "revision"]),
+                      Self.isInteger(input["offset"]), Self.isInteger(input["limit"]),
+                      let offset = input["offset"] as? NSNumber, (0...9_007_199_254_740_991).contains(offset.doubleValue),
+                      let limit = input["limit"] as? NSNumber, (1...100).contains(limit.doubleValue),
+                      let revision = input["revision"] as? String, revision.utf8.count <= 500 else {
+                    throw HostFailure("Unsupported native Manage Areas page")
                 }
             }
             if name == "somedaySections" {

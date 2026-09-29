@@ -10178,4 +10178,185 @@ final class FoundationUITests: XCTestCase {
         waitForExpectations(timeout: 30)
         XCTAssertFalse(app.buttons[title].exists)
     }
+
+    private func task86OpenAreas(_ app: XCUIApplication) {
+        task83OpenManage(app, ensureOpen: false)
+        let toggle = app.buttons["manage-section-toggle-areas"]
+        revealPagedElement(app, toggle, in: app.scrollViews["manage-someday-scroll"])
+        boardEnabled(toggle)
+        if toggle.value as? String == "collapsed" { toggle.tap() }
+        expectation(for: NSPredicate(format: "value == 'expanded'"), evaluatedWith: toggle)
+        waitForExpectations(timeout: 10)
+        boardEnabled(app.buttons["manage-unassigned-color"])
+    }
+
+    private func task86OpenColorEditor(_ app: XCUIApplication) {
+        let pencil = app.buttons["manage-unassigned-color"]
+        revealPagedElement(app, pencil, in: app.scrollViews["manage-someday-scroll"])
+        boardTap(app, "manage-unassigned-color")
+        for id in ["manage-unassigned-color-cancel", "manage-unassigned-color-save"] {
+            let button = app.buttons[id]
+            boardEnabled(button)
+            expectation(for: NSPredicate { _, _ in button.frame.height >= 44 - 0.001 }, evaluatedWith: button)
+            waitForExpectations(timeout: 10)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        }
+    }
+
+    private func task86SelectGreen(_ app: XCUIApplication) {
+        let swatch = app.buttons["manage-unassigned-color-option-1"]
+        boardEnabled(swatch)
+        XCTAssertGreaterThanOrEqual(swatch.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(swatch.frame.height, 44 - 0.001)
+        swatch.tap()
+        XCTAssertEqual(swatch.value as? String, "selected")
+    }
+
+    private func task86WaitForColorEditorClose(_ app: XCUIApplication) {
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["manage-unassigned-color-save"])
+        waitForExpectations(timeout: 20)
+        boardEnabled(app.buttons["manage-unassigned-color"])
+    }
+
+    func testManageUnassignedAreaColorNormal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "d77218ed-c41a-4b3e-aebe-335fea914193"]
+        app.launch(); task86OpenAreas(app)
+        task86OpenColorEditor(app)
+        task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-cancel")
+        task86OpenColorEditor(app)
+        XCTAssertNotEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        boardTap(app, "manage-unassigned-color-save") // Exact imported custom color: no-op.
+        task86WaitForColorEditorClose(app)
+        task86OpenColorEditor(app)
+        task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-save")
+        task86WaitForColorEditorClose(app)
+        app.terminate(); app.launch(); task86OpenAreas(app)
+        task86OpenColorEditor(app)
+        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        boardTap(app, "manage-unassigned-color-cancel")
+        app.terminate()
+    }
+
+    func testManageUnassignedAreaColorLargestText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "cc40b285-b861-4b05-a8e3-499f43bcf0bf"]
+        app.launch(); task86OpenAreas(app)
+        task86OpenColorEditor(app)
+        task86SelectGreen(app)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Unassigned Area color at largest text"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "manage-unassigned-color-save")
+        task86WaitForColorEditorClose(app)
+        app.terminate(); app.launch(); task86OpenAreas(app)
+        task86OpenColorEditor(app)
+        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        boardTap(app, "manage-unassigned-color-cancel")
+        app.terminate()
+    }
+
+    func testManageAreasPaging() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "f004e4a2-0aea-4f2e-9bcc-700b5326b678"]
+        app.launch(); task86OpenAreas(app)
+        let last = app.staticTexts["manage-area-name-105"]
+        revealPagedElement(app, last, in: app.scrollViews["manage-someday-scroll"],
+                           more: "manage-areas-more", ready: app.buttons["manage-back"])
+        XCTAssertEqual(last.label, "Task86 Last area")
+        XCTAssertFalse(app.buttons["manage-area-edit-105"].isEnabled)
+        XCTAssertFalse(app.buttons["manage-area-delete-105"].isEnabled)
+        XCTAssertFalse(app.buttons["manage-area-add"].isEnabled)
+        app.terminate()
+    }
+
+    func testManageUnassignedAreaColorReadFailureRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "970a99c7-6746-4d7a-ba36-e3d4844b4050",
+                               "--native-unassigned-color-read-failure"]
+        app.launch(); task86OpenAreas(app); task86OpenColorEditor(app); task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-save")
+        let failure = app.staticTexts["manage-unassigned-color-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-unassigned-color-save"].isEnabled)
+        for attempt in 0..<2 {
+            boardTap(app, "manage-unassigned-color-retry")
+            if attempt == 0 { XCTAssertTrue(failure.waitForExistence(timeout: 20)) }
+        }
+        task86WaitForColorEditorClose(app)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "970a99c7-6746-4d7a-ba36-e3d4844b4050"]
+        app.launch(); task86OpenAreas(app); task86OpenColorEditor(app)
+        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        boardTap(app, "manage-unassigned-color-cancel"); app.terminate()
+    }
+
+    /// Root checks the same pending journal bytes after each retry and disarms its failure trigger before the cold test.
+    func testManageUnassignedAreaColorSaveFailure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "aafd125a-deec-4d44-bf1e-183dc187c6e6"]
+        app.launch(); task86OpenAreas(app); task86OpenColorEditor(app); task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-save")
+        let failure = app.staticTexts["manage-unassigned-color-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+            XCTAssertFalse(app.buttons["manage-unassigned-color-save"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-unassigned-color-cancel"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            boardTap(app, "manage-unassigned-color-retry")
+            boardEnabled(app.buttons["manage-unassigned-color-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    func testManageUnassignedAreaColorColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "aafd125a-deec-4d44-bf1e-183dc187c6e6"]
+        app.launch(); task86OpenAreas(app); task86OpenColorEditor(app)
+        XCTAssertEqual(app.buttons["manage-unassigned-color-option-1"].value as? String, "selected")
+        boardTap(app, "manage-unassigned-color-cancel")
+        app.terminate()
+    }
+
+    func testManageUnassignedAreaColorOptionsReadRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "b8b50a5a-1457-4e2d-85f5-cb08ed82898d",
+                               "--native-unassigned-color-options-failure"]
+        app.launch(); task86OpenAreas(app)
+        boardTap(app, "manage-unassigned-color")
+        XCTAssertTrue(app.staticTexts["manage-unassigned-color-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-unassigned-color-save"].exists)
+        XCTAssertFalse(app.buttons["manage-unassigned-color"].isEnabled)
+        boardTap(app, "manage-unassigned-color-retry")
+        task86OpenColorEditor(app); task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-save")
+        task86WaitForColorEditorClose(app)
+        app.terminate()
+    }
+
+    func testManageUnassignedAreaColorDefiniteRefusal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ea5fd3d0-4e32-4c5a-a2a6-cdfd950fb4bf",
+                               "--native-unassigned-color-refusal"]
+        app.launch(); task86OpenAreas(app); task86OpenColorEditor(app); task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-save")
+        XCTAssertTrue(app.staticTexts["manage-unassigned-color-error"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-unassigned-color-save"].exists)
+        XCTAssertFalse(app.buttons["manage-unassigned-color"].isEnabled)
+        boardTap(app, "manage-unassigned-color-retry")
+        task86OpenColorEditor(app); task86SelectGreen(app)
+        boardTap(app, "manage-unassigned-color-save")
+        task86WaitForColorEditorClose(app)
+        app.terminate()
+    }
 }

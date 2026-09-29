@@ -24,7 +24,7 @@ struct SettingsScreen: View {
                 .disabled(model.busy || model.retryNeeded || model.somedaySectionRenamePending
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
-                          || model.somedaySectionOrderActive)
+                          || model.somedaySectionOrderActive || model.unassignedAreaColorActive)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -61,6 +61,10 @@ struct SettingsScreen: View {
                 if !deleteConfirmAnswered && !deleteConfirmPresented { model.cancelSomedaySectionDelete() }
             }
         }
+        .sheet(isPresented: Binding(
+            get: { !model.unassignedAreaColorOptions.isEmpty },
+            set: { if !$0 { model.cancelUnassignedAreaColor() } }
+        )) { unassignedAreaColorSheet }
         .accessibilityAction(.escape) {
             if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
@@ -131,7 +135,12 @@ struct SettingsScreen: View {
     private var manageContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                if let failure = model.somedaySectionOrderError {
+                if let failure = model.unassignedAreaColorError, model.unassignedAreaColorOptions.isEmpty {
+                    errorBlock(failure, id: "manage-unassigned-color-error",
+                               retryID: "manage-unassigned-color-retry") {
+                        Task { await model.retryUnassignedAreaColor() }
+                    }
+                } else if let failure = model.somedaySectionOrderError {
                     errorBlock(failure, id: "manage-someday-order-error",
                                retryID: "manage-someday-order-retry") {
                         Task { await model.retrySomedaySectionOrder() }
@@ -157,8 +166,9 @@ struct SettingsScreen: View {
                 ForEach(model.manageSettings.objects("sections").indices, id: \.self) { index in
                     let section = model.manageSettings.objects("sections")[index]
                     let someday = section.text("key") == "somedaySections"
+                    let areas = section.text("key") == "areas"
                     VStack(spacing: 1) {
-                        Button { if someday { Task { await model.toggleManageSection("somedaySections") } } } label: {
+                        Button { if someday || areas { Task { await model.toggleManageSection(section.text("key")) } } } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: section.flag("open") ? "chevron.down" : "chevron.right")
                                     .font(.system(size: 14)).foregroundStyle(palette.secondary).accessibilityHidden(true)
@@ -169,14 +179,38 @@ struct SettingsScreen: View {
                             .foregroundStyle(palette.text).padding(.horizontal, 16)
                             .frame(minHeight: 52).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).disabled(!someday || model.busy || model.retryNeeded
+                        .buttonStyle(.plain).disabled(!(someday || areas) || model.busy || model.retryNeeded
                                                       || model.somedaySectionRenameIndex != nil
                                                       || model.somedaySectionRenameReadPending
                                                       || model.somedaySectionDeleteActive
-                                                      || model.somedaySectionOrderActive)
-                        .opacity(someday ? 1 : 0.55)
+                                                      || model.somedaySectionOrderActive
+                                                      || model.unassignedAreaColorActive)
+                        .opacity((someday || areas) ? 1 : 0.55)
                         .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                         .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
+                        if areas && section.flag("open") {
+                            unassignedAreaRow
+                            if model.managedAreasTotal == 0,
+                               let empty = model.manageSettings.object("areas")["empty"] as? String {
+                                Text(empty).rnFont(14).foregroundStyle(palette.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                            }
+                            ForEach(model.managedAreas.indices, id: \.self) { rowIndex in
+                                areaRow(model.managedAreas[rowIndex], index: rowIndex)
+                            }
+                            if model.managedAreas.count < model.managedAreasTotal {
+                                Button(model.label("common.more")) {
+                                    Task { await model.loadMoreManagedAreas() }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                                          || model.unassignedAreaColorActive
+                                          || model.somedaySectionRenameIndex != nil
+                                          || model.somedaySectionDeleteActive || model.somedaySectionOrderActive)
+                                .accessibilityIdentifier("manage-areas-more")
+                            }
+                            newAreaRow
+                        }
                         if someday && section.flag("open") {
                             if model.managedSomedayTotal == 0 {
                                 Text(model.manageSettings.object("somedaySections").text("emptyHint"))
@@ -194,7 +228,8 @@ struct SettingsScreen: View {
                                     .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                                               || model.somedaySectionRenameIndex != nil
                                               || model.somedaySectionDeleteActive
-                                              || model.somedaySectionOrderActive)
+                                              || model.somedaySectionOrderActive
+                                              || model.unassignedAreaColorActive)
                                     .accessibilityIdentifier("manage-someday-more")
                                 }
                             }
@@ -207,6 +242,137 @@ struct SettingsScreen: View {
             .padding(16)
         }
         .accessibilityIdentifier("manage-someday-scroll")
+    }
+
+    private var unassignedAreaRow: some View {
+        let row = model.manageSettings.object("areas").object("unassigned")
+        return HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6).fill(Color(hex: row.text("color")))
+                .frame(width: 24, height: 24).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.text("label")).rnFont(15, .semibold).foregroundStyle(palette.text)
+                Text(row.text("description")).rnFont(12).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button { Task { await model.openUnassignedAreaColor() } } label: {
+                Image(systemName: "pencil").font(.system(size: 18))
+                    .foregroundStyle(palette.secondary).frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                      || model.unassignedAreaColorActive || model.somedaySectionRenameIndex != nil
+                      || model.somedaySectionDeleteActive || model.somedaySectionOrderActive)
+            .accessibilityLabel(model.label("common.edit") + ": " + row.text("label"))
+            .accessibilityIdentifier("manage-unassigned-color")
+        }
+        .padding(.horizontal, 12).frame(minHeight: 56)
+    }
+
+    private func areaRow(_ row: CoreObject, index: Int) -> some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6).fill(Color(hex: row.text("color")))
+                .frame(width: 24, height: 24).accessibilityHidden(true)
+            Text(row.text("name")).rnFont(15).foregroundStyle(palette.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .accessibilityIdentifier("manage-area-name-\(index)")
+            Button {} label: {
+                Image(systemName: "pencil").font(.system(size: 18)).foregroundStyle(palette.secondary)
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(true).accessibilityLabel(model.label("common.edit") + ": " + row.text("name"))
+            .accessibilityIdentifier("manage-area-edit-\(index)")
+            Button {} label: {
+                Image(systemName: "trash").font(.system(size: 18)).foregroundStyle(palette.secondary)
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(true).accessibilityIdentifier("manage-area-delete-\(index)")
+        }
+        .padding(.horizontal, 12).frame(minHeight: 52)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("manage-area-row-\(index)")
+    }
+
+    private var newAreaRow: some View {
+        let row = model.manageSettings.object("areas").object("newArea")
+        return HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6).fill(Color(hex: row.text("color")))
+                .frame(width: 24, height: 24).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.text("label")).rnFont(15, .semibold).foregroundStyle(palette.text)
+                Text(row.text("hint")).rnFont(12).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(row.text("addLabel")) {}.disabled(true)
+                .frame(minWidth: 86, minHeight: 44)
+                .accessibilityIdentifier("manage-area-add")
+        }
+        .padding(.horizontal, 12).frame(minHeight: 56)
+    }
+
+    private var unassignedAreaColorSheet: some View {
+        let editor = model.manageSettings.object("editor")
+        let copy = editor.object("text").object("unassignedArea")
+        let colors = editor.objects("colors")
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 52), spacing: 12)], spacing: 12) {
+                        ForEach(colors.indices, id: \.self) { index in
+                            let choice = colors[index]
+                            let selected = model.unassignedAreaColorDraft == choice.text("color")
+                            Button { model.selectUnassignedAreaColor(choice.text("color")) } label: {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(hex: choice.text("color")))
+                                    .frame(minWidth: 48, minHeight: 48)
+                                    .overlay {
+                                        if selected {
+                                            Image(systemName: "checkmark").font(.system(size: 17, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain).disabled(!model.unassignedAreaColorCanSave)
+                            .accessibilityLabel(choice.text("label"))
+                            .accessibilityValue(selected ? "selected" : "")
+                            .accessibilityIdentifier("manage-unassigned-color-option-\(index)")
+                        }
+                    }
+                    if let failure = model.unassignedAreaColorError {
+                        errorBlock(failure, id: "manage-unassigned-color-error",
+                                   retryID: "manage-unassigned-color-retry") {
+                            Task { await model.retryUnassignedAreaColor() }
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        Button { model.cancelUnassignedAreaColor() } label: {
+                            Text(copy.text("cancelLabel"))
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                            .disabled(model.busy || model.retryNeeded || model.unassignedAreaColorAwaitingRefresh)
+                            .accessibilityIdentifier("manage-unassigned-color-cancel")
+                        Button { Task { await model.saveUnassignedAreaColor() } } label: {
+                            Text(copy.text("saveLabel"))
+                                .foregroundStyle(palette.onTint)
+                                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                        }
+                            .buttonStyle(.borderedProminent)
+                            .tint(palette.tint)
+                            .disabled(!model.unassignedAreaColorCanSave)
+                            .accessibilityIdentifier("manage-unassigned-color-save")
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle(copy.text("title"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(model.busy || model.retryNeeded || model.unassignedAreaColorAwaitingRefresh)
     }
 
     private func somedayRow(index: Int) -> some View {

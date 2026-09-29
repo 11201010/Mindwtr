@@ -958,6 +958,18 @@ globalThis.MindwtrHost = {
     somedaySectionRenameRetryOutcome(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.probeSomedaySectionRenameOutcome(JSON.parse(json))); });
     },
+    unassignedAreaColorOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.getUnassignedAreaColorOptions(JSON.parse(json))); });
+    },
+    unassignedAreaColorValidate(json: string): string {
+        return submit(async () => unwrap(contract.validateUnassignedAreaColorWrite(JSON.parse(json))));
+    },
+    unassignedAreaColorWrite(json: string): string {
+        return submit(async () => unwrap(await contract.setUnassignedAreaColorChecked(JSON.parse(json))));
+    },
+    unassignedAreaColorRetryOutcome(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(contract.probeUnassignedAreaColorOutcome(JSON.parse(json))); });
+    },
     somedaySectionDeleteOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getSomedaySectionDeleteOptions(JSON.parse(json))); });
     },

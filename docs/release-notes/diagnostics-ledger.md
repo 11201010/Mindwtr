@@ -21,6 +21,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-unassigned-area-color`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS unassigned area color saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Change the unassigned-area color in Settings → Manage → Areas and relaunch; only that appearance preference and its settings timestamp may change. Cancel and unchanged colors write nothing. Failed saves retain the original request for Retry and cold recovery; changed settings are refused. No colors, identifiers or settings content are logged.
+
 - **`v1.3.4/ios-someday-section-order`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Someday section order saved` with `outcome=confirmed` follows durable acknowledgement and journal cleanup. Move a section up or down in Settings → Manage → Someday sections and relaunch; only section order fields and the GTD settings timestamp may change. Tasks retain all stored fields. Failed saves retain the original request for Retry and cold recovery; changed settings are refused. No section names, identifiers or settings content are logged.
 
 - **`v1.3.4/ios-calendar-create-recovery`** — `apps/mobile/lib/calendar-push-sync.ts`. `Recovered Mindwtr calendar creation` appears after the exact pending iOS calendar ID is stored, its title is finalized, and the creation intent is cleared. Interrupt creation after the OS calendar appears, relaunch, and verify that the same calendar is used once. No calendar title, ID, account, event or task content is logged.
