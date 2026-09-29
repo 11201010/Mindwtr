@@ -459,7 +459,7 @@ export function resolveSyncBadgeState(params: {
     if (!configured) return 'hidden';
     if (activityState === 'syncing') return 'syncing';
     if (lastSyncStatus === 'error') return 'attention';
-    if (Boolean(pendingRemoteWriteAt)) return 'syncing';
+    if (pendingRemoteWriteAt) return 'syncing';
     if (lastSyncStatus === 'success' || lastSyncStatus === 'conflict') return 'healthy';
     if (lastSyncAt) return 'healthy';
 
