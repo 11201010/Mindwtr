@@ -635,7 +635,9 @@ describe('getCalendarPushTargetCalendars', () => {
 });
 
 describe('deleteMindwtrCalendar', () => {
-    it('removes app-created Mindwtr calendars even when the stored calendar id was lost', async () => {
+    // Another install (another phone, or a second Mindwtr app) can own a calendar with the same
+    // title and name on the same account: only the calendar whose id this install saved is its own.
+    it('deletes no Mindwtr calendar it did not save, even one named like its own', async () => {
         mockGetItem
             .mockResolvedValueOnce(null) // stored calendar id after reinstall
             .mockResolvedValueOnce(null); // selected target id
@@ -663,7 +665,7 @@ describe('deleteMindwtrCalendar', () => {
 
         await deleteMindwtrCalendar();
 
-        expect(mockDeleteCalendarAsync).toHaveBeenCalledWith('old-app-calendar');
+        expect(mockDeleteCalendarAsync).not.toHaveBeenCalledWith('old-app-calendar');
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalledWith('user-calendar');
         expect(mockDeleteCalendarAsync).not.toHaveBeenCalledWith('other');
         expect(mockRemoveItem).toHaveBeenCalledWith('mindwtr:calendar-push-sync:calendar-id');

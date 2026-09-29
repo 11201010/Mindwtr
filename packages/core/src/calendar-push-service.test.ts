@@ -58,6 +58,11 @@ function device(options: { os?: string; calendars?: DeviceCalendar[]; storage?: 
                 calendars.push({ ...details, id, allowsModifications: true, source: { ...details.source } });
                 return id;
             },
+            updateCalendar: async (id, details) => {
+                writes.push(['updateCalendar', id, details.color]);
+                const calendar = calendars.find((entry) => entry.id === id);
+                if (calendar) calendar.color = details.color;
+            },
             deleteCalendar: async (id) => {
                 writes.push(['deleteCalendar', id]);
                 const index = calendars.findIndex((calendar) => calendar.id === id);
@@ -107,7 +112,7 @@ describe('calendar push behind the host ports', () => {
         expect(phone.storage.get(CALENDAR_PUSH_CALENDAR_ID_KEY)).toBe('created-2');
     });
 
-    it('deletes only calendars the app made and forgets only their pushed events', async () => {
+    it('deletes only the calendar it saved, never one another install named the same way, and forgets only its pushed events', async () => {
         const phone = device({
             calendars: [
                 PRIMARY,
@@ -122,11 +127,21 @@ describe('calendar push behind the host ports', () => {
             ],
         });
         await createCalendarPushService(phone.host).deleteMindwtrCalendar();
-        expect(phone.writes).toEqual([['deleteCalendar', 'saved'], ['deleteCalendar', 'app-made'], ['deleteSyncEntry', 't1']]);
-        expect(phone.calendars.map((calendar) => calendar.id)).toEqual(['primary', 'users-own']);
+        expect(phone.writes).toEqual([['deleteCalendar', 'saved'], ['deleteSyncEntry', 't1']]);
+        expect(phone.calendars.map((calendar) => calendar.id)).toEqual(['primary', 'app-made', 'users-own']);
         expect(phone.storage.has(CALENDAR_PUSH_CALENDAR_ID_KEY)).toBe(false);
-        expect(phone.storage.has(CALENDAR_PUSH_TARGET_ID_KEY)).toBe(false);
+        // The chosen calendar was not the one deleted: it stays chosen.
+        expect(phone.storage.get(CALENDAR_PUSH_TARGET_ID_KEY)).toBe('app-made');
         expect([...phone.entries.keys()]).toEqual(['t2']);
+    });
+
+    it('recolors only the calendar it saved', async () => {
+        const phone = device({
+            calendars: [PRIMARY, { id: 'other-install', title: 'Mindwtr', name: 'mindwtr', color: '#3B82F6', accessLevel: 'owner', allowsModifications: true, source: google }],
+        });
+        expect(await createCalendarPushService(phone.host).updateMindwtrCalendarColor('#059669')).toBe(false);
+        expect(phone.writes).toEqual([]);
+        expect(phone.calendars.map((calendar) => calendar.id)).toEqual(['primary', 'other-install']);
     });
 
     it('lists writable calendars: the managed one first, then Mindwtr-named ones, then by name', async () => {

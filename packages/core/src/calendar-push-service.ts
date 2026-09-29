@@ -222,12 +222,6 @@ function isStoredMindwtrManagedCalendar(calendar: DeviceCalendar, storedCalendar
     return Boolean(storedCalendarId && calendar.id === storedCalendarId);
 }
 
-function isAppCreatedMindwtrCalendar(calendar: DeviceCalendar): boolean {
-    const title = getCalendarDisplayName(calendar).trim().toLowerCase();
-    const name = typeof calendar.name === 'string' ? calendar.name.trim().toLowerCase() : '';
-    return title === MANAGED_CALENDAR_TITLE.toLowerCase() && name === MANAGED_CALENDAR_NAME;
-}
-
 function getAndroidManagedCalendarSeed(
     calendars: DeviceCalendar[],
     color: string
@@ -535,6 +529,9 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
     /**
      * Deletes the managed Mindwtr calendar and removes the stored ID.
      * Called when the user disables calendar push sync and chooses to clean up.
+     * The app owns only the calendar whose ID it saved: another install (another
+     * phone on the account, or a second Mindwtr app) may have a calendar with the
+     * same title and name, and it is never deleted.
      */
     const deleteMindwtrCalendar = async (): Promise<void> => {
         if (isSandboxMode()) return;
@@ -543,20 +540,6 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
         const calendarIdsToDelete = new Set<string>();
         if (storedId) {
             calendarIdsToDelete.add(storedId);
-        }
-
-        try {
-            const calendars = await device.getCalendars();
-            calendars.forEach((calendar) => {
-                if (isAppCreatedMindwtrCalendar(calendar)) {
-                    calendarIdsToDelete.add(calendar.id);
-                }
-            });
-        } catch (error) {
-            void log.warn('Failed to inspect calendars before deleting Mindwtr calendar', {
-                scope: 'calendar-push',
-                extra: { error: String(error) },
-            });
         }
 
         if (calendarIdsToDelete.size === 0) {
@@ -831,8 +814,8 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             if (typeof device.updateCalendar !== 'function') return false;
             const storedCalendarId = await getStoredCalendarId();
             const calendars = await device.getCalendars();
-            const target = calendars.find((calendar) => storedCalendarId && calendar.id === storedCalendarId)
-                ?? calendars.find(isAppCreatedMindwtrCalendar);
+            // Only the calendar the app saved is its own (never one found by its title).
+            const target = calendars.find((calendar) => storedCalendarId && calendar.id === storedCalendarId);
             if (!target || !isWritableCalendar(target)) return false;
 
             // Android's CalendarProvider only stores a calendar's color at creation
