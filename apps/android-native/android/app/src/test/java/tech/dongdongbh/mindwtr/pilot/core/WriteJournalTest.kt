@@ -117,6 +117,31 @@ class WriteJournalTest {
         assertEquals(emptyList<WriteJournal.Entry>(), journal.pending())
     }
 
+    // Review 2: a journal that cannot be listed is never read as empty (its next entry would take the name of one on disk).
+    @Test fun aJournalThatCannotBeListedRefusesToOpen() {
+        val notADirectory = File(folder.root, "journal").apply { writeText("") }
+        val refused = runCatching { open(notADirectory) }.exceptionOrNull()
+        assertTrue("an unlistable journal refuses to open: $refused", refused is java.io.IOException)
+    }
+
+    @Test fun anAppendNeverReplacesAnEntryOnDisk() {
+        val dir = File(folder.root, "journal")
+        val journal = open(dir)
+        // An entry the journal did not list (it appeared after the open): the next append must not take its place.
+        val stray = File(dir, "0000000000000001.json").apply { writeText("""{"method":"complete","args":["a","1:x:t"]}""") }
+        val refused = runCatching { journal.append("complete", listOf("task-1", "3:dev:2026")) }.exceptionOrNull()
+        assertTrue("the append refuses: $refused", refused != null)
+        assertEquals("""{"method":"complete","args":["a","1:x:t"]}""", stray.readText())
+    }
+
+    @Test fun theSequenceResumesAfterTheHighestNameSeen() {
+        val dir = File(folder.root, "journal").apply { mkdirs() }
+        File(dir, "0000000000000009.json").writeText("not json")
+        File(dir, "0000000000000012.json.tmp").writeText("""{"method":"compl""")
+        val entry = open(dir).append("complete", listOf("task-1", "3:dev:2026"))!!
+        assertEquals("0000000000000013.json", entry.file.name)
+    }
+
     @Test fun onlySaveFailedKeeps() {
         assertTrue(WriteJournal.keeps("SAVE_FAILED: Injected commit failure"))
         for (error in listOf(null, "STALE_REVISION: x", "INVALID_INPUT: x", "ACTION_FAILED: x", "Incomplete tasks load")) assertFalse(WriteJournal.keeps(error))

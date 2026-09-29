@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
 /**
  * The write-ahead journal under the app's `files/journal`: every write request (a [WRITES] method and its exact arguments,
@@ -13,7 +14,8 @@ import java.io.FileOutputStream
  *
  * An entry is one file, `<sequence>.json`: written whole to a temporary file, synced, renamed into place, and the directory
  * synced. A temporary file left by a death mid-write was never sent, so it is removed. An entry that cannot be read, or names
- * a method that is not a write, is moved to [ASIDE], never replayed and never deleted.
+ * a method that is not a write, is moved to [ASIDE], never replayed and never deleted. A journal that cannot be listed refuses
+ * to open (the boot fails as a failed load does, so no write runs), and an entry never takes the name of a file on disk.
  */
 class WriteJournal(
     private val dir: File,
@@ -34,6 +36,8 @@ class WriteJournal(
         val UNJOURNALED = emptySet<String>()
         const val ASIDE = "aside"
         private val NAME = Regex("""^(\d{16})\.json$""")
+        /** A sequence number on disk: an entry's, one set aside here, or one cut short. */
+        private val SEQUENCE = Regex("""^(\d{16})\.json""")
         private const val PARTIAL = ".tmp"
 
         /**
@@ -51,9 +55,13 @@ class WriteJournal(
 
     init {
         dir.mkdirs()
+        // Never read as empty when it cannot be listed: the next entry could take the name of one on disk.
+        val files = dir.listFiles() ?: throw IOException("Cannot read the write journal")
         var partial = 0
         var aside = 0
-        for (file in dir.listFiles().orEmpty().filter { it.isFile }.sortedBy { it.name }) {
+        for (file in files.filter { it.isFile }.sortedBy { it.name }) {
+            // The next entry comes after every sequence number on disk, set aside or cut short too.
+            SEQUENCE.find(file.name)?.let { next = maxOf(next, it.groupValues[1].toLong() + 1) }
             if (file.name.endsWith(PARTIAL)) {
                 file.delete()
                 partial += 1
@@ -66,7 +74,6 @@ class WriteJournal(
                 continue
             }
             entries += entry
-            next = maxOf(next, NAME.matchEntire(file.name)!!.groupValues[1].toLong() + 1)
         }
         log("Native Android journal open entries=${entries.size} aside=$aside partial=$partial")
     }
@@ -84,6 +91,8 @@ class WriteJournal(
         val text = JSONObject().put("method", method).put("args", JSONArray().apply { args.forEach { put(requireNotNull(it)) } }).toString()
         entries.firstOrNull { it.text == text }?.let { return it }
         val file = File(dir, "%016d.json".format(next++))
+        // The rename below would replace a file of that name: never over one on disk.
+        check(!file.exists()) { "The write journal already holds ${file.name}" }
         val partial = File(dir, file.name + PARTIAL)
         try {
             FileOutputStream(partial).use { out -> out.write(text.toByteArray()); out.fd.sync() }
