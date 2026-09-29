@@ -11,6 +11,14 @@
     "observations": [
      "A subscription URL no longer shows its user name and password: https://alex:s3cret@calendar.example.com/...ic.ics now reads https://calendar.example.com/...ic.ics. Only that text changed, in every step of feeds: add, test, toggle, color, areas, remove (from the first Add on), feeds: the synced list wins over the device copy, and in Chinese: push on and a test."
     ]
+   },
+   {
+    "base": "904aafc47",
+    "command": "The two observations below were written by hand, then React Native was fixed until the harness replayed them; every other observation matched the frozen one. Before the fix, the harness recorded (MINDWTR_DUMP_CALENDAR_SETTINGS) an updateSettings write for the re-pick, and a delete, a new Mindwtr calendar (created-2) and a toast for the second color tap.",
+    "observations": [
+     "push: the managed calendar, a new color, then off: a second tap on #059669 (a step added to the scenario) writes nothing, shows no toast and keeps the Mindwtr calendar created-1.",
+     "feeds: the synced list wins over the device copy: tapping Holidays feed's color #059669, which it already has, writes no settings."
+    ]
    }
   ]
  },
@@ -301,6 +309,10 @@
     [
      "press",
      "k:settings.calendarMobile.pushTasksToCalendar"
+    ],
+    [
+     "press",
+     "Mindwtr calendar color #059669"
     ],
     [
      "press",
@@ -2499,6 +2511,162 @@
       3000
      ]
     ]
+   },
+   {
+    "texts": [
+     "External Calendar",
+     "Push tasks to calendar",
+     "Scheduled tasks and tasks with due dates are added to your selected device calendar.",
+     "▾",
+     "Sync target",
+     "Choose an account calendar if your calendar app hides local calendars.",
+     "Local calendar targets stay on this device. Use a Google account calendar target if you need Google Calendar web sync.",
+     "Mindwtr calendar",
+     "Dedicated local calendar",
+     "alex@gmail.com",
+     "Shared account calendar · alex@gmail.com",
+     "Phone",
+     "Shared local calendar · local account",
+     "Mindwtr calendar color",
+     "Applies to the Mindwtr-created calendar; shared account calendars keep their own color.",
+     "Refresh calendars",
+     "Reload the list after adding a calendar in Google Calendar.",
+     "Delete Mindwtr calendar",
+     "Remove the dedicated calendar and its pushed events from this device.",
+     "Device calendars",
+     "Read events from calendars already synced on this device (DAVx5, iCloud, Outlook, etc.).",
+     "▸",
+     "ICS subscriptions",
+     "Connect external calendars (ICS subscription URLs or local .ics files).",
+     "Calendar integration guide",
+     "Name",
+     "ICS URL",
+     "Add calendar",
+     "Test",
+     "Choose local .ics file"
+    ],
+    "controls": [
+     [
+      "Push tasks to calendar|Scheduled tasks and tasks with due dates are added to your selected device calendar.|▾",
+      null,
+      false
+     ],
+     [
+      "Mindwtr calendar. Dedicated local calendar",
+      true,
+      false
+     ],
+     [
+      "alex@gmail.com. Shared account calendar · alex@gmail.com",
+      false,
+      false
+     ],
+     [
+      "Phone. Shared local calendar · local account",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #3B82F6",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #2563EB",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #7C3AED",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #DB2777",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #EA580C",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #059669",
+      true,
+      false
+     ],
+     [
+      "Mindwtr calendar color #0891B2",
+      false,
+      false
+     ],
+     [
+      "Mindwtr calendar color #65A30D",
+      false,
+      false
+     ],
+     [
+      "Refresh calendars",
+      null,
+      false
+     ],
+     [
+      "Delete Mindwtr calendar",
+      null,
+      false
+     ],
+     [
+      "Device calendars|Read events from calendars already synced on this device (DAVx5, iCloud, Outlook, etc.).|▸",
+      null,
+      false
+     ],
+     [
+      "Calendar integration guide. Setup notes for device calendars, push-to-calendar, and ICS subscriptions.",
+      null,
+      false
+     ],
+     [
+      "Add calendar",
+      null,
+      true
+     ],
+     [
+      "Test",
+      null,
+      false
+     ],
+     [
+      "Choose local .ics file",
+      null,
+      false
+     ]
+    ],
+    "switches": [
+     true,
+     false
+    ],
+    "inputs": [
+     [
+      "Optional",
+      ""
+     ],
+     [
+      "https://example.com/calendar.ics",
+      ""
+     ]
+    ],
+    "busy": 0,
+    "alert": null,
+    "storage": {
+     "mindwtr:calendar-push-sync:enabled": "1",
+     "mindwtr:calendar-push-sync:calendar-id": "created-1",
+     "mindwtr:calendar-push-sync:color": "#059669"
+    },
+    "writes": [],
+    "calendarWrites": [],
+    "prompts": 0,
+    "toasts": []
    },
    {
     "texts": [
@@ -9347,31 +9515,7 @@
     "storage": {
      "mindwtr-external-calendars": "[{\"id\":\"feed-a\",\"name\":\"Team\",\"url\":\"https://alex:s3cret@calendar.example.com/team/basic.ics\",\"enabled\":true},{\"id\":\"feed-b\",\"name\":\"Holidays feed\",\"url\":\"https://example.org/holidays.ics\",\"enabled\":true,\"color\":\"#059669\",\"areaIds\":[\"a-home\"]}]"
     },
-    "writes": [
-     [
-      "updateSettings",
-      {
-       "externalCalendars": [
-        {
-         "id": "feed-a",
-         "name": "Team",
-         "url": "https://alex:s3cret@calendar.example.com/team/basic.ics",
-         "enabled": true
-        },
-        {
-         "id": "feed-b",
-         "name": "Holidays feed",
-         "url": "https://example.org/holidays.ics",
-         "enabled": true,
-         "color": "#059669",
-         "areaIds": [
-          "a-home"
-         ]
-        }
-       ]
-      }
-     ]
-    ],
+    "writes": [],
     "calendarWrites": [],
     "prompts": 0,
     "toasts": []

@@ -18,6 +18,7 @@ import {
     getDocsGuideUrl,
     generateUUID,
     nextDeviceCalendarSelection,
+    planCalendarPushColor,
     pruneDeviceCalendarSelection,
     removeCalendarFeed,
     resolveCalendarFeedsOnLoad,
@@ -212,6 +213,7 @@ export function CalendarSettingsScreen() {
     };
 
     const handleSelectCalendarPushColor = async (color: string) => {
+        if (!planCalendarPushColor(calendarPushColor, color)) return;
         const updated = await updateMindwtrCalendarColor(color);
         setCalendarPushColorState(color);
         await loadCalendarPushTargetState();

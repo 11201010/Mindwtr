@@ -10,7 +10,7 @@
  * reads and choices) and calendar-push-service.ts (push options, the Mindwtr
  * calendar).
  */
-import { CALENDAR_PUSH_COLOR_OPTIONS, type CalendarPushTargetCalendar } from './calendar-push-service';
+import { CALENDAR_PUSH_COLOR_OPTIONS, normalizeCalendarPushColor, type CalendarPushTargetCalendar } from './calendar-push-service';
 import {
     EXTERNAL_CALENDAR_COLORS,
     hasExplicitExternalCalendarColor,
@@ -97,6 +97,11 @@ export function buildCalendarPushTargetChoices(input: {
         showColors: targetId === null || selected?.isMindwtrManaged === true,
     };
 }
+
+/** The color to store, or null when `picked` is the stored one: re-picking must not recreate the Mindwtr calendar (Android). */
+export const planCalendarPushColor = (current: string, picked: string): string | null => (
+    normalizeCalendarPushColor(picked) === normalizeCalendarPushColor(current) ? null : picked
+);
 
 export const getCalendarPushColorLabel = (t: Translate): string => (
     tFallback(t, 'settings.calendarMobile.mindwtrCalendarColor', 'Mindwtr calendar color')
@@ -223,7 +228,10 @@ export const setCalendarFeedEnabled = (feeds: readonly ExternalCalendarSubscript
     feeds.map((feed) => (feed.id === id ? { ...feed, enabled } : feed))
 );
 
-/** `undefined` is the Auto swatch: the pick is dropped so a feed hint or the default applies (#974). Null for a color no swatch has. */
+/**
+ * `undefined` is the Auto swatch: the pick is dropped so a feed hint or the default applies (#974).
+ * Null for a color no swatch has, and for the color the subscription already has (nothing to write).
+ */
 export function setCalendarFeedColor(
     feeds: readonly ExternalCalendarSubscription[],
     id: string,
@@ -231,6 +239,7 @@ export function setCalendarFeedColor(
 ): ExternalCalendarSubscription[] | null {
     const normalized = color === undefined ? undefined : normalizeExternalCalendarColor(color);
     if (color !== undefined && !normalized) return null;
+    if (feeds.find((feed) => feed.id === id)?.color === normalized) return null;
     return feeds.map((feed) => {
         if (feed.id !== id) return feed;
         if (normalized) return { ...feed, color: normalized };

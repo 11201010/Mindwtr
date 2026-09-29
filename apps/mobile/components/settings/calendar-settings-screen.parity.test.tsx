@@ -350,6 +350,7 @@ const scenarios: Scenario[] = [
     actions: [
       ['press', 'k:settings.calendarMobile.pushTasksToCalendar'],
       ['press', 'Mindwtr calendar color #059669'],
+      ['press', 'Mindwtr calendar color #059669'],
       ['switch', 0],
       ['press', 'k:settings.calendarMobile.pushTasksToCalendar'],
     ],
