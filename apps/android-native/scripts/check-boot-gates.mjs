@@ -1980,18 +1980,23 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(intentRead, /\.extra\("text", getStringExtra\(NOTE_TEXT\)\)\.extra\("extraText", getStringExtra\(Intent\.EXTRA_TEXT\)\)/);
     assert.match(entryKt, /private const val NOTE_NAME = "com\.google\.android\.gms\.actions\.extra\.NAME"\s+private const val NOTE_TEXT = "com\.google\.android\.gms\.actions\.extra\.TEXT"/);
     assert.doesNotMatch(code(entryKt), /EXTRA_STREAM|getParcelable|getSerializable|getBundleExtra/);
-    // The entry waits in the saved state until core answers it, opens only while the app is free, reads core's answer in one
-    // perform (a capture's popup view too), and opens it once the action ends: the editor through whenIdle, as it refuses while busy.
-    assert.match(entryKt, /var pending by mutableStateOf\(saved\.get<String>\("entry"\)\); private set/);
-    assert.match(entryKt, /pending = input\.toString\(\)\s+saved\["entry"\] = pending/);
-    assert.match(entryKt, /if \(!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture\?\.pending != null\s+\|\| menu\.screen == MenuScreen\.MindSweep\) return/);
-    assert.match(entryKt, /val reply = runtime\.menuRead\("entryPoint", input\)/);
+    // Entries wait in the persisted FIFO queue (EntryQueue.kt, JVM-tested) from the intent's arrival; the oldest opens only while
+    // the app is free, is read in one perform (a capture's popup view too), and opens once the action ends; the editor opens
+    // through whenIdle, as it refuses while busy.
+    const queueKt = source('EntryQueue.kt');
+    assert.match(entryKt, /private val queue = EntryQueue\(dir\)/);
+    assert.match(model, /val entries = EntryRouter\(this, File\(app\.noBackupFilesDir, "entries"\)\)/);
+    assert.doesNotMatch(code(entryKt), /saved\[|SavedStateHandle/, 'the queue lives on disk, not in the saved state');
+    assert.match(entryKt, /if \(!queue\.add\(input\.toString\(\)\)\)/);
+    assert.match(entryKt, /!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture\?\.pending != null\s+\|\| menu\.screen == MenuScreen\.MindSweep/);
+    assert.match(entryKt, /val reply = runtime\.menuRead\("entryPoint", entry\.input\)/);
     assert.match(entryKt, /runtime\.openQuickCapture\(\)\s+runtime\.quickCaptureView\(JSONObject\(\)\.put\("text", open\.getString\("text"\)\)\.put\("options", open\.getJSONObject\("options"\)\)\.toString\(\)\)/);
-    assert.match(entryKt, /ui \{ menu\.whenIdle \{ open\(reply, view\) \} \}\s+\} finally \{\s+ui \{ forget\(input\) \}/);
+    assert.match(queueKt, /out\.fd\.sync\(\)\s+\}\s+check\(partial\.renameTo\(file\)\)/);
+    assert.match(readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/EntryQueueTest.kt'), 'utf8'), /fun aSecondEntryNeverReplacesTheFirst\(\)/);
     assert.match(entryKt, /highlight\(id\); menu\.whenIdle \{ openEditor\(id, "view"\) \}/);
     assert.match(activity, /if \(savedInstanceState == null\) model\.entries\.receive\(intent\)/);
     assert.match(activity, /override fun onNewIntent\(intent: Intent\) \{\s+super\.onNewIntent\(intent\)\s+setIntent\(intent\)\s+model\.entries\.receive\(intent\)/);
-    assert.match(activity, /LaunchedEffect\(writable, busy, failedAction, editor == null, processing\?\.hidden, capture\?\.pending, menu\.screen, entries\.pending\) \{ entries\.pump\(\) \}/);
+    assert.match(activity, /LaunchedEffect\(entries\.head, entries\.blocked\) \{ entries\.pump\(\) \}/);
     assert.match(activity, /LaunchedEffect\(leaveApp\) \{ if \(leaveApp\) \{ leftApp\(\); moveTaskToBack\(true\) \} \}/);
     assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, contract\.resolveNativeEntryPoint\(input\)\),$/m);
     assert.match(hostEntry, /^\s+captureImport: \(input\) => contract\.planQuickCaptureImport\(input\),$/m);

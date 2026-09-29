@@ -214,7 +214,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     /** RN's app lock (AppLock.kt): core's stored value and the gate's state. */
     val lock = AppLock(this)
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
-    val entries = EntryRouter(this, saved)
+    val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
     /** A system capture ended: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
     var leaveApp by mutableStateOf(false); private set
     @Volatile private var host: CoreHost? = null

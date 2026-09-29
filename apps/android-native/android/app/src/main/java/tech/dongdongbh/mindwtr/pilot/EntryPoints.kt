@@ -3,11 +3,13 @@ package tech.dongdongbh.mindwtr.pilot
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.SavedStateHandle
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import java.io.File
 
 /*
  * RN's system entry points (app/+native-intent.ts and hooks/root-layout/use-root-layout-external-capture.ts, with the share
@@ -64,35 +66,38 @@ fun Context.readPickedText(uri: Uri): String? = runCatching {
 }.getOrNull()
 
 /**
- * The entry waiting to open. It is kept in the saved state from the intent's arrival until core answers it, so a process
- * death before then opens it after the restart. It opens once no command runs or is owed and nothing the user is working in
- * covers the screen (the editor, Process Inbox, Mind Sweep, a capture's save): their work stays, and the entry opens when
- * they end.
+ * The entries waiting to open, oldest first ([EntryQueue], on disk from the intent's arrival, so a process death or a
+ * force-stop keeps them). The oldest opens once no command runs or is owed and nothing the user is working in covers the
+ * screen (the editor, Process Inbox, Mind Sweep, a capture's save): their work stays, and the entry opens when they end.
  */
-class EntryRouter(private val shell: InboxViewModel, private val saved: SavedStateHandle) {
-    var pending by mutableStateOf(saved.get<String>("entry")); private set
+class EntryRouter(private val shell: InboxViewModel, dir: File) {
+    private val queue = EntryQueue(dir)
+    /** The oldest waiting entry's id: MainActivity pumps again when it changes. */
+    var head by mutableStateOf(queue.head()?.id); private set
+    /** The entry core is reading: one at a time. */
+    private var opening: String? = null
 
-    /** A new intent's entry (a launch without saved state, or onNewIntent); a later one replaces one not yet opened. */
+    /** A new intent's entry (a launch without saved state, or onNewIntent), last in the queue. */
     fun receive(intent: Intent) {
         val input = intent.entryInput() ?: return
-        pending = input.toString()
-        saved["entry"] = pending
+        if (!queue.add(input.toString())) Log.w(CoreHost.TAG, "Native Android entry point dropped: the queue is full")
+        head = queue.head()?.id
     }
 
-    private fun forget(input: String) {
-        if (pending != input) return
-        pending = null
-        saved["entry"] = null
+    /** Something keeps the entry from opening now: the app is not ready, a command runs or is owed, or the user's work covers the screen. */
+    val blocked: Boolean get() = with(shell) {
+        !writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture?.pending != null
+            || menu.screen == MenuScreen.MindSweep
     }
 
-    /** Opens the pending entry once the app is free; MainActivity calls it whenever that may have changed. */
+    /** Reads the oldest entry once the app is free, then opens it once no action runs; MainActivity calls it whenever that may change. */
     fun pump(): Unit = with(shell) {
-        val input = pending ?: return
-        if (!writable || busy || failedAction != null || editor != null || processing?.hidden == false || capture?.pending != null
-            || menu.screen == MenuScreen.MindSweep) return
+        val entry = queue.head() ?: return
+        if (opening != null || blocked) return
+        opening = entry.id
         perform { runtime ->
             try {
-                val reply = runtime.menuRead("entryPoint", input)
+                val reply = runtime.menuRead("entryPoint", entry.input)
                 check(reply.getInt("version") == 1) { "Unsupported core contract" }
                 // A capture opens RN's popup: core rebuilds its known tokens (openQuickCapture), then reads the entry's draft.
                 val view = reply.optJSONObject("capture")?.let { open ->
@@ -101,7 +106,11 @@ class EntryRouter(private val shell: InboxViewModel, private val saved: SavedSta
                 }
                 ui { menu.whenIdle { open(reply, view) } }
             } finally {
-                ui { forget(input) }
+                ui {
+                    opening = null
+                    queue.remove(entry.id)
+                    head = queue.head()?.id
+                }
             }
         }
     }

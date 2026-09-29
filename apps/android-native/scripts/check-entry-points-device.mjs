@@ -10,7 +10,8 @@
 // Someday (open-feature), the Calendar, the global search with its query, a task (the editor over Focus), a project, the
 // capture popup (open-feature capture), a capture link's title, an assistant note's name (CREATE_NOTE), and a capture link
 // without a title (core's toast); (d) a widget's quick capture link (capture-quick) opens the popup, and its Close puts the
-// app behind the previous screen (RN's #1169). Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
+// app behind the previous screen (RN's #1169); (g) the closed popups stored nothing; (h) a share waiting behind the editor
+// survives a force-stop and opens after the relaunch. Nothing but (b)'s share is saved; its title is 77 + a 12-digit run id + 1
 // (check-projects-device.mjs --prune-old removes earlier runs'). It never types, never launches over another app, and
 // leaves the app on its Inbox. Leave the device on its home screen before running. It needs host `bun`.
 // Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -47,7 +48,7 @@ const coreSrc = resolve(app, '../../packages/core/src');
 const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 // Digits only: no keyboard is involved, and the prune shape stays simple.
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
-const titles = { shared: `77${run}1`, link: `77${run}2`, note: `77${run}3` };
+const titles = { shared: `77${run}1`, link: `77${run}2`, note: `77${run}3`, killed: `77${run}8` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
 const { sh, home, front, requireAppFront, pid, screen, waitFor, tapExpecting } = device;
@@ -108,6 +109,16 @@ const send = async (intent, expected, description, timeoutMs = 20_000) => {
         await sleep(500);
     }
     return waitFor(description, expected, timeoutMs);
+};
+/** Sends a text share to this app only, without waiting for core: the entry may wait in the queue behind open work. */
+const share = (text) => { requireAppFront(); sh(`am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '${text}' ${PKG}`); };
+/** [still] holds on every read for [ms]: a waiting entry has not opened over the user's work. */
+const holds = async (still, ms, description) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+        if (!still(await screen())) fail(`${description} changed while an entry waited`);
+        await sleep(500);
+    }
 };
 const link = (path, expected, description, timeoutMs) => send(`-a android.intent.action.VIEW -d '${SCHEME}://${path}'`, expected, description, timeoutMs);
 const atTabs = (nodes) => Boolean(tab(nodes, en['tab.inbox'])) && !tagged(nodes, 'menu-screen') && !tagged(nodes, 'global-search') && !inEditor(nodes);
@@ -246,9 +257,22 @@ try {
     await waitFor('the tabs again', (current) => Boolean(tab(current, en['tab.inbox'])), 30_000);
 
     stored = core();
-    check(stored.tasks.shared.length === 1 && stored.tasks.link.length === 0 && stored.tasks.note.length === 0, '(e) only the shared text was stored; the closed popups stored nothing');
+    check(stored.tasks.shared.length === 1 && ['link', 'note'].every((name) => stored.tasks[name].length === 0),
+        '(g) only the shared text was stored; the closed popups stored nothing');
     check(entries('capture') >= 5 && entries('notice') >= 1 && entries('task') >= 1 && entries('screen') >= 5,
-        `(e) the entry-point log lines: capture ${entries('capture')}, notice ${entries('notice')}, task ${entries('task')}, screen ${entries('screen')}`);
+        `(g) the entry-point log lines: capture ${entries('capture')}, notice ${entries('notice')}, task ${entries('task')}, screen ${entries('screen')}`);
+
+    // (h) A share that waits behind the editor survives a force-stop before it opened: the relaunch opens it.
+    await link(`/open?task=${stored.tasks.shared[0].id}`, (current) => inEditor(current) && hasText(current, titles.shared), 'the shared task in the editor');
+    share(titles.killed);
+    await holds((current) => inEditor(current) && !tagged(current, 'quick-capture'), 3_000, 'the editor');
+    sh(`am force-stop ${PKG}`);
+    await sleep(1_000);
+    device.launch(ACTIVITY);
+    nodes = await waitFor('the waiting share\'s popup after the relaunch', popup(titles.killed), 60_000);
+    await closePopup(nodes);
+    stored = core();
+    check(stored.tasks.killed.length === 0 && entries('capture') >= 1, '(h) a share queued before a force-stop opens after the relaunch, once');
     console.log('Entry points device check passed');
 } catch (error) {
     evidenced(error);
