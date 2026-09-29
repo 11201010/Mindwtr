@@ -108,9 +108,12 @@ const core = (mode, db = pullDatabase()) => JSON.parse(execFileSync('bun', ['-e'
             const more = value(host.getMoreMenu());
             const tiles = Object.fromEntries([...more.primary, ...more.utilities].map((item) => [item.id, item.label]));
             const menu = value(host.getSettingsMenu({}));
+            // The app passes its sync badge: the Sync row's words then end with the badge's (RN's MenuItem label).
+            const badged = ['syncing', 'healthy', 'attention'].map((syncBadge) => value(host.getSettingsMenu({ syncBadge })).groups.flat());
             const general = value(host.getGeneralSettings({}));
             const strings = value(host.getStrings({ keys: ['common.back', 'tab.menu'] })).strings;
-            return { language, tiles, rows: menu.groups.flat().map((row) => ({ id: row.id, label: row.accessibilityLabel, enabled: row.enabled })),
+            return { language, tiles, rows: menu.groups.flat().map((row) => ({ id: row.id, label: row.accessibilityLabel,
+                labels: [row.accessibilityLabel, ...badged.map((rows) => rows.find((item) => item.id === row.id).accessibilityLabel)], enabled: row.enabled })),
                 general: { title: general.title, language: { label: general.language.label, value: general.language.value },
                     options: general.language.options.map((option) => ({ id: option.value, label: option.label, selected: option.selected })),
                     regional: { label: general.regional.label, summary: general.regional.summary },
@@ -296,7 +299,10 @@ try {
     // Rows below the fold are read after a drag down (a dump lists only what shows).
     const rowsSeen = new Map();
     for (let step = 0; step < 6 && rowsSeen.size < english.rows.length; step += 1) {
-        for (const row of english.rows) { const node = withDescription(nodes, row.label); if (node && !rowsSeen.has(row.id)) rowsSeen.set(row.id, node); }
+        for (const row of english.rows) {
+            const node = row.labels.map((label) => withDescription(nodes, label)).find(Boolean);
+            if (node && !rowsSeen.has(row.id)) rowsSeen.set(row.id, node);
+        }
         if (rowsSeen.size < english.rows.length) nodes = await device.swipe(nodes, 'down');
     }
     for (const row of english.rows) {
