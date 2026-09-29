@@ -60,6 +60,7 @@ type SharedFile = {
 
 function TestHarness({
   canonicalDataReady = true,
+  dataReady = true,
   disabled = false,
   hasShareIntent = false,
   incomingUrl,
@@ -75,6 +76,7 @@ function TestHarness({
   showToast,
 }: {
   canonicalDataReady?: boolean;
+  dataReady?: boolean;
   disabled?: boolean;
   hasShareIntent?: boolean;
   incomingUrl: string | null;
@@ -91,6 +93,7 @@ function TestHarness({
 }) {
   useRootLayoutExternalCapture({
     canonicalDataReady,
+    dataReady,
     disabled,
     hasShareIntent,
     incomingUrl,
@@ -997,6 +1000,52 @@ describe('useRootLayoutExternalCapture', () => {
     expect(router.replace).toHaveBeenCalledWith({
       pathname: '/focus',
       params: expect.objectContaining({ taskId: 'task-1', taskTab: 'view' }),
+    });
+  });
+
+  // A cold widget tap used to sit on the Inbox until canonical data loaded (#1310).
+  it('opens a task link from the startup snapshot before canonical data is ready', () => {
+    storeTasksById.set('task-1', { id: 'task-1', title: 'Buy milk' });
+
+    act(() => {
+      create(
+        <TestHarness
+          canonicalDataReady={false}
+          incomingUrl="mindwtr://open?task=task-1"
+          router={router}
+          showToast={showToast}
+        />
+      );
+    });
+
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith({
+      pathname: '/focus',
+      params: expect.objectContaining({ taskId: 'task-1', taskTab: 'view' }),
+    });
+  });
+
+  it('holds a task link the snapshot lacks until canonical data is ready', () => {
+    let tree!: ReturnType<typeof create>;
+    const url = 'mindwtr://open?task=task-late';
+
+    act(() => {
+      tree = create(<TestHarness dataReady={false} canonicalDataReady={false} incomingUrl={url} router={router} showToast={showToast} />);
+    });
+    act(() => {
+      tree.update(<TestHarness canonicalDataReady={false} incomingUrl={url} router={router} showToast={showToast} />);
+    });
+    expect(router.replace).not.toHaveBeenCalled();
+
+    storeTasksById.set('task-late', { id: 'task-late', title: 'Synced later' });
+    act(() => {
+      tree.update(<TestHarness incomingUrl={url} router={router} showToast={showToast} />);
+    });
+
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith({
+      pathname: '/focus',
+      params: expect.objectContaining({ taskId: 'task-late' }),
     });
   });
 

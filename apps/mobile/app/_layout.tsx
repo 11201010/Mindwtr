@@ -557,6 +557,7 @@ function RootLayoutContentInner() {
   });
   useRootLayoutExternalCapture({
     canonicalDataReady,
+    dataReady,
     disabled: sandboxMode,
     hasShareIntent,
     incomingUrl,

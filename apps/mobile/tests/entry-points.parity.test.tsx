@@ -172,6 +172,7 @@ function Harness(props: {
 }) {
   useRootLayoutExternalCapture({
     canonicalDataReady: true,
+    dataReady: true,
     hasShareIntent: props.hasShareIntent ?? false,
     incomingUrl: props.incomingUrl ?? null,
     incomingUrlKey: props.incomingUrl ? 1 : 0,
