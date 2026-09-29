@@ -4,7 +4,7 @@ import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session
 import { View, Text, TextInput, TouchableOpacity, FlatList, Platform, useWindowDimensions } from 'react-native';
 import type { GettingStartedAction } from '@/components/GettingStartedActions';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { AREA_PRESET_COLORS, areaOrderIdsForIntent, Attachment, collectProjectTaskLinks, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, Project, projectTagsForIntent, shallow, Task, type Section, type TaskSortBy, undoProjectDelete, useTaskStore } from '@mindwtr/core';
+import { AREA_PRESET_COLORS, areaOrderIdsForIntent, Attachment, collectProjectTaskLinks, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, planProjectMove, Project, type ProjectAreaGroup, projectTagsForIntent, shallow, Task, type Section, type TaskSortBy, undoProjectDelete, useTaskStore } from '@mindwtr/core';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react-native';
 
@@ -89,6 +89,7 @@ export default function ProjectsScreen() {
     updateArea,
     deleteArea,
     reorderAreas,
+    reorderProjects,
     setHighlightTask,
     projectTaskSummaryById,
   } = useTaskStore((state) => ({
@@ -107,6 +108,7 @@ export default function ProjectsScreen() {
     updateArea: state.updateArea,
     deleteArea: state.deleteArea,
     reorderAreas: state.reorderAreas,
+    reorderProjects: state.reorderProjects,
     setHighlightTask: state.setHighlightTask,
     projectTaskSummaryById: state.getDerivedState().projectTaskSummaryById,
   }), shallow);
@@ -518,7 +520,30 @@ export default function ProjectsScreen() {
       });
   }, [duplicateProject, logProjectError, resolveText, showToast]);
 
-  const renderProjectItem = (project: Project) => {
+  const moveProject = (
+    project: Project,
+    group: ProjectAreaGroup | undefined,
+    direction: 'up' | 'down',
+  ) => {
+    const plan = group ? planProjectMove(group, allProjects, project.id, direction) : null;
+    if (!plan) return undefined;
+    return () => {
+      void Promise.resolve(reorderProjects(plan.orderedIds, plan.areaId)).catch((error) => {
+        logProjectError('Failed to move project', error);
+        showToast({
+          title: resolveText('common.notice', 'Notice'),
+          message: resolveText('projects.moveProjectFailed', 'Failed to move project'),
+          tone: 'error',
+        });
+      });
+    };
+  };
+
+  const renderProjectItem = (project: Project, sectionKind: 'active' | 'deferred' | 'archived') => {
+    const groups = sectionKind === 'active'
+      ? groupedActiveProjects
+      : sectionKind === 'deferred' ? groupedDeferredProjects : groupedArchivedProjects;
+    const group = groups.find((entry) => entry.projects.some((item) => item.id === project.id));
     return (
       <ProjectRow
         project={project}
@@ -531,6 +556,8 @@ export default function ProjectsScreen() {
         onDuplicateProject={handleDuplicateProject}
         onOpenProject={openProject}
         onToggleProjectFocus={toggleProjectFocus}
+        onMoveUp={moveProject(project, group, 'up')}
+        onMoveDown={moveProject(project, group, 'down')}
       />
     );
   };
@@ -719,7 +746,7 @@ export default function ProjectsScreen() {
       );
     }
 
-    return renderProjectItem(item.project);
+    return renderProjectItem(item.project, item.sectionKind);
   };
 
   const selectedProjectAreaName = selectedProject?.areaId && areaById.has(selectedProject.areaId)

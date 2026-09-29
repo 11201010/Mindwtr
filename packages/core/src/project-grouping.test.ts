@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AREA_FILTER_NONE } from './area-filter';
-import { buildProjectGroups } from './project-grouping';
+import { buildProjectGroups, planProjectMove } from './project-grouping';
 import type { Area, Project } from './types';
 
 const now = '2026-08-09T00:00:00.000Z';
@@ -178,5 +178,34 @@ describe('buildProjectGroups', () => {
         ]);
         expect(projects.map((entry) => entry.id)).toEqual(originalIds);
         expect(orderedAreas).toEqual([work]);
+    });
+});
+
+describe('planProjectMove', () => {
+    const home = area('home', 0);
+    const projects = [
+        project('starred', 'active', { areaId: home.id, order: 4, isFocused: true }),
+        project('a', 'active', { areaId: home.id, order: 1 }),
+        project('parked', 'someday', { areaId: home.id, order: 2 }),
+        project('b', 'active', { areaId: home.id, order: 3 }),
+        project('elsewhere', 'active', { order: 0 }),
+    ];
+    const shown = buildProjectGroups({
+        projects, orderedAreas: [home], areaFilter: { included: [], excluded: [] }, tagFilter: { kind: 'all' }, pinFocused: true,
+    }).active[0];
+
+    it('swaps a project with its shown neighbour in the area stored order', () => {
+        expect(shown.projects.map((item) => item.id)).toEqual(['starred', 'a', 'b']);
+        // 'parked' sits between them in stored order but is not shown here; it keeps its place.
+        expect(planProjectMove(shown, projects, 'b', 'up')).toEqual({
+            areaId: 'home',
+            orderedIds: ['b', 'parked', 'a', 'starred'],
+        });
+    });
+
+    it('never moves a project past one with a different star state, or past an edge', () => {
+        expect(planProjectMove(shown, projects, 'a', 'up')).toBeNull();
+        expect(planProjectMove(shown, projects, 'starred', 'down')).toBeNull();
+        expect(planProjectMove(shown, projects, 'b', 'down')).toBeNull();
     });
 });

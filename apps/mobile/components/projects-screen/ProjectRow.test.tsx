@@ -89,6 +89,44 @@ describe('ProjectRow', () => {
     renderer.act(() => tree.unmount());
   });
 
+  it('offers only the available moves on long-press and as accessibility actions (#1263)', () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const onMoveDown = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow project={project} tc={tc} focusedCount={0}
+          statusPalette={statusPalette as any} t={(key) => key}
+          onDeleteProject={vi.fn()} onDuplicateProject={vi.fn()}
+          onOpenProject={vi.fn()} onToggleProjectFocus={vi.fn()} onMoveDown={onMoveDown} />,
+      );
+    });
+    const open = tree.root.findByProps({ testID: 'project-row-open-project-1' });
+    expect(open.props.accessibilityActions).toEqual([{ name: 'moveDown', label: 'projects.moveDown' }]);
+
+    renderer.act(() => open.props.onLongPress());
+    const buttons = alertSpy.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+    expect(buttons.map((button) => button.text)).toEqual(['projects.moveDown', 'common.cancel']);
+    buttons[0].onPress?.();
+    renderer.act(() => open.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveDown' } }));
+    expect(onMoveDown).toHaveBeenCalledTimes(2);
+    renderer.act(() => tree.unmount());
+  });
+
+  it('has no long-press menu when the project cannot move', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow project={project} tc={tc} focusedCount={0}
+          statusPalette={statusPalette as any} t={(key) => key}
+          onDeleteProject={vi.fn()} onDuplicateProject={vi.fn()}
+          onOpenProject={vi.fn()} onToggleProjectFocus={vi.fn()} />,
+      );
+    });
+    expect(tree.root.findByProps({ testID: 'project-row-open-project-1' }).props.onLongPress).toBeUndefined();
+    renderer.act(() => tree.unmount());
+  });
+
   it('shows a clean project title without tag dots while retaining its tags', () => {
     const taggedProject = Object.freeze({ ...project, tagIds: Object.freeze(['admin', 'family']) });
     let tree!: renderer.ReactTestRenderer;

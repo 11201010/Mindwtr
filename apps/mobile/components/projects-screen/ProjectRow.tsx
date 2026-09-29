@@ -29,6 +29,9 @@ type ProjectRowProps = {
     onDuplicateProject: (projectId: string) => void;
     onOpenProject: (project: Project) => void;
     onToggleProjectFocus: (projectId: string) => void;
+    /** Present only when the project can move that way in the shown list (#1263). */
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
 };
 
 const ROW_ACTION_HIT_SLOP = { top: 12, bottom: 12, left: 12, right: 12 } as const;
@@ -47,6 +50,8 @@ export function ProjectRow({
     onDuplicateProject,
     onOpenProject,
     onToggleProjectFocus,
+    onMoveUp,
+    onMoveDown,
 }: ProjectRowProps) {
     const nextAction = taskSummary?.nextAction;
     const taskCount = taskSummary?.activeTaskCount ?? 0;
@@ -78,6 +83,21 @@ export function ProjectRow({
                 },
             ],
         );
+    };
+
+    // Long-press offers Move up / Move down, the same buttons areas and sections use (#1263).
+    const moveActions = [
+        onMoveUp && { name: 'moveUp', label: t('projects.moveUp'), run: onMoveUp },
+        onMoveDown && { name: 'moveDown', label: t('projects.moveDown'), run: onMoveDown },
+    ].filter((action): action is { name: string; label: string; run: () => void } => Boolean(action));
+
+    const showMoveMenu = () => {
+        if (moveActions.length === 0) return;
+        void Haptics.selectionAsync().catch(() => {});
+        Alert.alert(project.title, undefined, [
+            ...moveActions.map((action) => ({ text: action.label, onPress: action.run })),
+            { text: t('common.cancel'), style: 'cancel' as const },
+        ]);
     };
 
     const renderLeftActions = () => (
@@ -118,7 +138,10 @@ export function ProjectRow({
                 testID={`project-row-open-${project.id}`}
                 style={styles.projectTouchArea}
                 onPress={() => onOpenProject(project)}
+                onLongPress={moveActions.length > 0 ? showMoveMenu : undefined}
                 accessibilityRole="button"
+                accessibilityActions={moveActions.map(({ name, label }) => ({ name, label }))}
+                onAccessibilityAction={(event) => moveActions.find((action) => action.name === event.nativeEvent.actionName)?.run()}
             >
                 <View style={styles.projectContent}>
                     <View style={styles.projectTitleRow}>
