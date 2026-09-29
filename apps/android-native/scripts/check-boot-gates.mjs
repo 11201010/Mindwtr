@@ -2324,6 +2324,33 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(data, /val activity = LocalActivity\.current\s+LaunchedEffect\(settings\.logToShare\) \{ if \(settings\.logToShare != null\) activity\?\.let\(settings::openShareSheet\) \}/);
     assert.match(data, /diagnostics\.optJSONObject\("clearLog"\)\?\.let/);
     assert.doesNotMatch(data, /\bt\(|"settings\./, 'every word is the view\'s');
+    // Review 2026-09-28. (1) RN draws this heading in tc.text (General's are secondaryText).
+    const rnDataCard = readFileSync(resolve(app, '../../apps/mobile/components/settings/sync-settings-sections.tsx'), 'utf8');
+    assert.match(rnDataCard, /style=\{\[styles\.sectionTitle, \{ color: tc\.text, marginTop: 24 \}\]\}>\{t\('settings\.diagnostics'\)\}/);
+    assert.match(data, /SectionTitle\(diagnostics\.getString\("title"\), top = 24, color = c\.text\)/);
+    // (3) Share and Clear touch no app data: they run in every state, as RN's do (a tester needs the log most after a failed save).
+    assert.match(data, /ActionRow\(share\.getString\("label"\), share\.getString\("description"\), c\.tint, true, "settings-share-log"\)/);
+    assert.match(data, /ActionRow\(clear\.getString\("label"\), null, c\.secondaryText, true, "settings-clear-log"\)/);
+    const clear = code(settingsModelKt.slice(settingsModelKt.indexOf('fun clearLog()'), settingsModelKt.indexOf('\n    }\n', settingsModelKt.indexOf('fun clearLog()'))));
+    for (const body of [share, clear]) {
+        assert.match(body, /shell\.anyTime\(\{ runtime ->/);
+        assert.doesNotMatch(body, /perform|background\(/);
+    }
+    assert.match(model, /internal fun anyTime\(work: \(CoreHost\) -> Unit, failed: \(Throwable\) -> Unit\) \{\s+val runtime = host \?: return/);
+    // (6) A Share answered after the Data screen closed opens nothing on a later visit.
+    assert.match(share, /screen == "data" && menu\.list == "settings" -> logToShare = path/);
+    for (const fn of ['fun reset()', 'fun push(', 'fun back()']) {
+        const at = settingsModelKt.indexOf(fn);
+        assert.match(settingsModelKt.slice(at, settingsModelKt.indexOf('\n    }\n', at)), /logToShare = null/, `${fn} drops a pending share`);
+    }
+    // (5) RN's settingInfo keeps 16dp to its right.
+    const actionRow = code(settingsUiKt.slice(settingsUiKt.indexOf('private fun ActionRow('), settingsUiKt.indexOf('\n}\n', settingsUiKt.indexOf('private fun ActionRow('))));
+    assert.match(actionRow, /Column\(Modifier\.padding\(end = 16\.dp\)\)/);
+    // (2, 7) Kotlin's file: a file core cannot read is moved aside whole; a folder where the log should be is removed, as RN does.
+    assert.match(logFileKt, /"moveAside" -> \{\s+val aside = File\(file\.parentFile, "\$\{file\.name\}\.unreadable"\)\s+aside\.delete\(\)\s+check\(file\.renameTo\(aside\)\)/);
+    assert.match(logFileKt, /if \(file\.isDirectory\) file\.deleteRecursively\(\)\s+file\.createNewFile\(\)/);
+    assert.match(logFileKt, /file\.isDirectory -> \{ file\.deleteRecursively\(\); "" \}/);
+    assert.match(hostEntry, /moveAside: async \(\) => \{ logFile\('moveAside'\); \},/);
 }
 
 // Every native switch draws RN's Switch on Android (ReactSwitch over AppCompat 1.7.0's SwitchCompat) for the props its RN call

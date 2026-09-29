@@ -17,8 +17,10 @@ class DiagnosticsLogFile(val file: File) {
     /** One operation as nativeLogFile sends it; each answer is text, "" for none or false. */
     fun run(operation: String, text: String): String = when (operation) {
         "path" -> file.path
+        // A folder where the log should be is removed first, as RN's ensureLogFile and clearLog do.
         "ensure" -> {
             file.parentFile?.mkdirs()
+            if (file.isDirectory) file.deleteRecursively()
             file.createNewFile()
             if (file.isFile) file.path else ""
         }
@@ -37,7 +39,18 @@ class DiagnosticsLogFile(val file: File) {
             check(partial.renameTo(file)) { "Cannot replace the diagnostics log" }
             ""
         }
-        "delete" -> if (file.isFile && file.delete()) "1" else ""
+        "delete" -> when {
+            file.isFile -> if (file.delete()) "1" else ""
+            file.isDirectory -> { file.deleteRecursively(); "" }
+            else -> ""
+        }
+        // A file core cannot read, past twice the cap: kept whole beside the log, replacing an older one; the next line starts anew.
+        "moveAside" -> {
+            val aside = File(file.parentFile, "${file.name}.unreadable")
+            aside.delete()
+            check(file.renameTo(aside)) { "Cannot move the diagnostics log aside" }
+            ""
+        }
         else -> throw IllegalArgumentException("Unknown log operation $operation")
     }
 }

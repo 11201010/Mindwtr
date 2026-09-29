@@ -118,6 +118,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** RN pushes a new Settings: its menu, no search. */
     fun reset() {
         keepStack(listOf("main"))
+        logToShare = null
         query = ""
         saved["settingsQuery"] = ""
         keepLocal(JSONObject())
@@ -127,6 +128,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** A menu row or a GTD link opens its screen, as RN pushes it; its screen state starts afresh (RN resets it on every visit). */
     fun push(next: String) {
         keepStack(stack + next)
+        logToShare = null
         keepLocal(JSONObject())
         menu.keepDialog(null)
         if (!(isGtd(next) && page?.screen?.let(::isGtd) == true)) page = null
@@ -137,6 +139,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     fun back(): Boolean {
         if (stack.size < 2) return false
         keepStack(stack.dropLast(1))
+        logToShare = null
         keepLocal(JSONObject())
         menu.keepDialog(null)
         if (!(isGtd(screen) && page?.screen?.let(::isGtd) == true)) page = null
@@ -341,14 +344,18 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
      */
     fun shareLog() {
         val words = page?.view?.optJSONObject("diagnostics") ?: return
-        shell.perform { runtime ->
+        val missing = { shell.showToast(words.getString("toastTitle"), words.getString("logMissing"), "warning") }
+        shell.anyTime({ runtime ->
             val reply = runtime.logShare()
             val path = if (reply.isNull("path")) null else reply.getString("path")
             shell.ui {
-                if (path == null) shell.showToast(words.getString("toastTitle"), words.getString("logMissing"), "warning")
-                else logToShare = path
+                when {
+                    path == null -> missing()
+                    // An answer after the Data screen closed opens nothing, now or on a later visit.
+                    screen == "data" && menu.list == "settings" -> logToShare = path
+                }
             }
-        }
+        }) { missing() }
     }
 
     /**
@@ -375,10 +382,10 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** Data's Clear log (RN's handleClearLog): core deletes the log file; RN's success toast. */
     fun clearLog() {
         val words = page?.view?.optJSONObject("diagnostics") ?: return
-        shell.perform { runtime ->
+        shell.anyTime({ runtime ->
             runtime.logClear()
             shell.ui { shell.showToast(words.getString("toastTitle"), words.getString("logCleared"), "success") }
-        }
+        }) {}
     }
 
     /** A Someday section's rename (RN's inline field), core's reorder (a row's move ids) and delete (after core's question). */

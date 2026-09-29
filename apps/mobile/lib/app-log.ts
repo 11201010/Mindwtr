@@ -10,6 +10,7 @@ import {
   sanitizeForLog,
   sanitizeLogContext,
   useTaskStore,
+  type DiagnosticsLog,
   type DiagnosticsLogEntry,
   type DiagnosticsLogFile,
 } from '@mindwtr/core';
@@ -38,6 +39,7 @@ type ExpoFile = {
   create: (options: { intermediates?: boolean; overwrite?: boolean }) => void;
   delete: () => void;
   info?: () => { exists?: boolean; size?: number };
+  move?: (destination: ExpoFile) => void;
   open?: () => ExpoFileHandle;
   size?: number;
   write: (content: string, options?: { encoding?: string }) => void;
@@ -340,6 +342,15 @@ const primaryLogFile: DiagnosticsLogFile = {
   },
   append: async (line) => appendWithFileHandle(line),
   size: async () => getFileSize(LOG_FILE),
+  moveAside: async () => {
+    const fs = await getExpoFileSystem();
+    if (!fs || !LOG_FILE || !LOG_FILE_URI || typeof LOG_FILE.move !== 'function') throw new Error('primary log file unavailable');
+    const aside = new fs.File(`${LOG_FILE_URI}.unreadable`);
+    if (fileExists(aside)) aside.delete();
+    LOG_FILE.move(aside);
+    // Expo's move points the File at its new place: the next line starts a new file at the log's path.
+    LOG_FILE = new fs.File(LOG_FILE_URI);
+  },
 };
 
 const legacyLogPath = async (): Promise<{ fs: ExpoLegacyFileSystemModule; path: string } | null> => {
@@ -379,8 +390,13 @@ const legacyLogFile: DiagnosticsLogFile = {
 // Core's file rules (diagnostics-log.ts): the gate, the line, the size cap, and one write at a time.
 // Several notification-path callers intentionally do not await diagnostics; the log keeps their
 // file-handle offsets and read-modify-write fallbacks ordered so adjacent receipt/outcome evidence
-// cannot overwrite an earlier line (#1028).
-const diagnosticsLog = createDiagnosticsLog({ isEnabled: isLoggingEnabled, files: [primaryLogFile, legacyLogFile] });
+// cannot overwrite an earlier line (#1028). Made on first use: tests that replace @mindwtr/core as a
+// whole still import this module.
+let diagnosticsLogInstance: DiagnosticsLog | null = null;
+const diagnosticsLog = (): DiagnosticsLog => {
+  diagnosticsLogInstance ??= createDiagnosticsLog({ isEnabled: isLoggingEnabled, files: [primaryLogFile, legacyLogFile] });
+  return diagnosticsLogInstance;
+};
 
 async function appendLogLine(entry: LogEntry, options?: { force?: boolean }): Promise<string | null> {
   feedbackDiagnosticsBuffer.record(entry);
@@ -388,9 +404,9 @@ async function appendLogLine(entry: LogEntry, options?: { force?: boolean }): Pr
   // tester has no way to hand over the log file, but can paste the terminal.
   logEntryToDevConsole(entry);
   const backend = customLogBackend;
-  if (!backend?.appendLogLine) return diagnosticsLog.append(entry, options);
+  if (!backend?.appendLogLine) return diagnosticsLog().append(entry, options);
   if (!options?.force && !isLoggingEnabled()) return null;
-  return diagnosticsLog.serialize(() => backend.appendLogLine!(entry, options));
+  return diagnosticsLog().serialize(() => backend.appendLogLine!(entry, options));
 }
 
 const getLocalFatalCrashCapture = (
@@ -463,7 +479,7 @@ export async function getLogPath(): Promise<string | null> {
   if (customLogBackend?.getLogPath) {
     return customLogBackend.getLogPath();
   }
-  return diagnosticsLog.path();
+  return diagnosticsLog().path();
 }
 
 export async function ensureLogFilePath(): Promise<string | null> {
@@ -473,7 +489,7 @@ export async function ensureLogFilePath(): Promise<string | null> {
     const logPath = await customLogBackend.ensureLogFilePath();
     return retainedCrashPath ?? logPath;
   }
-  const logPath = await diagnosticsLog.ensurePath();
+  const logPath = await diagnosticsLog().ensurePath();
   return retainedCrashPath ?? logPath;
 }
 
@@ -485,10 +501,10 @@ export async function clearLog(): Promise<void> {
   try {
     const backend = customLogBackend;
     if (backend?.clearLog) {
-      await diagnosticsLog.serialize(() => backend.clearLog!());
+      await diagnosticsLog().serialize(() => backend.clearLog!());
       return;
     }
-    await diagnosticsLog.clear();
+    await diagnosticsLog().clear();
   } finally {
     try {
       getLocalFatalCrashCapture()?.clear();
@@ -509,7 +525,7 @@ const withRetainedFatalCrash = (
 export async function readRecentLogText(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {
   await recoverRetainedFatalCrash();
   const retainedCrashText = readRetainedFatalCrashText();
-  return withRetainedFatalCrash(await diagnosticsLog.read(), retainedCrashText, maxChars);
+  return withRetainedFatalCrash(await diagnosticsLog().read(), retainedCrashText, maxChars);
 }
 
 export async function collectFeedbackDiagnostics(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {

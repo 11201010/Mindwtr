@@ -153,10 +153,10 @@ private fun MenuCard(model: InboxViewModel, rows: List<JSONObject>) = with(model
 
 // ---- Shared pieces (setting-row.tsx, settings.styles.ts) ----
 
-/** RN's sectionTitle: 13/600 capitals in the secondary text color. */
+/** RN's sectionTitle: 13/600 capitals, in the secondary text color unless the screen sets another (Data's Diagnostics: the text color). */
 @Composable
-private fun SectionTitle(text: String, top: Int = 0) =
-    Text(text.uppercase(), style = rnText(13, 600), color = LocalTheme.current.colors.secondaryText,
+private fun SectionTitle(text: String, top: Int = 0, color: Color = LocalTheme.current.colors.secondaryText) =
+    Text(text.uppercase(), style = rnText(13, 600), color = color,
         modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = top.dp).semantics { heading() })
 
 /** RN's description line above a card. */
@@ -327,17 +327,18 @@ private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.m
     val theme = LocalTheme.current
     val c = theme.colors
     val diagnostics = view.getJSONObject("diagnostics")
-    SectionTitle(diagnostics.getString("title"), top = 24)
+    SectionTitle(diagnostics.getString("title"), top = 24, color = c.text)
     Card {
-        // RN always draws this row's top border (it follows the Encryption block).
+        // RN always draws this row's top border (it follows the Encryption block). Share and Clear touch no app data, so they work
+        // in every state, as RN's do (a retry owed included).
         ToggleRow(model, diagnostics.getJSONObject("debugLogging"), true) { settings.data(it) }
         val activity = LocalActivity.current
         LaunchedEffect(settings.logToShare) { if (settings.logToShare != null) activity?.let(settings::openShareSheet) }
         diagnostics.optJSONObject("shareLog")?.let { share ->
-            ActionRow(share.getString("label"), share.getString("description"), c.tint, idle, "settings-share-log") { settings.shareLog() }
+            ActionRow(share.getString("label"), share.getString("description"), c.tint, true, "settings-share-log") { settings.shareLog() }
         }
         diagnostics.optJSONObject("clearLog")?.let { clear ->
-            ActionRow(clear.getString("label"), null, c.secondaryText, idle, "settings-clear-log") { settings.clearLog() }
+            ActionRow(clear.getString("label"), null, c.secondaryText, true, "settings-clear-log") { settings.clearLog() }
         }
     }
 }
@@ -350,8 +351,11 @@ private fun ActionRow(label: String, description: String?, color: Color, enabled
     Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true)
         .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = tag; if (enabled) onClick { onClick(); true } else disabled() }
         .clickable(enabled = enabled, onClick = onClick).padding(16.dp)) {
-        Text(label, style = rnText(16, 500, 21), color = color)
-        description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
+        // RN's settingInfo: 16dp to its right.
+        Column(Modifier.padding(end = 16.dp)) {
+            Text(label, style = rnText(16, 500, 21), color = color)
+            description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
+        }
     }
 }
 

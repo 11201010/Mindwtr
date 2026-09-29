@@ -137,6 +137,8 @@ export type DiagnosticsLogFile = {
     append?(line: string): Promise<boolean>;
     /** The size in bytes. */
     size?(): Promise<number>;
+    /** Moves the file to `<its path>.unreadable`, replacing an older one; the next line starts a new file. */
+    moveAside?(): Promise<void>;
 };
 
 export type DiagnosticsLog = ReturnType<typeof createDiagnosticsLog>;
@@ -154,12 +156,23 @@ export function createDiagnosticsLog(options: { isEnabled: () => boolean; files:
         return run;
     };
 
+    /**
+     * Keeps the file's last ROTATED_LOG_RETAIN_CHARS characters once it passes the cap. A file that cannot be read (on RN, one
+     * that is not valid UTF-8) is left as it is and logging goes on: trimming '' would erase it, and throwing stopped every
+     * later line. Past twice the cap it is moved aside whole, so the log stays bounded, and a new file starts.
+     */
     const trimIfNeeded = async (file: DiagnosticsLogFile, afterAppend: boolean): Promise<void> => {
         if (!file.size || !await file.exists()) return;
         if (!afterAppend && writes > 0 && writes % LOG_ROTATION_CHECK_INTERVAL !== 0) return;
-        if (await file.size() <= MAX_LOG_FILE_BYTES) return;
-        // A failed read throws: trimming '' would erase the log.
-        const current = await file.read();
+        const size = await file.size();
+        if (size <= MAX_LOG_FILE_BYTES) return;
+        let current: string;
+        try {
+            current = await file.read();
+        } catch {
+            if (size > 2 * MAX_LOG_FILE_BYTES && file.moveAside) await file.moveAside();
+            return;
+        }
         await file.write(current.slice(-ROTATED_LOG_RETAIN_CHARS));
     };
 

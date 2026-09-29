@@ -18,7 +18,7 @@ import { addBreadcrumb, clearBreadcrumbs } from './log-breadcrumbs';
 /** An in-memory log file; `append: false` leaves out append and size, as RN's legacy Expo file system has neither. */
 const fakeFile = (options: { path?: string | null; append?: boolean } = {}) => {
     const path = options.path === undefined ? 'files/logs/mindwtr.log' : options.path;
-    const state = { text: null as string | null, calls: [] as string[] };
+    const state = { text: null as string | null, aside: null as string | null, calls: [] as string[] };
     const file: DiagnosticsLogFile = {
         path: async () => path,
         ensure: async () => {
@@ -44,6 +44,11 @@ const fakeFile = (options: { path?: string | null; append?: boolean } = {}) => {
             return true;
         },
         ...(options.append === false ? {} : {
+            moveAside: async () => {
+                state.calls.push('moveAside');
+                state.aside = state.text;
+                state.text = null;
+            },
             append: async (line: string) => {
                 state.calls.push('append');
                 state.text = (state.text ?? '') + line;
@@ -161,6 +166,26 @@ describe('diagnostics log', () => {
         appending.file.read = async () => { throw new Error('read failed'); };
         await trimmed.append(entry('second'));
         expect(appending.state.text).toBe(`${'z'.repeat(MAX_LOG_FILE_BYTES)}${formatDiagnosticsLogLine(entry('second'))}`);
+    });
+
+    it('keeps logging when a file over the cap cannot be read, and moves it aside past twice the cap', async () => {
+        // A failed trim read used to stop the log for good: every later line returned null until Clear log.
+        const { file, state } = fakeFile();
+        const log = createDiagnosticsLog({ isEnabled: () => enabled, files: [file] });
+        const unreadable = 'u'.repeat(MAX_LOG_FILE_BYTES + 1);
+        state.text = unreadable;
+        file.read = async () => { throw new Error('not valid UTF-8'); };
+        for (let i = 0; i < 5; i += 1) await expect(log.append(entry(`fresh ${i}`))).resolves.toBe('files/logs/mindwtr.log');
+        expect(state.text.startsWith(unreadable)).toBe(true);
+        expect(state.text.endsWith(formatDiagnosticsLogLine(entry('fresh 4')))).toBe(true);
+        // Past twice the cap it is moved aside whole (nothing erased) and a new file starts; 60 lines cross a 50th write.
+        const huge = 'u'.repeat(2 * MAX_LOG_FILE_BYTES + 1);
+        state.text = huge;
+        for (let i = 0; i < 60; i += 1) await expect(log.append(entry(`later ${i}`))).resolves.toBe('files/logs/mindwtr.log');
+        expect(state.aside?.startsWith(huge)).toBe(true);
+        expect(state.calls.filter((call) => call === 'moveAside')).toHaveLength(1);
+        expect(state.text).toContain(JSON.stringify(entry('later 59')));
+        expect(state.text.length).toBeLessThan(MAX_LOG_FILE_BYTES);
     });
 
     it('writes a line once when the trim after its append fails', async () => {

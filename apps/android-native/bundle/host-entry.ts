@@ -92,6 +92,7 @@ const nativeLogFile: DiagnosticsLogFile = {
     delete: async () => logFile('delete') === '1',
     append: async (line) => { logFile('append', line); return true; },
     size: async () => Number(logFile('size')),
+    moveAside: async () => { logFile('moveAside'); },
 };
 const diagnosticsLog = createDiagnosticsLog({
     isEnabled: () => isDiagnosticsLoggingEnabled(useTaskStore.getState().settings),
