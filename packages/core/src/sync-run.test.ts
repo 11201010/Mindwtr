@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppData, Project, Task } from './types';
 import type {
@@ -209,6 +209,11 @@ const createHarness = (config: HarnessConfig = {}) => {
 };
 
 describe('runSharedSyncCycle', () => {
+    // The fixtures are stamped 2026-07-01 (STAMP), and tombstones older than 90 days are pruned, so an
+    // unpinned clock turned these tests red on 2026-09-29. Pin the date (timers stay real).
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-07-15T00:00:00.000Z') }); });
+    afterEach(() => { vi.useRealTimers(); });
+
     describe('persisted-vs-in-memory reconcile short-circuit (#766)', () => {
         it('uses the persisted side without merging when change fingerprints match', async () => {
             // Same id/rev/updatedAt metadata, diverged content. The fingerprint
