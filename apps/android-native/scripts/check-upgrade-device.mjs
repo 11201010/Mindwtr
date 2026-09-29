@@ -774,10 +774,10 @@ const scenarioSync = async () => {
         let now = nodes;
         for (let step = 0; step < 6 && !tagged(now, 'sync-now'); step += 1) now = await device.swipe(now, 'down');
         check(tagged(now, 'sync-username')?.text === user, '(6) it shows RN\'s username');
-        const beforeSync = dav.state.requests.length;
+        const beforeSync = dav.state.authorized.length;
         await tap(tagged(now, 'sync-now') ?? fail('no Sync now'));
         await waitFor('the native Sync now to complete', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 60_000);
-        check(dav.state.requests.slice(beforeSync).some((request) => request.startsWith(`GET ${folder}/data.json`)),
+        check(dav.state.authorized.slice(beforeSync).some((request) => request.startsWith(`GET ${folder}/data.json`)),
             '(6) the native app synced with RN\'s password from RN\'s secret store (the folder answered its signed-in reads)');
         await stopApp();
     } finally {

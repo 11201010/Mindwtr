@@ -229,4 +229,23 @@ class WriteJournalTest {
         assertTrue(WriteJournal.keeps("SAVE_FAILED: Injected commit failure"))
         for (error in listOf(null, "STALE_REVISION: x", "INVALID_INPUT: x", "ACTION_FAILED: x", "Incomplete tasks load")) assertFalse(WriteJournal.keeps(error))
     }
+
+    /** Settings › Sync's screen commands can carry a password: never on disk, and one planted there is never replayed. */
+    @Test fun aSyncScreenCommandNeverReachesTheDisk() {
+        val dir = File(folder.root, "journal")
+        val journal = open(dir)
+        val save = """{"requestId":"r-1","revision":"c","webdav":{"url":"https://dav.example","username":"alice","password":"hunter22","allowInsecureHttp":false}}"""
+        assertEquals(null, journal.append("menuCommand", listOf("saveSyncBackend", save)))
+        assertEquals(emptyList<String>(), names(dir))
+        for (command in WriteJournal.UNJOURNALED) assertTrue(command, WriteJournal.unjournaled("menuCommand", listOf(command, "{}")))
+        // The settings sync option is a synced write: journaled like any other, and never on the long path.
+        assertFalse(WriteJournal.unjournaled("menuCommand", listOf("syncPreference", """{"requestId":"r-2"}""")))
+        assertTrue(journal.append("menuCommand", listOf("syncPreference", """{"requestId":"r-2","key":"appearance","value":true}""")) != null)
+        // A file of an unjournaled command found at open (an older build's, or planted) is set aside, never replayed.
+        File(dir, "0000000000000099.json").writeText("""{"method":"menuCommand","args":["saveSyncBackend",${org.json.JSONObject.quote(save)}]}""")
+        val reopened = open(dir)
+        assertEquals(listOf("menuCommand"), reopened.pending().map { it.method })
+        assertEquals("syncPreference", reopened.pending().single().args[0])
+        assertTrue(File(dir, "${WriteJournal.ASIDE}/0000000000000099.json").exists())
+    }
 }

@@ -380,10 +380,6 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
             online = now;
             return state();
         },
-        /** A Sync screen command changed the configuration: the badge reads it again. */
-        configurationChanged() {
-            void refreshConfigured();
-        },
     };
 };
 

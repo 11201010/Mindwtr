@@ -63,6 +63,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import java.util.UUID
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /*
@@ -83,13 +84,20 @@ val SYNC_COMMANDS = setOf("openSyncSettings", "closeSyncSettings", "selectSyncBa
  * The WebDAV or self-hosted form as typed (RN's panel state). A null [password] or [token] was not edited: the field shows core's
  * dots and the stored one is kept.
  */
+/** Core's dot for a stored password or token (native-host-contract-settings-sync.ts PASSWORD_DOTS). */
+private const val MASK_DOT = "•"
+
 data class SyncForm(val kind: String, val url: String, val username: String, val password: String?, val token: String?, val insecure: Boolean)
 
 class SyncSettingsModel(private val menu: MenuModel) {
+    private companion object {
+        /** A visit's open and close, in order, never behind a long command: a late close must never end the next visit. */
+        val visits: ExecutorService = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-visits") }
+        /** The encryption card's light actions in the order sent: a passphrase field's text never overtakes an earlier keystroke. */
+        val light: ExecutorService = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-light") }
+    }
     private val shell get() = menu.shell
     private val settings get() = menu.settings
-    /** One command at a time, in the order sent: a passphrase field's typed text never overtakes an earlier tap. */
-    private val commands = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-screen") }
 
     /** openSyncSettings ran for this visit: RN reads the stored configuration once, when the screen mounts. */
     @Volatile private var opened = false
@@ -99,24 +107,37 @@ class SyncSettingsModel(private val menu: MenuModel) {
     var historyOpen by mutableStateOf(false); private set
     var preferencesOpen by mutableStateOf(false); private set
     var snapshotsOpen by mutableStateOf(false); private set
-    /** The command running now; core's view shows each control's own spinner. */
-    var running by mutableStateOf<String?>(null); private set
+    /** How many commands run now (each its own thread, as RN's run side by side); core's view shows each control's spinner. */
+    var running by mutableStateOf(0); private set
+    /** The commands running, by name: a second tap before core's view disables the control sends nothing. Main thread. */
+    private val inFlight = HashSet<String>()
     /** The panel the form last followed (RN's form takes a stored value again whenever it changes). */
     private var followed: JSONObject? = null
     private var typed = 0
 
     /** Settings' read of this screen: it opens once per visit (its toasts shown), then core's view for the form's typed text. */
     fun read(runtime: CoreHost): JSONObject {
-        // One open per visit: a refresh and a reload can read at once, and a second open would replace the first.
-        synchronized(this) {
-            if (!opened) {
-                val reply = runtime.syncCommand("openSyncSettings", "{}")
-                opened = true
-                shell.ui { toasts(reply) }
-            }
+        open(runtime)
+        val input = JSONObject().put("draft", draft()).toString()
+        return try {
+            runtime.menuRead("syncSettings", input)
+        } catch (failure: Exception) {
+            // Core has no open screen (a close that raced this visit): open it again, once.
+            if (failure.message?.contains("(openSyncSettings)") != true) throw failure
+            opened = false
+            open(runtime)
+            runtime.menuRead("syncSettings", input)
         }
-        return runtime.menuRead("syncSettings", JSONObject().put("draft", draft()).toString())
     }
+
+    /** One open per visit, after any close sent before it: a refresh and a reload can read at once. */
+    private fun open(runtime: CoreHost) = visits.submit {
+        if (!opened) {
+            val reply = runtime.syncCommand("openSyncSettings", "{}")
+            opened = true
+            shell.ui { toasts("openSyncSettings", reply) }
+        }
+    }.get()
 
     /** The form's typed URL and token (null: not edited), which core's checks follow. */
     private fun draft(): JSONObject = form?.let { typed ->
@@ -152,8 +173,15 @@ class SyncSettingsModel(private val menu: MenuModel) {
         shell.ui { if (mine == typed) settings.refresh() }
     }
 
-    /** RN's secure field starts with the stored secret; here it starts with core's dots, so the first keystroke starts it over. */
-    fun secret(masked: String?, mask: String, text: String): String = if (masked != null) text else text.removePrefix(mask)
+    /**
+     * RN's secure field starts with the stored secret; here it starts with core's dots, so the first edit starts it over: the
+     * text typed after the dots, or, for any other edit (a Backspace, a keystroke among the dots), what was typed, dots left out.
+     */
+    fun secret(masked: String?, mask: String, text: String): String = when {
+        masked != null -> text
+        text.startsWith(mask) -> text.removePrefix(mask)
+        else -> text.replace(MASK_DOT, "")
+    }
 
     fun toggleHistory() { historyOpen = !historyOpen }
     fun togglePreferences() { preferencesOpen = !preferencesOpen }
@@ -170,7 +198,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
         preferencesOpen = false
         snapshotsOpen = false
         val runtime = shell.coreHost() ?: return
-        commands.execute { runCatching { runtime.syncCommand("closeSyncSettings", "{}") }.onFailure { Log.w(CoreHost.TAG, "Sync screen close failed", it) } }
+        visits.execute { runCatching { runtime.syncCommand("closeSyncSettings", "{}") }.onFailure { Log.w(CoreHost.TAG, "Sync screen close failed", it) } }
     }
 
     // ---- Commands: each tap sends core's command with a new request UUID ----
@@ -232,16 +260,14 @@ class SyncSettingsModel(private val menu: MenuModel) {
      * running; the screen reads core's view again after each.
      */
     private fun run(name: String, input: JSONObject, light: Boolean = false, done: (JSONObject) -> Unit = {}) {
-        if (!light) {
-            if (running != null) return
-            running = name
-        }
-        val runtime = shell.coreHost() ?: run { if (!light) running = null; return }
-        commands.execute {
+        val runtime = shell.coreHost() ?: return
+        if (!light && !inFlight.add(name)) return
+        if (!light) running += 1
+        val work = Runnable {
             val result = runCatching { runtime.syncCommand(name, input.toString()) }
             shell.ui {
-                if (!light) running = null
-                result.onSuccess { reply -> toasts(reply); done(reply) }
+                if (!light) { inFlight.remove(name); running -= 1 }
+                result.onSuccess { reply -> toasts(name, reply); done(reply) }
                 result.exceptionOrNull()?.let { error ->
                     Log.w(CoreHost.TAG, "Sync screen command failed command=$name code=${error.message?.substringBefore(':')}")
                     val message = error.message.orEmpty()
@@ -250,11 +276,17 @@ class SyncSettingsModel(private val menu: MenuModel) {
                 settings.refresh()
             }
         }
+        if (light) SyncSettingsModel.light.execute(work) else Thread(work, "mindwtr-sync-$name").start()
     }
 
-    /** Core's toasts for the command, RN's in order: the last one stays on screen, as RN's toast shows the newest. */
-    private fun toasts(reply: JSONObject) {
-        val toast = reply.menuObjects("toasts").lastOrNull() ?: return
+    /**
+     * Core's toasts for the command, RN's in order: the last one stays on screen, as RN's toast shows the newest. The log names
+     * each toast's tone and title (core's fixed words; a message can quote a server) for the device check.
+     */
+    private fun toasts(name: String, reply: JSONObject) {
+        val all = reply.menuObjects("toasts")
+        if (all.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android sync screen command=$name toasts=${all.joinToString("|") { "${it.optString("tone")}:${it.optString("title")}" }}")
+        val toast = all.lastOrNull() ?: return
         shell.showToast(toast.menuText("title")?.ifEmpty { null }, toast.getString("message"), toast.getString("tone"))
     }
 
@@ -269,8 +301,8 @@ class SyncSettingsModel(private val menu: MenuModel) {
 internal fun SyncSettings(model: InboxViewModel, view: JSONObject) {
     val sync = model.menu.settings.sync
     val c = LocalTheme.current.colors
-    LaunchedEffect(sync.running) {
-        while (sync.running != null) {
+    LaunchedEffect(sync.running > 0) {
+        while (sync.running > 0) {
             delay(500)
             model.menu.settings.refresh()
         }
@@ -282,7 +314,7 @@ internal fun SyncSettings(model: InboxViewModel, view: JSONObject) {
             Text(backend.getString("current"), style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp))
             Text(backend.getString("hint"), style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 10.dp))
             FlowRow(Modifier.padding(top = 10.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (option in backend.menuObjects("options")) BackendChip(sync, option, sync.running == null)
+                for (option in backend.menuObjects("options")) BackendChip(sync, option)
             }
             backend.optJSONObject("group")?.let { group ->
                 Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -310,15 +342,15 @@ internal fun SyncSettings(model: InboxViewModel, view: JSONObject) {
 
 /** RN's backendOption chip: the chosen one outlined in the tint on the filter wash. */
 @Composable
-private fun BackendChip(sync: SyncSettingsModel, option: JSONObject, enabled: Boolean) {
+private fun BackendChip(sync: SyncSettingsModel, option: JSONObject) {
     val c = LocalTheme.current.colors
     val selected = option.getBoolean("selected")
     val label = option.getString("label")
     val shape = RoundedCornerShape(16.dp)
     Box(Modifier.clip(shape).background(if (selected) c.filterBg else Color.Transparent).border(1.dp, if (selected) c.tint else c.border, shape)
         .clearAndSetSemantics { contentDescription = label; role = Role.Button; this.selected = selected; testTag = "sync-backend-${option.getString("option")}"
-            if (enabled) onClick { sync.select(option.getString("option")); true } else disabled() }
-        .clickable(enabled = enabled) { sync.select(option.getString("option")) }.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            onClick { sync.select(option.getString("option")); true } }
+        .clickable { sync.select(option.getString("option")) }.padding(horizontal = 10.dp, vertical = 6.dp)) {
         Text(label, style = rnText(13, 700, 17), color = if (selected) c.tint else c.secondaryText, maxLines = 2, textAlign = TextAlign.Center)
     }
 }

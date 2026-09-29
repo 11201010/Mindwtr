@@ -118,12 +118,14 @@ internal object ProcessCoreHost {
      * (get() waits for it). A replay stopped by an owed save leaves that entry, and every screen opens on its exact retry
      * (InboxViewModel.retryOwed, kind "journal"), as for any owed command. Only a replay that left nothing prunes core's old
      * receipts, so an entry never outlives the receipt its replay needs; a failed prune only logs (the next boot prunes).
+     * True once the replay finished (no entry owed): then sync may start.
      */
     private fun replay(runtime: CoreHost): Boolean {
         val replay = runtime.replayJournal()
         replay.owed?.let { recordFailure(PendingFailure(FailedAction("journal", ""), it, null)); return false }
-        // Only once the journal is empty on disk: an entry whose delete did not reach the disk still needs its receipt.
-        if (replay.left > 0) return false
+        // Only once the journal is empty on disk: an entry whose delete did not reach the disk still needs its receipt. That
+        // entry had its final reply, so the replay itself finished: sync may start.
+        if (replay.left > 0) return true
         runCatching { runtime.pruneReceipts() }
             .onSuccess { Log.i(CoreHost.TAG, "Native Android receipts pruned=${it.optInt("pruned")}") }
             .onFailure { Log.w(CoreHost.TAG, "Native Android receipts prune failed", it) }
@@ -152,10 +154,10 @@ internal object ProcessCoreHost {
     }
 
     /**
-     * Sync starts only after the boot's validated load and a journal replay that left nothing (plan block 1: a sync never runs
-     * before the replay finished); a replay that stopped starts it once its owed retry went through ([journalReplayed]). The
-     * network state goes first, then core's triggers start and ask for the app's first sync. A failure here never fails the
-     * boot: the app runs without automatic sync, and Settings › Sync still opens.
+     * Sync starts only after the boot's validated load and a journal replay that finished with no entry owed (plan block 1: a
+     * sync never runs before the replay finished); a replay that stopped starts it once its owed retry went through
+     * ([journalReplayed]). The network state goes first, then core's triggers start and ask for the app's first sync. A failure
+     * here never fails the boot: the app runs without automatic sync, and Settings › Sync still opens.
      */
     private fun startSync(app: Application, runtime: CoreHost) {
         if (syncHost != null) return
@@ -164,7 +166,8 @@ internal object ProcessCoreHost {
             val network = HostNetwork(app) { state -> syncThread.execute { runCatching { runtime.syncNetwork(state) } } }
             runtime.syncNetwork(network.state())
             val startedWith = appState
-            syncState = runtime.syncStart(startedWith).put("type", "sync")
+            // An event that arrived while the triggers started is newer than this reply.
+            runtime.syncStart(startedWith).put("type", "sync").let { reply -> if (syncState == null) syncState = reply }
             syncHost = runtime
             network.start()
             // Resumed or paused while the triggers started.

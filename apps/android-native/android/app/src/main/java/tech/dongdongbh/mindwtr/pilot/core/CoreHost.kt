@@ -489,6 +489,8 @@ class CoreHost(
      * outside one (a sync's requests). Engine thread; a stopped or closed host pumps nothing.
      */
     private fun idlePump() {
+        // A pump a host-call answer woke replaces the one scheduled for a timer: schedulePump below sets the next.
+        pumpTask?.cancel(false)
         pumpTask = null
         pumpAt = Long.MAX_VALUE
         val engine = context ?: return
@@ -529,6 +531,7 @@ class CoreHost(
                 throw IllegalStateException(reason)
             }
             checkNotNull(context).globalObject.getJSFunction("__resumeHostCalls").call()
+            schedulePump()
             throw IllegalStateException("Core $method timed out")
         }
         // Work this call's pump advanced: a long operation it finished, and the timers it left.

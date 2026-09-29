@@ -21,7 +21,8 @@ import vm from 'node:vm';
 export const serveWebdav = ({ port, username, password }) => new Promise((ready) => {
     const files = new Map();
     let version = 0;
-    const state = { files, requests: [], failWrites: 0, down: false };
+    // `requests`: every request as it arrived; `authorized`: only those that carried the folder's user and password.
+    const state = { files, requests: [], authorized: [], failWrites: 0, down: false };
     const authorized = (req) => req.headers.authorization === `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     const server = createServer((req, res) => {
         const chunks = [];
@@ -36,6 +37,7 @@ export const serveWebdav = ({ port, username, password }) => new Promise((ready)
             };
             if (state.down) return answer(503, { 'Content-Type': 'text/plain' }, 'down');
             if (!authorized(req)) return answer(401, { 'WWW-Authenticate': 'Basic realm="mindwtr-test"' });
+            state.authorized.push(`${req.method} ${path}`);
             const file = files.get(path);
             const ifMatch = req.headers['if-match'];
             const ifNoneMatch = req.headers['if-none-match'];

@@ -26,7 +26,7 @@
 // device on its home screen. Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomInt } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, mainList, Stopped, tab, tabSelected, tagged, taskRow, withDescription } from './device.mjs';
@@ -205,6 +205,40 @@ const until = async (description, holds, timeoutMs = 120_000, everyMs = 2_000) =
         await sleep(everyMs);
     }
 };
+/** How many times the Sync screen's [operation] answered (host-entry.ts taskResult's line: its context's quotes arrive escaped). */
+const commands = (operation, outcome = 'saved') => logs().replace(/\\/g, '').split('\n')
+    .filter((line) => line.includes(`"operation":"${operation}"`) && line.includes(`"outcome":"${outcome}"`)).length;
+/**
+ * Taps the control [tag] and waits for its command's answer in the log (a toast shows for 3.2 s only, so it is evidence, not
+ * the wait); [toast] seen on screen meanwhile is printed.
+ */
+const runCommand = async (tag, operation, description, toast, timeoutMs = 90_000) => {
+    const before = commands(operation);
+    let seen = false;
+    await tapTag(tag, (current) => {
+        seen ||= Boolean(toast) && current.some((node) => node.text === toast);
+        return commands(operation) > before;
+    }, description, timeoutMs);
+    if (toast) {
+        const nodes = await screen();
+        seen ||= nodes.some((node) => node.text === toast);
+        console.log(`info - ${description}: the toast "${toast}" ${seen ? 'showed' : 'was not caught on screen (3.2 s)'}`);
+    }
+};
+/** The toasts (tone:title) the Sync screen showed for [operation], oldest first (SyncSettings.kt logs them). */
+const toastsOf = (operation) => [...logs().matchAll(new RegExp(`Native Android sync screen command=${operation} toasts=(\\S+(?: \\S+)*)`, 'g'))]
+    .map((match) => match[1].split('|').at(-1));
+/** The Menu tab's sync dot drawn in RN's attention red (a decorative dot, hidden from TalkBack as RN's, so read by its pixels). */
+const menuDotIsRed = async () => {
+    const nodes = await toTabs();
+    const [l, t, r, b] = box(tab(nodes, en['tab.menu']) ?? fail('no Menu tab'));
+    const file = resolve(work, 'menu-dot.png');
+    mkdirSync(work, { recursive: true });
+    writeFileSync(file, device.adbRaw('exec-out', 'screencap', '-p'));
+    const histogram = execFileSync('magick', [file, '-crop', `${r - l}x${Math.round((b - t) / 2)}+${l}+${t}`, '+repage', '-format', '%c', 'histogram:info:-'], { encoding: 'utf8' });
+    // #EF4444 at RN's 0.85 opacity over the tab bar: red well above green and blue.
+    return [...histogram.matchAll(/(\d+):\s*\(\s*(\d+),\s*(\d+),\s*(\d+)/g)].some(([, count, red, green, blue]) => Number(count) >= 6 && Number(red) > 200 && Number(green) < 120 && Number(blue) < 120);
+};
 /** The sync badge the app logged last (host-sync.ts: "Native Android sync state badge=… cycles=…"). */
 const badge = () => [...logs().matchAll(/Native Android sync state badge=(\w+) cycles=(\d+)/g)].at(-1)?.slice(1) ?? [null, null];
 
@@ -253,11 +287,12 @@ try {
     await insecureOn();
     await fill('sync-username', USER);
     await fill('sync-password', PASSWORD);
-    const beforeTest = dav.state.requests.length;
-    await tapTag('sync-test', (current) => current.some((node) => node.text === en['settings.syncMobile.connectionOk']), 'Connection OK', 30_000);
-    check(dav.state.requests.slice(beforeTest).some((request) => request.startsWith(`GET ${FOLDER}/`)), '(2) Test connection reached the local WebDAV folder');
+    const beforeTest = dav.state.authorized.length;
+    await runCommand('sync-test', 'testSyncConnection', 'Test connection', en['settings.syncMobile.connectionOk']);
+    check(toastsOf('testSyncConnection').at(-1) === `success:${en['settings.syncMobile.connectionOk']}`, `(2) Test connection answered RN's "${en['settings.syncMobile.connectionOk']}" (${toastsOf('testSyncConnection').at(-1)})`);
+    check(dav.state.authorized.slice(beforeTest).some((request) => request.startsWith(`GET ${FOLDER}/`)), '(2) Test connection signed in to the local WebDAV folder with the typed password');
     check(rkStorage().keys['@mindwtr_sync_backend'] !== 'webdav' && webdavDocument(dav, FOLDER) === null, '(2) Test connection stored nothing and wrote nothing');
-    await tapTag('sync-save', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 'Sync completed after Save', 60_000);
+    await runCommand('sync-save', 'saveSyncBackend', 'Save', en['settings.syncCompleted']);
     await until('the phone\'s data in the WebDAV folder', () => webdavDocument(dav, FOLDER) !== null, 30_000);
     const stored = rkStorage();
     check(stored.keys['@mindwtr_sync_backend'] === 'webdav' && stored.keys['@mindwtr_webdav_url'] === webdavFields.url
@@ -269,6 +304,7 @@ try {
     check(/name="key_v1-mindwtr_webdav_password"/.test(secretPrefs) && !secretPrefs.includes(PASSWORD), '(2) the password is sealed in RN\'s SecureStore entry, never in plain text');
     const holders = grepApp(PASSWORD);
     check(holders.length === 0, `(2) no app file holds the password in plain text (${holders.join(', ') || 'none'}; journal, logs, databases, preferences)`);
+    check(!logs().includes(PASSWORD), '(2) no log line holds the password');
     console.log(`info - files checked: ${plaintextHolders().replace(/\s+/g, ' ')}`);
 
     // (3) Convergence with the second device.
@@ -281,7 +317,7 @@ try {
     await second.syncNow('webdav', { ...webdavFields, password: null });
     check(webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.host), '(3) the second device wrote its emoji task to the folder');
     nodes = await openSync();
-    await tapTag('sync-now', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 'Sync completed after Sync now', 60_000);
+    await runCommand('sync-now', 'syncNow', 'Sync now', en['settings.syncCompleted']);
     await until('the second device\'s task on the phone', () => phoneTasks()[titles.host] === 'inbox', 30_000);
     check(true, `(3) Sync now brought "${titles.host}" to the phone exactly (${secondTitles.length} tasks on the second device)`);
     await toInbox();
@@ -311,8 +347,7 @@ try {
     const failed = await statusLine();
     check(failed.status.endsWith(en['settings.syncStatusFailedSuffix']) && Boolean(failed.error),
         `(4) the status line shows the failure: "${failed.status}" / "${failed.error}"`);
-    await toTabs();
-    check(Boolean(tagged(await screen(), 'menu-sync-dot')), '(4) the Menu tab shows the sync dot (attention)');
+    check(await menuDotIsRed(), '(4) the Menu tab\'s sync dot shows RN\'s attention red');
     check(phoneTasks()[titles.down] === 'inbox', '(4) the capture stays on the phone');
     check(!webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.down)
         && dav.state.requests.filter((request) => request.startsWith('PUT')).length === writesBefore, '(4) nothing reached the server while it was down');
@@ -336,17 +371,17 @@ try {
     await fill('sync-url', cloudFields.url);
     await insecureOn();
     await fill('sync-token', TOKEN);
-    await tapTag('sync-save', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 'Sync completed after Save', 60_000);
+    await runCommand('sync-save', 'saveSyncBackend', 'Save', en['settings.syncCompleted']);
     const cloudStored = rkStorage().keys;
     check(cloudStored['@mindwtr_sync_backend'] === 'cloud' && cloudStored['@mindwtr_cloud_provider'] === 'selfhosted' && cloudStored['@mindwtr_cloud_url'] === cloudFields.url
         && !Object.values(cloudStored).some((value) => value.includes(TOKEN)), '(6) Save stored the self-hosted backend under RN\'s keys, the token only in the secret store');
-    check(grepApp(TOKEN).length === 0, '(6) no app file holds the token in plain text');
+    check(grepApp(TOKEN).length === 0 && !logs().includes(TOKEN), '(6) no app file and no log line holds the token');
     await second.configure('selfhosted', cloudFields);
     check((await second.titles()).includes(titles.failed), '(6) the second device joined the cloud and has the phone\'s tasks');
     await second.capture(titles.cloudHost);
     await second.syncNow('selfhosted', { ...cloudFields, token: null });
     nodes = await openSync();
-    await tapTag('sync-now', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 'Sync completed after Sync now', 60_000);
+    await runCommand('sync-now', 'syncNow', 'Sync now', en['settings.syncCompleted']);
     await until('the cloud task on the phone', () => phoneTasks()[titles.cloudHost] === 'inbox', 30_000);
     check(true, `(6) Sync now brought "${titles.cloudHost}" from the cloud exactly`);
     const offlineSkips = () => (logs().match(/Sync skipped after offline detection/g) ?? []).length;
@@ -357,13 +392,13 @@ try {
     check(phoneTasks()[titles.offline] === 'inbox', '(6) with the cloud stopped the capture stays on the phone (read as offline, as on RN)');
     cloud = await startCloud({ repo, port: CLOUD_PORT, token: TOKEN, dataDir: resolve(work, `cloud-${run}`) });
     nodes = await openSync();
-    await tapTag('sync-now', (current) => current.some((node) => node.text === en['settings.syncCompleted']), 'Sync completed after the cloud came back', 60_000);
+    await runCommand('sync-now', 'syncNow', 'Sync now after the cloud came back', en['settings.syncCompleted']);
     await second.syncNow('selfhosted', { ...cloudFields, token: null });
     check((await second.titles()).includes(titles.offline), '(6) the cloud back, Sync now uploaded the capture made while it was stopped');
 
     // (7) Off again.
     nodes = await openSync();
-    await tapTag('sync-backend-off', (current) => current.some((node) => node.text === en['settings.syncOff']), 'Sync off');
+    await runCommand('sync-backend-off', 'selectSyncBackend', 'Off');
     await until('Off stored', () => rkStorage().keys['@mindwtr_sync_backend'] === 'off', 15_000, 1_000);
     check(true, '(7) Sync is Off again and RKStorage holds "off"');
     await toTabs();
