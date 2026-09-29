@@ -159,6 +159,7 @@ export * from './someday-sections-model';
 export * from './native-host-contract-someday-section-create';
 export * from './native-host-contract-someday-section-rename';
 export * from './native-host-contract-someday-section-delete';
+export * from './native-host-contract-someday-section-order';
 export * from './native-host-contract-someday-section-task';
 export * from './native-host-contract-someday-section-move';
 export * from './settings-menu-model';

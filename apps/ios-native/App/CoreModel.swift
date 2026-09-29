@@ -7,6 +7,9 @@ import UIKit
 private struct SimulatedSomedayDeleteRefusal: LocalizedError {
     var errorDescription: String? { "STALE_REVISION: Someday section changed; confirm again" }
 }
+private struct SimulatedSomedayOrderRefusal: LocalizedError {
+    var errorDescription: String? { "STALE_REVISION: Someday section order changed; read it again" }
+}
 #endif
 
 typealias CoreObject = [String: Any]
@@ -117,6 +120,8 @@ final class CoreModel: ObservableObject {
     @Published private(set) var somedaySectionDeleteOptions: CoreObject = [:]
     @Published private(set) var somedaySectionDeleteError: String?
     @Published private(set) var somedaySectionDeleteAwaitingRefresh = false
+    @Published private(set) var somedaySectionOrderError: String?
+    @Published private(set) var somedaySectionOrderAwaitingRefresh = false
     @Published private(set) var projects: CoreObject = [:]
     @Published private(set) var selectedProjectTagFilter = "__all__"
     @Published private(set) var projectTagFilterShown = false
@@ -412,6 +417,11 @@ final class CoreModel: ObservableObject {
     private var somedaySectionDeleteID: String?
     private var somedaySectionDeleteIndex: Int?
     var somedaySectionDeleteActive: Bool { somedaySectionDeleteID != nil }
+    private var somedaySectionOrderRequest: String?
+    private var somedaySectionOrderID: String?
+    var somedaySectionOrderActive: Bool {
+        somedaySectionOrderID != nil || somedaySectionOrderError != nil || somedaySectionOrderAwaitingRefresh
+    }
     private var boardFilters: CoreObject = [:]
     private var boardPendingEdit: CoreObject?
     @Published private var boardActionRequest: String?
@@ -527,6 +537,9 @@ final class CoreModel: ObservableObject {
     private var somedayDeleteTestReadFailures = 0
     private var somedayDeleteOptionsTestReadFailures = 0
     private var somedayDeleteTestRefusals = 0
+    private var somedayOrderTestReadFailures = 0
+    private var somedayOrderOptionsTestReadFailures = 0
+    private var somedayOrderTestRefusals = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -1207,6 +1220,7 @@ final class CoreModel: ObservableObject {
     var somedaySectionCreatePending: Bool { somedaySectionCreateRequest != nil }
     var somedaySectionRenamePending: Bool { somedaySectionRenameRequest != nil }
     var somedaySectionDeletePending: Bool { somedaySectionDeleteRequest != nil }
+    var somedaySectionOrderPending: Bool { somedaySectionOrderRequest != nil }
     var somedaySectionDeleteCanConfirm: Bool {
         ready && selectedSurface == .settings && settingsManagePresented && somedaySectionDeleteID != nil
             && !busy && !retryNeeded && !somedaySectionDeletePending && !somedaySectionDeleteAwaitingRefresh
@@ -1378,6 +1392,9 @@ final class CoreModel: ObservableObject {
                     somedayDeleteTestReadFailures = arguments.contains("--native-someday-delete-read-failure") ? 2 : 0
                     somedayDeleteOptionsTestReadFailures = arguments.contains("--native-someday-delete-options-failure") ? 1 : 0
                     somedayDeleteTestRefusals = arguments.contains("--native-someday-delete-refusal") ? 1 : 0
+                    somedayOrderTestReadFailures = arguments.contains("--native-someday-order-read-failure") ? 2 : 0
+                    somedayOrderOptionsTestReadFailures = arguments.contains("--native-someday-order-options-failure") ? 1 : 0
+                    somedayOrderTestRefusals = arguments.contains("--native-someday-order-refusal") ? 1 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -1521,7 +1538,7 @@ final class CoreModel: ObservableObject {
                 selectedSurface = .focus
             } else if recovery.text("method") == "taskListSortWrite" {
                 selectedSurface = .reference
-            } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite"].contains(recovery.text("method")) {
+            } else if ["somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite"].contains(recovery.text("method")) {
                 selectedSurface = .settings
                 settingsManagePresented = true
             } else if ["somedaySectionCreateWrite", "somedaySectionTaskCommit", "somedaySectionMoveCommit",
@@ -1600,7 +1617,7 @@ final class CoreModel: ObservableObject {
               !projectRenameEditing, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
         guard !busy else { refreshRequested = true; return }
         busy = true
         defer { finishOperation() }
@@ -1619,7 +1636,7 @@ final class CoreModel: ObservableObject {
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
               !somedayMovePending, !somedayMoveAwaitingRefresh, !somedayMoveUndoAwaitingRefresh,
               somedayMoveCreatedSectionID == nil else { return }
         morePresented = false
@@ -1638,7 +1655,7 @@ final class CoreModel: ObservableObject {
               !projectRenameEditing, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, managePendingCandidate == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
         if morePresented { morePresented = false; return }
         busy = true
         defer { finishOperation() }
@@ -1656,7 +1673,8 @@ final class CoreModel: ObservableObject {
 
     func openSettings() async {
         guard ready, !busy, !retryNeeded, !somedaySectionRenamePending,
-              !somedaySectionRenameAwaitingRefresh, !somedaySectionDeleteActive else { return }
+              !somedaySectionRenameAwaitingRefresh, !somedaySectionDeleteActive,
+              !somedaySectionOrderActive else { return }
         settingsCaller = selectedSurface
         morePresented = false
         settingsManagePresented = false
@@ -1673,7 +1691,7 @@ final class CoreModel: ObservableObject {
     func closeSettings() async {
         guard selectedSurface == .settings, !busy, !retryNeeded,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManagePresented = false
@@ -1712,7 +1730,7 @@ final class CoreModel: ObservableObject {
 
     func openManageSettings() async {
         guard ready, selectedSurface == .settings, !settingsManagePresented, !busy, !retryNeeded,
-              !somedaySectionDeleteActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
         settingsSearchTask?.cancel()
         settingsSearchGeneration += 1
         settingsManageRequested = true
@@ -1728,7 +1746,7 @@ final class CoreModel: ObservableObject {
     func closeManageSettings() {
         guard settingsManagePresented, !busy, !retryNeeded, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, !somedaySectionDeletePending,
-              !somedaySectionDeleteAwaitingRefresh else { return }
+              !somedaySectionDeleteAwaitingRefresh, !somedaySectionOrderActive else { return }
         cancelSomedaySectionRename()
         cancelSomedaySectionDelete()
         settingsManagePresented = false
@@ -1788,7 +1806,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               let row = manageSettings.objects("sections").first(where: { $0.text("key") == key }),
               row.object("toggle").text("key") == manageOpenSectionsKey else { return }
@@ -1804,7 +1822,7 @@ final class CoreModel: ObservableObject {
     func loadMoreManagedSomedaySections() async {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               manageReadError == nil, somedaySectionRenameIndex == nil, !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive,
+              !somedaySectionDeleteActive, !somedaySectionOrderActive,
               managedSomedaySections.count < managedSomedayTotal else { return }
         busy = true
         defer { finishOperation() }
@@ -1822,7 +1840,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .settings, !busy, !retryNeeded,
               somedaySectionRenameIndex == nil, somedaySectionRenameOpeningIndex == nil,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
-              !somedaySectionDeleteActive else { return }
+              !somedaySectionDeleteActive, !somedaySectionOrderActive else { return }
         busy = true
         defer { finishOperation() }
         do {
@@ -1843,7 +1861,7 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
               !somedaySectionRenamePending, !somedaySectionRenameAwaitingRefresh,
               manageReadError == nil, somedaySectionRenameOpeningIndex == nil,
-              somedaySectionRenameIndex == nil, !somedaySectionDeleteActive,
+              somedaySectionRenameIndex == nil, !somedaySectionDeleteActive, !somedaySectionOrderActive,
               managedSomedaySections.indices.contains(index) else { return }
         let id = managedSomedaySections[index].text("id")
         guard !id.isEmpty else { return }
@@ -1979,6 +1997,7 @@ final class CoreModel: ObservableObject {
               !somedaySectionDeleteActive, !somedaySectionRenamePending,
               !somedaySectionRenameAwaitingRefresh, somedaySectionRenameIndex == nil,
               somedaySectionRenameOpeningIndex == nil, manageReadError == nil,
+              !somedaySectionOrderActive,
               managedSomedaySections.indices.contains(index) else { return }
         let id = managedSomedaySections[index].text("id")
         guard !id.isEmpty else { return }
@@ -2087,6 +2106,92 @@ final class CoreModel: ObservableObject {
         } else if let id = somedaySectionDeleteID, somedaySectionDeleteIndex != nil {
             do { try await readSomedaySectionDeleteOptions(id: id) }
             catch { somedaySectionDeleteError = error.localizedDescription }
+        }
+    }
+
+    func moveManagedSomedaySection(index: Int, offset: Int) async {
+        guard selectedSurface == .settings, settingsManagePresented, !busy, !retryNeeded,
+              !somedaySectionOrderActive, !somedaySectionDeleteActive,
+              somedaySectionRenameIndex == nil, !somedaySectionRenameReadPending,
+              manageReadError == nil, managedSomedaySections.indices.contains(index),
+              offset == -1 || offset == 1 else { return }
+        let row = managedSomedaySections[index]
+        let control = row.object(offset == -1 ? "moveUp" : "moveDown")
+        let id = row.text("id")
+        guard !id.isEmpty, !control.flag("disabled") else { return }
+        somedaySectionOrderID = id
+        busy = true
+        defer { finishOperation() }
+        do {
+            let options = try await query("somedaySectionOrderOptions", [try json(["id": id, "offset": offset])])
+            guard options.text("id") == id, options["offset"] as? Int == offset,
+                  !options.text("revision").isEmpty,
+                  options.object("expected")["sections"] is [Any],
+                  options.object("expected")["updatedAt"] is String
+                    || options.object("expected")["updatedAt"] is NSNull else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "id": id,
+                                    "offset": offset, "expected": options.object("expected")])
+            somedaySectionOrderRequest = request
+            let result = try await query("somedaySectionOrderWrite", [request])
+            try acknowledgeSomedaySectionOrder(result)
+            await refreshManageAfterSomedayOrder()
+        } catch { handleSomedaySectionOrderError(error) }
+    }
+
+    private func acknowledgeSomedaySectionOrder(_ result: CoreObject) throws {
+        guard somedaySectionOrderRequest != nil, let id = somedaySectionOrderID,
+              Set(result.keys) == Set(["id", "changed"]), result.text("id") == id,
+              let changed = result["changed"] as? NSNumber,
+              CFGetTypeID(changed) == CFBooleanGetTypeID(), changed.boolValue else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        somedaySectionOrderRequest = nil
+        somedaySectionOrderAwaitingRefresh = true
+        somedaySectionOrderError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func refreshManageAfterSomedayOrder() async {
+        guard selectedSurface == .settings, settingsManagePresented,
+              somedaySectionOrderAwaitingRefresh else { return }
+        do {
+            try await readManageSettings()
+            somedaySectionOrderAwaitingRefresh = false
+            somedaySectionOrderID = nil
+            somedaySectionOrderError = nil
+            error = nil
+        } catch { somedaySectionOrderError = error.localizedDescription }
+    }
+
+    private func handleSomedaySectionOrderError(_ failure: Error) {
+        if somedaySectionOrderPending && isDefiniteRejection(failure) {
+            somedaySectionOrderRequest = nil
+            retryNeeded = false
+            error = nil
+        } else {
+            retryNeeded = somedaySectionOrderPending
+            if retryNeeded { error = failure.localizedDescription }
+        }
+        somedaySectionOrderError = failure.localizedDescription
+    }
+
+    func retrySomedaySectionOrder() async {
+        if retryNeeded { await retry(); return }
+        guard selectedSurface == .settings, settingsManagePresented, !busy,
+              !somedaySectionOrderPending, somedaySectionOrderActive else { return }
+        busy = true
+        defer { finishOperation() }
+        if somedaySectionOrderAwaitingRefresh {
+            await refreshManageAfterSomedayOrder()
+        } else {
+            do {
+                try await readManageSettings()
+                somedaySectionOrderID = nil
+                somedaySectionOrderError = nil
+            } catch { somedaySectionOrderError = error.localizedDescription }
         }
     }
 
@@ -12143,6 +12248,14 @@ final class CoreModel: ObservableObject {
                 await refreshManageAfterSomedayDelete()
                 return
             }
+            if let request = somedaySectionOrderRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("somedaySectionOrderRetryOutcome", [request]) }
+                try acknowledgeSomedaySectionOrder(result)
+                await refreshManageAfterSomedayOrder()
+                return
+            }
             if let envelope = somedaySectionTaskEnvelope {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -12396,6 +12509,10 @@ final class CoreModel: ObservableObject {
             }
             if somedaySectionDeleteRequest != nil {
                 await handleSomedaySectionDeleteError(error)
+                return
+            }
+            if somedaySectionOrderRequest != nil {
+                handleSomedaySectionOrderError(error)
                 return
             }
             if somedaySectionTaskEnvelope != nil {
@@ -13227,6 +13344,11 @@ final class CoreModel: ObservableObject {
             throw CocoaError(.fileReadUnknown)
         }
         if method == "menuRead", args.first as? String == "manageSettings",
+           somedaySectionOrderAwaitingRefresh, somedayOrderTestReadFailures > 0 {
+            somedayOrderTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "menuRead", args.first as? String == "manageSettings",
            managePendingCandidate != nil, manageToggleTestReadFailures > 0 {
             manageToggleTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
@@ -13245,6 +13367,16 @@ final class CoreModel: ObservableObject {
            somedayDeleteTestRefusals > 0 {
             somedayDeleteTestRefusals -= 1
             throw SimulatedSomedayDeleteRefusal()
+        }
+        if method == "somedaySectionOrderOptions", somedaySectionOrderActive,
+           somedayOrderOptionsTestReadFailures > 0 {
+            somedayOrderOptionsTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if method == "somedaySectionOrderWrite", somedaySectionOrderPending,
+           somedayOrderTestRefusals > 0 {
+            somedayOrderTestRefusals -= 1
+            throw SimulatedSomedayOrderRefusal()
         }
         if method == "menuRead", args.first as? String == "someday",
            somedaySectionCreateReturnsToMove, somedaySectionCreateAwaitingRefresh,
@@ -13286,7 +13418,7 @@ final class CoreModel: ObservableObject {
     private func invalidatePreview() { previewGeneration += 1; previewTask?.cancel() }
     private func isDefiniteRejection(_ error: Error) -> Bool {
         #if DEBUG && targetEnvironment(simulator)
-        if error is SimulatedSomedayDeleteRefusal { return true }
+        if error is SimulatedSomedayDeleteRefusal || error is SimulatedSomedayOrderRefusal { return true }
         #endif
         return error is CoreHostRejection
     }

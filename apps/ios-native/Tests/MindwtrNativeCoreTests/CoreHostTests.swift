@@ -5225,6 +5225,16 @@ final class CoreHostTests: XCTestCase {
                         "expected": XCTUnwrap(options["expected"])])])
     }
 
+    private func somedaySectionOrderOptions(_ core: CoreHost, id: String, offset: Int) async throws -> [String: Any] {
+        try object(await core.call("somedaySectionOrderOptions", argumentsJSON: json([json(["id": id, "offset": offset])])))
+    }
+
+    private func somedaySectionOrderPayload(_ options: [String: Any],
+                                            requestID: String = UUID().uuidString.lowercased()) throws -> String {
+        try json([json(["requestId": requestID, "id": XCTUnwrap(options["id"]),
+                        "offset": XCTUnwrap(options["offset"]), "expected": XCTUnwrap(options["expected"])])])
+    }
+
     private func somedaySectionTaskPayload(_ core: CoreHost, title: String, sectionId: String? = nil,
                                            id: String = UUID().uuidString.lowercased()) async throws -> String {
         let request: [String: Any] = ["requestId": id, "title": title, "sectionId": (sectionId as Any?) ?? NSNull()]
@@ -6348,6 +6358,254 @@ final class CoreHostTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
             await reader.close()
         }
+    }
+
+    func testSomedaySectionOrderPreservesRawSettingsTasksAndExactReplay() async throws {
+        try await seedCalendarPreferenceTask()
+        var before = try calendarPreferenceSettings()
+        var gtd = before["gtd"] as? [String: Any] ?? [:]
+        var scopes = gtd["viewSections"] as? [String: Any] ?? [:]
+        let raw: [Any] = [
+            ["id": "none", "title": "Alpha", "order": 10, "future": ["color": "blue"]],
+            NSNull(), 7, ["future": "newer-client"],
+            ["id": "bravo", "title": "Bravo", "order": 30],
+            ["id": "hidden", "order": 40, "future": ["title": "Newer shape"]],
+            ["id": "charlie", "title": "Charlie", "order": 80],
+        ]
+        scopes["someday"] = raw
+        scopes["next"] = [["id": "next", "title": "Keep next", "order": 0]]
+        gtd["viewSections"] = scopes
+        before["gtd"] = gtd
+        try writeCalendarPreferenceSettings(before)
+        let tasks = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        var writes = 0, diagnostics: [String] = []
+        faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+        faults.commandDiagnostic = { diagnostics.append($0) }
+        let writer = host(faults)
+        _ = try await writer.start()
+        writes = 0
+        let options = try await somedaySectionOrderOptions(writer, id: "bravo", offset: -1)
+        XCTAssertEqual(Set(options.keys), Set(["revision", "id", "offset", "expected"]))
+        XCTAssertEqual(try json(XCTUnwrap((options["expected"] as? [String: Any])?["sections"])), try json(raw))
+        let requestID = UUID().uuidString.lowercased()
+        let payload = try somedaySectionOrderPayload(options, requestID: requestID)
+        await expectFailure("unavailable") { _ = try await writer.call("somedaySectionOrderValidate", argumentsJSON: payload) }
+        let result = try object(await writer.call("somedaySectionOrderWrite", argumentsJSON: payload))
+        XCTAssertEqual(Set(result.keys), Set(["id", "changed"]))
+        XCTAssertEqual(result["id"] as? String, "bravo")
+        XCTAssertEqual(result["changed"] as? Bool, true)
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(diagnostics.filter { $0 == "somedaySectionOrderSaved" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        let saved = try calendarPreferenceSettings()
+        var normalized = saved
+        gtd = normalized["gtd"] as? [String: Any] ?? [:]
+        scopes = gtd["viewSections"] as? [String: Any] ?? [:]
+        let ordered = try XCTUnwrap(scopes["someday"] as? [Any])
+        XCTAssertEqual(ordered.count, raw.count)
+        XCTAssertEqual(try json(Array(ordered[1...3])), try json(Array(raw[1...3])))
+        XCTAssertEqual(try json(ordered[5]), try json(raw[5]))
+        XCTAssertEqual((ordered[0] as? [String: Any])?["order"] as? Int, 1)
+        XCTAssertEqual((ordered[4] as? [String: Any])?["order"] as? Int, 0)
+        XCTAssertEqual((ordered[6] as? [String: Any])?["order"] as? Int, 2)
+        scopes["someday"] = raw
+        gtd["viewSections"] = scopes
+        normalized["gtd"] = gtd
+        normalized["syncPreferencesUpdatedAt"] = before["syncPreferencesUpdatedAt"]
+        XCTAssertEqual(try json(normalized), try json(before))
+        let replay = try object(await writer.call("somedaySectionOrderRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(replay["id"] as? String, "bravo")
+        XCTAssertEqual(writes, 1)
+        let changedRequest = try somedaySectionOrderPayload(options, requestID: UUID().uuidString.lowercased())
+        let matchingPostimage = try object(await writer.call("somedaySectionOrderWrite", argumentsJSON: changedRequest))
+        XCTAssertEqual(matchingPostimage["id"] as? String, "bravo")
+        var conflictingOptions = options
+        conflictingOptions["offset"] = 1
+        let conflictingRequest = try somedaySectionOrderPayload(conflictingOptions, requestID: requestID)
+        await expectFailure("INVALID_INPUT") { _ = try await writer.call("somedaySectionOrderWrite", argumentsJSON: conflictingRequest) }
+        XCTAssertEqual(writes, 1)
+        await writer.close()
+
+        let replayFaults = HostIOFaults()
+        var laterWrites = 0
+        replayFaults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { laterWrites += 1 } }
+        let recreated = host(replayFaults)
+        _ = try await recreated.start()
+        laterWrites = 0
+        let originalReplay = try object(await recreated.call("somedaySectionOrderWrite", argumentsJSON: payload))
+        XCTAssertEqual(originalReplay["id"] as? String, "bravo")
+        XCTAssertEqual(laterWrites, 0)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(saved))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+    }
+
+    func testSomedaySectionOrderFailedSaveTwoExactRetriesAndColdRecovery() async throws {
+        try await seedCalendarPreferenceTask()
+        var before = try calendarPreferenceSettings()
+        var gtd = before["gtd"] as? [String: Any] ?? [:]
+        var scopes = gtd["viewSections"] as? [String: Any] ?? [:]
+        scopes["someday"] = [["id": "none", "title": "Alpha", "order": 10],
+                              ["id": "bravo", "title": "Bravo", "order": 30]]
+        gtd["viewSections"] = scopes
+        before["gtd"] = gtd
+        try writeCalendarPreferenceSettings(before)
+        let tasks = try calendarPreferenceTasks()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let payload = try somedaySectionOrderPayload(try await somedaySectionOrderOptions(writer, id: "bravo", offset: -1))
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Order COMMIT failure") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("somedaySectionOrderWrite", argumentsJSON: payload) }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.retryPending() }
+        XCTAssertEqual((try object(String(contentsOf: journal)))["argumentsJSON"] as? String, payload)
+        XCTAssertEqual(try json(calendarPreferenceSettings()), try json(before))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        await writer.close()
+
+        let recoveryFaults = HostIOFaults()
+        var diagnostics: [String] = []
+        recoveryFaults.commandDiagnostic = { diagnostics.append($0) }
+        let recovered = host(recoveryFaults)
+        let window = try object(await recovered.start())
+        let recovery = try XCTUnwrap(window["recovery"] as? [String: Any])
+        XCTAssertEqual(recovery["method"] as? String, "somedaySectionOrderWrite")
+        XCTAssertEqual((recovery["result"] as? [String: Any])?["id"] as? String, "bravo")
+        XCTAssertEqual(diagnostics.filter { $0 == "somedaySectionOrderSaved" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertEqual(try calendarPreferenceTasks(), tasks)
+        let outcome = try object(await recovered.call("somedaySectionOrderRetryOutcome", argumentsJSON: payload))
+        XCTAssertEqual(outcome["changed"] as? Bool, true)
+    }
+
+    func testSomedaySectionOrderMalformedAndForgedColdJournalNeverOpenSQLite() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var scopes = gtd["viewSections"] as? [String: Any] ?? [:]
+        scopes["someday"] = [["id": "none", "title": "Alpha", "order": 0],
+                              ["id": "bravo", "title": "Bravo", "order": 1]]
+        gtd["viewSections"] = scopes
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let payload = try somedaySectionOrderPayload(try await somedaySectionOrderOptions(core, id: "bravo", offset: -1))
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String])
+        let request = try object(XCTUnwrap(args.first))
+        var sql = 0, journalWrites = 0
+        faults.beforeSQL = { _ in sql += 1 }
+        faults.journalWrite = { journalWrites += 1 }
+        var extra = request; extra["unexpected"] = true
+        var uppercase = request; uppercase["requestId"] = UUID().uuidString.uppercased()
+        var badOffset = request; badOffset["offset"] = 0
+        var badExpected = request; badExpected["expected"] = ["sections": [:], "updatedAt": NSNull()]
+        var oversized = request
+        oversized["expected"] = ["sections": [String(repeating: "x", count: 1_000_001)], "updatedAt": NSNull()]
+        let malformed = try ["{", json(extra), json(uppercase), json(badOffset), json(badExpected), json(oversized)]
+        for invalid in malformed {
+            await expectFailure { _ = try await core.call("somedaySectionOrderWrite", argumentsJSON: try json([invalid])) }
+        }
+        await expectFailure("unavailable") { _ = try await core.call("somedaySectionOrderValidate", argumentsJSON: payload) }
+        XCTAssertEqual(sql, 0); XCTAssertEqual(journalWrites, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+
+        for forgedRequest in [extra, uppercase, badOffset, badExpected] {
+            let frozen = try json(["version": 2, "method": "somedaySectionOrderWrite",
+                                   "argumentsJSON": json([json(forgedRequest)])] as [String: Any])
+            try Data(frozen.utf8).write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0)
+            try assertJournalContentUnchanged(Data(frozen.utf8))
+            await blocked.close()
+        }
+        for wrong in [["id": "other", "changed": true] as [String: Any],
+                      ["id": "bravo", "changed": false],
+                      ["id": "bravo", "changed": 1],
+                      ["id": "bravo", "changed": true, "extra": true]] {
+            let frozen = try json(["version": 2, "method": "somedaySectionOrderWrite",
+                                   "argumentsJSON": payload,
+                                   "terminal": ["success": ["_0": json(wrong)]]] as [String: Any])
+            try Data(frozen.utf8).write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var statements = 0
+            blockedFaults.beforeSQL = { _ in statements += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure("acknowledgment") { _ = try await blocked.start() }
+            XCTAssertEqual(statements, 0)
+            try assertJournalContentUnchanged(Data(frozen.utf8))
+            await blocked.close()
+        }
+    }
+
+    func testSomedaySectionOrderRefusesBoundaryDuplicateAndStaleState() async throws {
+        try await seedCalendarPreferenceTask()
+        var settings = try calendarPreferenceSettings()
+        var gtd = settings["gtd"] as? [String: Any] ?? [:]
+        var scopes = gtd["viewSections"] as? [String: Any] ?? [:]
+        let raw: [[String: Any]] = [
+            ["id": "none", "title": "Alpha", "order": 0],
+            ["id": "bravo", "title": "Bravo", "order": 1],
+            ["id": "charlie", "title": "Charlie", "order": 2],
+        ]
+        scopes["someday"] = raw
+        gtd["viewSections"] = scopes
+        settings["gtd"] = gtd
+        try writeCalendarPreferenceSettings(settings)
+        let optionsHost = host()
+        _ = try await optionsHost.start()
+        await expectFailure("INVALID_INPUT") { _ = try await somedaySectionOrderOptions(optionsHost, id: "none", offset: -1) }
+        await expectFailure("INVALID_INPUT") { _ = try await somedaySectionOrderOptions(optionsHost, id: "charlie", offset: 1) }
+        let payload = try somedaySectionOrderPayload(try await somedaySectionOrderOptions(optionsHost, id: "bravo", offset: -1))
+        await optionsHost.close()
+        let variations: [([[String: Any]], String?)] = [
+            (Array(raw.reversed()), nil),
+            ([raw[0], ["id": "bravo", "title": "Renamed", "order": 1], raw[2]], nil),
+            (raw, "2026-09-29T12:00:01.000Z"),
+        ]
+        for (changedRaw, stamp) in variations {
+            var changed = settings
+            var changedGtd = changed["gtd"] as? [String: Any] ?? [:]
+            var changedScopes = changedGtd["viewSections"] as? [String: Any] ?? [:]
+            changedScopes["someday"] = changedRaw
+            changedGtd["viewSections"] = changedScopes
+            changed["gtd"] = changedGtd
+            if let stamp {
+                var stamps = changed["syncPreferencesUpdatedAt"] as? [String: Any] ?? [:]
+                stamps["gtd"] = stamp
+                changed["syncPreferencesUpdatedAt"] = stamps
+            }
+            try writeCalendarPreferenceSettings(changed)
+            let faults = HostIOFaults()
+            var writes = 0
+            faults.beforeSQL = { if $0.hasPrefix("UPDATE settings") || $0.hasPrefix("INSERT INTO settings") { writes += 1 } }
+            let core = host(faults)
+            _ = try await core.start()
+            writes = 0
+            await expectFailure("STALE_REVISION") { _ = try await core.call("somedaySectionOrderWrite", argumentsJSON: payload) }
+            XCTAssertEqual(writes, 0)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            XCTAssertEqual(try json(calendarPreferenceSettings()), try json(changed))
+            await core.close()
+        }
+        var duplicated = settings
+        gtd = duplicated["gtd"] as? [String: Any] ?? [:]
+        scopes = gtd["viewSections"] as? [String: Any] ?? [:]
+        scopes["someday"] = raw + [["id": "charlie", "hidden": true]]
+        gtd["viewSections"] = scopes
+        duplicated["gtd"] = gtd
+        try writeCalendarPreferenceSettings(duplicated)
+        let blocked = host()
+        _ = try await blocked.start()
+        await expectFailure("INVALID_INPUT") { _ = try await somedaySectionOrderOptions(blocked, id: "bravo", offset: -1) }
     }
 
     func testSomedaySectionDeletePreservesRawSettingsTasksAndExactReplay() async throws {

@@ -4031,6 +4031,177 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func task85Arrow(_ app: XCUIApplication, index: Int, up: Bool) -> XCUIElement {
+        let arrow = app.buttons.matching(identifier: "manage-someday-\(up ? "up" : "down")-\(index)").firstMatch
+        // A boundary arrow is intentionally disabled; reveal its row via an enabled sibling.
+        let rename = app.buttons.matching(identifier: "manage-someday-rename-\(index)").firstMatch
+        revealPagedElement(app, rename, in: app.scrollViews["manage-someday-scroll"],
+            more: "manage-someday-more", ready: app.buttons["manage-back"])
+        XCTAssertTrue(arrow.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(arrow.frame.width, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(arrow.frame.height, 44 - 0.001)
+        return arrow
+    }
+
+    private func task85Move(_ app: XCUIApplication, index: Int, up: Bool) {
+        let arrow = task85Arrow(app, index: index, up: up)
+        boardEnabled(arrow)
+        arrow.tap()
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+    }
+
+    private func task85AssertThree(_ app: XCUIApplication, _ titles: [String]) {
+        boardEnabled(app.buttons["manage-back"], timeout: 20)
+        for (index, title) in titles.enumerated() { task83AssertRow(app, index: index, title: title) }
+    }
+
+    func testSomedayManageOrderNormalAndRestart() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "bc3bb075-e4b2-4bab-80c3-4d6d3d3dabac"]
+        app.launch(); task83OpenManage(app, search: true)
+        task85AssertThree(app, ["Task85 Alpha", "Task85 Bravo", "Task85 Charlie"])
+        XCTAssertFalse(task85Arrow(app, index: 0, up: true).isEnabled)
+        XCTAssertFalse(task85Arrow(app, index: 2, up: false).isEnabled)
+        XCTAssertEqual(task85Arrow(app, index: 1, up: true).label, "Move up: Task85 Bravo")
+        task85Move(app, index: 1, up: true)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        task85Move(app, index: 0, up: false)
+        task85AssertThree(app, ["Task85 Alpha", "Task85 Bravo", "Task85 Charlie"])
+        task85Move(app, index: 0, up: false)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate()
+    }
+
+    func testSomedayManageOrderLargestText() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "0569bcb6-1172-44b0-a2ea-8f23647396e5"]
+        app.launch(); task83OpenManage(app)
+        func assertFullTitle(_ index: Int, _ expected: String) {
+            let row = app.descendants(matching: .any).matching(identifier: "manage-someday-row-\(index)").firstMatch
+            let title = app.staticTexts.matching(identifier: "manage-someday-title-\(index)").firstMatch
+            let control = task85Arrow(app, index: index, up: false)
+            XCTAssertTrue(title.waitForExistence(timeout: 10))
+            XCTAssertEqual(title.label, expected)
+            XCTAssertGreaterThanOrEqual(title.frame.minX, row.frame.minX - 0.001)
+            XCTAssertLessThanOrEqual(title.frame.maxX, row.frame.maxX + 0.001)
+            XCTAssertLessThanOrEqual(title.frame.maxY, control.frame.minY)
+        }
+        assertFullTitle(0, "Task85 Alpha")
+        let arrow = task85Arrow(app, index: 1, up: true)
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "Largest Someday section order before"; before.lifetime = .keepAlways; add(before)
+        boardEnabled(arrow); arrow.tap()
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        assertFullTitle(0, "Task85 Bravo")
+        _ = task85Arrow(app, index: 0, up: false)
+        let after = XCTAttachment(screenshot: app.screenshot())
+        after.name = "Largest Someday section order after"; after.lifetime = .keepAlways; add(after)
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate()
+    }
+
+    func testSomedayManageOrderAcrossPageAndRestart() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "abc52dfd-8952-4fd5-a736-cadd6ad4f9b1"]
+        app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 105, title: "Task85 Last section")
+        task85Move(app, index: 105, up: true)
+        task83AssertRow(app, index: 104, title: "Task85 Last section")
+        task83AssertRow(app, index: 105, title: "Section 104")
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task83AssertRow(app, index: 104, title: "Task85 Last section")
+        task83AssertRow(app, index: 105, title: "Section 104")
+        app.terminate()
+    }
+
+    func testSomedayManageOrderPostAckReadRetryOnly() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "db2ec7a4-1afa-480a-8cfe-e83e6ad1c8a1",
+                               "--native-someday-order-read-failure"]
+        app.launch(); task83OpenManage(app)
+        task85Arrow(app, index: 1, up: true).tap()
+        let failure = app.staticTexts["manage-someday-order-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for attempt in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            XCTAssertFalse(app.buttons.matching(identifier: "manage-someday-up-1").firstMatch.isEnabled)
+            boardTap(app, "manage-someday-order-retry")
+            if attempt == 0 { boardEnabled(app.buttons["manage-someday-order-retry"], timeout: 20) }
+        }
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        XCTAssertFalse(failure.exists)
+        app.terminate(); app.launchArguments = ["--native-ui-test-library", "db2ec7a4-1afa-480a-8cfe-e83e6ad1c8a1"]
+        app.launch(); task83OpenManage(app)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate()
+    }
+
+    /// Root disarms the fixture's failed-save trigger before the paired cold test.
+    func testSomedayManageOrderFailedSaveKeepsExactRequest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "fcf4a43e-02c8-41fd-9766-279c9a4c197d"]
+        app.launch(); task83OpenManage(app)
+        task85Arrow(app, index: 1, up: true).tap()
+        let failure = app.staticTexts["manage-someday-order-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        for _ in 0..<2 {
+            XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-someday-rename-1"].isEnabled)
+            XCTAssertFalse(app.buttons["manage-section-toggle-someday-sections"].isEnabled)
+            boardTap(app, "manage-someday-order-retry")
+            boardEnabled(app.buttons["manage-someday-order-retry"], timeout: 20)
+            XCTAssertTrue(failure.exists)
+        }
+        app.terminate()
+    }
+
+    func testSomedayManageOrderColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "fcf4a43e-02c8-41fd-9766-279c9a4c197d"]
+        app.launch(); task83OpenManage(app)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        XCTAssertFalse(app.staticTexts["manage-someday-order-error"].exists)
+        app.terminate(); app.launch(); task83OpenManage(app)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate()
+    }
+
+    func testSomedayManageOrderOptionsReadNeedsFreshArrow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "9fd32e61-fd7e-41ff-baf1-a0d22269879a",
+                               "--native-someday-order-options-failure"]
+        app.launch(); task83OpenManage(app)
+        task85Arrow(app, index: 1, up: true).tap()
+        let failure = app.staticTexts["manage-someday-order-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(failure.exists)
+        boardTap(app, "manage-someday-order-retry")
+        task85AssertThree(app, ["Task85 Alpha", "Task85 Bravo", "Task85 Charlie"])
+        task85Move(app, index: 1, up: true)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate()
+    }
+
+    func testSomedayManageOrderDefiniteRefusalNeedsFreshArrow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "6f4fd215-6ce4-4353-99a2-0f882bafd440",
+                               "--native-someday-order-refusal"]
+        app.launch(); task83OpenManage(app)
+        task85Arrow(app, index: 1, up: true).tap()
+        let failure = app.staticTexts["manage-someday-order-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["manage-back"].isEnabled)
+        boardTap(app, "manage-someday-order-retry")
+        task85AssertThree(app, ["Task85 Alpha", "Task85 Bravo", "Task85 Charlie"])
+        task85Move(app, index: 1, up: true)
+        task85AssertThree(app, ["Task85 Bravo", "Task85 Alpha", "Task85 Charlie"])
+        app.terminate()
+    }
+
     func testSomedayManageLegacyDisclosureImport() { task83LegacyDisclosure(open: true) }
     func testSomedayManageNativeDisclosureOverride() { task83LegacyDisclosure(open: false) }
 

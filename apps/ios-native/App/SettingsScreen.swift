@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var renameFocused: Bool
     @State private var deleteConfirmPresented = false
     @State private var deleteConfirmAnswered = false
@@ -22,7 +23,8 @@ struct SettingsScreen: View {
                 .buttonStyle(.plain)
                 .disabled(model.busy || model.retryNeeded || model.somedaySectionRenamePending
                           || model.somedaySectionRenameAwaitingRefresh
-                          || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh)
+                          || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
+                          || model.somedaySectionOrderActive)
                 .accessibilityLabel(model.label("common.back"))
                 .accessibilityIdentifier(model.settingsManagePresented ? "manage-back" : "settings-back")
                 Text(model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
@@ -129,7 +131,12 @@ struct SettingsScreen: View {
     private var manageContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                if let failure = model.somedaySectionDeleteError {
+                if let failure = model.somedaySectionOrderError {
+                    errorBlock(failure, id: "manage-someday-order-error",
+                               retryID: "manage-someday-order-retry") {
+                        Task { await model.retrySomedaySectionOrder() }
+                    }
+                } else if let failure = model.somedaySectionDeleteError {
                     errorBlock(failure, id: "manage-someday-delete-error",
                                retryID: "manage-someday-delete-retry") {
                         Task {
@@ -165,7 +172,8 @@ struct SettingsScreen: View {
                         .buttonStyle(.plain).disabled(!someday || model.busy || model.retryNeeded
                                                       || model.somedaySectionRenameIndex != nil
                                                       || model.somedaySectionRenameReadPending
-                                                      || model.somedaySectionDeleteActive)
+                                                      || model.somedaySectionDeleteActive
+                                                      || model.somedaySectionOrderActive)
                         .opacity(someday ? 1 : 0.55)
                         .accessibilityValue(section.flag("open") ? "expanded" : "collapsed")
                         .accessibilityIdentifier("manage-section-toggle-" + (someday ? "someday-sections" : section.text("key")))
@@ -185,7 +193,8 @@ struct SettingsScreen: View {
                                     .frame(maxWidth: .infinity, minHeight: 44)
                                     .disabled(model.busy || model.retryNeeded || model.manageReadError != nil
                                               || model.somedaySectionRenameIndex != nil
-                                              || model.somedaySectionDeleteActive)
+                                              || model.somedaySectionDeleteActive
+                                              || model.somedaySectionOrderActive)
                                     .accessibilityIdentifier("manage-someday-more")
                                 }
                             }
@@ -203,67 +212,97 @@ struct SettingsScreen: View {
     private func somedayRow(index: Int) -> some View {
         let row = model.managedSomedaySections[index]
         let editing = model.somedaySectionRenameIndex == index
-        return HStack(spacing: 8) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return Group {
             if editing {
-                TextField(model.somedaySectionRenameOptions.object("text").text("nameLabel"), text: Binding(
-                    get: { model.somedaySectionRenameTitle }, set: { model.setSomedaySectionRenameTitle($0) }))
-                    .focused($renameFocused).submitLabel(.done)
-                    .onSubmit { Task { await model.saveSomedaySectionRename() } }
-                    .rnFont(15).padding(.horizontal, 10).frame(minHeight: 44)
-                    .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
-                    .contentShape(Rectangle())
-                    .onTapGesture { renameFocused = true }
-                    .disabled(!model.somedaySectionRenameInputEnabled)
-                    .accessibilityLabel(model.somedaySectionRenameOptions.object("text").text("nameLabel"))
-                    .accessibilityIdentifier("manage-someday-name")
-                Button { renameFocused = false; model.cancelSomedaySectionRename() } label: {
-                    Text(model.label("common.cancel")).rnFont(13).frame(minHeight: 44)
-                        .padding(.horizontal, 4).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded
-                                              || model.somedaySectionRenamePending || model.somedaySectionRenameAwaitingRefresh)
-                .accessibilityIdentifier("manage-someday-cancel")
-                Button { renameFocused = false; Task { await model.saveSomedaySectionRename() } } label: {
-                    Image(systemName: "checkmark").font(.system(size: 18, weight: .semibold))
-                        .frame(width: 44, height: 44).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(!model.somedaySectionRenameCanSave)
-                .opacity(model.somedaySectionRenameCanSave ? 1 : 0.45)
-                .accessibilityLabel(model.somedaySectionRenameOptions.object("text").text("saveLabel"))
-                .accessibilityIdentifier("manage-someday-save")
-            } else {
-                Text(row.text("title")).rnFont(15).foregroundStyle(palette.text)
-                    .frame(maxWidth: .infinity, alignment: .leading).lineLimit(1)
-                Button { Task { await model.openSomedaySectionRename(index: index); renameFocused = true } } label: {
-                    Image(systemName: "pencil").font(.system(size: 18))
-                        .foregroundStyle(palette.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                                              || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil
-                                              || model.somedaySectionDeleteActive)
-                .accessibilityLabel(row.text("renameLabel"))
-                .accessibilityIdentifier("manage-someday-rename-\(index)")
-                Button {
-                    Task {
-                        await model.openSomedaySectionDelete(index: index)
-                        presentSomedayDeleteConfirmationIfReady()
-                    }
-                } label: {
-                    Image(systemName: "trash").font(.system(size: 18))
-                        .foregroundStyle(palette.danger).frame(width: 44, height: 44)
+                HStack(spacing: 8) {
+                    TextField(model.somedaySectionRenameOptions.object("text").text("nameLabel"), text: Binding(
+                        get: { model.somedaySectionRenameTitle }, set: { model.setSomedaySectionRenameTitle($0) }))
+                        .focused($renameFocused).submitLabel(.done)
+                        .onSubmit { Task { await model.saveSomedaySectionRename() } }
+                        .rnFont(15).padding(.horizontal, 10).frame(minHeight: 44)
+                        .background(palette.input, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
+                        .onTapGesture { renameFocused = true }
+                        .disabled(!model.somedaySectionRenameInputEnabled)
+                        .accessibilityLabel(model.somedaySectionRenameOptions.object("text").text("nameLabel"))
+                        .accessibilityIdentifier("manage-someday-name")
+                    Button { renameFocused = false; model.cancelSomedaySectionRename() } label: {
+                        Text(model.label("common.cancel")).rnFont(13).frame(minHeight: 44)
+                            .padding(.horizontal, 4).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(model.busy || model.retryNeeded
+                                                  || model.somedaySectionRenamePending || model.somedaySectionRenameAwaitingRefresh)
+                    .accessibilityIdentifier("manage-someday-cancel")
+                    Button { renameFocused = false; Task { await model.saveSomedaySectionRename() } } label: {
+                        Image(systemName: "checkmark").font(.system(size: 18, weight: .semibold))
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(!model.somedaySectionRenameCanSave)
+                    .opacity(model.somedaySectionRenameCanSave ? 1 : 0.45)
+                    .accessibilityLabel(model.somedaySectionRenameOptions.object("text").text("saveLabel"))
+                    .accessibilityIdentifier("manage-someday-save")
                 }
-                .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.manageReadError != nil
-                                              || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil
-                                              || model.somedaySectionDeleteActive)
-                .accessibilityLabel(row.text("deleteLabel"))
-                .accessibilityIdentifier("manage-someday-delete-\(index)")
+            } else {
+                layout {
+                    Text(row.text("title")).rnFont(15).foregroundStyle(palette.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .accessibilityIdentifier("manage-someday-title-\(index)")
+                    HStack(spacing: 8) {
+                        orderButton(row: row, index: index, offset: -1)
+                        orderButton(row: row, index: index, offset: 1)
+                        Button { Task { await model.openSomedaySectionRename(index: index); renameFocused = true } } label: {
+                            Image(systemName: "pencil").font(.system(size: 18))
+                                .foregroundStyle(palette.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                                                      || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil
+                                                      || model.somedaySectionDeleteActive || model.somedaySectionOrderActive)
+                        .accessibilityLabel(row.text("renameLabel"))
+                        .accessibilityIdentifier("manage-someday-rename-\(index)")
+                        Button {
+                            Task {
+                                await model.openSomedaySectionDelete(index: index)
+                                presentSomedayDeleteConfirmationIfReady()
+                            }
+                        } label: {
+                            Image(systemName: "trash").font(.system(size: 18))
+                                .foregroundStyle(palette.danger).frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(model.busy || model.retryNeeded || model.manageReadError != nil
+                                                      || model.somedaySectionRenameReadPending || model.somedaySectionRenameIndex != nil
+                                                      || model.somedaySectionDeleteActive || model.somedaySectionOrderActive)
+                        .accessibilityLabel(row.text("deleteLabel"))
+                        .accessibilityIdentifier("manage-someday-delete-\(index)")
+                    }
+                }
             }
         }
         .padding(.horizontal, 12).frame(minHeight: 52)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(row.text("title"))
         .accessibilityIdentifier("manage-someday-row-\(index)")
+    }
+
+    private func orderButton(row: CoreObject, index: Int, offset: Int) -> some View {
+        let up = offset == -1
+        let control = row.object(up ? "moveUp" : "moveDown")
+        let disabled = control.flag("disabled") || model.busy || model.retryNeeded
+            || model.manageReadError != nil || model.somedaySectionRenameReadPending
+            || model.somedaySectionRenameIndex != nil || model.somedaySectionDeleteActive
+            || model.somedaySectionOrderActive
+        return Button { Task { await model.moveManagedSomedaySection(index: index, offset: offset) } } label: {
+            Image(systemName: up ? "chevron.up" : "chevron.down")
+                .font(.system(size: 18)).foregroundStyle(palette.secondary)
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.45 : 1)
+        .accessibilityLabel(control.text("label"))
+        .accessibilityIdentifier("manage-someday-\(up ? "up" : "down")-\(index)")
     }
 
     private func presentSomedayDeleteConfirmationIfReady() {

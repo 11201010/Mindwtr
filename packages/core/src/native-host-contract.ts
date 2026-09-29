@@ -266,6 +266,7 @@ import { createTaskListSortMethods } from './native-host-contract-task-list-sort
 import { createSomedaySectionCreateMethods } from './native-host-contract-someday-section-create';
 import { createSomedaySectionRenameMethods } from './native-host-contract-someday-section-rename';
 import { createSomedaySectionDeleteMethods } from './native-host-contract-someday-section-delete';
+import { createSomedaySectionOrderMethods } from './native-host-contract-someday-section-order';
 import { createSomedaySectionTaskMethods } from './native-host-contract-someday-section-task';
 import { createSomedaySectionMoveMethods } from './native-host-contract-someday-section-move';
 import { createProjectNotesWriteMethods } from './native-host-contract-project-notes';
@@ -1607,6 +1608,10 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             readiness, save,
             revision: () => `${revision()}:${settingsRevision()}:${language}`,
             t: (key) => translate(key),
+        }),
+        ...createSomedaySectionOrderMethods({
+            readiness, save,
+            revision: () => `${revision()}:${settingsRevision()}:${language}`,
         }),
         ...createSomedaySectionTaskMethods({
             readiness, save,
