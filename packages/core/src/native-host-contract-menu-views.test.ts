@@ -14,7 +14,7 @@ import {
 } from './menu-views-model';
 import { createWriteRecorder, loadMenuViewsFixture, seedMenuViewsStore, type MenuViewScenario } from './menu-views-model.replay';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
-import { revisionOf } from './native-request-receipts';
+import { revisionOf, setNativeReplayTokens } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -171,6 +171,8 @@ describe('native host contract: More sheet and list views', () => {
     it('refuses invalid input', async () => {
         freezeClock();
         const { host } = await openHost(scenario('someday', 'sections'));
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         expect(host.getWaitingView({ offset: 0, limit: 101 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(host.getSomedayView({ groupBy: 'tag' as never, offset: 0, limit: 10 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
         expect(host.getSomedayView({ filters: { tokens: 'x' } as never, offset: 0, limit: 10 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });

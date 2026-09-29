@@ -5,7 +5,7 @@ import { loadTranslations } from './i18n/i18n-loader';
 import { formatListItemCount } from './list-count';
 import { createNativeHostContract } from './native-host-contract';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
-import { taskRevisionOf } from './native-request-receipts';
+import { taskRevisionOf, setNativeReplayTokens } from './native-request-receipts';
 import type { NativeReviewAction, NativeReviewOverview } from './native-host-contract-review-views';
 import { compareProjectsByPickerOrder } from './project-utils';
 import { getAdvancedReviewDate } from './review-utils';
@@ -459,6 +459,8 @@ describe('native host contract: Review rows and Review\'s Organize sheet', () =>
     it('refuses invalid input without writing', async () => {
         freezeClock();
         const { host, recorder } = await openHost();
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
         const view = (extra: Record<string, unknown>) => host.getReviewOverview({ selectedIds: ['n-bike'], ...extra, ...page } as never);
         expect(view({ organize: { draft: { color: 'red' } } })).toMatchObject(invalid);

@@ -12,6 +12,7 @@ import {
     logWarn,
     planLegacyJsonImport,
     pruneNativeRequestReceipts,
+    setNativeReplayTokens,
     setStorageAdapter,
     splitSqlStatements,
     sqliteHasAnyData,
@@ -438,7 +439,9 @@ const activateAndVerify = async (adapter: ValidatedSqliteAdapter, recoveryLoad =
     }
     return unwrap(contract.getInboxWindow({ offset: 0, limit: 50 }));
 };
-const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false): string => submit(async () => {
+const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, journaled = false): string => submit(async () => {
+    // A host that journals every write replays it after process death, so each write must carry its replay tokens.
+    setNativeReplayTokens(journaled ? 'required' : 'optional');
     const adapter = new ValidatedSqliteAdapter(sqlite, { rejectConcurrentWrites: true });
     // Schema setup may write only after the native host's validated checkpoint.
     setStorageAdapter(adapter);
@@ -469,9 +472,12 @@ globalThis.MindwtrHost = {
             ? { ok: true, value: slot.value }
             : { ok: false, error: slot.error });
     },
-    /** `legacyState` is "" for the dev database; else LegacyRnStoreGuard's reading of RN's AsyncStorage. */
-    boot(legacyState: string, legacyBackup: string): string {
-        return boot(legacyState, legacyBackup);
+    /**
+     * `legacyState` is "" for the dev database; else LegacyRnStoreGuard's reading of RN's AsyncStorage.
+     * `writeJournal` is "journaled" from a host that journals every write (Kotlin's WriteJournal); iOS sends nothing.
+     */
+    boot(legacyState: string, legacyBackup: string, writeJournal = ''): string {
+        return boot(legacyState, legacyBackup, false, writeJournal === 'journaled');
     },
     /** Private iOS journal recovery: no dynamic load maintenance before exact replay. */
     bootRecovery(legacyState: string, legacyBackup: string): string {

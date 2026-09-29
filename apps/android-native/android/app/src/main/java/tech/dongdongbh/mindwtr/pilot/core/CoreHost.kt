@@ -152,7 +152,8 @@ class CoreHost(
             bridge.setProperty("ioBody", guarded { _ -> io.body() })
             engine.globalObject.setProperty("__mindwtrNative", bridge)
             engine.evaluate(bundle, "core-host.js")
-            callAsync("boot", legacyState, legacyBackup).also { netCheck() }
+            // This host journals every write (WriteJournal), so core requires each write's replay tokens.
+            callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
         } catch (error: Throwable) {
             closeOnEngine()
             throw error

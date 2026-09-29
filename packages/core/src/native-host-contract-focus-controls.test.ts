@@ -13,6 +13,7 @@ import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
 import { generateUUID } from './uuid';
+import { setNativeReplayTokens } from './native-request-receipts';
 
 const fixture = loadFocusControlsFixture();
 const scenario = (settings = 'base') => fixture.scenarios.find((entry) => entry.settings === settings && !entry.taskIds)!;
@@ -309,6 +310,8 @@ describe('native host contract: Focus controls', () => {
     it('refuses what Focus cannot hold or offer', async () => {
         freezeClock();
         const host = await openHost('prioritiesOff');
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
         expect(host.getFocus({ limit: 1, controls: { filters: { searchQuery: 'x' } } })).toMatchObject(invalid);
         expect(host.getFocus({ limit: 1, controls: { sortBy: 'unknown' as never } })).toMatchObject(invalid);

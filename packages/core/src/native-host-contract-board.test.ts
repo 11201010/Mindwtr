@@ -13,7 +13,7 @@ import { createBoardRecorder, loadBoardViewsFixture, seedBoardStore, type BoardF
 import { loadTranslations } from './i18n/i18n-loader';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
 import { matchesPickerQuery } from './native-host-contract-menu-views';
-import { taskRevisionOf } from './native-request-receipts';
+import { taskRevisionOf, setNativeReplayTokens } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -421,6 +421,8 @@ describe('native host contract: Board', () => {
     it('refuses invalid input', async () => {
         freezeClock();
         const { host } = await openHost();
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
         expect(host.getBoardView({ limit: 101 })).toMatchObject(invalid);
         expect(host.getBoardView({ filters: { tokens: '@home' } as never, limit: 1 })).toMatchObject(invalid);

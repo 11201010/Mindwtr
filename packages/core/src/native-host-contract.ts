@@ -176,7 +176,9 @@ import {
     refuseStaleTasks,
     requestProjects,
     requestRowId,
+    replayTokensRequired,
     revisionOf,
+    setNativeReplayTokens,
     startNativeRequestSession,
     withRequestProject,
     revisionsToken,
@@ -184,6 +186,7 @@ import {
     settleWrite,
     taskRevisionOf,
     taskRevisionsOf,
+    type NativeReplayTokens,
     type NativeRevisions,
     type NativeUnsavedWrite,
 } from './native-request-receipts';
@@ -841,10 +844,13 @@ const applyNativeTaskDraftEdit = (
 /**
  * One instance per serial native JS host. All reads and commands use the shared store.
  * `syncSettings` binds the host's device for Settings › Sync (native-host-contract-settings-sync.ts).
+ * `replayTokens` (NativeReplayTokens, native-request-receipts.ts): 'required' for a host that
+ * journals its writes; the default, 'optional', lets a write leave its replay tokens out.
  */
-export function createNativeHostContract(options: { syncSettings?: NativeSyncSettingsHost } = {}) {
+export function createNativeHostContract(options: { syncSettings?: NativeSyncSettingsHost; replayTokens?: NativeReplayTokens } = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
     startNativeRequestSession();
+    setNativeReplayTokens(options.replayTokens ?? 'optional');
     const processId = generateUUID();
     let language: Language = 'en';
     let systemLocale: string | null = null;
@@ -1313,6 +1319,39 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         } catch (error) {
             return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
         }
+    };
+    // A draft save without a request UUID (tokens optional): per task, the last save the store
+    // accepted and the task it produced. The same save against that same task is a retry: the store
+    // may have rewritten fields it saved (a recurrence's series stamp, a deferred star), so the field
+    // comparison alone cannot recognise it. Any other write to the task replaces its object, which
+    // ends the entry.
+    // ponytail: keeps the 50 most recently saved tasks; an older task's retry falls back to the field comparison.
+    const draftSaves = new Map<string, { key: string; task: Task | undefined }>();
+    const saveDraftWithoutRequest = async (
+        id: string,
+        key: string,
+        write: () => Promise<NativeHostResult<{ id: string; draft: TaskDraft }> | NativeUnsavedWrite<{ id: string; draft: TaskDraft }>>,
+    ): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> => {
+        const lastSave = draftSaves.get(id);
+        if (lastSave && lastSave.task !== useTaskStore.getState()._tasksById.get(id)) draftSaves.delete(id);
+        if (draftSaves.get(id)?.key !== key) {
+            const written = await write();
+            if (!written.ok && !('value' in written)) return written;
+            draftSaves.delete(id);
+            draftSaves.set(id, { key, task: useTaskStore.getState()._tasksById.get(id) });
+            if (draftSaves.size > 50) draftSaves.delete(draftSaves.keys().next().value as string);
+        }
+        if (useTaskStore.getState().persistenceFailure) {
+            try {
+                await useTaskStore.getState().retryPersistence();
+            } catch (error) {
+                return fail('SAVE_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        }
+        const saved = await save();
+        if (!saved.ok) return saved;
+        const task = useTaskStore.getState()._tasksById.get(id);
+        return task ? { ok: true, value: { id, draft: createTaskDraft(task) } } : fail('TASK_NOT_FOUND', 'Task not found');
     };
     // Exact retries of this block's writes that take a request UUID (the editor's, createProject, saveSearch).
     const receipts = createNativeRequestReceipts({
@@ -2438,7 +2477,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         /**
          * Save draft fields. `base` holds each field's value when editing began; a field
          * changed since by another writer is a conflict, unless it already holds the new
-         * value. A repeat of the same `requestId` (after a failed save, or a replay) writes nothing new.
+         * value. A repeat of the same `requestId` (after a failed save, or a replay) writes nothing new;
+         * while replay tokens are optional, a save without one repeats as before (a same-host retry
+         * of the last accepted save only saves).
          * `checklist` saves the editor's checklist in the same write, as React Native saves
          * it with the draft: `base` is the saved checklist the editor loaded (getTaskView's
          * checklistBase), `value` the edited one; it conflicts like a field, and empty items
@@ -2450,7 +2491,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             base: Partial<TaskDraft>;
             patch: Partial<TaskDraft>;
             checklist?: { base: ChecklistItem[]; value: ChecklistItem[] };
-            requestId: string;
+            requestId?: string;
         }): Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -2480,13 +2521,16 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 return fail('INVALID_INPUT', `base and patch fields must match${named}`);
             }
 
-            if (typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) return fail('INVALID_INPUT', 'A request UUID is required');
+            const withoutRequest = input.requestId === undefined && !replayTokensRequired();
+            if (!withoutRequest && (typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId))) {
+                return fail('INVALID_INPUT', 'A request UUID is required');
+            }
 
             const focusedBefore = useTaskStore.getState()._tasksById.get(input.id)?.isFocusedToday === true;
             // A repeat answers from the request's receipt: the store may rewrite fields it saved (a
             // recurrence's series stamp, a deferred star), so comparing fields cannot recognise it.
             const payload = JSON.stringify(['saveTaskDraft', input.id, input.base, input.patch, checklistHalf ?? null]);
-            const result = await receipts.run(input.requestId, payload, async () => {
+            const write = async (): Promise<NativeHostResult<{ id: string; draft: TaskDraft }> | NativeUnsavedWrite<{ id: string; draft: TaskDraft }>> => {
                 const state = useTaskStore.getState();
                 const task = state._tasksById.get(input.id);
                 if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
@@ -2573,7 +2617,8 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 if (Object.keys(updates).length === 0) return { ok: true, value: { id: input.id, draft: current } };
                 const landed = await runStoreWrite(() => useTaskStore.getState().updateTask(input.id, updates));
                 return settleWrite(landed, { id: input.id, draft: createTaskDraft(useTaskStore.getState()._tasksById.get(input.id) ?? task) });
-            });
+            };
+            const result = withoutRequest ? await saveDraftWithoutRequest(input.id, payload, write) : await receipts.run(input.requestId, payload, write);
             if (result.ok && !focusedBefore && useTaskStore.getState()._tasksById.get(input.id)?.isFocusedToday) {
                 logInfo('Editor Focus star saved', {
                     scope: 'native-host', category: 'storage',

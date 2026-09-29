@@ -19,7 +19,7 @@ import {
     titleWeeklyReviewSteps,
 } from './review-views-model';
 import { createReviewRecorder, loadReviewViewsFixture, seedReviewStore, type ReviewScenario } from './review-views-model.replay';
-import { taskRevisionOf } from './native-request-receipts';
+import { taskRevisionOf, setNativeReplayTokens } from './native-request-receipts';
 import type { NativeReviewAction } from './native-host-contract-review-views';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -575,6 +575,8 @@ describe('native host contract: Review, Weekly Review and Daily Review', () => {
     it('refuses invalid input', async () => {
         freezeClock();
         const { host } = await openHost();
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const invalid = { ok: false, error: { code: 'INVALID_INPUT' } };
         expect(host.getReviewOverview({ offset: 0, limit: 101 })).toMatchObject(invalid);
         expect(host.getReviewOverview({ expansionEdit: { type: 'explode' } as never, ...page })).toMatchObject(invalid);

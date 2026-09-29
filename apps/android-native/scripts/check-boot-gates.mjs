@@ -293,7 +293,7 @@ assert.equal(sqliteBridge.match(/journal_mode|synchronous =/g).length, 2);
 assert.doesNotMatch(bridgeCheckpoint, /\breturn\b/);
 assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\)[\s\S]*?syncDirectory/);
 assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('engine.evaluate(bundle'));
-assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup)'));
+assert(coreHost.indexOf('database.ensureRecoveryCheckpoint()') < coreHost.indexOf('callAsync("boot", legacyState, legacyBackup, "journaled")'));
 const source = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot', name), 'utf8');
 const activity = source('MainActivity.kt');
 const model = source('InboxViewModel.kt');
@@ -478,7 +478,13 @@ assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
 assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
-assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)/);
+// The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
+// flag sets 'required'; iOS boots and recovers with none.
+assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
+assert.equal(coreHost.match(/"journaled"/g).length, 1);
+assert.match(hostEntry, /setNativeReplayTokens\(journaled \? 'required' : 'optional'\)/);
+assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string\): string \{\s*return boot\(legacyState, legacyBackup, true\);/);
+assert.equal(hostEntry.match(/setNativeReplayTokens\(/g).length, 1);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
 assert.match(guard, /val database = File\(dataDir, DATABASE\)/);
@@ -647,7 +653,7 @@ for (const line of bridgeCallbacks) assert.match(line, /^bridge\.setProperty\("\
     assert.equal(/CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(hostIo)[1], /CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(rnClient)[1]);
     assert.match(hostIo, /\.connectTimeout\(CONNECT_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/);
     assert.match(coreHost, /if \(io\.busy\(\)\) io\.await\(if \(delay < 0\) 25L else minOf\(delay, 25L\)\)\s+else if \(delay > 0\) Thread\.sleep\(minOf\(delay, 25L\)\)/);
-    assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup\)\.also \{ netCheck\(\) \}/);
+    assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)\.also \{ netCheck\(\) \}/);
     assert.match(coreHost, /val port = debugFault\("net_check"\)\.ifEmpty \{ return \}/, 'the net check is debug-only');
     // RN's network security config (cleartext as RN allows it, user CAs trusted), and the INTERNET permission.
     const rnConfig = /NETWORK_SECURITY_CONFIG_XML = `([\s\S]*?)`;/.exec(readFileSync(resolve(app, '../mobile/plugins/android-network-security-config.js'), 'utf8'))[1];
@@ -2293,6 +2299,7 @@ export function legacyImportMismatch(merged, saved) { return JSON.stringify(merg
 export function splitSqlStatements(sql) { return [sql]; }
 export class NativeReceiptSqliteAdapter extends SqliteAdapter {}
 export async function loadNativeRequestReceipts() { globalThis.receiptsLoadedAt = globalThis.events.length; return 0; }
+export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
 export async function pruneNativeRequestReceipts() { return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export async function flushPendingSave() { globalThis.events.push('flush'); }
@@ -2498,6 +2505,13 @@ assert.equal(ready.activationCount, 1);
 assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
 // Receipts load before the validated load, so before activation and any replay; pruning is Kotlin's call after its replay.
 assert.equal(ready.receiptsLoadedAt, 0);
+// Replay tokens: optional for a boot without the journal flag (iOS), required for the Kotlin host's "journaled".
+assert.equal(ready.replayTokens, 'optional');
+{
+    const journaled = makeState(0);
+    assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
+    assert.equal(journaled.replayTokens, 'required');
+}
 assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: true, value: { pruned: 3 } });
 // The capture popup: every call passes Kotlin's JSON to core unchanged; the snapshot comes wrapped, null in sandbox mode.
 {
@@ -2736,7 +2750,7 @@ assert.equal((await poll(ready, ready.MindwtrHost.strings('["tab.inbox"]'))).ok,
 const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
 const bootOrder = ['await adapter.getData();', 'await importLegacyJson(adapter,', 'await activateAndVerify(adapter, recoveryLoad)'].map((text) => bootBody.indexOf(text));
 assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `boot order ${bootOrder}`);
-assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string\): string \{\s*return boot\(legacyState, legacyBackup\);/);
+assert.match(hostEntry, /boot\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, false, writeJournal === 'journaled'\);/);
 const importBody = hostEntry.slice(hostEntry.indexOf('const importLegacyJson'), hostEntry.indexOf('// After a failed save'));
 const importOrder = ['adapter.latestData', 'planLegacyJsonImport(', 'legacyImportMismatch(plan.merged, loaded)', 'await adapter.saveData(plan.merged)',
     'legacyImportMismatch(plan.merged, await adapter.getData())', 'Legacy import not confirmed', 'native().rnStateCommit(',

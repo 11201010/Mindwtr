@@ -21,7 +21,7 @@ import { createDateFormatter } from './date';
 import { createNativeHostContract, sortAreasForDisplay } from './native-host-contract';
 import type { NativeCalendarEntry, NativeCalendarFeed, NativeCalendarView } from './native-host-contract-calendar';
 import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
-import { requestRowId, taskRevisionOf } from './native-request-receipts';
+import { requestRowId, taskRevisionOf, setNativeReplayTokens } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -537,6 +537,8 @@ describe('native host contract: Calendar', () => {
     it('refuses what the screen refuses without writing, and leaves the request ID free', async () => {
         freezeClock();
         const { host, recorder } = await openHost();
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const requestId = generateUUID();
         // Onto Deep work: the time-conflict toast.
         const conflict = value(await host.runCalendarAction({

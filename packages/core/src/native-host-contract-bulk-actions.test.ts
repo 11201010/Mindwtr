@@ -5,7 +5,7 @@ import { createNativeHostContract } from './native-host-contract';
 import type { NativeBulkAction } from './native-host-contract-bulk-actions';
 import { createBulkOrganizeArea, createBulkOrganizeProject } from './bulk-organize-create';
 import { paramsKey } from './native-host-contract-menu-views';
-import { revisionOf, taskRevisionOf, taskRevisionsOf } from './native-request-receipts';
+import { revisionOf, taskRevisionOf, taskRevisionsOf, setNativeReplayTokens } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import {
@@ -339,6 +339,8 @@ describe('native host contract: selection mode', () => {
         it('shows the revision of each selected row, for the action to send', async () => {
             freezeClock();
             const { host, log } = await open();
+            // As the journaling Android host: each write must carry its replay tokens.
+            setNativeReplayTokens('required');
             const tasks = useTaskStore.getState()._tasksById;
             const revisions = { 's-novel': taskRevisionOf(tasks.get('s-novel')!), 's-piano': taskRevisionOf(tasks.get('s-piano')!) };
             const view = value(host.getBulkActions({ list: 'someday', taskIds: ['s-novel', 's-piano'] }));

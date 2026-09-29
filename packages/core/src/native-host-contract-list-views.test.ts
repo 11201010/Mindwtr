@@ -20,7 +20,7 @@ import {
 } from './list-views-model.replay';
 import { EMPTY_LIST_FILTER_STATE } from './list-filter-state';
 import { createNativeHostContract, type NativeArchiveAction, type NativeContextsAction, type NativeContextsView, type NativeHostResult, type NativeTrashAction } from './native-host-contract';
-import { revisionOf, taskRevisionOf } from './native-request-receipts';
+import { revisionOf, taskRevisionOf, setNativeReplayTokens } from './native-request-receipts';
 import { replayAfterRestart, value } from './screen-parity.replay';
 import { matchesPickerQuery, paramsKey } from './native-host-contract-menu-views';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -380,6 +380,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
 
     it('never deletes forever or restores an item that is not in Trash', async () => {
         const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const run = (action: unknown) => host.runTrashAction({ requestId: generateUUID(), action: action as never });
         const revision = (id: string) => taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!);
         expect(await run({ type: 'purgeItem', kind: 'task', id: 'tt-live', revision: revision('tt-live') })).toMatchObject({ ok: false, error: { code: 'TASK_NOT_FOUND' } });
@@ -403,6 +405,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
 
     it('checks each Contexts and Archive action before writing', async () => {
         const { host, recorder } = await openHost(fixture.archive, scenario(fixture.archive, 'rows, labels, summary and menus'));
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const archive = (action: unknown) => host.runArchiveAction({ requestId: generateUUID(), action: action as never });
         const contexts = (action: unknown) => host.runContextsAction({ requestId: generateUUID(), action: action as never });
         const revision = (id: string) => taskRevisionOf(useTaskStore.getState()._tasksById.get(id)!);

@@ -40,7 +40,8 @@ const realActions = new Map<string, StoreFn>();
  * then opens a native host over it. Each store action named in `record` is logged to
  * `log` as [name, ...its first `record[name]` arguments] (all of them when null),
  * after `intercept` had its say: an intercept that returns a promise answers the call
- * instead of the store.
+ * instead of the store. This harness's hosts require replay tokens, as the journaling
+ * Android host does (NativeReplayTokens).
  */
 export async function openScreenHost(input: {
     data: { tasks?: Task[]; projects?: Project[]; areas?: Area[]; settings?: AppSettings };
@@ -69,7 +70,7 @@ export async function openScreenHost(input: {
         _allTasks: [], _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
         settings: {}, error: null, persistenceFailure: null, isLoading: false, editLockCount: 0, lastDataChangeAt: 0,
     } as never);
-    const host = createNativeHostContract();
+    const host = createNativeHostContract({ replayTokens: 'required' });
     value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
     value(await host.activate({ writeSafetyReady: true }));
     useTaskStore.setState(Object.fromEntries(Object.entries(input.record).map(([name, count]) => [name, async (...args: unknown[]) => {
@@ -84,7 +85,7 @@ export type ScreenHost = Awaited<ReturnType<typeof openScreenHost>>;
 /** A new host over the same store and storage, as after a restart: it holds no request receipts. */
 export async function restartScreenHost() {
     await flushPendingSave();
-    const host = createNativeHostContract();
+    const host = createNativeHostContract({ replayTokens: 'required' });
     value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
     value(await host.activate({ writeSafetyReady: true }));
     return host;
@@ -158,7 +159,7 @@ export async function openSqliteHost(seed: Partial<AppData>, wrap: (client: Sqli
         const client = wrap(clientOf(database));
         setStorageAdapter(new NativeReceiptSqliteAdapter(client));
         await loadNativeRequestReceipts(client);
-        const host = createNativeHostContract();
+        const host = createNativeHostContract({ replayTokens: 'required' });
         value(await host.setLanguage({ storedLanguage: 'en', systemLocale: null }));
         value(await host.activate({ writeSafetyReady: true }));
         return host;

@@ -4,7 +4,7 @@ import { createDateFormatter } from './date';
 import { loadTranslations } from './i18n/i18n-loader';
 import { createMarkdownLinkLookup, resolveMarkdownBlocks, resolveMarkdownInline } from './markdown-blocks';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import { taskRevisionOf } from './native-request-receipts';
+import { taskRevisionOf, setNativeReplayTokens } from './native-request-receipts';
 import { replayAfterRestart } from './screen-parity.replay';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage } from './storage';
@@ -480,6 +480,8 @@ describe('native host contract: Reset checklist', () => {
     it('refuses a request ID reused for another task, and invalid input', async () => {
         freezeClock();
         const host = await openHost();
+        // As the journaling Android host: each write must carry its replay tokens.
+        setNativeReplayTokens('required');
         const done = reset(host, 't-done');
         value(await host.resetTaskChecklist(done));
         expect(await host.resetTaskChecklist({ ...reset(host, 't-list'), requestId: done.requestId })).toMatchObject(invalid);
