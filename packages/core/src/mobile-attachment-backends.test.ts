@@ -3,6 +3,7 @@ import type { AppData, Attachment } from './types';
 import { computeSha256Hex } from './attachment-hash';
 import { buildFileSyncGenerationCloudKey } from './attachment-paths';
 import { DropboxConflictError, DropboxFileNotFoundError } from './dropbox';
+import { WebDavRemoteWriteConflictError } from './webdav';
 import { createMobileAttachmentFiles, type MobileAttachmentSafPort } from './mobile-attachment-files';
 import { createMobileAttachmentCommon, type MobileAttachmentUploadTask } from './mobile-attachment-common';
 import { createMobileAttachmentBackends, type MobileAttachmentBackendsCoreFunctions } from './mobile-attachment-backends';
@@ -188,7 +189,7 @@ describe('WebDAV attachment pass', () => {
     const createUploadTask = vi.fn(() => task);
     const webdavPutFileVersioned = vi.fn(async () => undefined);
     const remote = { exists: false, fingerprint: null, etag: null as string | null, lastModified: null, contentLength: null };
-    const webdavConfirmUploadedFile = vi.fn(async () => ({ confirmed: true, status: 200 }));
+    const webdavConfirmUploadedFile = vi.fn(async () => ({ confirmed: true, redirected: false, status: 200 }));
     const { backends, memory } = setup({
       createUploadTask,
       core: {
@@ -233,7 +234,7 @@ describe('WebDAV attachment pass', () => {
         webdavMakeDirectory: vi.fn(async () => undefined),
         webdavHeadFile: vi.fn(async () => ({ exists: false, fingerprint: null, etag: null, lastModified: null, contentLength: null })),
         webdavPutFileVersioned: vi.fn(async () => undefined),
-        webdavConfirmUploadedFile: vi.fn(async () => ({ confirmed: false, status: 404 })),
+        webdavConfirmUploadedFile: vi.fn(async () => ({ confirmed: false, redirected: false, status: 404 })),
       },
     });
     memory.put(LOCAL_URI, LOCAL);
@@ -256,6 +257,65 @@ describe('WebDAV attachment pass', () => {
       level: 'warn',
       context: { releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: 404 },
     })]);
+  });
+
+  describe('after a redirected HEAD (a CDN for downloads, or a write redirect)', () => {
+    const run = async (putResult: () => Promise<undefined>) => {
+      const task = { uploadAsync: vi.fn(async () => ({ status: 201 })), cancelAsync: vi.fn(async () => undefined) };
+      const webdavPutFileVersioned = vi.fn(putResult);
+      const { backends, memory, lines } = setup({
+        createUploadTask: () => task,
+        core: {
+          webdavMakeDirectory: vi.fn(async () => undefined),
+          webdavHeadFile: vi.fn(async () => ({ exists: false, fingerprint: null, etag: null, lastModified: null, contentLength: null })),
+          webdavPutFileVersioned,
+          webdavConfirmUploadedFile: vi.fn(async () => ({ confirmed: false, redirected: true, status: 200 })),
+        },
+      });
+      memory.put(LOCAL_URI, LOCAL);
+      const result = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+      return { result, lines, task, webdavPutFileVersioned };
+    };
+
+    it('falls back once to the checked byte PUT and records it', async () => {
+      const { result, lines, task, webdavPutFileVersioned } = await run(async () => undefined);
+
+      expect(task.uploadAsync).toHaveBeenCalledTimes(1);
+      expect(webdavPutFileVersioned).toHaveBeenCalledTimes(1);
+      expect(webdavPutFileVersioned).toHaveBeenCalledWith(
+        `${BASE_URL}/attachments/att-1.txt`,
+        expect.any(ArrayBuffer),
+        expect.any(String),
+        null,
+        expect.objectContaining({ username: 'user' }),
+      );
+      expect(attachmentOf(result)?.cloudKey).toBe('attachments/att-1.txt');
+      expect(lines).toContainEqual(expect.objectContaining({
+        message: 'WebDAV streamed upload unproven after a redirected HEAD; sending it through the checked PUT',
+        extra: { id: 'att-1', releaseCheck: 'v1.3.4/streamed-upload-head-fallback' },
+      }));
+    });
+
+    it('takes a 412 from that create-only PUT as the streamed create that already landed', async () => {
+      const { result, webdavPutFileVersioned } = await run(async () => {
+        throw new WebDavRemoteWriteConflictError(412);
+      });
+
+      expect(webdavPutFileVersioned).toHaveBeenCalledTimes(1);
+      expect(attachmentOf(result)?.cloudKey).toBe('attachments/att-1.txt');
+    });
+
+    it('fails the upload only when the byte PUT is refused', async () => {
+      const { result, lines } = await run(async () => {
+        throw new TypeError('fetch failed: unexpected redirect');
+      });
+
+      expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+      expect(lines).toContainEqual(expect.objectContaining({
+        message: 'Failed to upload attachment att-1',
+        extra: { error: 'fetch failed: unexpected redirect' },
+      }));
+    });
   });
 
   it('marks the attachment unrecoverable when the remote answers 404', async () => {

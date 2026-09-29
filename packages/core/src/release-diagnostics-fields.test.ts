@@ -83,6 +83,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // desktop-reminder-fired / desktop-notification-path (apps/desktop/src/lib/notification-service.tsx)
     'kind', 'entity', 'fireAt', 'path', 'error',
     'deferred', 'ids',
+    // streamed-upload-head-fallback (core WebDAV attachment pass): the attachment id only.
+    'id',
     // webdav-activation-batches (core activation coordinator)
     'batches',
     // attachment-only-task-replace (store-settings.ts) / section-conversion-canonical (store-tasks.ts)

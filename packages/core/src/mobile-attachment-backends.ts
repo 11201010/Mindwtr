@@ -523,10 +523,12 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
               },
             }
           );
+          let storedByStream = uploadedWithFileSystem;
           if (uploadedWithFileSystem) {
             // The native uploader follows a redirect by itself: a 307 or 308 stores the file at
             // another URL and a 303 stores nothing, yet the task answers 2xx. Record the cloud
-            // key only once a HEAD at this URL, not after a redirect, finds the uploaded size.
+            // key only once a HEAD at this URL, not after a redirect, finds the file (with the
+            // uploaded size when it states one).
             const sentBytes = (await files.statAttachmentFile(localPath))?.size ?? uploadBytes;
             const landed = await core.withRetry(async () => {
               await waitForSlot();
@@ -537,10 +539,20 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
                 signal,
               });
             }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
-            if (!landed.confirmed) {
+            if (landed.redirected) {
+              // A redirected HEAD (a download CDN, or a write redirect) proves nothing about this
+              // URL, so the bytes go once more through the buffered PUT, whose redirect core
+              // refuses. An attachment is never left unsynced for good by an unprovable stream.
+              storedByStream = false;
+              files.logAttachmentInfo('WebDAV streamed upload unproven after a redirected HEAD; sending it through the checked PUT', {
+                id: attachment.id,
+                releaseCheck: 'v1.3.4/streamed-upload-head-fallback',
+              });
+            } else if (!landed.confirmed) {
               refuseWriteRedirect({ releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: landed.status });
             }
-          } else {
+          }
+          if (!storedByStream) {
             let uploadData = fileData;
             if (!uploadData) {
               const readResult = await files.readAttachmentBytesForUpload(localPath);
@@ -548,29 +560,37 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
               uploadData = readResult.data;
             }
             const buffer = toAttachmentArrayBuffer(await common.sealAttachmentBytesForUpload(uploadData, material, cloudKey));
-            await core.withRetry(
-              async () => {
-                await waitForSlot();
-                await options.assertRemoteMutationFenceHeld?.(35_000);
-                return await core.webdavPutFileVersioned(uploadUrl, buffer, attachment.mimeType || DEFAULT_ATTACHMENT_CONTENT_TYPE, expectedEtag, {
-                  ...getMobileWebDavRequestOptions(webDavConfig.allowInsecureHttp),
-                  username: webDavConfig.username,
-                  password: webDavConfig.password,
-                  signal,
-                });
-              },
-              {
-                ...WEBDAV_ATTACHMENT_RETRY_OPTIONS,
-                onRetry: (error, attempt, delayMs) => {
-                  files.logAttachmentInfo('Retrying WebDAV attachment upload', {
-                    id: attachment.id,
-                    attempt: String(attempt + 1),
-                    delayMs: String(delayMs),
-                    error: host.log.sanitize(error instanceof Error ? error.message : String(error)),
+            try {
+              await core.withRetry(
+                async () => {
+                  await waitForSlot();
+                  await options.assertRemoteMutationFenceHeld?.(35_000);
+                  return await core.webdavPutFileVersioned(uploadUrl, buffer, attachment.mimeType || DEFAULT_ATTACHMENT_CONTENT_TYPE, expectedEtag, {
+                    ...getMobileWebDavRequestOptions(webDavConfig.allowInsecureHttp),
+                    username: webDavConfig.username,
+                    password: webDavConfig.password,
+                    signal,
                   });
                 },
-              }
-            );
+                {
+                  ...WEBDAV_ATTACHMENT_RETRY_OPTIONS,
+                  onRetry: (error, attempt, delayMs) => {
+                    files.logAttachmentInfo('Retrying WebDAV attachment upload', {
+                      id: attachment.id,
+                      attempt: String(attempt + 1),
+                      delayMs: String(delayMs),
+                      error: host.log.sanitize(error instanceof Error ? error.message : String(error)),
+                    });
+                  },
+                }
+              );
+            } catch (error) {
+              // After a stream this PUT is create-only, and the HEAD before the stream found no
+              // file here; a 412 now means the stream's own create landed (same key, same bytes),
+              // not another version, so it is recorded instead of failing and looping.
+              if (!(uploadedWithFileSystem && getErrorStatus(error) === 412)) throw error;
+              files.logAttachmentInfo('WebDAV attachment already stored by the streamed upload', { id: attachment.id });
+            }
           }
           attachment.cloudKey = cloudKey;
           if (!Number.isFinite(attachment.size ?? NaN) && Number.isFinite(size ?? NaN)) {

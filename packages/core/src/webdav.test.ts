@@ -1016,22 +1016,34 @@ describe('webdavConfirmUploadedFile', () => {
         const fetcher = vi.fn(async () => headAnswer('https://DAV.example.com:443/Mindwtr/attachments/a.bin', 200, '1234'));
 
         await expect(webdavConfirmUploadedFile(url, 1234, { fetcher, username: 'u', password: 'p' }))
-            .resolves.toEqual({ confirmed: true, status: 200 });
+            .resolves.toEqual({ confirmed: true, redirected: false, status: 200 });
         expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
             method: 'HEAD',
             headers: { 'Accept-Encoding': 'identity', Authorization: expect.stringMatching(/^Basic /) },
         });
     });
 
-    it.each([
-        ['a redirect (307 stored it elsewhere)', 'https://elsewhere.example.com/a.bin', 200, '1234'],
-        ['another size (the old or a partial file)', url, 200, '99'],
-        ['no size', url, 200, null],
-        ['no file (303 stored nothing)', url, 404, null],
-    ])('does not confirm %s', async (_label, answeredUrl, status, length) => {
-        const fetcher = vi.fn(async () => headAnswer(answeredUrl, status, length));
+    it('confirms a file answering at the same URL without a size', async () => {
+        const fetcher = vi.fn(async () => headAnswer(url, 200, null));
 
         await expect(webdavConfirmUploadedFile(url, 1234, { fetcher }))
-            .resolves.toEqual({ confirmed: false, status });
+            .resolves.toEqual({ confirmed: true, redirected: false, status: 200 });
+    });
+
+    it('reports a redirected HEAD, which proves nothing about this URL', async () => {
+        const fetcher = vi.fn(async () => headAnswer('https://cdn.example.net/a.bin', 200, '1234'));
+
+        await expect(webdavConfirmUploadedFile(url, 1234, { fetcher }))
+            .resolves.toEqual({ confirmed: false, redirected: true, status: 200 });
+    });
+
+    it.each([
+        ['another size (the old or a partial file)', 200, '99'],
+        ['no file (303 stored nothing)', 404, null],
+    ])('does not confirm %s', async (_label, status, length) => {
+        const fetcher = vi.fn(async () => headAnswer(url, status, length));
+
+        await expect(webdavConfirmUploadedFile(url, 1234, { fetcher }))
+            .resolves.toEqual({ confirmed: false, redirected: false, status });
     });
 });

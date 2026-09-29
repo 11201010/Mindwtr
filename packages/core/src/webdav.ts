@@ -1298,15 +1298,17 @@ export async function webdavHeadFile(
 /**
  * Proves a streamed upload landed where it was sent. expo-file-system's upload task follows a
  * redirect by itself: a 307 or 308 stores the file at another URL and a 303 stores nothing,
- * yet the task answers 2xx. Confirmed only when a HEAD answers from this same URL (not after a
- * redirect, by core's write-redirect comparison) with the uploaded size; reads already ask
- * for `Accept-Encoding: identity`, so a compressing server reports the stored length.
+ * yet the task answers 2xx. Confirmed when a HEAD answers 2xx from this same URL (not after a
+ * redirect, by core's write-redirect comparison) and, when it states a size, the uploaded
+ * size; reads already ask for `Accept-Encoding: identity`, so a compressing server reports
+ * the stored length. A redirected HEAD (a download CDN, or a write redirect) proves nothing
+ * either way and is reported as such.
  */
 export async function webdavConfirmUploadedFile(
     url: string,
     expectedBytes: number,
     options: WebDavOptions = {}
-): Promise<{ confirmed: boolean; status: number }> {
+): Promise<{ confirmed: boolean; redirected: boolean; status: number }> {
     assertWebdavUrl(url, options);
     const res = await fetchWithTimeout(
         url,
@@ -1316,11 +1318,10 @@ export async function webdavConfirmUploadedFile(
         WEBDAV_TIMEOUT_ERROR,
     );
     const length = res.headers.get('content-length');
+    const redirected = isAnsweredFromAnotherUrl(url, res.url);
     return {
-        confirmed: res.ok
-            && !isAnsweredFromAnotherUrl(url, res.url)
-            && length !== null
-            && Number(length) === expectedBytes,
+        confirmed: res.ok && !redirected && (length === null || Number(length) === expectedBytes),
+        redirected,
         status: res.status,
     };
 }
