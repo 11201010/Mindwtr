@@ -309,6 +309,7 @@ impl MigrationLock {
         let path = root.join(LOCK_FILE_NAME);
         let started = Instant::now();
         let mut waited_for_holder = false;
+        let mut delete_pending_seen = false;
         loop {
             match Self::create(&path) {
                 Ok(()) => {
@@ -318,6 +319,19 @@ impl MigrationLock {
                     })
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                // Windows: a lock file the holder is deleting while another handle is open
+                // (our own is_stale metadata read, or antivirus) is "delete pending", and
+                // creating it again fails with access denied until the last handle closes.
+                // That is the holder releasing, not an I/O failure: keep waiting.
+                Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                    if !delete_pending_seen {
+                        delete_pending_seen = true;
+                        log::info!(
+                            "Storage layout lock was being released; waiting \
+                             extra.releaseCheck=v1.3.3/layout-lock-delete-pending"
+                        );
+                    }
+                }
                 Err(error) => {
                     log::warn!("Failed to take the storage layout migration lock: {error}");
                     return None;

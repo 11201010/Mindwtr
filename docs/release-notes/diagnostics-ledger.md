@@ -21,6 +21,7 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.3 (add before tagging, trim in the release after)
 
+- **`v1.3.3/layout-lock-delete-pending`** — `apps/desktop/src-tauri/src/storage_layout.rs`, `MigrationLock::acquire`, on Windows when creating the migration lock fails with access denied because another process is deleting it ("delete pending"). Message: `Storage layout lock was being released; waiting`. Start two Mindwtr processes at once on a standard Windows install; a log with this marker must end on the subfolder layout, not the flat root. Contains no paths or profile data.
 - **`v1.3.3/flatpak-secret-portal`** — `apps/desktop/src-tauri/src/portal_secrets.rs`, after a portal-backed encrypted credential write is persisted and read back. Message: `Portal credential write verified`. Connect Dropbox in Flatpak without a Secret Service override, restart, and sync; expect this marker and no plaintext-storage warning. A missing or declined portal must report a storage error through the existing fallback path. The marker contains no credential content, account names, or paths. (#1297)
 
 - **`v1.3.3/calendar-areas`** — desktop and mobile Calendar views, after applying saved calendar Area associations under an active Area filter. Message: `Calendar Area associations applied to display`. Confirms the association-aware display path ran; it contains no calendar names, URLs, or event text. Availability still reads all enabled source events.
