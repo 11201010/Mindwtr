@@ -5178,7 +5178,7 @@ describe('attachment sync', () => {
     it('bounds a cloud streamed upload and allows the next upload after it terminates', async () => {
       const upload = deferred<{ status: number }>();
       const cancelAsync = vi.fn(async () => undefined);
-      const nextUploadAsync = vi.fn().mockResolvedValue({ status: 200 });
+      const nextUploadAsync = vi.fn().mockResolvedValue({ status: 200, body: '{"ok":true}' });
       fileSystemMock.createUploadTask
         .mockReturnValueOnce({ uploadAsync: () => upload.promise, cancelAsync })
         .mockReturnValueOnce({ uploadAsync: nextUploadAsync, cancelAsync: vi.fn() });
@@ -5218,7 +5218,7 @@ describe('attachment sync', () => {
       // UploadTask spreads our options over its own, so an undefined value here reached
       // Kotlin as null and killed uploadTaskStartAsync with an Enum.ordinal() NPE.
       fileSystemMock.createUploadTask.mockReturnValue({
-        uploadAsync: vi.fn().mockResolvedValue({ status: 200 }),
+        uploadAsync: vi.fn().mockResolvedValue({ status: 200, body: '{"ok":true}' }),
         cancelAsync: vi.fn(),
       });
       const { uploadCloudFileWithFileSystem, uploadWebdavFileWithFileSystem } =
@@ -5237,6 +5237,10 @@ describe('attachment sync', () => {
         'u',
         'p',
         false,
+        undefined,
+        undefined,
+        undefined,
+        null,
       )).resolves.toBe(true);
 
       expect(fileSystemMock.createUploadTask).toHaveBeenCalledTimes(2);

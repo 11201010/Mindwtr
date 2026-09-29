@@ -8,6 +8,7 @@ import { defaultSyncCryptoPrimitives, SYNC_CRYPTO_DEFAULT_KDF_PARAMS, type SyncK
 import { WebDavRemoteWriteConflictError } from './webdav';
 import { AttachmentUploadTooLargeError } from './attachment-transfer';
 import { CACHE, createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
 
 const now = '2026-09-28T00:00:00.000Z';
 const bytes = (...values: number[]) => new Uint8Array(values);
@@ -175,7 +176,10 @@ describe('mobile attachment common: upload snapshots', () => {
 });
 
 describe('mobile attachment common: streamed uploads', () => {
-  const upload = (common: ReturnType<typeof setup>['common'], url: string, fileUri: string, options: {
+  const upload = (common: ReturnType<typeof setup>['common'], url: string, fileUri: string, {
+    expectedEtag = null,
+    signal,
+  }: {
     expectedEtag?: string | null;
     signal?: AbortSignal;
   } = {}) => common.uploadWebdavFileWithFileSystem(
@@ -187,9 +191,55 @@ describe('mobile attachment common: streamed uploads', () => {
     false,
     undefined,
     undefined,
-    options.signal,
-    options.expectedEtag,
+    signal,
+    expectedEtag,
   );
+  const uploadCloud = (common: ReturnType<typeof setup>['common']) => common.uploadCloudFileWithFileSystem(
+    'https://cloud.example.com/v1/attachments/a.txt',
+    `${MANAGED}att-1.txt`,
+    'text/plain',
+    'token',
+  );
+
+  it('leaves a WebDAV overwrite to the buffered PUT, whose redirect core refuses', async () => {
+    // The native uploader follows a redirect by itself. A 303 (iOS) or 301-303 (Android)
+    // turns the PUT into a GET, and with If-Match that GET answers 200 from the old file.
+    const task = { uploadAsync: vi.fn(async () => ({ status: 200 })), cancelAsync: vi.fn(async () => undefined) };
+    const { common, createUploadTask } = setup({ createUploadTask: () => task });
+
+    await expect(upload(common, 'https://dav.example.com/a.txt', `${MANAGED}att-1.txt`, { expectedEtag: '"v1"' }))
+      .resolves.toBe(false);
+    expect(createUploadTask).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cloud upload the server did not acknowledge as stored', async () => {
+    // A redirected upload that became a GET answers 200 with the file itself; the
+    // server answers every stored upload with {"ok":true}.
+    const task = {
+      uploadAsync: vi.fn(async () => ({ status: 200, body: 'hello', headers: { 'Content-Type': 'application/octet-stream' } })),
+      cancelAsync: vi.fn(async () => undefined),
+    };
+    const { common } = setup({ createUploadTask: () => task });
+    const logs: LogPayload[] = [];
+    setLogger((payload) => { logs.push(payload); });
+    try {
+      await expect(uploadCloud(common)).rejects.toThrow('fetch failed: unexpected redirect');
+    } finally {
+      setLogger(consoleLogger);
+    }
+    expect(logs).toEqual([expect.objectContaining({
+      level: 'warn',
+      context: { releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status: 200 },
+    })]);
+    expect(JSON.stringify(logs)).not.toContain('example');
+  });
+
+  it('accepts a cloud upload the server acknowledged', async () => {
+    const task = { uploadAsync: vi.fn(async () => ({ status: 200, body: '{"ok":true}' })), cancelAsync: vi.fn(async () => undefined) };
+    const { common } = setup({ createUploadTask: () => task });
+
+    await expect(uploadCloud(common)).resolves.toBe(true);
+  });
 
   it('refuses cleartext to a public host before creating a task (SEC-10a)', async () => {
     const { common, createUploadTask } = setup();

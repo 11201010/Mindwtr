@@ -4,7 +4,7 @@ import { computeSha256Hex } from './attachment-hash';
 import { buildFileSyncGenerationCloudKey } from './attachment-paths';
 import { DropboxConflictError, DropboxFileNotFoundError } from './dropbox';
 import { createMobileAttachmentFiles, type MobileAttachmentSafPort } from './mobile-attachment-files';
-import { createMobileAttachmentCommon } from './mobile-attachment-common';
+import { createMobileAttachmentCommon, type MobileAttachmentUploadTask } from './mobile-attachment-common';
 import { createMobileAttachmentBackends, type MobileAttachmentBackendsCoreFunctions } from './mobile-attachment-backends';
 import { createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
 
@@ -49,6 +49,7 @@ const attachmentOf = (result: AppData | false) => (result === false ? undefined 
 const setup = (options: {
   saf?: MobileAttachmentSafPort;
   core?: Partial<MobileAttachmentBackendsCoreFunctions>;
+  createUploadTask?: () => MobileAttachmentUploadTask | null;
 } = {}) => {
   const memory = createMemoryFileSystem({ saf: options.saf });
   const { storage } = createMemoryStorage();
@@ -96,7 +97,7 @@ const setup = (options: {
     installerMayBeMissing: () => false,
     // Skips the WebDAV request spacing; no test here waits on a timer.
     timersPaused: () => true,
-    uploads: { createUploadTask: () => null },
+    uploads: { createUploadTask: options.createUploadTask ?? (() => null) },
   });
   const backends = createMobileAttachmentBackends({
     fs: memory.fs,
@@ -179,6 +180,39 @@ describe('WebDAV attachment pass', () => {
 
     expect(webdavPutFileVersioned).not.toHaveBeenCalled();
     expect(attachmentOf(result)?.cloudKey).toBeUndefined();
+  });
+
+  it('streams a new upload but sends an overwrite through the checked byte PUT', async () => {
+    const task = { uploadAsync: vi.fn(async () => ({ status: 201 })), cancelAsync: vi.fn(async () => undefined) };
+    const createUploadTask = vi.fn(() => task);
+    const webdavPutFileVersioned = vi.fn(async () => undefined);
+    const remote = { exists: false, fingerprint: null, etag: null as string | null, lastModified: null, contentLength: null };
+    const { backends, memory } = setup({
+      createUploadTask,
+      core: {
+        webdavMakeDirectory: vi.fn(async () => undefined),
+        webdavHeadFile: vi.fn(async () => remote),
+        webdavPutFileVersioned,
+      },
+    });
+    memory.put(LOCAL_URI, LOCAL);
+
+    const created = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+    expect(createUploadTask).toHaveBeenCalledTimes(1);
+    expect(webdavPutFileVersioned).not.toHaveBeenCalled();
+    expect(attachmentOf(created)?.cloudKey).toBe('attachments/att-1.txt');
+
+    Object.assign(remote, { exists: true, etag: '"v1"' });
+    const replaced = await backends.syncWebdavAttachments(withAttachment(fileAttachment()), webdavConfig, BASE_URL);
+    expect(createUploadTask).toHaveBeenCalledTimes(1);
+    expect(webdavPutFileVersioned).toHaveBeenCalledWith(
+      `${BASE_URL}/attachments/att-1.txt`,
+      expect.any(ArrayBuffer),
+      expect.any(String),
+      '"v1"',
+      expect.objectContaining({ username: 'user' }),
+    );
+    expect(attachmentOf(replaced)?.cloudKey).toBe('attachments/att-1.txt');
   });
 
   it('marks the attachment unrecoverable when the remote answers 404', async () => {

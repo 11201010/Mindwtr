@@ -25,7 +25,7 @@ import {
   type AttachmentTransferResult,
 } from './attachment-transfer';
 import { bytesToBase64 } from './base64-bytes';
-import { MAX_DOWNLOAD_BYTES, ResponseTooLargeError } from './http-utils';
+import { MAX_DOWNLOAD_BYTES, refuseWriteRedirect, ResponseTooLargeError } from './http-utils';
 import { encryptSyncArtifact, inspectSyncArtifact, SyncCryptoUnsupportedError, type SyncCryptoPrimitives, type SyncKeyMaterial } from './sync-crypto';
 import { buildSyncEncryptionRemoteReadExtra, SYNC_ENCRYPTION_LOG_EVENTS, type SyncEncryptionRemoteReadLogInput } from './sync-encryption-diagnostics';
 import { decryptRemoteArtifactOrThrow, SyncEncryptionTerminalError } from './sync-encryption';
@@ -173,6 +173,16 @@ export class StreamedUploadCancellationUnconfirmedError extends Error {
     (this as Error & { cause?: unknown }).cause = cause;
   }
 }
+
+const isCloudUploadAcknowledged = (result: unknown): boolean => {
+  const body = (result as { body?: unknown } | null)?.body;
+  if (typeof body !== 'string') return false;
+  try {
+    return (JSON.parse(body) as { ok?: unknown } | null)?.ok === true;
+  } catch {
+    return false;
+  }
+};
 
 const cancelUploadTask = async (task: unknown): Promise<void> => {
   const cancelAsync = (task as { cancelAsync?: unknown } | null)?.cancelAsync;
@@ -1009,14 +1019,19 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
     assertMobileWebdavConnection(url, allowInsecureHttp);
     assertUploadNotAborted(signal);
     if (!fileUri.startsWith('file://')) return false;
+    // Only a create-only PUT may stream. The native uploader follows a redirect by itself and
+    // can turn the PUT into a GET (a 303 on iOS, a 301-303 on Android). With `If-None-Match: *`
+    // that GET fails loudly (304 or 404); with `If-Match`, or with no condition, it answers 200
+    // from the old file and would read as a finished overwrite. Overwrites take the buffered
+    // PUT, whose redirect core refuses.
+    if (expectedEtag !== null) return false;
 
     const authHeader = buildBasicAuthHeader(username, password);
     const headers: Record<string, string> = {
       'Content-Type': contentType || DEFAULT_ATTACHMENT_CONTENT_TYPE,
+      'If-None-Match': '*',
     };
     if (authHeader) headers.Authorization = authHeader;
-    if (expectedEtag === null) headers['If-None-Match'] = '*';
-    else if (expectedEtag !== undefined) headers['If-Match'] = expectedEtag;
 
     // A platform without a cancellable upload task falls back to the bounded byte PUT
     // rather than start an upload that can outlive the remote mutation lease.
@@ -1081,6 +1096,12 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
         }
       }
       throw error;
+    }
+    // The native uploader follows a redirect by itself and can turn the PUT into a GET (a 303
+    // on iOS, a 301-303 on Android), which answers 200 with the file and stores nothing. The
+    // server answers every stored upload with {"ok":true}.
+    if (!isCloudUploadAcknowledged(result)) {
+      refuseWriteRedirect({ releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status });
     }
     return true;
   };
