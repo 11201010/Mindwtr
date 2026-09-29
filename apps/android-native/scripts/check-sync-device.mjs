@@ -137,7 +137,11 @@ const toTabs = async () => {
 };
 const toInbox = async () => {
     let nodes = await toTabs();
-    if (!tabSelected(nodes, en['tab.inbox'])) nodes = await tapExpecting(tab(nodes, en['tab.inbox']), onInbox, 'the Inbox');
+    if (!tabSelected(nodes, en['tab.inbox'])) {
+        nodes = await tapExpecting(tab(nodes, en['tab.inbox']), (current) => tabSelected(current, en['tab.inbox']), 'the Inbox');
+    }
+    // A list scrolled down (a revealed row) hides the Inbox's count at its top.
+    if (!onInbox(nodes)) await device.toTop();
     return waitFor('the Inbox', onInbox, 30_000);
 };
 /** Settings' scroll moves the node [find] picks into view: from the top, then down. */
