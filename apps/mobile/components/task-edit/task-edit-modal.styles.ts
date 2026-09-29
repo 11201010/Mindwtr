@@ -14,6 +14,11 @@ export const styles = StyleSheet.create({
         gap: 12,
         marginBottom: 8,
     },
+    titleActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
     fieldHelpButton: {
         width: 28,
         height: 28,

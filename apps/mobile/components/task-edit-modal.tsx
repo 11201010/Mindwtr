@@ -1140,7 +1140,6 @@ function TaskEditModalInner({
                 >
                     <SandboxWorkspaceCue />
                     <TaskEditHeader
-                        focusStar={focusStar}
                         onDone={readOnly ? onClose : handleDone}
                         onClose={readOnly ? onClose : handleAttemptClose}
                         onShare={handleShare}
@@ -1233,6 +1232,7 @@ function TaskEditModalInner({
                             onMomentumScrollEnd={handleMomentumScrollEnd}
                         >
                             <TaskEditFormTab
+                                focusStar={focusStar}
                                 accessibilityHidden={editTab !== 'task'}
                                 t={t}
                                 tc={tc}

@@ -4,7 +4,6 @@ import { MoreHorizontal, X } from 'lucide-react-native';
 import { tFallback } from '@mindwtr/core';
 
 import { AppPressable } from '../app-pressable';
-import { FocusStarIcon } from '../FocusStarIcon';
 
 import { useLanguage } from '../../contexts/language-context';
 import { useReducedMotion } from '../../hooks/use-reduced-motion';
@@ -25,7 +24,6 @@ type TaskEditHeaderProps = {
   onConvertToSection?: () => void;
   showConvertToSection?: boolean;
   readOnly?: boolean;
-  focusStar?: { focused: boolean; disabled: boolean; label: string; onToggle: () => void };
 };
 
 export function TaskEditHeader({
@@ -43,7 +41,6 @@ export function TaskEditHeader({
   onConvertToSection,
   showConvertToSection = false,
   readOnly = false,
-  focusStar,
 }: TaskEditHeaderProps) {
   const { t } = useLanguage();
   const tc = useThemeColors();
@@ -71,19 +68,6 @@ export function TaskEditHeader({
               >
                 <X size={22} strokeWidth={2.25} color={tc.tint} accessible={false} />
               </TouchableOpacity>
-              {focusStar ? (
-                <TouchableOpacity
-                  style={styles.headerActionTouchable}
-                  onPress={focusStar.onToggle}
-                  disabled={focusStar.disabled}
-                  accessibilityRole="button"
-                  accessibilityLabel={focusStar.label}
-                  accessibilityState={{ disabled: focusStar.disabled, selected: focusStar.focused }}
-                  testID="task-edit-focus-star"
-                >
-                  <FocusStarIcon focused={focusStar.focused} disabled={focusStar.disabled} inactiveColor={tc.secondaryText} />
-                </TouchableOpacity>
-              ) : null}
               <TouchableOpacity
                 style={styles.headerActionTouchable}
                 onPress={() => setMenuVisible(true)}
