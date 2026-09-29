@@ -11,8 +11,9 @@
  * Device keys (React Native's AsyncStorage names, `mindwtr:calendar-push-sync:*`):
  * `enabled` ('1' or '0'), `calendar-id` (the Mindwtr calendar the app made),
  * `target-calendar-id` (the calendar the user chose; absent: the Mindwtr
- * calendar), `color`, and iOS `creation-intent`. Data safety: the saved Mindwtr calendar is reused while
- * it exists, so a restart never makes a second calendar and duplicate events;
+ * calendar), `color`, and iOS `creation-intent`. The saved Mindwtr calendar is
+ * reused while the provider reports it; unfinished iOS creation retains its
+ * unique temporary title and then its exact ID across restarts.
  * deleting touches only calendars the app made (the saved ID or a calendar
  * identified by its durable creation marker). The pushed-event map is the
  * calendar_sync table (`syncEntries`). The sandbox touches none of this.
@@ -549,6 +550,8 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
                     return recovered.id;
                 }
                 if (intent.calendarId) return null;
+                // ponytail: delayed provider visibility can duplicate this same pending title;
+                // native idempotent creation would be needed to eliminate that ambiguity.
             } else if (storedId && allCalendars.some((c) => c.id === storedId)) {
                 // A death after saving the ID left the marker: the creation is done.
                 if (host.os() === 'android' && await storage.getItem(CALENDAR_PUSH_PENDING_KEY)) {
