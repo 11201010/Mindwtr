@@ -2960,6 +2960,7 @@ function isValidInboxEdit(edit: unknown): edit is ProcessInboxDraftEdit {
             return Boolean(project && isSelectableProjectForTaskAssignment(project));
         }
         case 'toggleContext':
+        case 'addContext':
         case 'toggleTag':
         case 'applyTokenSuggestion':
             return typeof value === 'string' && value.trim().length > 0 && value.length <= 500;

@@ -179,6 +179,9 @@ async function replaySettings(scenario: SettingsScenario, strings: Record<string
         }
         if (result.extraBodyDraft !== null) extraDraft = result.extraBodyDraft;
     };
+    const endpoint = async (field: 'assistant' | 'speech', text: string) => {
+        value(await contract.setAIEndpoint({ requestId: generateUUID(), field, value: text }));
+    };
     const key = async (field: 'assistant' | 'speech', text: string) => {
         const provider = field === 'assistant'
             ? view.assistant.provider.options.find((option) => option.selected)!.value
@@ -221,7 +224,7 @@ async function replaySettings(scenario: SettingsScenario, strings: Record<string
                 text(panel.reasoning.label, panel.reasoning.description);
                 options(panel.reasoning.options, (effort) => set({ type: 'reasoningEffort', value: effort }));
                 text(panel.baseUrl.label, panel.baseUrl.description);
-                input(panel.baseUrl.placeholder, panel.baseUrl.value, false, (entry) => set({ type: 'baseUrl', value: entry }));
+                input(panel.baseUrl.placeholder, panel.baseUrl.value, false, (entry) => endpoint('assistant', entry));
                 const chevron = screen.extra ? '▾' : '▸';
                 control(`${panel.extraBody.label}|${panel.extraBody.description}|${chevron}`, false, () => { screen.extra = !screen.extra; },
                     panel.extraBody.label, panel.extraBody.description ?? '', chevron);
@@ -285,7 +288,7 @@ async function replaySettings(scenario: SettingsScenario, strings: Record<string
                 }
                 if (speech.baseUrl) {
                     text(speech.baseUrl.label, speech.baseUrl.description);
-                    input(speech.baseUrl.placeholder, speech.baseUrl.value, false, (entry) => set({ type: 'speechBaseUrl', value: entry }));
+                    input(speech.baseUrl.placeholder, speech.baseUrl.value, false, (entry) => endpoint('speech', entry));
                 }
             }
             text(speech.language.label, speech.language.description);
@@ -484,7 +487,11 @@ async function replayActions(scenario: ActionsScenario, strings: Record<string, 
                 case 'modal': {
                     const choice = (dialog as unknown as { choices: { label: string; apply: unknown }[] }).choices.find((entry) => entry.label === labelText(target as string))!;
                     if (choice.apply && dialogKind === 'clarify') edit(choice.apply as never);
-                    if (choice.apply && dialogKind === 'breakdown') ({ draft, checklist } = choice.apply as { draft: TaskDraft; checklist: ChecklistItem[] });
+                    if (choice.apply && dialogKind === 'breakdown') {
+                        const added = choice.apply as { checklist: ChecklistItem[]; edit: never };
+                        checklist = added.checklist;
+                        if (added.edit) edit(added.edit);
+                    }
                     dialog = null;
                     break;
                 }
@@ -718,6 +725,59 @@ describe('native host contract: AI commands replayed after a restart', () => {
         }
     });
 
+    it('setAIEndpoint: never on disk, and a replay finds the URL stored and writes nothing', async () => {
+        const { env } = await openFile({ ai: { provider: 'openai' } });
+        try {
+            const input = { requestId: generateUUID(), field: 'assistant' as const, value: 'http://ann:pw-1@10.0.0.5:11434/v1' };
+            expect(value(await env.host.setAIEndpoint(input))).toEqual({ changed: true });
+            expect(useTaskStore.getState().settings.ai?.baseUrl).toBe(input.value);
+            const rows = await env.sql<{ request_id: string; method: string; reply: string }>('SELECT request_id, method, reply FROM native_request_receipts');
+            expect(JSON.stringify(rows)).not.toContain('pw-1');
+            expect(rows.map((row) => row.request_id)).not.toContain(input.requestId);
+            const { result, wrote, receipts } = await env.replay((restarted) => restarted.setAIEndpoint(input));
+            expect(value(result)).toEqual({ changed: false });
+            expect({ wrote, receipts }).toEqual({ wrote: false, receipts: false });
+            // The speech card shows a transcription server only while OpenAI transcribes.
+            expect(await env.host.setAIEndpoint({ requestId: generateUUID(), field: 'speech', value: 'http://stt' }))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        } finally {
+            await env.close();
+        }
+    });
+
+    it('setAISetting: a replayed provider or thinking choice never resets what was chosen since', async () => {
+        await seed({ settings: { ai: { provider: 'anthropic', thinkingBudget: 0, speechToText: { provider: 'gemini' } } } });
+        const dev = createDevice({});
+        const first = await openHost(dev.host);
+        const thinking = { requestId: generateUUID(), change: { type: 'anthropicThinking' as const, value: true } };
+        const speech = { requestId: generateUUID(), change: { type: 'speechProvider' as const, value: 'openai' as const } };
+        value(await first.setAISetting(thinking));
+        value(await first.setAISetting(speech));
+        value(await first.setAISetting({ requestId: generateUUID(), change: { type: 'thinkingBudget', value: 4096 } }));
+        value(await first.setAISetting({ requestId: generateUUID(), change: { type: 'speechModel', value: 'whisper-1' } }));
+        const restarted = await openHost(dev.host);
+        expect(value(await restarted.setAISetting(thinking)).changed).toBe(false);
+        expect(value(await restarted.setAISetting(speech)).changed).toBe(false);
+        expect(useTaskStore.getState().settings.ai).toMatchObject({ thinkingBudget: 4096, speechToText: { provider: 'openai', model: 'whisper-1' } });
+    });
+
+    it('openAISettings answered from its receipt still reads the Whisper model file', async () => {
+        const dev = createDevice({});
+        dev.host.whisper = {
+            preferredModelUri: (modelId) => `file:///whisper/${modelId}.bin`,
+            locate: async (modelId) => ({ exists: true, uri: `file:///whisper/${modelId}.bin`, size: 77691713 }),
+        };
+        const env = await openSqliteHost({ settings: { ai: { speechToText: { provider: 'whisper', model: 'whisper-tiny' } } } }, undefined, { ai: dev.host });
+        try {
+            const input = { requestId: generateUUID() };
+            expect(value(await env.host.openAISettings(input)).speech.whisper?.status).toBe('Model downloaded - 74.1 MB');
+            const { result } = await env.replay((restarted) => restarted.openAISettings(input));
+            expect(value(result).speech.whisper?.status).toBe('Model downloaded - 74.1 MB');
+        } finally {
+            await env.close();
+        }
+    });
+
     it('setAIKey: a provider the view no longer shows is refused', async () => {
         await seed({ settings: { ai: { provider: 'gemini' } } });
         const dev = createDevice({});
@@ -794,6 +854,38 @@ describe('native host contract: AI keys stay out of views, errors and logs', () 
         dev.secrets.set('mindwtr-ai-key_gemini', 'gem-1');
         expect(value(await contract.requestAICopilot({ request }))).toEqual({ suggestion: { context: '@phone', timeEstimate: '5min' } });
         expect(device.calls).toEqual([['ai', 'predictMetadata', expect.objectContaining({ provider: 'gemini', apiKey: 'gem-1' }), request]]);
+    });
+
+    it('Break down on a finished list task reopens it through a status edit, as React Native does', async () => {
+        const tasks = [{
+            id: 'l1', title: 'Pack', status: 'done', taskMode: 'list', contexts: [], tags: [], checklist: [{ id: 'c1', title: 'Passport', isCompleted: true }],
+            // Done just now, so it is not archived on load.
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+        }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://local/v1' } } });
+        const dev = createDevice({ queues: { breakDownTask: [{ value: { steps: ['Charger'] } }] } });
+        const contract = await openHost(dev.host);
+        const task = useTaskStore.getState()._tasksById.get('l1')!;
+        const answered = value(await contract.requestTaskEditorBreakdown({ id: 'l1', draft: createTaskDraft(task), checklist: task.checklist! }));
+        const add = answered.kind === 'dialog' ? answered.choices[1].apply : null;
+        expect(add).toEqual({
+            checklist: [{ id: 'c1', title: 'Passport', isCompleted: true }, { id: expect.any(String), title: 'Charger', isCompleted: false }],
+            edit: { type: 'fields', patch: { status: 'next' } },
+        });
+    });
+
+    it('Process Inbox\'s Clarify only adds its context, never takes one away', async () => {
+        const tasks = [{ id: 'i1', title: 'Gift', status: 'inbox', contexts: ['@calls'], tags: [], createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }] as Task[];
+        await seed({ tasks, settings: { ai: { enabled: true, provider: 'openai', baseUrl: 'http://local/v1' } } });
+        const suggestion = { value: { question: 'Next?', options: [], suggestedAction: { title: 'Call Sam', context: '@calls' } } };
+        const dev = createDevice({ queues: { clarifyTask: [suggestion] } });
+        const contract = await openHost(dev.host);
+        const started = value(contract.startInboxProcessing({}));
+        let view = started.view!;
+        const answered = value(await contract.requestInboxClarify({ sessionId: started.sessionId!, taskId: view.taskId, step: view.step }));
+        const edits = answered.kind === 'dialog' ? answered.choices.find((choice) => choice.variant === 'primary')!.apply! : [];
+        for (const edit of edits) view = value(contract.getInboxProcessingStep({ sessionId: started.sessionId!, taskId: view.taskId, step: view.step, edit }));
+        expect(view.draft).toMatchObject({ title: 'Call Sam', contexts: ['@calls'] });
     });
 
     it('answers ACTION_FAILED without a bound AI host, and sends nothing', async () => {

@@ -21,24 +21,29 @@
  *   on, answers `consent` (and writes nothing) until this device agreed to send task text to that
  *   provider: show the question; on its agree button send the same change again with a new
  *   request UUID and `consent: true`, which records the agreement first.
- * - A key field sends setAIKey on each change, naming the provider the view shows.
+ * - A key field sends setAIKey on each change, naming the provider the view shows; a base URL
+ *   field sends setAIEndpoint (a URL may carry a password).
  * - The model lists: when a view's `modelLists.assistant.request` or `.speech.request` differs
  *   from the one last asked, send loadAIModels with it `delayMs` after it last changed; the
  *   pickers then offer the provider's own list (a failure keeps the built-in one).
  *
- * The AI actions send task text to the provider only while the assistant is on, which this device
- * turns on only through the consent question (as on React Native), and only with a key when the
- * provider needs one. Their answers are dialogs whose buttons carry what they change; the host
+ * Consent, as on React Native: this device asks before its user turns the assistant on here, and
+ * before a provider change while it is on, until the device recorded that provider
+ * (`mindwtr-ai-provider-consent-v1`). A synced `ai.enabled` turned on on another device does not
+ * ask again here. The AI actions send task text only while `ai.enabled` is on, and only with a key
+ * when the provider needs one. Their answers are dialogs whose buttons carry what they change; the host
  * applies that through the screen's normal edits (editTaskDraft, getInboxProcessingStep) and
  * saves through its normal commands (saveTaskDraft, commitInboxProcessingStep, runReviewAction's
  * applySuggestions), so an AI answer writes nothing by itself.
  *
  * Replay rules. setAISetting and openAISettings are synced-settings writes with request receipts,
- * target-state: a replay writes nothing when the settings already hold the value, and a consent
- * recorded once stays recorded. setAIKey carries a key, so it is in NATIVE_UNJOURNALED_COMMANDS:
- * no journal entry and no disk receipt; its receipt payload holds a fingerprint of the key,
- * never the key. It is target-state too (the keystore holds the value) and refuses a provider the
- * view no longer shows (STALE_REVISION). The requests are reads.
+ * target-state: a replay writes nothing when the settings already hold the value (a provider
+ * choice that is already the provider writes nothing, so a replay never resets a later model), and
+ * a consent recorded once stays recorded. setAIKey (a key) and setAIEndpoint (a URL that may hold
+ * a password) are in NATIVE_UNJOURNALED_COMMANDS: no journal entry and no disk receipt; their
+ * receipt payloads hold a salted fingerprint of the value, never the value. Both are target-state
+ * too, and setAIKey refuses a provider the view no longer shows (STALE_REVISION). The requests are
+ * reads.
  *
  * No key reaches a view, a log line, a receipt or an error text: every provider failure goes
  * through redactAIError (the sync screen's redaction with the key and the endpoint password).
@@ -114,7 +119,7 @@ import { isSandboxMode } from './sandbox';
 import { useTaskStore } from './store';
 import { createSyncSecretVault } from './sync-secret-storage';
 import { getChecklistEditStatus } from './task-checklist-model';
-import { setTaskDraftField, taskDraftToUpdatePatch, type TaskDraft } from './task-draft';
+import { taskDraftToUpdatePatch, type TaskDraft } from './task-draft';
 import { parseTaskEditorTokenList } from './task-editor-model';
 import type { AppSettings, ChecklistItem, Task, TimeEstimate } from './types';
 import { deterministicHash128Hex, generateUUID } from './uuid';
@@ -141,7 +146,11 @@ export type NativeAIHost = {
         set(key: string, value: string): Promise<void>;
         delete(key: string): Promise<void>;
     };
-    /** The fetch the providers and the model lists use; globalThis.fetch when absent. */
+    /**
+     * The fetch the providers and the model lists use; globalThis.fetch when absent. It must never
+     * log a request URL: Gemini's model list puts the key in the query (`?key=`). Its failure text
+     * reaches the user only after core drops the key from it.
+     */
     fetch?: typeof fetch;
     /** The app log (no key is ever passed). */
     log?: {
@@ -156,8 +165,8 @@ export type NativeAIHost = {
     };
 };
 
-/** Commands a host must not write to its request journal: they carry an API key. */
-export const NATIVE_AI_UNJOURNALED_COMMANDS = ['setAIKey'] as const;
+/** Commands a host must not write to its request journal: they carry an API key, or a URL that may hold a password. */
+export const NATIVE_AI_UNJOURNALED_COMMANDS = ['setAIKey', 'setAIEndpoint'] as const;
 
 export type AIDeps = {
     readiness: () => NativeHostResult<null>;
@@ -243,7 +252,7 @@ export type NativeAISettings = {
 export type NativeAISettingChange =
     | { type: 'enabled'; value: boolean }
     | { type: 'provider'; value: AIProviderId }
-    | { type: 'model' | 'copilotModel' | 'baseUrl'; value: string }
+    | { type: 'model' | 'copilotModel'; value: string }
     | { type: 'reasoningEffort'; value: AIReasoningEffort }
     | { type: 'thinkingBudget'; value: number }
     | { type: 'anthropicThinking'; value: boolean }
@@ -252,7 +261,7 @@ export type NativeAISettingChange =
     | { type: 'extraBodyParams'; text: string }
     | { type: 'speechEnabled'; value: boolean }
     | { type: 'speechProvider'; value: SpeechProviderChoice }
-    | { type: 'speechModel' | 'speechBaseUrl'; value: string }
+    | { type: 'speechModel'; value: string }
     /** The audio language as typed; blank is auto-detect. */
     | { type: 'speechLanguage'; text: string }
     | { type: 'speechMode'; value: AudioCaptureMode }
@@ -305,8 +314,11 @@ export type NativeTaskEditorAI = {
     };
 };
 
-/** "Add steps": the editor's draft and checklist to show (the draft's status follows a list task's checklist). */
-export type NativeAIBreakdownApply = { draft: TaskDraft; checklist: ChecklistItem[] };
+/**
+ * "Add steps": the editor's checklist to show, and the draft edit a list task's status needs
+ * (editTaskDraft; null when the status stays), as React Native applies them.
+ */
+export type NativeAIBreakdownApply = { checklist: ChecklistItem[]; edit: NativeTaskDraftEdit | null };
 
 export type NativeWeeklyReviewAnalysis = {
     /** The error line (null clears it). */
@@ -356,9 +368,7 @@ const readChange = (value: unknown): NativeAISettingChange | null => {
             return one(['type', 'value']) && isOneOf(PROVIDERS)(value.value) ? value as NativeAISettingChange : null;
         case 'model':
         case 'copilotModel':
-        case 'baseUrl':
         case 'speechModel':
-        case 'speechBaseUrl':
             return one(['type', 'value']) && text(value.value, 2000) ? value as NativeAISettingChange : null;
         case 'reasoningEffort':
             return one(['type', 'value']) && isOneOf(EFFORTS)(value.value) ? value as NativeAISettingChange : null;
@@ -712,7 +722,6 @@ export function createAIMethods(deps: AIDeps) {
                 return { patches: [getAIProviderDefaultsPatch(change.value, isFossBuild)], consentFor: state.aiEnabled ? change.value : null };
             case 'model':
             case 'copilotModel':
-            case 'baseUrl':
                 return { patches: [{ [change.type]: change.value }], consentFor: null };
             case 'reasoningEffort':
                 return state.aiProvider === 'openai' ? { patches: [{ reasoningEffort: change.value }], consentFor: null } : null;
@@ -722,7 +731,9 @@ export function createAIMethods(deps: AIDeps) {
                     ? { patches: [{ thinkingBudget: change.value }], consentFor: null }
                     : null;
             case 'anthropicThinking':
-                return state.aiProvider === 'anthropic' ? { patches: [getAnthropicThinkingPatch(change.value)], consentFor: null } : null;
+                if (state.aiProvider !== 'anthropic') return null;
+                // Already on (or off): nothing, so a replay never undoes a budget chosen since.
+                return change.value === state.anthropicThinkingEnabled ? unchanged : { patches: [getAnthropicThinkingPatch(change.value)], consentFor: null };
             case 'requestTimeoutSeconds':
                 return { patches: [{ requestTimeoutSeconds: change.value }], consentFor: null };
             case 'extraBodyParams': {
@@ -746,6 +757,8 @@ export function createAIMethods(deps: AIDeps) {
                 return { patches: [speechPatch({ enabled: change.value })], consentFor: null };
             case 'speechProvider':
                 if (isFossBuild && change.value !== 'whisper') return null;
+                // Already the provider: nothing, so a replay never resets a model chosen since.
+                if (change.value === state.speechProvider) return unchanged;
                 return { patches: [speechPatch(getSpeechProviderPatch(change.value, (modelId) => host.whisper?.preferredModelUri(modelId)))], consentFor: null };
             case 'speechModel':
                 return {
@@ -754,8 +767,6 @@ export function createAIMethods(deps: AIDeps) {
                         : { model: change.value })],
                     consentFor: null,
                 };
-            case 'speechBaseUrl':
-                return state.speechProvider === 'openai' ? { patches: [speechPatch({ baseUrl: change.value })], consentFor: null } : null;
             case 'speechLanguage':
                 return { patches: [speechPatch({ language: normalizeSpeechLanguageInput(change.text) })], consentFor: null };
             case 'speechMode':
@@ -868,6 +879,8 @@ export function createAIMethods(deps: AIDeps) {
                 if (!corrected.ok) return corrected;
                 if (visit !== opened) return fail('ACTION_FAILED', 'Settings › AI was closed or opened again');
                 await loadKeys(host, isFossBuild);
+                // Answered from its receipt: the model file's state is still read (a move is stored on the next open).
+                if (!opened.whisper) await whisperPathFix(host, isFossBuild);
                 return { ok: true, value: buildView(host) };
             } catch (error) {
                 return fail('ACTION_FAILED', redactAIError(error, '', settings()).message);
@@ -930,6 +943,30 @@ export function createAIMethods(deps: AIDeps) {
                     changed = changed || movedWritten.value;
                 }
                 return { ok: true, value: { changed, consent: null, extraBodyDraft, toasts: [] } };
+            });
+        },
+
+        /**
+         * A base URL field's change (the assistant's OpenAI-compatible endpoint, or the speech card's
+         * transcription server while OpenAI transcribes), as typed. Never journaled
+         * (NATIVE_AI_UNJOURNALED_COMMANDS): a URL may carry a password.
+         */
+        async setAIEndpoint(input: { requestId: string; field: 'assistant' | 'speech'; value: string }): Promise<NativeHostResult<{ changed: boolean }>> {
+            const bound = requireHost();
+            if (!bound.ok) return bound;
+            const host = bound.value;
+            if (!isObjectRecord(input) || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+                || (input.field !== 'assistant' && input.field !== 'speech') || !isText(input.value, 2000)) {
+                return fail('INVALID_INPUT', 'A request UUID, a base URL field and its text are required');
+            }
+            const { field, value: url } = input;
+            return receipts.run<{ changed: boolean }>(input.requestId, JSON.stringify(['setAIEndpoint', field, fingerprint(['url', url])]), async () => {
+                const state = resolveAISettingsScreenState(settings(), host.platform.isFossBuild);
+                if (field === 'assistant' ? state.aiProvider !== 'openai' : state.speechProvider !== 'openai') {
+                    return fail('INVALID_INPUT', 'The AI screen shows no such base URL now');
+                }
+                const written = await writeAI(field === 'assistant' ? { baseUrl: url } : speechPatch({ baseUrl: url }));
+                return written.ok ? { ok: true, value: { changed: written.value } } : settleWrite(written, { changed: true });
             });
         },
 
@@ -1161,8 +1198,8 @@ export function createAIMethods(deps: AIDeps) {
                         choices: [
                             choice<NativeAIBreakdownApply>(dialog.cancel.label, dialog.cancel.variant, null),
                             choice<NativeAIBreakdownApply>(dialog.add.label, dialog.add.variant, {
-                                draft: status === draft.status ? draft : setTaskDraftField(draft, 'status', status),
                                 checklist,
+                                edit: status === draft.status ? null : { type: 'fields', patch: { status } },
                             }),
                         ],
                     },
@@ -1223,7 +1260,7 @@ export function createAIMethods(deps: AIDeps) {
                             const context = apply.type === 'suggestion' ? apply.suggestion.context : undefined;
                             return choice<ProcessInboxDraftEdit[]>(label, variant, [
                                 { type: 'set', field: 'title', value: title },
-                                ...(context && !draft.contexts.includes(context) ? [{ type: 'toggleContext' as const, value: context }] : []),
+                                ...(context ? [{ type: 'addContext' as const, value: context }] : []),
                             ]);
                         }),
                     },
