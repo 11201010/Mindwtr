@@ -179,6 +179,8 @@ test('rollout workflow schedules one automatic stage per day and retains explici
   expect(play.run).toContain('google-play-edit.py "${args[@]}"');
   const msstore = rollout.jobs.msstore.steps.find((step) => step.env?.SUBMISSION_ID);
   expect(msstore.run).toContain('--submission-id "$SUBMISSION_ID"');
+  expect(msstore.run).toContain('[ "$ROLLOUT_ACTION" = status ] && [ -z "$SUBMISSION_ID" ]');
+  expect(msstore.run).toContain('args=(--action status)');
   expect(msstore.run).toContain('args=(--action auto)');
   expect(msstore.env.ROLLOUT_ACTION).toContain("github.event_name == 'schedule'");
   expect(msstore.env.MS_STORE_APP_ID).toBe("${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}");
