@@ -92,6 +92,12 @@ describe('a URL the platform cannot parse', () => {
         expect(sanitizeUrl('http://alice:hunter2@nas.local:99999/dav')).not.toContain('hunter2');
     });
 
+    it('removes a password that holds "@" too (a URL splits its user part at the last "@")', () => {
+        const text = sanitizeForLog('GET http://alice:p@ss@nas.local:99999/dav failed');
+        expect(text).not.toContain('ss@');
+        expect(text).toContain('http://nas.local:99999/dav');
+    });
+
     it('still hides a calendar feed', () => {
         expect(sanitizeForLog('feed webcal://[bad/calendar.ics')).not.toContain('calendar.ics');
     });

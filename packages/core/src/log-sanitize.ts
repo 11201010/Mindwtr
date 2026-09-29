@@ -91,10 +91,11 @@ const sanitizeParsedUrl = (raw: string): string | null => {
 
 /**
  * A URL the platform cannot parse (a port out of range, a broken host), redacted as text: a calendar feed whole, anything
- * else without its user and password. Never through sanitizeUrl again, which would call this text's redaction forever.
+ * else without its user and password (up to the last "@", where a URL splits them). Never through sanitizeUrl again, which
+ * would call this text's redaction forever.
  */
 const redactUnparsedUrl = (raw: string): string => (
-    /^webcals?:/i.test(raw) || /\.ics\b/i.test(raw) ? '[redacted-ics-url]' : raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/i, '$1')
+    /^webcals?:/i.test(raw) || /\.ics\b/i.test(raw) ? '[redacted-ics-url]' : raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/i, '$1')
 );
 
 export function sanitizeUrl(raw?: string): string | undefined {
