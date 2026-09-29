@@ -268,8 +268,8 @@ assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrent
 // COMMIT in both data saves, into native_request_receipts), and boot loads them before activation and the journal's replay.
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
-    const bootBody = hostEntry.slice(hostEntry.indexOf('boot(legacyState'), hostEntry.indexOf('window(offset'));
-    const bootOrder = ['setStorageAdapter(adapter)', 'await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'contract.activate('].map((text) => bootBody.indexOf(text));
+    const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
+    const bootOrder = ['setStorageAdapter(adapter)', 'await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -700,9 +700,17 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const host = hostEntry.slice(hostEntry.indexOf('globalThis.MindwtrHost = {'));
     const methods = [...host.matchAll(/\n    (\w+)\([^)]*\): [^{\n]+\{([\s\S]*?)\n    \},/g)].map(([, name, body]) => ({ name, body }));
     assert(methods.length > 40 && methods.some((m) => m.name === 'menuCommand'), 'host-entry\'s methods parsed');
-    assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(')).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
+    // The iOS host's prepared commits and its Calendar preference write: its own journal holds them, and Kotlin never calls them.
+    const iosPreparedCommits = ['captureCommit', 'draftCommit'];
+    const iosOnlyWrites = ['setCalendarPreference'];
+    // Core writes no host method calls yet (the capture confirmation screen, reminder actions, Settings › Sync's option):
+    // wiring one into host-entry fails the write-list checks above until the journal takes it.
+    const unwiredWrites = ['submitCaptureModal', 'submitCaptureModalLines', 'completeReminderTask', 'snoozeReminder', 'setSyncPreference'];
+    assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
+    assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
+    assert.deepEqual(called(hostEntry).filter((name) => unwiredWrites.includes(name)), [], 'no host method calls an unwired core write');
     // Core's write commands: every command of the crash-safe table (native-request-receipts.ts states the rule each follows).
     const coreWrites = ['setTaskFocus', 'completeTask', 'setProjectFocus', 'createProject', 'saveSearch', 'updateTask', 'saveTaskDraft', 'resetTaskChecklist',
         'submitQuickCapture', 'submitQuickCaptureLines', 'submitQuickCapturePickerQuery', 'commitInboxProcessingStep', 'skipInboxProcessingTask', 'setAreaFilter',
@@ -751,15 +759,15 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         const set = /export const NATIVE_UNJOURNALED_COMMANDS: ReadonlySet<string> = new Set<string>\(([^)]*)\);/.exec(receiptsTs);
         assert(set, 'core\'s NATIVE_UNJOURNALED_COMMANDS parsed');
         const unjournaledCore = [...set[1].matchAll(/'(\w+)'/g)].map((m) => m[1]);
-        const receiptNames = new Map(coreWrites.map((name) => [name, []]));
+        const receiptNames = new Map([...coreWrites, ...iosOnlyWrites, ...unwiredWrites].map((name) => [name, []]));
         let sites = 0;
         for (const file of contractFiles) {
-            const defs = [...file.matchAll(new RegExp(`\\n {8}(?:async )?(${coreWrites.join('|')})\\(input`, 'g'))];
+            const defs = [...file.matchAll(new RegExp(`\\n {8}(?:async )?(${[...coreWrites, ...iosOnlyWrites, ...unwiredWrites].join('|')})\\(input`, 'g'))];
             for (const site of file.matchAll(/JSON\.stringify\(\['(\w+)'/g)) {
                 const owner = defs.filter((def) => def.index < site.index).at(-1);
                 assert(owner, `core's receipt payload '${site[1]}' sits inside a core write`);
                 receiptNames.get(owner[1]).push(site[1]);
-                sites += 1;
+                if (coreWrites.includes(owner[1])) sites += 1;
             }
         }
         assert(sites >= 26, 'core\'s receipt payloads parsed');
