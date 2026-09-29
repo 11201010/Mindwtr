@@ -167,7 +167,14 @@ async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<str
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         try {
-            const res = await (tauriFetch ?? fetch)(url, { method: 'GET', signal: controller.signal });
+            // The HTTP plugin adds `Origin: tauri://localhost` unless it is sent empty,
+            // and some feed gateways answer any Origin with 403 (#1309). Feeds are
+            // plain downloads, so drop it the way curl and the mobile app do.
+            const res = await (tauriFetch ?? fetch)(url, {
+                method: 'GET',
+                headers: { Origin: '' },
+                signal: controller.signal,
+            });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return await readCalendarResponseText(res);
         } finally {
