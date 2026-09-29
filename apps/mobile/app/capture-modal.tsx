@@ -560,7 +560,10 @@ export default function CaptureScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: tc.bg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // Android draws edge to edge, so the window no longer shrinks for the keyboard and it covered Cancel and Save.
+      // 'height' keeps the card above it, as the task editor's form does; its frame math is relative, so a window that
+      // still resizes gains nothing twice.
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
         contentContainerStyle={styles.content}

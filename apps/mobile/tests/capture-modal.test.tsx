@@ -830,6 +830,21 @@ describe('CaptureScreen', () => {
     expect(dismissSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the card and its buttons above the keyboard on Android, where edge-to-edge no longer resizes the window', () => {
+    setPlatform('android');
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    expect(tree.root.findByType(KeyboardAvoidingView).props.behavior).toBe('height');
+
+    setPlatform('ios');
+    act(() => {
+      tree.update(<CaptureScreen />);
+    });
+    expect(tree.root.findByType(KeyboardAvoidingView).props.behavior).toBe('padding');
+  });
+
   it('accepts only one rapid Save submission', async () => {
     const write = deferred<{ success: true; id: string }>();
     storeState.addTask.mockReturnValue(write.promise);
