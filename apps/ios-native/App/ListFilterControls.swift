@@ -57,7 +57,11 @@ struct ListFilterControls: View {
             }
             .frame(minHeight: 44).padding(.bottom, 12)
             if isPicker { pickerBody }
-            else { ScrollView { filterOverview.padding(.bottom, 12) }.scrollDismissesKeyboard(.interactively) }
+            else {
+                ScrollView { filterOverview.padding(.vertical, 8).padding(.bottom, 12) }
+                    .scrollDismissesKeyboard(.interactively)
+                    .accessibilityIdentifier(prefix + "-filter-overview-scroll")
+            }
             HStack {
                 Spacer()
                 Button { close() } label: {
@@ -174,11 +178,14 @@ struct ListFilterControls: View {
                             }
                         }
                     }
-                    if let error = pickerError { filterFailure(error, picker: true) }
+                    if let error = error { filterFailure(error, picker: false) }
+                    else if let error = pickerError { filterFailure(error, picker: true) }
                     else if !pickerCurrent { ProgressView().frame(maxWidth: .infinity).padding(16) }
                 }
+                .padding(.vertical, 8)
             }
             .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier(prefix + "-filter-picker-scroll")
         }
     }
 
@@ -270,10 +277,13 @@ struct ListFilterControls: View {
     private func filterFailure(_ error: String, picker: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
-            Button(localized("common.retry")) {
+            Button {
                 if picker { onRetryPicker() } else { onRetry() }
+            } label: {
+                Text(localized("common.retry")).rnFont(14, .semibold)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }
-            .rnFont(14, .semibold).frame(minHeight: 44).disabled(busy || frozen)
+            .buttonStyle(.plain).disabled(busy || frozen)
             .accessibilityIdentifier(picker ? prefix + "-filter-picker-retry" : prefix + "-filter-retry")
         }
     }

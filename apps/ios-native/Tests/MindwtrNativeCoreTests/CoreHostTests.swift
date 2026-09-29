@@ -13977,6 +13977,144 @@ final class CoreHostTests: XCTestCase {
         await core.close()
     }
 
+    func testProjectTaskFiltersReadOnlyTokensPagingAndClear() async throws {
+        try await seedProjectRenameRows()
+        let seed = try SQLiteBridge(url: database)
+        let tokens = (0..<150).map { String(format: "@token-%03d", $0) }
+        _ = try seed.execute("UPDATE tasks SET contexts = ?, tags = ? WHERE id = 'rename-task'",
+                             parametersJSON: json([json(tokens), json(["#caf\u{00e9}", "#cafe\u{0301}"])]))
+        seed.close()
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        let check = try SQLiteBridge(url: database)
+        defer { check.close() }
+        let before = try nineTableSnapshot(check)
+        var statements = 0
+        var journals = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journals += 1 }
+        let base: [String: Any] = ["projectId": "focus-target", "offset": 0, "limit": 100,
+                                  "showCompleted": false, "completedCollapsed": false]
+        func read(_ state: [String: Any] = [:], edit: [String: Any]? = nil,
+                  offset: Int = 0, revision: String? = nil) async throws -> [String: Any] {
+            var input = base; input["filters"] = state; input["filterSheetOpen"] = true; input["offset"] = offset
+            if let edit { input["filterEdit"] = edit }
+            if let revision { input["revision"] = revision }
+            return try object(await core.call("menuRead", argumentsJSON: json(["projectDetailFilterView", json(input)])))
+        }
+        func state(_ view: [String: Any]) throws -> [String: Any] {
+            try XCTUnwrap((view["filters"] as? [String: Any])?["state"] as? [String: Any])
+        }
+        func ids(_ view: [String: Any]) -> [String] {
+            (view["items"] as? [[String: Any]] ?? []).compactMap { ($0["row"] as? [String: Any])?["id"] as? String }
+        }
+        let initial = try await read()
+        XCTAssertEqual(ids(initial), ["rename-task"])
+        let controls = try XCTUnwrap(initial["filters"] as? [String: Any])
+        XCTAssertTrue(controls["projects"] is NSNull)
+        XCTAssertEqual((controls["timeEstimates"] as? [Any])?.count, 0)
+        XCTAssertEqual((controls["visibility"] as? [String: Any])?["timeEstimate"] as? Bool, false)
+        let edit: [String: Any] = ["type": "toggleToken", "value": "@token-000"]
+        let included = try await read(edit: edit)
+        XCTAssertEqual(try state(included)["tokens"] as? [String], ["@token-000"])
+        XCTAssertEqual(ids(included), ["rename-task"])
+        let excluded = try await read(state(included), edit: edit)
+        XCTAssertEqual(try state(excluded)["excludedTokens"] as? [String], ["@token-000"])
+        XCTAssertEqual(ids(excluded), [])
+        let neutral = try await read(state(excluded), edit: edit)
+        XCTAssertEqual(try state(neutral)["excludedTokens"] as? [String], [])
+        XCTAssertEqual(ids(neutral), ["rename-task"])
+        let absent = try await read(["tokens": ["@missing"]])
+        XCTAssertEqual(ids(absent), [])
+        let empty = try XCTUnwrap(absent["empty"] as? [String: Any])
+        let clear = try XCTUnwrap((empty["action"] as? [String: Any])?["filterEdit"] as? [String: Any])
+        XCTAssertEqual(clear["type"] as? String, "clear")
+        let cleared = try await read(state(absent), edit: clear)
+        XCTAssertEqual(ids(cleared), ["rename-task"])
+        let search = try await read(["searchQuery": "id:rename-task"])
+        XCTAssertEqual(ids(search), ["rename-task"])
+        func picker(_ query: String = "", offset: Int = 0, revision: String? = nil) async throws -> [String: Any] {
+            var input = base; input["filters"] = [String: Any](); input["picker"] = "tokens"
+            input["query"] = query; input["offset"] = offset
+            if let revision { input["revision"] = revision }
+            return try object(await core.call("menuRead", argumentsJSON: json(["projectDetailFilterOptions", json(input)])))
+        }
+        let first = try await picker()
+        XCTAssertEqual(first["viewRevision"] as? String, initial["revision"] as? String)
+        XCTAssertEqual(first["total"] as? Int, 152)
+        let revision = try XCTUnwrap(first["revision"] as? String)
+        let second = try await picker(offset: 100, revision: revision)
+        let firstItems = try XCTUnwrap(first["items"] as? [[String: Any]])
+        let secondItems = try XCTUnwrap(second["items"] as? [[String: Any]])
+        XCTAssertEqual(firstItems.count, 100); XCTAssertEqual(secondItems.count, 52)
+        let values = Set((firstItems + secondItems).compactMap { ($0["value"] as? String).map { Data($0.utf8) } })
+        XCTAssertEqual(values.count, 152)
+        XCTAssertTrue(values.contains(Data("#caf\u{00e9}".utf8)))
+        XCTAssertTrue(values.contains(Data("#cafe\u{0301}".utf8)))
+        let query = try await picker("TOKEN-149")
+        XCTAssertEqual(query["total"] as? Int, 1)
+        await expectFailure("STALE_REVISION") { _ = try await picker("TOKEN-149", offset: 100, revision: revision) }
+        await expectFailure("STALE_REVISION") {
+            _ = try await read(["tokens": ["@missing"]], offset: 1, revision: try XCTUnwrap(initial["revision"] as? String))
+        }
+        let legacy = try object(await core.call("menuRead", argumentsJSON: json(["projectDetailView", json(base)])))
+        XCTAssertNil(legacy["filters"])
+        XCTAssertEqual(ids(legacy), ["rename-task"])
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
+    func testProjectTaskFiltersRejectMalformedControlsBeforeSQLite() async throws {
+        let faults = HostIOFaults()
+        let core = host(faults)
+        _ = try await core.start()
+        var statements = 0
+        var journals = 0
+        faults.beforeSQL = { _ in statements += 1 }
+        faults.journalWrite = { journals += 1 }
+        let base: [String: Any] = ["projectId": "project", "offset": 0, "limit": 50,
+                                  "showCompleted": false, "completedCollapsed": true, "filters": [String: Any]()]
+        for kind in ["projectDetailFilterView", "projectDetailFilterOptions"] {
+            var valid = base
+            if kind == "projectDetailFilterOptions" { valid["picker"] = "tokens"; valid["query"] = "" }
+            var invalid: [[String: Any]] = [[:], valid.filter { $0.key != "filters" }]
+            let cases: [(String, Any)] = [
+                ("extra", true), ("showCompleted", 1), ("completedCollapsed", "true"),
+                ("offset", true), ("offset", -1), ("offset", 1.5), ("offset", 1),
+                ("limit", 101), ("limit", false), ("revision", NSNull()), ("projectId", " "),
+                ("projectId", String(repeating: "x", count: 501)), ("filters", NSNull()),
+                ("filters", ["bogus": true]), ("filters", ["projects": ["project"]]),
+                ("filters", ["timeEstimates": ["15min"]]),
+                ("filters", ["tokens": [String(repeating: "x", count: 501)]]),
+                ("filters", ["searchQuery": String(repeating: "x", count: 2001)])]
+            for (field, value) in cases { var input = valid; input[field] = value; invalid.append(input) }
+            if kind == "projectDetailFilterView" {
+                for edit: [String: Any] in [["type": "toggleProject", "value": "project"],
+                                           ["type": "toggleTimeEstimate", "value": "15min"], ["type": "bogus"]] {
+                    var input = valid; input["filterEdit"] = edit; invalid.append(input)
+                }
+                for (field, value) in [("filterSheetOpen", 1 as Any), ("filterEdit", NSNull()), ("query", "")] {
+                    var input = valid; input[field] = value; invalid.append(input)
+                }
+            } else {
+                for (field, value) in [("picker", "projects" as Any), ("query", NSNull()),
+                                       ("query", String(repeating: "x", count: 501)), ("filterSheetOpen", true),
+                                       ("filterEdit", ["type": "clear"])] {
+                    var input = valid; input[field] = value; invalid.append(input)
+                }
+            }
+            for input in invalid {
+                await expectFailure { _ = try await core.call("menuRead", argumentsJSON: json([kind, json(input)])) }
+            }
+        }
+        XCTAssertEqual(statements, 0); XCTAssertEqual(journals, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+    }
+
     func testProjectCompletedViewRejectsMalformedControlsBeforeSQLite() async throws {
         let faults = HostIOFaults()
         let core = host(faults)

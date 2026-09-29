@@ -169,6 +169,23 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectCurrent = false
     @Published private(set) var projectError: String?
     @Published private(set) var projectViewOptionsPresented = false
+    @Published private(set) var projectFiltersPresented = false
+    @Published private(set) var projectFilterSearchText = ""
+    @Published private(set) var projectFilterLocationText = ""
+    @Published private(set) var projectFilterPickerName = ""
+    @Published private(set) var projectFilterPickerQuery = ""
+    @Published private(set) var projectFilterPicker: CoreObject = [:]
+    @Published private(set) var projectFilterPickerCurrent = false
+    @Published private(set) var projectFilterError: String?
+    @Published private(set) var projectFilterPickerError: String?
+    private var projectFilterPickerDepth = 100
+    private var projectFilterPublishedSheetOpen = false
+    private var projectFilterPendingEdit: CoreObject?
+    private var projectFilterTextEdits: [String: CoreObject] = [:]
+    private var projectFilterNeedsRead = false
+    private var projectFilterPickerNeedsRead = false
+    private var projectFilterReadTask: Task<Void, Never>?
+    private var projectFilterSession = 0
     private var projectShowCompleted = false
     private var projectCompletedCollapsed = true
     private var pendingProjectView: (showCompleted: Bool, collapsed: Bool)?
@@ -386,6 +403,7 @@ final class CoreModel: ObservableObject {
     private var projectAreaTestBlockedWrite = false
     private var projectTagTestReadFailure = false
     private var projectViewTestReadFailures = 0
+    private var projectFilterTestReadFailures = 0
     // Exercise the empty-snapshot error and Retry through the real UI. Both
     // initial attempts fail; the explicit retry then uses the real core read.
     private var focusInitialReadFailures = ProcessInfo.processInfo.arguments.contains("--native-focus-initial-read-failure") ? 2 : 0
@@ -632,11 +650,24 @@ final class CoreModel: ObservableObject {
             && !projectRenameEditing
     }
     var projectViewOpenEnabled: Bool {
-        projectActionsEnabled && pendingProjectView == nil && !capturePresented && !areaPickerPresented
+        projectActionsEnabled && pendingProjectView == nil && projectFilterPendingEdit == nil
+            && !projectFilterNeedsRead && !capturePresented && !areaPickerPresented
             && !areaManagerPresented && !morePresented && !projectSectionsPresented && !projectAreaPresented
             && !projectTagsPresented && projectDateField == nil && !projectStatusOpen
     }
-    var projectViewReadPending: Bool { pendingProjectView != nil }
+    var projectViewReadPending: Bool {
+        pendingProjectView != nil || projectFilterPendingEdit != nil || projectFilterNeedsRead
+            || (!projectDetail.isEmpty && projectError != nil)
+    }
+    var projectFilterActionsEnabled: Bool {
+        projectViewOpenEnabled && projectFilterError == nil && !projectTaskSortPresented
+    }
+    var projectFilterPickerActionsEnabled: Bool {
+        projectFilterActionsEnabled && projectFiltersPresented && projectFilterPickerName == "tokens"
+            && projectFilterPickerCurrent
+            && projectFilterPicker.text("query").utf8.elementsEqual(projectFilterPickerQuery.utf8)
+            && projectFilterPicker.text("viewRevision") == projectDetail.text("revision")
+    }
     var projectTaskSortPending: Bool { projectTaskSortRequest != nil }
     var projectTaskSortInputEnabled: Bool {
         projectViewOpenEnabled && projectTaskSortOptions.flag("canEdit")
@@ -646,6 +677,7 @@ final class CoreModel: ObservableObject {
     var projectTaskViewActive: Bool {
         projectDetail.object("controls").flag("showCompleted")
             || projectTaskSortOptions.text("effectiveSortBy") != "default"
+            || projectDetail.object("filters").flag("hasActive")
     }
     var projectRenameOpenEnabled: Bool {
         projectActionsEnabled && !projectDetail.flag("readOnly") && !capturePresented
@@ -1120,6 +1152,7 @@ final class CoreModel: ObservableObject {
                     projectAreaTestBlockedWrite = arguments.contains("--native-project-area-blocked-write")
                     projectTagTestReadFailure = arguments.contains("--native-project-tag-read-failure")
                     projectViewTestReadFailures = arguments.contains("--native-project-view-read-failure") ? 2 : 0
+                    projectFilterTestReadFailures = arguments.contains("--native-project-filter-read-failure") ? 2 : 0
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
                 } else if arguments.contains("--native-rn-rehearsal") {
                     // An explicitly staged copy only. Never select the live RN container.
@@ -6884,9 +6917,26 @@ final class CoreModel: ObservableObject {
             invalidateSearch()
         }
         projectCaller = selectedSurface
+        projectFilterSession += 1
+        projectFilterReadTask?.cancel()
         projectHeader = row
         projectDetail = [:]
         projectViewOptionsPresented = false
+        projectFiltersPresented = false
+        projectFilterSearchText = ""
+        projectFilterLocationText = ""
+        projectFilterPickerName = ""
+        projectFilterPickerQuery = ""
+        projectFilterPicker = [:]
+        projectFilterPickerCurrent = false
+        projectFilterPickerDepth = 100
+        projectFilterPublishedSheetOpen = false
+        projectFilterPendingEdit = nil
+        projectFilterTextEdits = [:]
+        projectFilterNeedsRead = false
+        projectFilterPickerNeedsRead = false
+        projectFilterError = nil
+        projectFilterPickerError = nil
         projectTaskSortPresented = false
         projectTaskSortOptions = [:]
         projectTaskSortError = nil
@@ -7004,6 +7054,12 @@ final class CoreModel: ObservableObject {
         guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented,
               !projectRenameEditing && !projectSectionsPresented && !projectAreaPresented
               && !projectTagsPresented else { return }
+        projectFilterSession += 1
+        projectFilterReadTask?.cancel()
+        projectFiltersPresented = false
+        projectFilterPickerName = ""
+        projectFilterNeedsRead = false
+        projectFilterPickerNeedsRead = false
         projectDateField = nil
         projectDatePicker = [:]
         projectDateOpeningTimeZone = nil
@@ -7035,6 +7091,136 @@ final class CoreModel: ObservableObject {
 
     func closeProjectViewOptions() { projectViewOptionsPresented = false }
 
+    func openProjectFilters() async {
+        guard await flushProjectNotesEdit(), projectViewOpenEnabled, !projectTaskSortPresented,
+              !projectFiltersPresented else { return }
+        projectViewOptionsPresented = false
+        projectFiltersPresented = true
+        projectFilterNeedsRead = true
+        busy = true
+        defer { finishOperation() }
+        projectFilterNeedsRead = false
+        _ = await readProjectDetail()
+    }
+
+    func closeProjectFilters() {
+        guard projectFiltersPresented else { return }
+        projectFiltersPresented = false
+        closeProjectFilterPicker()
+        projectFilterNeedsRead = true
+        scheduleProjectFilterRead(delay: 0)
+    }
+
+    func editProjectFilter(_ edit: CoreObject) async {
+        guard await flushProjectNotesEdit(), projectFilterActionsEnabled, !edit.isEmpty else { return }
+        projectFilterPendingEdit = edit
+        projectLoadedDepth = pageSize
+        busy = true
+        defer { finishOperation() }
+        _ = await readProjectDetail()
+    }
+
+    func setProjectFilterText(_ text: String, location: Bool = false) {
+        guard selectedSurface == .project, projectFiltersPresented, !retryNeeded, !taskPresented,
+              !text.utf8.elementsEqual((location ? projectFilterLocationText : projectFilterSearchText).utf8) else { return }
+        if location { projectFilterLocationText = text } else { projectFilterSearchText = text }
+        let type = location ? "setLocation" : "setSearch"
+        projectFilterTextEdits[type] = ["type": type, "value": text]
+        projectFilterNeedsRead = true
+        projectCurrent = false
+        projectError = nil
+        projectFilterError = nil
+        projectLoadedDepth = pageSize
+        scheduleProjectFilterRead()
+    }
+
+    func retryProjectFilterRead() {
+        guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented else { return }
+        projectFilterNeedsRead = true
+        scheduleProjectFilterRead(delay: 0)
+    }
+
+    private func scheduleProjectFilterRead(delay: UInt64 = 200_000_000) {
+        guard selectedSurface == .project, !busy, !retryNeeded, !taskPresented else { return }
+        projectFilterReadTask?.cancel()
+        let session = projectFilterSession
+        projectFilterReadTask = Task {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled, session == projectFilterSession, selectedSurface == .project,
+                  !busy, !retryNeeded, !taskPresented else { return }
+            busy = true
+            defer { finishOperation() }
+            let needsRead = projectFilterNeedsRead
+            projectFilterNeedsRead = false
+            if projectFilterPendingEdit != nil || projectError != nil || projectFilterError != nil
+                || (needsRead && (projectFilterTextEdits.isEmpty
+                    || projectFilterPublishedSheetOpen != projectFiltersPresented)) {
+                guard await readProjectDetail() else { return }
+            }
+            while let type = projectFilterTextEdits.keys.sorted().first,
+                  let edit = projectFilterTextEdits[type] {
+                projectFilterPendingEdit = edit
+                guard await readProjectDetail() else { return }
+                if let queued = projectFilterTextEdits[type],
+                   queued.text("value").utf8.elementsEqual(edit.text("value").utf8) {
+                    projectFilterTextEdits.removeValue(forKey: type)
+                }
+            }
+            syncProjectFilterText()
+            if projectFilterPickerNeedsRead { await readProjectFilterPicker() }
+        }
+    }
+
+    private func syncProjectFilterText() {
+        let state = projectDetail.object("filters").object("state")
+        if projectFilterTextEdits["setSearch"] == nil { projectFilterSearchText = state.text("searchQuery") }
+        if projectFilterTextEdits["setLocation"] == nil { projectFilterLocationText = state.text("location") }
+    }
+
+    func openProjectFilterPicker(_ name: String) {
+        guard name == "tokens", projectFiltersPresented, projectFilterActionsEnabled,
+              projectFilterPublishedSheetOpen else { return }
+        projectFilterPickerName = name
+        projectFilterPickerQuery = ""
+        projectFilterPickerDepth = 100
+        projectFilterPickerCurrent = false
+        projectFilterPickerError = nil
+        projectFilterPickerNeedsRead = true
+        scheduleProjectFilterRead(delay: 0)
+    }
+
+    func closeProjectFilterPicker() {
+        projectFilterPickerName = ""
+        projectFilterPickerCurrent = false
+        projectFilterPickerNeedsRead = false
+        projectFilterPickerError = nil
+    }
+
+    func setProjectFilterPickerQuery(_ text: String) {
+        guard projectFilterPickerName == "tokens", !retryNeeded,
+              !text.utf8.elementsEqual(projectFilterPickerQuery.utf8) else { return }
+        projectFilterPickerQuery = text
+        projectFilterPickerDepth = 100
+        projectFilterPickerCurrent = false
+        projectFilterPickerError = nil
+        projectFilterPickerNeedsRead = true
+        scheduleProjectFilterRead()
+    }
+
+    func loadMoreProjectFilterPicker() {
+        guard projectFilterPickerActionsEnabled,
+              projectFilterPicker.objects("items").count < projectFilterPicker.number("total") else { return }
+        projectFilterPickerDepth = projectFilterPicker.objects("items").count + pageSize
+        retryProjectFilterPicker()
+    }
+
+    func retryProjectFilterPicker() {
+        guard projectFilterPickerName == "tokens", !busy, !retryNeeded else { return }
+        projectFilterPickerCurrent = false
+        projectFilterPickerNeedsRead = true
+        scheduleProjectFilterRead(delay: 0)
+    }
+
     func toggleProjectShowCompleted() async {
         guard await flushProjectNotesEdit(), projectViewOptionsPresented, projectViewOpenEnabled,
               projectDetail.object("controls").flag("canToggleCompleted") else { return }
@@ -7056,12 +7242,89 @@ final class CoreModel: ObservableObject {
         await readProjectDetail()
     }
 
-    private func projectDetailWindow(offset: Int, limit: Int, revision: String? = nil,
-                                     showCompleted: Bool, collapsed: Bool) async throws -> CoreObject {
-        var input: CoreObject = ["projectId": projectHeader.text("id"), "offset": offset, "limit": limit,
-                                 "showCompleted": showCompleted, "completedCollapsed": collapsed]
+    private func projectDetailWindow(projectID: String, offset: Int, limit: Int, revision: String? = nil,
+                                     showCompleted: Bool, collapsed: Bool, filters: CoreObject,
+                                     sheetOpen: Bool, edit: CoreObject? = nil) async throws -> CoreObject {
+        var input: CoreObject = ["projectId": projectID, "offset": offset, "limit": limit,
+                                 "showCompleted": showCompleted, "completedCollapsed": collapsed,
+                                 "filters": filters, "filterSheetOpen": sheetOpen]
         if let revision { input["revision"] = revision }
-        return try await query("menuRead", ["projectDetailView", try json(input)])
+        if let edit { input["filterEdit"] = edit }
+        #if DEBUG && targetEnvironment(simulator)
+        if offset == 0, edit != nil, projectFilterTestReadFailures > 0 {
+            projectFilterTestReadFailures -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        #endif
+        return try await query("menuRead", ["projectDetailFilterView", try json(input)])
+    }
+
+    private func projectFilterOptionsPage(snapshot: CoreObject, query text: String, offset: Int,
+                                          limit: Int, revision: String? = nil) async throws -> CoreObject {
+        var input: CoreObject = ["projectId": snapshot.text("projectId"),
+                                 "showCompleted": snapshot.object("controls").flag("showCompleted"),
+                                 "completedCollapsed": snapshot.object("controls").flag("completedCollapsed"),
+                                 "filters": snapshot.object("filters").object("state"),
+                                 "picker": "tokens", "query": text, "offset": offset, "limit": limit]
+        if let revision { input["revision"] = revision }
+        return try await query("menuRead", ["projectDetailFilterOptions", try json(input)])
+    }
+
+    private func readProjectFilterPicker() async {
+        let text = projectFilterPickerQuery
+        let id = projectHeader.text("id")
+        let session = projectFilterSession
+        guard projectFiltersPresented, projectFilterPickerName == "tokens", projectCurrent else { return }
+        projectFilterPickerNeedsRead = false
+        projectFilterPickerCurrent = false
+        projectFilterPickerError = nil
+        for attempt in 0..<2 {
+            do {
+                let snapshot = projectDetail
+                let first = try await projectFilterOptionsPage(snapshot: snapshot, query: text, offset: 0, limit: 100)
+                guard selectedSurface == .project, session == projectFilterSession, id == projectHeader.text("id"),
+                      projectFiltersPresented, projectFilterPickerName == "tokens",
+                      text.utf8.elementsEqual(projectFilterPickerQuery.utf8) else { return }
+                guard first.text("viewRevision") == snapshot.text("revision"),
+                      first.text("projectId") == id, first.text("picker") == "tokens",
+                      first.text("query").utf8.elementsEqual(text.utf8), first.number("offset") == 0,
+                      !first.text("revision").isEmpty, first.number("total") >= 0,
+                      first.objects("items").count == min(100, first.number("total")) else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var items = first.objects("items")
+                let target = min(projectFilterPickerDepth, first.number("total"))
+                while items.count < target {
+                    let limit = min(pageSize, target - items.count)
+                    let page = try await projectFilterOptionsPage(snapshot: snapshot, query: text,
+                        offset: items.count, limit: limit, revision: first.text("revision"))
+                    guard page.text("revision") == first.text("revision"),
+                          page.text("viewRevision") == snapshot.text("revision"),
+                          page.text("projectId") == id, page.text("picker") == "tokens",
+                          page.text("query").utf8.elementsEqual(text.utf8), page.number("offset") == items.count,
+                          page.number("total") == first.number("total"),
+                          page.objects("items").count == limit else { throw CocoaError(.coderReadCorrupt) }
+                    items += page.objects("items")
+                }
+                guard selectedSurface == .project, session == projectFilterSession, id == projectHeader.text("id"),
+                      projectFiltersPresented, projectFilterPickerName == "tokens",
+                      text.utf8.elementsEqual(projectFilterPickerQuery.utf8),
+                      snapshot.text("revision") == projectDetail.text("revision") else { return }
+                var next = first
+                next["items"] = items
+                projectFilterPicker = next
+                projectFilterPickerCurrent = true
+                projectFilterPickerNeedsRead = false
+                return
+            } catch {
+                guard selectedSurface == .project, session == projectFilterSession, id == projectHeader.text("id"),
+                      projectFiltersPresented, projectFilterPickerName == "tokens",
+                      text.utf8.elementsEqual(projectFilterPickerQuery.utf8) else { return }
+                if attempt == 0, await readProjectDetail() { continue }
+                projectFilterPickerError = error.localizedDescription
+                return
+            }
+        }
     }
 
     func loadMoreProject() async {
@@ -7069,20 +7332,28 @@ final class CoreModel: ObservableObject {
         guard projectActionsEnabled, projectDetail.objects("items").count < projectDetail.number("total") else { return }
         busy = true
         defer { finishOperation() }
+        let session = projectFilterSession
+        let snapshot = projectDetail
+        let sheetOpen = projectFiltersPresented
         let offset = projectDetail.objects("items").count
         let limit = min(pageSize, projectDetail.number("total") - offset)
         projectLoadedDepth = offset + limit
         projectCurrent = false
         do {
-            let window = try await projectDetailWindow(offset: offset, limit: limit,
-                revision: projectDetail.text("revision"), showCompleted: projectShowCompleted,
-                collapsed: projectCompletedCollapsed)
-            try validateProjectWindow(window, against: projectDetail, count: limit)
-            projectDetail["items"] = projectDetail.objects("items") + window.objects("items")
+            let window = try await projectDetailWindow(projectID: snapshot.text("projectId"), offset: offset, limit: limit,
+                revision: snapshot.text("revision"), showCompleted: projectShowCompleted,
+                collapsed: projectCompletedCollapsed, filters: snapshot.object("filters").object("state"),
+                sheetOpen: sheetOpen)
+            guard session == projectFilterSession, selectedSurface == .project,
+                  snapshot.text("projectId") == projectHeader.text("id"), sheetOpen == projectFiltersPresented else { return }
+            try validateProjectWindow(window, against: snapshot, count: limit)
+            projectDetail["items"] = snapshot.objects("items") + window.objects("items")
             projectCurrent = true
             projectError = nil
         } catch {
             // Restart at zero after a stale or failed window; never append mixed revisions.
+            guard session == projectFilterSession, selectedSurface == .project,
+                  snapshot.text("projectId") == projectHeader.text("id") else { return }
             await readProjectDetail()
             if projectNotesExpanded && projectCurrent {
                 if projectNotesEditMode {
@@ -7094,29 +7365,53 @@ final class CoreModel: ObservableObject {
         }
     }
 
-    private func readProjectDetail() async {
+    @discardableResult private func readProjectDetail() async -> Bool {
         projectCurrent = false
+        projectFilterPickerCurrent = false
         projectError = nil
         let id = projectHeader.text("id")
+        let session = projectFilterSession
+        let sheetOpen = projectFiltersPresented
+        let filters = projectDetail.object("filters").object("state")
+        let edit = projectFilterPendingEdit
         let showCompleted = pendingProjectView?.showCompleted ?? projectShowCompleted
         var collapsed = pendingProjectView?.collapsed ?? projectCompletedCollapsed
         for attempt in 0..<2 {
             do {
-                var next = try await projectDetailWindow(offset: 0, limit: pageSize,
-                    showCompleted: showCompleted, collapsed: collapsed)
+                var next = try await projectDetailWindow(projectID: id, offset: 0, limit: pageSize,
+                    showCompleted: showCompleted, collapsed: collapsed, filters: filters,
+                    sheetOpen: sheetOpen, edit: edit)
+                guard session == projectFilterSession, selectedSurface == .project,
+                      id == projectHeader.text("id"), sheetOpen == projectFiltersPresented else { return false }
                 // RN resets the completed pile when its grouping mode changes (including type/status edits).
                 if !collapsed, !projectDetail.isEmpty,
                    next.object("controls").flag("groupCompletedTasksLast")
                     != projectDetail.object("controls").flag("groupCompletedTasksLast") {
                     collapsed = true
-                    next = try await projectDetailWindow(offset: 0, limit: pageSize,
-                        showCompleted: showCompleted, collapsed: collapsed)
+                    // Apply the one pending edit to its original state again; never cycle a token twice.
+                    next = try await projectDetailWindow(projectID: id, offset: 0, limit: pageSize,
+                        showCompleted: showCompleted, collapsed: collapsed, filters: filters,
+                        sheetOpen: sheetOpen, edit: edit)
                 }
                 let metadata = next.object("metadata")
                 let controls = next.object("controls")
+                let filterView = next.object("filters")
+                let resolved = filterView.object("state")
                 guard next.text("projectId") == id, !next.text("revision").isEmpty,
                       !next.text("mutationRevision").isEmpty,
                       next.number("total") >= 0,
+                      !filterView.isEmpty, !resolved.isEmpty,
+                      next["chips"] is [CoreObject], !next.text("filterButtonLabel").isEmpty,
+                      (next["empty"] is NSNull) == (next.number("total") > 0),
+                      filterView["projects"] is NSNull, filterView.objects("timeEstimates").isEmpty,
+                      !filterView.object("visibility").flag("timeEstimate"),
+                      filterView.object("tokens").number("total") >= 0,
+                      filterView.object("tokens").objects("items").count
+                        == min(100, filterView.object("tokens").number("total")),
+                      (edit?.text("type") != "setSearch"
+                        || resolved.text("searchQuery").utf8.elementsEqual((edit?.text("value") ?? "").utf8)),
+                      (edit?.text("type") != "setLocation"
+                        || resolved.text("location").utf8.elementsEqual((edit?.text("value") ?? "").utf8)),
                       ["showCompleted", "completedCollapsed", "canToggleCompleted", "groupCompletedTasksLast"].allSatisfy({ key in
                           (controls[key] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
                       }), controls.flag("showCompleted") == showCompleted,
@@ -7131,13 +7426,16 @@ final class CoreModel: ObservableObject {
                 let target = min(projectLoadedDepth, next.number("total"))
                 while items.count < target {
                     let limit = min(pageSize, target - items.count)
-                    let window = try await projectDetailWindow(offset: items.count, limit: limit,
-                        revision: next.text("revision"), showCompleted: showCompleted, collapsed: collapsed)
+                    let window = try await projectDetailWindow(projectID: id, offset: items.count, limit: limit,
+                        revision: next.text("revision"), showCompleted: showCompleted, collapsed: collapsed,
+                        filters: resolved, sheetOpen: sheetOpen)
                     try validateProjectWindow(window, against: next, count: limit)
                     items += window.objects("items")
                 }
                 next["items"] = items
                 let sortOptions = try await readProjectTaskSortOptions(projectID: id, revision: next.text("mutationRevision"))
+                guard session == projectFilterSession, selectedSurface == .project,
+                      id == projectHeader.text("id"), sheetOpen == projectFiltersPresented else { return false }
                 if projectNotes.text("revision") != next.text("mutationRevision") { projectNotesCurrent = false }
                 if projectNotesEditOptions.text("revision") != next.text("mutationRevision") {
                     projectNotesEditOptionsCurrent = false
@@ -7173,14 +7471,28 @@ final class CoreModel: ObservableObject {
                 projectShowCompleted = showCompleted
                 projectCompletedCollapsed = collapsed
                 pendingProjectView = nil
+                projectFilterPendingEdit = nil
+                projectFilterPublishedSheetOpen = sheetOpen
+                projectFilterError = nil
                 projectDetail = next
                 projectTaskSortOptions = sortOptions
+                syncProjectFilterText()
+                if !projectFilterPickerName.isEmpty { projectFilterPickerNeedsRead = true }
                 projectCurrent = true
-                return
+                if edit != nil {
+                    NSLog("Native iOS Project task filters applied releaseCheck=v1.3.3/native-ios-project-task-filters")
+                }
+                return true
             } catch {
-                if attempt == 1 { projectError = error.localizedDescription }
+                guard session == projectFilterSession, selectedSurface == .project,
+                      id == projectHeader.text("id"), sheetOpen == projectFiltersPresented else { return false }
+                if attempt == 1 {
+                    projectError = error.localizedDescription
+                    if sheetOpen { projectFilterError = error.localizedDescription }
+                }
             }
         }
+        return false
     }
 
     private func validateProjectWindow(_ window: CoreObject, against snapshot: CoreObject, count: Int) throws {
@@ -7190,6 +7502,11 @@ final class CoreModel: ObservableObject {
               window.number("total") == snapshot.number("total"),
               window.flag("readOnly") == snapshot.flag("readOnly"),
               NSDictionary(dictionary: window.object("controls")).isEqual(to: snapshot.object("controls")),
+              try json(window.object("filters")) == json(snapshot.object("filters")),
+              try json(window.objects("chips")) == json(snapshot.objects("chips")),
+              window.text("filterButtonLabel") == snapshot.text("filterButtonLabel"),
+              try json(["empty": window["empty"] ?? NSNull()])
+                == json(["empty": snapshot["empty"] ?? NSNull()]),
               window.objects("items").count == count else { throw CocoaError(.coderReadCorrupt) }
     }
 
@@ -10395,7 +10712,7 @@ final class CoreModel: ObservableObject {
     private func query(_ method: String, _ args: [Any] = []) async throws -> CoreObject {
         guard let host else { throw CocoaError(.coderInvalidValue) }
         #if DEBUG && targetEnvironment(simulator)
-        if method == "menuRead", args.first as? String == "projectDetailView",
+        if method == "menuRead", args.first as? String == "projectDetailFilterView",
            pendingProjectView != nil, projectViewTestReadFailures > 0 {
             projectViewTestReadFailures -= 1
             throw CocoaError(.fileReadUnknown)
@@ -10465,6 +10782,11 @@ final class CoreModel: ObservableObject {
         }
         if selectedSurface == .reference && (referenceTextNeedsRead || referencePickerNeedsRead) && !retryNeeded && !taskPresented {
             scheduleReferenceRead()
+        }
+        if selectedSurface == .project && !retryNeeded && !taskPresented
+            && (projectFilterNeedsRead || ((projectFilterTextEdits.isEmpty == false || projectFilterPickerNeedsRead)
+                && projectError == nil && projectFilterError == nil)) {
+            scheduleProjectFilterRead(delay: 0)
         }
     }
 }

@@ -772,6 +772,7 @@ struct ProjectDetailScreen: View {
     @FocusState private var renameFocused: Bool
     @FocusState private var notesFocused: Bool
     @FocusState private var sectionFocused: Bool
+    @FocusState private var filterFocusedField: String?
     @State private var detailsExpanded = false
     @State private var detailsProjectID = ""
     @State private var discardNotesConfirm = false
@@ -901,10 +902,52 @@ struct ProjectDetailScreen: View {
                     .accessibilityLabel(model.label("taskEdit.moreOptions"))
                     .accessibilityAddTraits(model.projectTaskViewActive ? .isSelected : [])
                     .accessibilityIdentifier("project-task-view-options-button")
+                    if model.projectDetail.object("filters").flag("hasActive") {
+                        Button { resignProjectNotesInput(); Task { await model.openProjectFilters() } } label: {
+                            Text(model.projectDetail.text("filterButtonLabel")).rnFont(13, .semibold)
+                                .foregroundStyle(palette.tint).padding(.horizontal, 12)
+                                .frame(minHeight: 44).contentShape(Rectangle())
+                                .background(palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
+                        .accessibilityIdentifier("project-filter-button")
+                    }
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8).background(palette.card)
                 .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
+                if !model.projectDetail.objects("chips").isEmpty {
+                    AppChipFlow {
+                        ForEach(model.projectDetail.objects("chips").indices, id: \.self) { index in
+                            let chip = model.projectDetail.objects("chips")[index]
+                            Button {
+                                resignProjectNotesInput()
+                                Task { await model.editProjectFilter(chip.object("action").object("filterEdit")) }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(chip.text("label")).rnFont(12, .semibold).strikethrough(chip.flag("excluded"))
+                                    AppIcon(name: "x", size: 12)
+                                }
+                                .foregroundStyle(palette.onTint).padding(.horizontal, 10)
+                                .frame(minHeight: 44).background(chip.flag("excluded") ? palette.danger : palette.tint, in: Capsule())
+                                .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain).disabled(!model.projectFilterActionsEnabled)
+                            .accessibilityIdentifier("project-filter-chip-" + chip.text("id"))
+                        }
+                        Button {
+                            resignProjectNotesInput()
+                            Task { await model.editProjectFilter(model.projectDetail.object("filters").object("clearEdit")) }
+                        } label: {
+                            Text(model.label("filters.clear")).rnFont(12, .semibold)
+                                .foregroundStyle(palette.tint).padding(.horizontal, 10)
+                                .frame(minHeight: 44).contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectFilterActionsEnabled)
+                        .accessibilityIdentifier("project-filter-clear")
+                    }
+                    .padding(.horizontal, 12).padding(.bottom, 8).background(palette.card)
+                }
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
@@ -927,8 +970,25 @@ struct ProjectDetailScreen: View {
                             if !metadata.isEmpty { detailsPanel(metadata) }
                             let items = model.projectDetail.objects("items")
                             if items.isEmpty {
-                                Text(model.label("list.noTasks")).rnFont(16).foregroundStyle(palette.secondary)
-                                    .frame(maxWidth: .infinity).padding(32).accessibilityIdentifier("project-empty")
+                                let empty = model.projectDetail.object("empty")
+                                VStack(spacing: 8) {
+                                    Text(empty.text("message").isEmpty ? model.label("list.noTasks") : empty.text("message"))
+                                        .rnFont(16).foregroundStyle(palette.secondary)
+                                    if !empty.text("hint").isEmpty {
+                                        Text(empty.text("hint")).rnFont(13).foregroundStyle(palette.secondary)
+                                    }
+                                    if !empty.object("action").object("filterEdit").isEmpty {
+                                        Button {
+                                            Task { await model.editProjectFilter(empty.object("action").object("filterEdit")) }
+                                        } label: {
+                                            Text(empty.text("actionLabel")).rnFont(14, .semibold)
+                                                .frame(minHeight: 44).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.projectFilterActionsEnabled)
+                                        .accessibilityIdentifier("project-empty-filter-clear")
+                                    }
+                                }
+                                .frame(maxWidth: .infinity).padding(32).accessibilityIdentifier("project-empty")
                             }
                             ForEach(items.indices, id: \.self) { index in
                                 let item = items[index]
@@ -1029,11 +1089,21 @@ struct ProjectDetailScreen: View {
                 .presentationDetents(model.retryNeeded ? [.large] : [.medium, .large])
                 .interactiveDismissDisabled(model.projectDatePending || model.retryNeeded || model.busy)
         }
-        .sheet(isPresented: Binding(get: { model.projectViewOptionsPresented || model.projectTaskSortPresented },
-                                    set: { if !$0 { model.closeProjectViewOptions(); model.closeProjectTaskSort() } })) {
-            projectTaskViewSheet
-                .presentationDetents(model.projectTaskSortPresented ? [.large] : [.medium, .large])
-                .interactiveDismissDisabled(model.busy || model.retryNeeded || model.projectTaskSortPending)
+        .sheet(isPresented: Binding(get: {
+            model.projectViewOptionsPresented || model.projectTaskSortPresented || model.projectFiltersPresented
+        }, set: { if !$0 {
+            filterFocusedField = nil
+            model.closeProjectFilters()
+            model.closeProjectViewOptions()
+            model.closeProjectTaskSort()
+        } })) {
+            Group {
+                if model.projectFiltersPresented { projectFiltersSheet }
+                else { projectTaskViewSheet }
+            }
+            .presentationDetents(model.projectTaskSortPresented || model.projectFiltersPresented ? [.large] : [.medium, .large])
+            .interactiveDismissDisabled(model.retryNeeded || model.projectTaskSortPending
+                || (!model.projectFiltersPresented && model.busy))
         }
         .sheet(isPresented: Binding(get: { model.projectAreaPresented },
                                     set: { if !$0 { model.closeProjectArea() } })) {
@@ -1137,6 +1207,19 @@ struct ProjectDetailScreen: View {
                             .accessibilityIdentifier("project-sort-option-" + choice.text("id"))
                         }
                     } else {
+                        Button { Task { await model.openProjectFilters() } } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "line.3.horizontal.decrease").accessibilityHidden(true)
+                                Text(model.projectDetail.text("filterButtonLabel")).rnFont(16)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").accessibilityHidden(true)
+                            }
+                            .foregroundStyle(palette.text)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectViewOpenEnabled)
+                        .accessibilityAddTraits(model.projectDetail.object("filters").flag("hasActive") ? .isSelected : [])
+                        .accessibilityIdentifier("project-view-filters-option")
                         Button { Task { await model.openProjectTaskSort() } } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: "arrow.up.arrow.down").accessibilityHidden(true)
@@ -1186,6 +1269,28 @@ struct ProjectDetailScreen: View {
         .padding(16).background(palette.card).tint(palette.tint)
         .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
         .accessibilityIdentifier(model.projectTaskSortPresented ? "project-sort-sheet" : "project-view-options-sheet")
+    }
+
+    private var projectFiltersSheet: some View {
+        ListFilterControls(
+            data: model.projectDetail, strings: model.strings, palette: palette, prefix: "project",
+            enabled: model.projectFilterActionsEnabled, busy: model.busy, frozen: model.retryNeeded,
+            error: model.projectFilterError ?? model.projectError,
+            searchText: Binding(get: { model.projectFilterSearchText }, set: { model.setProjectFilterText($0) }),
+            locationText: Binding(get: { model.projectFilterLocationText }, set: { model.setProjectFilterText($0, location: true) }),
+            pickerName: model.projectFilterPickerName, picker: model.projectFilterPicker,
+            pickerCurrent: model.projectFilterPickerCurrent, pickerEnabled: model.projectFilterPickerActionsEnabled,
+            pickerError: model.projectFilterPickerError,
+            pickerQuery: Binding(get: { model.projectFilterPickerQuery }, set: { model.setProjectFilterPickerQuery($0) }),
+            onEdit: { edit in Task { await model.editProjectFilter(edit) } },
+            onChipAction: { action in Task { await model.editProjectFilter(action.object("filterEdit")) } },
+            onArchived: { _ in }, onOpenPicker: model.openProjectFilterPicker, onBack: model.closeProjectFilterPicker,
+            onMore: model.loadMoreProjectFilterPicker, onRetry: model.retryProjectFilterRead,
+            onRetryPicker: model.retryProjectFilterPicker,
+            onClose: { filterFocusedField = nil; model.closeProjectFilters() }, focusedField: $filterFocusedField)
+            .padding(16).background(palette.card).tint(palette.tint)
+            .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("project-filters-sheet")
     }
 
     @ViewBuilder private var projectTaskSortErrors: some View {

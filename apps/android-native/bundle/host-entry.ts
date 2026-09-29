@@ -316,6 +316,8 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
     projects: (input) => contract.getFilteredProjects(input),
     projectDetailView: (input) => contract.getProjectDetailView(input),
+    projectDetailFilterView: (input) => contract.getProjectDetailFilterView(input),
+    projectDetailFilterOptions: (input) => contract.getProjectDetailFilterOptions(input),
     waiting: (input) => contract.getWaitingView(input),
     someday: (input) => contract.getSomedayView(input),
     reference: (input) => contract.getReferenceView(input),

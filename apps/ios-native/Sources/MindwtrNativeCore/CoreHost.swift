@@ -3462,7 +3462,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
+            guard let name = args[0] as? String, ["more", "projects", "projectDetailView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
@@ -3485,6 +3485,32 @@ private final class Engine: @unchecked Sendable {
                       (input["revision"] == nil || input["revision"] is String),
                       (offset.doubleValue == 0 || input["revision"] is String) else {
                     throw HostFailure("Unsupported native Project detail view input")
+                }
+            }
+            if ["projectDetailFilterView", "projectDetailFilterOptions"].contains(name) {
+                let picker = name == "projectDetailFilterOptions"
+                let required: Set<String> = ["projectId", "offset", "limit", "showCompleted", "completedCollapsed", "filters"]
+                let requiredFields = picker ? required.union(["picker", "query"]) : required
+                let allowed = requiredFields.union(picker ? ["revision"] : ["revision", "filterEdit", "filterSheetOpen"])
+                guard json.utf8.count <= 2_000_000,
+                      requiredFields.isSubset(of: Set(input.keys)), Set(input.keys).isSubset(of: allowed),
+                      let id = input["projectId"] as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      id.utf16.count <= 500, Self.isInteger(input["offset"]), Self.isInteger(input["limit"]),
+                      let offset = input["offset"] as? NSNumber, (0...9_007_199_254_740_991).contains(offset.doubleValue),
+                      let limit = input["limit"] as? NSNumber, (1...100).contains(limit.doubleValue),
+                      Self.isBoolean(input["showCompleted"]), Self.isBoolean(input["completedCollapsed"]),
+                      input["filters"] is [String: Any],
+                      input["revision"] == nil || input["revision"] is String,
+                      offset.doubleValue == 0 || input["revision"] is String,
+                      input["filterEdit"] == nil || input["filterEdit"] is [String: Any],
+                      input["filterSheetOpen"] == nil || Self.isBoolean(input["filterSheetOpen"]) else {
+                    throw HostFailure("Unsupported native Project task filter input")
+                }
+                if picker {
+                    guard input["picker"] as? String == "tokens", let query = input["query"] as? String,
+                          query.utf16.count <= 500 else {
+                        throw HostFailure("Unsupported native Project task filter picker")
+                    }
                 }
             }
             if name == "contexts" {

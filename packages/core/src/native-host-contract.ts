@@ -17,7 +17,7 @@ import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime }
 import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
 import { isRecurrenceRule, parseRRuleString } from './recurrence';
 import { createTaskDraft, isTaskDraftDateInputBaseline, resolveTaskDraftTitle, serializeTaskDraftTokens, TASK_DRAFT_FIELD_KEYS, type TaskDraft, type TaskDraftField } from './task-draft';
-import { getRetainedTaskContexts } from './task-token-usage';
+import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
 import {
     applyTaskDraftPatch,
     buildTaskDraftDestinationPicker,
@@ -182,7 +182,7 @@ import {
     type ContextsTokenPicker,
 } from './contexts-view-model';
 import { formatTimeEstimateLabel } from './calendar-scheduling';
-import { applyListFilterEdit, resolveListFilterState, type ListFilterEdit, type ListFilterState } from './list-filter-state';
+import { applyListFilterEdit, resolveListFilterState, type ListFilterEdit, type ListFilterState, type ResolvedListFilter } from './list-filter-state';
 import { isStatusListTaskReadOnly, type ListFilterOptions } from './menu-views-model';
 import { getProjectAccentColor } from './task-accent-color';
 import { formatListItemCount } from './list-count';
@@ -477,6 +477,27 @@ export type NativeProjectDetailView = Omit<NativeProjectDetail, 'items'> & {
         groupCompletedTasksLast: boolean;
         label: string;
     };
+};
+export type NativeProjectDetailFilterView = NativeProjectDetailView & {
+    filters: NativeListFilterView;
+    chips: NativeListChip[];
+    filterButtonLabel: string;
+    empty: null | {
+        message: string;
+        hint: string;
+        actionLabel: string | null;
+        action: { filterEdit: { type: 'clear' } } | null;
+    };
+};
+export type NativeProjectDetailFilterOptions = {
+    revision: string;
+    viewRevision: string;
+    projectId: string;
+    picker: 'tokens';
+    query: string;
+    offset: number;
+    total: number;
+    items: TokenOption[];
 };
 export type NativeProjectNotes = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
@@ -1083,34 +1104,43 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
     };
 
     // RN TaskList filters its project rows by area, including completed and reference tasks.
-    const projectDetail = (projectId: string, currentRevision: string, showCompleted = false, completedCollapsed = false): ProjectDetailCache | null => {
-        const key = JSON.stringify([currentRevision, projectId, showCompleted, completedCollapsed]);
-        if (cachedProjectDetailKey === key && cachedProjectDetail) return cachedProjectDetail;
+    const projectTaskSources = (projectId: string, showCompleted: boolean) => {
         const state = useTaskStore.getState();
         const project = state._allProjects.find((candidate) => candidate.id === projectId);
         if (!project || project.deletedAt) return null;
         const options = getProjectDetailTaskListOptions(project, showCompleted);
-        // Mobile: ProjectDetailModal resolves the saved sort for features (it gates
-        // the cues); TaskList then resolves that for the all-status list.
-        const projectSortBy = resolveTaskSortByForFeatures(project.taskSortBy ?? 'default', state.settings);
         const projectTasks = state._allTasks.filter((task) => task.projectId === project.id && !task.deletedAt);
         const areaById = new Map(sortAreasForDisplay(state.areas).map((area) => [area.id, area]));
         const selection = resolveAreaFilterSelection(state.settings.filters, state.areas);
+        const filterableTasks = selectProjectTaskListTasks(projectTasks, {
+            projectId: project.id,
+            statusFilter: 'all',
+            includeArchived: options.includeArchived,
+            includeDone: options.includeDone,
+            isVisible: (task) => taskMatchesAreaFilterSelection(task, selection, state._projectsById, areaById),
+        });
+        return { state, project, options, projectTasks, filterableTasks };
+    };
+
+    const projectDetail = (projectId: string, currentRevision: string, showCompleted = false, completedCollapsed = false,
+        filter?: { resolved: ResolvedListFilter; sheetOpen: boolean }): ProjectDetailCache | null => {
+        const key = JSON.stringify([currentRevision, projectId, showCompleted, completedCollapsed, filter?.resolved.state, filter?.sheetOpen]);
+        if (cachedProjectDetailKey === key && cachedProjectDetail) return cachedProjectDetail;
+        const sources = projectTaskSources(projectId, showCompleted);
+        if (!sources) return null;
+        const { state, project, options, projectTasks, filterableTasks } = sources;
+        // Mobile: ProjectDetailModal resolves the saved sort for features (it gates
+        // the cues); TaskList then resolves that for the all-status list.
+        const projectSortBy = resolveTaskSortByForFeatures(project.taskSortBy ?? 'default', state.settings);
         const model = buildProjectTaskListModel({
             project,
-            tasks: selectProjectTaskListTasks(projectTasks, {
-                projectId: project.id,
-                statusFilter: 'all',
-                includeArchived: options.includeArchived,
-                includeDone: options.includeDone,
-                isVisible: (task) => taskMatchesAreaFilterSelection(task, selection, state._projectsById, areaById),
-            }),
+            tasks: filterableTasks,
             visibleTasks: state.tasks,
             sections: state.sections,
             allSections: state._allSections,
             statusFilter: 'all',
-            criteria: {},
-            searchQuery: '',
+            criteria: filter?.resolved.criteria ?? {},
+            searchQuery: filter?.resolved.searchQuery ?? '',
             sortBy: resolveNonDoneTaskSortBy(projectSortBy, state.settings),
             projectOrder: options.enableProjectReorder,
             reorderMode: false,
@@ -1141,9 +1171,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
 
     const readProjectDetail = (
         projectId: string, offset: number, limit: number, currentRevision: string, now: Date,
-        showCompleted = false, completedCollapsed = false,
+        showCompleted = false, completedCollapsed = false, filter?: { resolved: ResolvedListFilter; sheetOpen: boolean },
     ): NativeHostResult<{ value: NativeProjectDetail; cache: ProjectDetailCache }> => {
-        const detail = projectDetail(projectId, currentRevision, showCompleted, completedCollapsed);
+        const detail = projectDetail(projectId, currentRevision, showCompleted, completedCollapsed, filter);
         if (!detail) return fail('TASK_NOT_FOUND', 'Project not found');
         return { ok: true, value: {
             cache: detail,
@@ -1172,6 +1202,56 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
                 )),
             },
         } };
+    };
+
+    const projectDetailView = (
+        value: NativeProjectDetail, cache: ProjectDetailCache, offset: number,
+        showCompleted: boolean, completedCollapsed: boolean,
+    ): NativeProjectDetailView => ({
+        ...value,
+        items: value.items.map((item, index) => {
+            if (item.type !== 'section') return item;
+            const source = cache.items[offset + index];
+            return { ...item, collapsible: source.type === 'section' && source.collapsible === true,
+                collapsed: source.type === 'section' && source.collapsed === true };
+        }),
+        controls: {
+            showCompleted,
+            completedCollapsed,
+            canToggleCompleted: !cache.readOnly,
+            groupCompletedTasksLast: cache.groupCompletedTasksLast,
+            label: showCompleted
+                ? tFallback(translate, 'common.hideCompleted', 'Hide completed')
+                : tFallback(translate, 'common.showCompleted', 'Show completed'),
+        },
+    });
+
+    const projectFilterData = (
+        projectId: string, showCompleted: boolean, completedCollapsed: boolean,
+        filters: ListFilterState, filterEdit: ListFilterEdit | undefined, sheetOpen: boolean, now: Date,
+    ) => {
+        const sources = projectTaskSources(projectId, showCompleted);
+        if (!sources) return null;
+        const visibility = getTaskMetadataFilterVisibility(sources.filterableTasks, {
+            prioritiesEnabled: resolveFeatureFlags(sources.state.settings).priorities,
+            timeEstimatesEnabled: false,
+        });
+        const resolve = (state: ListFilterState) => resolveListFilterState(state, { visibility, t: translate });
+        let resolved = resolve(filters);
+        if (filterEdit) resolved = resolve(applyListFilterEdit(resolved.state, filterEdit));
+        const options: ListFilterOptions = {
+            tokens: sheetOpen
+                ? getUsedTaskTokens(sources.filterableTasks, (task) => [...(task.contexts ?? []), ...(task.tags ?? [])], { includeAncestors: true })
+                : Array.from(new Set([...resolved.state.tokens, ...resolved.state.excludedTokens])),
+            projects: null,
+            timeEstimates: [],
+            visibility,
+        };
+        const tokens = tokenOptions(options, resolved.state);
+        const viewRevision = JSON.stringify([
+            projectId, showCompleted, completedCollapsed, resolved.state, sheetOpen, revision(), displayRevision(now),
+        ]);
+        return { resolved, options, tokens, viewRevision };
     };
 
     const save = async (): Promise<NativeHostResult<null>> => {
@@ -1857,23 +1937,104 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             const result = readProjectDetail(input.projectId, input.offset, input.limit, currentRevision, now, input.showCompleted, input.completedCollapsed);
             if (!result.ok) return result;
             const { value, cache } = result.value;
+            return { ok: true, value: projectDetailView(value, cache, input.offset, input.showCompleted, input.completedCollapsed) };
+        },
+
+        getProjectDetailFilterView(input: {
+            projectId: string; offset: number; limit: number; revision?: string;
+            showCompleted: boolean; completedCollapsed: boolean; filters: Partial<ListFilterState>;
+            filterEdit?: ListFilterEdit; filterSheetOpen?: boolean;
+        }): NativeHostResult<NativeProjectDetailFilterView> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isNativeJsonWithinBytes(input)
+                || !['projectId', 'offset', 'limit', 'showCompleted', 'completedCollapsed', 'filters'].every((key) => Object.prototype.hasOwnProperty.call(input, key))
+                || Object.keys(input).some((key) => !['projectId', 'offset', 'limit', 'revision', 'showCompleted', 'completedCollapsed', 'filters', 'filterEdit', 'filterSheetOpen'].includes(key))
+                || typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 500
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || (input.offset > 0 && typeof input.revision !== 'string')
+                || (input.revision !== undefined && typeof input.revision !== 'string')
+                || typeof input.showCompleted !== 'boolean' || typeof input.completedCollapsed !== 'boolean'
+                || (input.filterSheetOpen !== undefined && typeof input.filterSheetOpen !== 'boolean')
+                || !isObjectRecord(input.filters)) {
+                return fail('INVALID_INPUT', 'A bounded Project filter view and revision for later pages are required');
+            }
+            const filters = readFilterState(input.filters);
+            if (!filters || filters.projects.length || filters.timeEstimates.length
+                || (input.filterEdit !== undefined && (!isFilterEdit(input.filterEdit)
+                    || input.filterEdit.type === 'toggleProject' || input.filterEdit.type === 'toggleTimeEstimate'))) {
+                return fail('INVALID_INPUT', 'Project and Time Estimate filters are not offered by this list');
+            }
+            const now = new Date();
+            const sheetOpen = input.filterSheetOpen === true;
+            const data = projectFilterData(input.projectId, input.showCompleted, input.completedCollapsed,
+                filters, input.filterEdit, sheetOpen, now);
+            if (!data) return fail('TASK_NOT_FOUND', 'Project not found');
+            if (input.revision !== undefined && input.revision !== data.viewRevision) {
+                return fail('STALE_REVISION', 'Project filters changed; restart paging from offset zero');
+            }
+            const result = readProjectDetail(input.projectId, input.offset, input.limit, data.viewRevision, now,
+                input.showCompleted, input.completedCollapsed, { resolved: data.resolved, sheetOpen });
+            if (!result.ok) return result;
+            const view = projectDetailView(result.value.value, result.value.cache, input.offset,
+                input.showCompleted, input.completedCollapsed);
+            const chips: NativeListChip[] = data.resolved.chips.map((chip) => ({
+                id: chip.id, label: chip.label, excluded: chip.excluded, action: { filterEdit: chip.edit },
+            }));
             return { ok: true, value: {
-                ...value,
-                items: value.items.map((item, index) => {
-                    if (item.type !== 'section') return item;
-                    const source = cache.items[input.offset + index];
-                    return { ...item, collapsible: source.type === 'section' && source.collapsible === true,
-                        collapsed: source.type === 'section' && source.collapsed === true };
-                }),
-                controls: {
-                    showCompleted: input.showCompleted,
-                    completedCollapsed: input.completedCollapsed,
-                    canToggleCompleted: !cache.readOnly,
-                    groupCompletedTasksLast: cache.groupCompletedTasksLast,
-                    label: input.showCompleted
-                        ? tFallback(translate, 'common.hideCompleted', 'Hide completed')
-                        : tFallback(translate, 'common.showCompleted', 'Show completed'),
-                },
+                ...view,
+                filters: nativeFilterView(data.resolved, data.options, data.tokens, null, translate),
+                chips,
+                filterButtonLabel: `${tFallback(translate, 'filters.label', 'Filters')}${data.resolved.activeCount ? ` · ${data.resolved.activeCount}` : ''}`,
+                empty: view.total === 0 ? data.resolved.hasActive ? {
+                    message: tFallback(translate, 'filters.noMatch', 'No tasks match these filters.'),
+                    hint: chips.slice(0, 3).map((chip) => chip.label).join(', '),
+                    actionLabel: tFallback(translate, 'filters.clear', 'Clear'),
+                    action: { filterEdit: { type: 'clear' } },
+                } : {
+                    message: tFallback(translate, 'list.noTasks', 'No tasks found'),
+                    hint: '', actionLabel: null, action: null,
+                } : null,
+            } };
+        },
+
+        getProjectDetailFilterOptions(input: {
+            projectId: string; showCompleted: boolean; completedCollapsed: boolean;
+            filters: Partial<ListFilterState>; picker: 'tokens'; query: string;
+            offset: number; limit: number; revision?: string;
+        }): NativeHostResult<NativeProjectDetailFilterOptions> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isNativeJsonWithinBytes(input)
+                || !['projectId', 'showCompleted', 'completedCollapsed', 'filters', 'picker', 'query', 'offset', 'limit'].every((key) => Object.prototype.hasOwnProperty.call(input, key))
+                || Object.keys(input).some((key) => !['projectId', 'showCompleted', 'completedCollapsed', 'filters', 'picker', 'query', 'offset', 'limit', 'revision'].includes(key))
+                || typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 500
+                || typeof input.showCompleted !== 'boolean' || typeof input.completedCollapsed !== 'boolean'
+                || !isObjectRecord(input.filters) || input.picker !== 'tokens'
+                || typeof input.query !== 'string' || input.query.length > 500
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || (input.offset > 0 && typeof input.revision !== 'string')
+                || (input.revision !== undefined && typeof input.revision !== 'string')) {
+                return fail('INVALID_INPUT', 'A bounded Project token picker and revision for later pages are required');
+            }
+            const filters = readFilterState(input.filters);
+            if (!filters || filters.projects.length || filters.timeEstimates.length) {
+                return fail('INVALID_INPUT', 'Project and Time Estimate filters are not offered by this list');
+            }
+            const data = projectFilterData(input.projectId, input.showCompleted, input.completedCollapsed,
+                filters, undefined, true, new Date());
+            if (!data) return fail('TASK_NOT_FOUND', 'Project not found');
+            const pickerRevision = JSON.stringify([data.viewRevision, input.query]);
+            if (input.revision !== undefined && input.revision !== pickerRevision) {
+                return fail('STALE_REVISION', 'Project token picker changed; restart paging from offset zero');
+            }
+            const matches = data.tokens.filter((item) => matchesPickerQuery(item.value, input.query));
+            return { ok: true, value: {
+                revision: pickerRevision, viewRevision: data.viewRevision, projectId: input.projectId,
+                picker: 'tokens', query: input.query, offset: input.offset,
+                total: matches.length, items: matches.slice(input.offset, input.offset + input.limit),
             } };
         },
 
