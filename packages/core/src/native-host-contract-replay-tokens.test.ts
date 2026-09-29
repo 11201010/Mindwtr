@@ -57,6 +57,16 @@ describe('native host replay tokens', () => {
         expect(stored('b').status).toBe('next');
     });
 
+    it.each(['required', 'optional'] as const)('the Trash selection carries its revisions only while tokens are required: %s', async (mode) => {
+        const host = await open(mode);
+        expect((await useTaskStore.getState().deleteTask('a')).success).toBe(true);
+        const view = host.getTrashView({ selected: { taskIds: ['a'], projectIds: [] }, offset: 0, limit: 10 });
+        if (!view.ok) throw new Error(view.error.message);
+        expect(view.value.selected).toEqual(mode === 'required'
+            ? { taskIds: ['a'], projectIds: [], taskRevisions: { a: taskRevisionOf(stored()) }, projectRevisions: {} }
+            : { taskIds: ['a'], projectIds: [] });
+    });
+
     it('optional: a draft save without a request UUID saves, and its retry after a failed save only saves', async () => {
         const host = await open();
         const input = { id: 'a', base: { title: 'a' }, patch: { title: 'Mine' } };

@@ -269,7 +269,7 @@ assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrent
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -2503,14 +2503,22 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
 assert.equal(ready.activationCount, 1);
 // Activation may write (core backfills a person per assignee): the store is checked against a load taken after its save.
 assert.deepEqual(ready.events.slice(ready.events.lastIndexOf('activate')), ['activate', 'load', 'flush', 'load']);
-// Receipts load before the validated load, so before activation and any replay; pruning is Kotlin's call after its replay.
-assert.equal(ready.receiptsLoadedAt, 0);
-// Replay tokens: optional for a boot without the journal flag (iOS), required for the Kotlin host's "journaled".
+// Replay tokens and durable receipts: a boot without the journal flag (iOS) keeps tokens optional and receipts in
+// memory; the Kotlin host's "journaled" requires tokens and loads the receipts before the validated load, so before
+// activation and any replay (pruning is Kotlin's call after its replay).
 assert.equal(ready.replayTokens, 'optional');
+assert.equal(ready.receiptsLoadedAt, undefined);
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
     assert.equal(journaled.replayTokens, 'required');
+    assert.equal(journaled.receiptsLoadedAt, 0);
+}
+// A revision a host leaves out ("") is none: core requires one only from a journaling host.
+for (const [method, call] of [['complete', 'completeTask({ id, taskRevision: taskRevision || undefined })'],
+    ['taskFocus', 'setTaskFocus({ id, focused, taskRevision: taskRevision || undefined })'],
+    ['projectFocus', 'setProjectFocus({ id, focused, projectRevision: projectRevision || undefined })']]) {
+    assert(hostEntry.includes(`contract.${call}`), `${method} sends no revision for ""`);
 }
 assert.deepEqual(await poll(ready, ready.MindwtrHost.pruneReceipts()), { ok: true, value: { pruned: 3 } });
 // The capture popup: every call passes Kotlin's JSON to core unchanged; the snapshot comes wrapped, null in sandbox mode.

@@ -816,6 +816,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         }, async () => { await store().deleteTask('tt-report'); await store().deleteProject('tp-home'); }, () => expect(stored('tt-report').deletedAt).toEqual(expect.any(String))],
     ] as const)('Trash %s: a replay after a restart never undoes a later change', async (_name, request, change, check) => {
         const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        // As the journaling Android host: the Trash selection carries the revisions its actions send back.
+        setNativeReplayTokens('required');
         const input = { requestId: generateUUID(), action: request(host) };
         expect(await replayAfterChange(host, recorder, (current) => current.runTrashAction(input), change)).toMatchObject(stale);
         check();
@@ -829,6 +831,8 @@ describe('native host contract: Contexts, Archive, Trash and History', () => {
         }],
     ] as const)('Trash %s: a replay after a restart deletes nothing it did not show', async (_name, request) => {
         const { host, recorder } = await openHost(fixture.trash, scenario(fixture.trash, 'timeline, summary and retention hint'));
+        // As the journaling Android host: the Trash selection carries the revisions its actions send back.
+        setNativeReplayTokens('required');
         // The request never ran: the item was restored and trashed again after the view showed it.
         const stalled = { requestId: generateUUID(), action: request(host) };
         await store().restoreTask('tt-report');

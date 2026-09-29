@@ -445,8 +445,9 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     const adapter = new ValidatedSqliteAdapter(sqlite, { rejectConcurrentWrites: true });
     // Schema setup may write only after the native host's validated checkpoint.
     setStorageAdapter(adapter);
-    // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt.
-    await loadNativeRequestReceipts(sqlite);
+    // Before the journal's replay (Kotlin, after boot): a landed request answers from its receipt. A host without
+    // a journal keeps its receipts in memory, as before.
+    if (journaled) await loadNativeRequestReceipts(sqlite);
     await adapter.getData();
     if (legacyState) await importLegacyJson(adapter, JSON.parse(legacyState) as LegacyState, legacyBackup);
     const result = await activateAndVerify(adapter, recoveryLoad);
@@ -1271,15 +1272,16 @@ globalThis.MindwtrHost = {
     capturePicker(json: string): string {
         return submit(async () => taskResult('quickCapturePicker', await contract.submitQuickCapturePickerQuery(JSON.parse(json))));
     },
+    // A revision left out ("", as iOS sends none) is no revision: core requires one only from a journaling host.
     complete(id: string, taskRevision = ''): string {
-        return submit(async () => taskResult('complete', await contract.completeTask({ id, taskRevision })));
+        return submit(async () => taskResult('complete', await contract.completeTask({ id, taskRevision: taskRevision || undefined })));
     },
     /** A target state, so an exact retry re-sends the same target. A `{ blocked }` reply wrote nothing. */
     taskFocus(id: string, focused: boolean, taskRevision = ''): string {
-        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused, taskRevision })));
+        return submit(async () => taskResult('taskFocus', await contract.setTaskFocus({ id, focused, taskRevision: taskRevision || undefined })));
     },
     projectFocus(id: string, focused: boolean, projectRevision = ''): string {
-        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused, projectRevision })));
+        return submit(async () => taskResult('projectFocus', await contract.setProjectFocus({ id, focused, projectRevision: projectRevision || undefined })));
     },
     /** `areaId` "" is no area. Core names the new project by `requestId`, so a replay finds it. */
     createProject(title: string, areaId: string, requestId: string): string {

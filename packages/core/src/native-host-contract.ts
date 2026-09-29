@@ -2713,7 +2713,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         },
 
         /** `taskRevision` is the row's: a task changed since is not written (STALE_REVISION). */
-        async setTaskFocus(input: { id: string; focused: boolean; taskRevision: string }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: string; blockedTitle: string }>> {
+        async setTaskFocus(input: { id: string; focused: boolean; taskRevision?: string }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: string; blockedTitle: string }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
             if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean' || !isRevision(input.taskRevision)) {
@@ -2751,7 +2751,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         },
 
         /** `projectRevision` is the row's: a project changed since is not written (STALE_REVISION). */
-        async setProjectFocus(input: { id: string; focused: boolean; projectRevision: string }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: '' }>> {
+        async setProjectFocus(input: { id: string; focused: boolean; projectRevision?: string }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: '' }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
             if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean' || !isRevision(input.projectRevision)) {
@@ -2783,7 +2783,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         },
 
         /** `taskRevision` is the row's: a task changed since is not completed (STALE_REVISION). */
-        async completeTask(input: { id: string; taskRevision: string }): Promise<NativeHostResult<{ id: string }>> {
+        async completeTask(input: { id: string; taskRevision?: string }): Promise<NativeHostResult<{ id: string }>> {
             const ready = readiness();
             if (!ready.ok) return ready;
             if (!input || typeof input.id !== 'string' || !input.id.trim() || !isRevision(input.taskRevision)) {
@@ -3675,7 +3675,8 @@ export type NativeTrashView = {
     total: number;
     items: NativeTrashItem[];
     /** The selection still in Trash, with each item's revision to send with restoreItems and purgeItems. */
-    selected: { taskIds: string[]; projectIds: string[]; taskRevisions: NativeRevisions; projectRevisions: NativeRevisions };
+    /** The revisions only while replay tokens are required (NativeReplayTokens). */
+    selected: { taskIds: string[]; projectIds: string[]; taskRevisions?: NativeRevisions; projectRevisions?: NativeRevisions };
     empty: ReturnType<typeof getTrashEmptyState> | null;
     labels: ReturnType<typeof getTrashRowLabels> & { done: string; clearAll: string; selectAll: string; restoreSelected: string; deleteSelected: string; selected: string };
     confirmations: { purgeItem: ListConfirmation; purgeSelection: ListConfirmation };
@@ -4372,11 +4373,13 @@ function createListViewMethods(deps: ListViewDeps) {
                             descriptionMarkdown: item.task.description ? getInlineMarkdownPreview(item.task.description) : null,
                         }
                 )),
-                selected: {
+                // The selection's revisions are what Restore and Delete forever send back; a host whose replay tokens are
+                // optional (iOS) reads the selection as before.
+                selected: replayTokensRequired() ? {
                     ...view.selected,
                     taskRevisions: taskRevisionsOf(view.selected.taskIds),
                     projectRevisions: Object.fromEntries(view.selected.projectIds.map((id) => [id, revisionOf(view.projectById.get(id)!)])),
-                },
+                } : view.selected,
                 empty: count === 0 ? getTrashEmptyState(t) : null,
                 labels: {
                     ...labels,
