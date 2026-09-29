@@ -239,8 +239,11 @@ describe('native host contract: resolveNativeEntryPoint', () => {
         expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'x'.repeat(500_001), title: null, subject: null }))).toEqual({ ...none, notice });
         expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'Body', title: 't'.repeat(100_001), subject: null }))).toEqual({ ...none, notice });
         expect(value(host.resolveNativeEntryPoint({ kind: 'createNote', name: 'n'.repeat(100_001), text: null, extraText: null }))).toEqual({ ...none, notice });
-        // A share whose route params (URI-encoded) are longer than the capture screen takes: é is six characters encoded.
-        expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'é'.repeat(20_000), title: null, subject: null }))).toEqual({ ...none, notice });
+        // The capture screen takes route params up to 500,000 characters (the popup's note limit), URI-encoded: é is six.
+        const long = value(host.resolveNativeEntryPoint({ kind: 'share', text: 'é'.repeat(20_000), title: null, subject: null }));
+        expect(long.captureModal?.params.initialValue).toHaveLength(120_000);
+        expect(value(host.openCaptureModal({ params: long.captureModal!.params })).draft.text).toBe('é'.repeat(20_000));
+        expect(value(host.resolveNativeEntryPoint({ kind: 'share', text: 'é'.repeat(90_000), title: null, subject: null }))).toEqual({ ...none, notice });
     });
 
     it('opens nothing for another scheme, and refuses malformed input', () => {

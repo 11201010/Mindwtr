@@ -133,8 +133,10 @@ const PARAM_KEYS = new Set<string>(['initialProps', 'initialValue', 'origin', 'p
 const DRAFT_KEYS = ['text', 'description', 'showHelp', 'suggestion', 'applied', 'failed'];
 const PART_KINDS = new Set<string>(['context', 'timeEstimate', 'tag']);
 
-const isParamValue = (value: unknown) => isText(value, TEXT_LIMIT)
-    || (Array.isArray(value) && value.length <= 16 && value.every((entry) => isText(entry, TEXT_LIMIT)));
+/** A route param, URI-encoded: at most the popup's note limit (a share's body rides initialProps). */
+export const CAPTURE_MODAL_PARAM_LIMIT = NOTE_LIMIT;
+const isParamValue = (value: unknown) => isText(value, CAPTURE_MODAL_PARAM_LIMIT)
+    || (Array.isArray(value) && value.length <= 16 && value.every((entry) => isText(entry, CAPTURE_MODAL_PARAM_LIMIT)));
 const readParams = (value: unknown): CaptureModalParams | null => (
     isObjectRecord(value) && Object.entries(value).every(([key, entry]) => PARAM_KEYS.has(key) && (entry === undefined || isParamValue(entry)))
         ? value as CaptureModalParams

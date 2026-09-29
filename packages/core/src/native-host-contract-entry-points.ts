@@ -28,6 +28,7 @@ import {
 } from './entry-points';
 import { DEFAULT_GLOBAL_SEARCH_FILTERS, type GlobalSearchFilterState } from './global-search-model';
 import type { CaptureModalParams } from './capture-modal-model';
+import { CAPTURE_MODAL_PARAM_LIMIT } from './native-host-contract-capture-modal';
 import { tFallback, type TranslateFn } from './i18n';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-host-contract';
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
@@ -87,7 +88,7 @@ export type NativeQuickCaptureImport =
     | { kind: 'refused'; notice: QuickCaptureNotice };
 
 const URL_LIMIT = 16_000;
-/** The capture popup's text limit (native-host-contract-quick-capture.ts), and the capture screen's for each route param. */
+/** The capture popup's text limit (native-host-contract-quick-capture.ts). */
 const TEXT_LIMIT = 100_000;
 const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]{0,31}$/;
 const isOptionalString = (value: unknown): value is string | null => value === null || typeof value === 'string';
@@ -102,8 +103,8 @@ const captureModalParams = (title: string, props: { description?: string; tags?:
     ...(Object.keys(props).length > 0 ? { initialProps: encodeURIComponent(JSON.stringify(props)) } : {}),
     ...(project ? { project: encodeURIComponent(project) } : {}),
 });
-/** Whether the capture screen takes these params: each at most its text limit, encoded. */
-const fitsCaptureModal = (params: CaptureModalParams) => Object.values(params).every((param) => typeof param === 'string' && param.length <= TEXT_LIMIT);
+/** Whether the capture screen takes these params: each at most its limit, encoded. */
+const fitsCaptureModal = (params: CaptureModalParams) => Object.values(params).every((param) => typeof param === 'string' && param.length <= CAPTURE_MODAL_PARAM_LIMIT);
 
 export function createEntryPointMethods(deps: EntryPointDeps) {
     const opened = (value: Partial<Omit<NativeEntryPoint, 'version'>>): NativeHostResult<NativeEntryPoint> => ({
