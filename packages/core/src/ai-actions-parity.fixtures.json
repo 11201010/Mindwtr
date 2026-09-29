@@ -1,0 +1,3610 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_AI_ACTIONS=1 TZ=UTC bunx vitest run components/ai-actions.parity.test.tsx",
+  "capturedAt": "2678f9a447d2736005b171510244f7a1de583b56",
+  "sourceState": "Every file under apps/ was at HEAD except the parity harnesses. No React Native code imported core's AI request rules yet.",
+  "device": "The device is stubbed: Android; the AI provider answers each method from the scenario's queue (none queued: it fails); the secure store holds the scenario's keys and AsyncStorage starts empty; the editor host holds the draft, checklist and dialog as the task editor does; Process Inbox and the Weekly Review run their real controllers over the real core store.",
+  "recaptured": [
+   {
+    "base": "0ff13b46c",
+    "command": "cd apps/mobile && MINDWTR_DUMP_AI_ACTIONS=<file> TZ=UTC bunx vitest run components/ai-actions.parity.test.tsx, with the React Native fixes for AI error text in place; only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "editor: Clarify offers three options and the suggestion, step 7: the failure alert shows [redacted] where the provider echoed the API key.",
+     "review: a missing key, step 1: the error is the translated ai.missingKeyBody instead of hard-coded English."
+    ]
+   }
+  ]
+ },
+ "now": "2026-09-23T14:00:00.000Z",
+ "tasks": [
+  {
+   "id": "t-dentist",
+   "title": "Book the dentist",
+   "status": "next",
+   "contexts": [
+    "@phone"
+   ],
+   "tags": [
+    "#health"
+   ],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z",
+   "dueDate": "2026-09-30",
+   "reviewAt": "2026-09-26"
+  },
+  {
+   "id": "t-call",
+   "title": "Call the bank",
+   "status": "next",
+   "contexts": [
+    "@phone",
+    "@errands"
+   ],
+   "tags": [
+    "#money"
+   ],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z"
+  },
+  {
+   "id": "t-launch",
+   "title": "Plan the launch party",
+   "status": "next",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z",
+   "projectId": "p-launch",
+   "description": "Venue, food and invites",
+   "startTime": "2026-09-24T09:00"
+  },
+  {
+   "id": "t-flyers",
+   "title": "Print flyers",
+   "status": "waiting",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z",
+   "projectId": "p-launch"
+  },
+  {
+   "id": "t-list",
+   "title": "Pack for the trip",
+   "status": "next",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z",
+   "taskMode": "list",
+   "checklist": [
+    {
+     "id": "c1",
+     "title": "Passport",
+     "isCompleted": false
+    }
+   ]
+  },
+  {
+   "id": "t-stale",
+   "title": "Fix bike",
+   "status": "next",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-08-01T12:00:00.000Z"
+  },
+  {
+   "id": "t-stale-2",
+   "title": "Hear back from vendor",
+   "status": "waiting",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-08-20T12:00:00.000Z"
+  },
+  {
+   "id": "i-idea",
+   "title": "Birthday gift for Sam",
+   "status": "inbox",
+   "contexts": [
+    "@home"
+   ],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z"
+  },
+  {
+   "id": "i-note",
+   "title": "Look into solar panels",
+   "status": "inbox",
+   "contexts": [],
+   "tags": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z"
+  }
+ ],
+ "projects": [
+  {
+   "id": "p-launch",
+   "title": "Launch",
+   "status": "active",
+   "color": "#2563eb",
+   "order": 0,
+   "tagIds": [],
+   "createdAt": "2026-09-01T12:00:00.000Z",
+   "updatedAt": "2026-09-20T12:00:00.000Z"
+  },
+  {
+   "id": "p-stale",
+   "title": "Old project",
+   "status": "active",
+   "color": "#94a3b8",
+   "order": 1,
+   "tagIds": [],
+   "createdAt": "2026-07-01T12:00:00.000Z",
+   "updatedAt": "2026-07-01T12:00:00.000Z"
+  }
+ ],
+ "settings": {
+  "off": {},
+  "openai": {
+   "ai": {
+    "enabled": true,
+    "provider": "openai",
+    "model": "gpt-5.6",
+    "requestTimeoutSeconds": 60
+   }
+  },
+  "custom": {
+   "ai": {
+    "enabled": true,
+    "provider": "openai",
+    "baseUrl": "http://10.0.0.5:11434/v1",
+    "model": "qwen3:8b",
+    "copilotModel": "qwen3:1.7b",
+    "openAIExtraBodyParams": {
+     "thinking": {
+      "type": "disabled"
+     }
+    }
+   }
+  },
+  "gemini": {
+   "ai": {
+    "enabled": true,
+    "provider": "gemini",
+    "thinkingBudget": 256
+   }
+  },
+  "anthropic": {
+   "ai": {
+    "enabled": true,
+    "provider": "anthropic",
+    "thinkingBudget": 2048
+   }
+  },
+  "noEstimates": {
+   "ai": {
+    "enabled": true,
+    "provider": "openai"
+   },
+   "features": {
+    "timeEstimates": false
+   }
+  }
+ },
+ "scenarios": [
+  {
+   "name": "editor: copilot suggestions, one part and then all",
+   "screen": "editor",
+   "settings": "openai",
+   "taskId": "t-dentist",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {
+        "context": "@calls",
+        "timeEstimate": "30min",
+        "tags": [
+         "#health",
+         "#errand"
+        ]
+       }
+      },
+      {
+       "value": {}
+      },
+      {
+       "error": "HTTP 500"
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "wait"
+    ],
+    [
+     "chip",
+     "@calls"
+    ],
+    [
+     "applyAll"
+    ],
+    [
+     "description",
+     "Ask about the cleaning"
+    ],
+    [
+     "wait"
+    ],
+    [
+     "title",
+     "Bo"
+    ],
+    [
+     "wait"
+    ],
+    [
+     "title",
+     "Book the dentist again"
+    ],
+    [
+     "wait"
+    ],
+    [
+     "hide"
+    ]
+   ]
+  },
+  {
+   "name": "editor: copilot with time estimates off",
+   "screen": "editor",
+   "settings": "noEstimates",
+   "taskId": "t-call",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {
+        "timeEstimate": "5min"
+       }
+      },
+      {
+       "value": {
+        "context": "@phone",
+        "timeEstimate": "5min"
+       }
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "wait"
+    ],
+    [
+     "title",
+     "Call the bank today"
+    ],
+    [
+     "wait"
+    ],
+    [
+     "applyAll"
+    ]
+   ]
+  },
+  {
+   "name": "editor: a provider that needs a key it lacks asks nothing",
+   "screen": "editor",
+   "settings": "gemini",
+   "taskId": "t-dentist",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    }
+   },
+   "actions": [
+    [
+     "wait"
+    ],
+    [
+     "clarify"
+    ],
+    [
+     "breakdown"
+    ]
+   ]
+  },
+  {
+   "name": "editor: a custom endpoint needs no key",
+   "screen": "editor",
+   "settings": "custom",
+   "taskId": "t-dentist",
+   "device": {
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {
+        "tags": [
+         "#health"
+        ]
+       }
+      }
+     ],
+     "clarifyTask": [
+      {
+       "value": {
+        "question": "What is the very next step?",
+        "options": [
+         {
+          "label": "Call",
+          "action": "Call the dentist to book a cleaning"
+         },
+         {
+          "label": "Online",
+          "action": "Book a cleaning on the dentist website"
+         },
+         {
+          "label": "Ask",
+          "action": "Ask Sam for a dentist recommendation"
+         },
+         {
+          "label": "Wait",
+          "action": "Wait until next month"
+         }
+        ],
+        "suggestedAction": {
+         "title": "Call the dentist on Monday",
+         "context": "@calls",
+         "timeEstimate": "15min"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "wait"
+    ],
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "k:common.cancel"
+    ]
+   ]
+  },
+  {
+   "name": "editor: AI off",
+   "screen": "editor",
+   "settings": "off",
+   "taskId": "t-dentist",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    }
+   },
+   "actions": [
+    [
+     "wait"
+    ],
+    [
+     "clarify"
+    ],
+    [
+     "breakdown"
+    ]
+   ]
+  },
+  {
+   "name": "editor: Clarify offers three options and the suggestion",
+   "screen": "editor",
+   "settings": "openai",
+   "taskId": "t-dentist",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {}
+      },
+      {
+       "value": {}
+      },
+      {
+       "value": {}
+      }
+     ],
+     "clarifyTask": [
+      {
+       "value": {
+        "question": "What is the very next step?",
+        "options": [
+         {
+          "label": "Call",
+          "action": "Call the dentist to book a cleaning"
+         },
+         {
+          "label": "Online",
+          "action": "Book a cleaning on the dentist website"
+         },
+         {
+          "label": "Ask",
+          "action": "Ask Sam for a dentist recommendation"
+         },
+         {
+          "label": "Wait",
+          "action": "Wait until next month"
+         }
+        ],
+        "suggestedAction": {
+         "title": "Call the dentist on Monday",
+         "context": "@calls",
+         "timeEstimate": "15min"
+        }
+       }
+      },
+      {
+       "value": {
+        "question": "What is the very next step?",
+        "options": [
+         {
+          "label": "Call",
+          "action": "Call the dentist to book a cleaning"
+         },
+         {
+          "label": "Online",
+          "action": "Book a cleaning on the dentist website"
+         },
+         {
+          "label": "Ask",
+          "action": "Ask Sam for a dentist recommendation"
+         },
+         {
+          "label": "Wait",
+          "action": "Wait until next month"
+         }
+        ],
+        "suggestedAction": {
+         "title": "Call the dentist on Monday",
+         "context": "@calls",
+         "timeEstimate": "15min"
+        }
+       }
+      },
+      {
+       "value": {
+        "question": "",
+        "options": []
+       }
+      },
+      {
+       "error": "OpenAI API error: 401 Incorrect API key provided: sk-open-111"
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "Online"
+    ],
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "k:ai.applySuggestion"
+    ],
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "k:common.cancel"
+    ],
+    [
+     "clarify"
+    ]
+   ]
+  },
+  {
+   "name": "editor: Clarify in a project sends the project context",
+   "screen": "editor",
+   "settings": "anthropic",
+   "taskId": "t-launch",
+   "device": {
+    "language": "de",
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {}
+      }
+     ],
+     "clarifyTask": [
+      {
+       "value": {
+        "question": "What is the very next step?",
+        "options": [
+         {
+          "label": "Call",
+          "action": "Call the dentist to book a cleaning"
+         },
+         {
+          "label": "Online",
+          "action": "Book a cleaning on the dentist website"
+         },
+         {
+          "label": "Ask",
+          "action": "Ask Sam for a dentist recommendation"
+         },
+         {
+          "label": "Wait",
+          "action": "Wait until next month"
+         }
+        ],
+        "suggestedAction": {
+         "title": "Call the dentist on Monday",
+         "context": "@calls",
+         "timeEstimate": "15min"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "k:ai.applySuggestion"
+    ]
+   ]
+  },
+  {
+   "name": "editor: Break down adds at most eight steps",
+   "screen": "editor",
+   "settings": "openai",
+   "taskId": "t-list",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {}
+      },
+      {
+       "value": {}
+      }
+     ],
+     "breakDownTask": [
+      {
+       "value": {
+        "steps": [
+         "  Buy adapter ",
+         "",
+         "Charge phone",
+         "Print tickets",
+         "Pack shoes",
+         "Pack shirts",
+         "   ",
+         "Water plants",
+         "Lock windows",
+         "Take out trash",
+         "Call mum"
+        ]
+       }
+      },
+      {
+       "value": {
+        "steps": [
+         "   "
+        ]
+       }
+      },
+      {
+       "value": {
+        "steps": [
+         "Book taxi"
+        ]
+       }
+      },
+      {
+       "error": "timeout"
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "breakdown"
+    ],
+    [
+     "modal",
+     "k:ai.addSteps"
+    ],
+    [
+     "breakdown"
+    ],
+    [
+     "breakdown"
+    ],
+    [
+     "modal",
+     "k:common.cancel"
+    ],
+    [
+     "breakdown"
+    ]
+   ]
+  },
+  {
+   "name": "editor: Break down in a project with notes",
+   "screen": "editor",
+   "settings": "openai",
+   "taskId": "t-launch",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "predictMetadata": [
+      {
+       "value": {}
+      }
+     ],
+     "breakDownTask": [
+      {
+       "value": {
+        "steps": [
+         "Pick a venue",
+         "Order food"
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "breakdown"
+    ],
+    [
+     "modal",
+     "k:ai.addSteps"
+    ]
+   ]
+  },
+  {
+   "name": "inbox: Clarify, then an option and the suggestion",
+   "screen": "inbox",
+   "settings": "openai",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "clarifyTask": [
+      {
+       "value": {
+        "question": "What is the very next step?",
+        "options": [
+         {
+          "label": "Call",
+          "action": "Call the dentist to book a cleaning"
+         },
+         {
+          "label": "Online",
+          "action": "Book a cleaning on the dentist website"
+         },
+         {
+          "label": "Ask",
+          "action": "Ask Sam for a dentist recommendation"
+         },
+         {
+          "label": "Wait",
+          "action": "Wait until next month"
+         }
+        ],
+        "suggestedAction": {
+         "title": "Call the dentist on Monday",
+         "context": "@calls",
+         "timeEstimate": "15min"
+        }
+       }
+      },
+      {
+       "value": {
+        "question": "What is the very next step?",
+        "options": [
+         {
+          "label": "Call",
+          "action": "Call the dentist to book a cleaning"
+         },
+         {
+          "label": "Online",
+          "action": "Book a cleaning on the dentist website"
+         },
+         {
+          "label": "Ask",
+          "action": "Ask Sam for a dentist recommendation"
+         },
+         {
+          "label": "Wait",
+          "action": "Wait until next month"
+         }
+        ],
+        "suggestedAction": {
+         "title": "Call the dentist on Monday",
+         "context": "@calls",
+         "timeEstimate": "15min"
+        }
+       }
+      },
+      {
+       "error": "Network request failed"
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "Ask"
+    ],
+    [
+     "title",
+     "Gift for Sam"
+    ],
+    [
+     "clarify"
+    ],
+    [
+     "modal",
+     "k:ai.applySuggestion"
+    ],
+    [
+     "clarify"
+    ]
+   ]
+  },
+  {
+   "name": "inbox: a missing key opens a toast",
+   "screen": "inbox",
+   "settings": "gemini",
+   "device": {},
+   "actions": [
+    [
+     "clarify"
+    ]
+   ]
+  },
+  {
+   "name": "review: analysis, choices and apply",
+   "screen": "review",
+   "settings": "openai",
+   "device": {
+    "secrets": {
+     "mindwtr-ai-key_openai": "sk-open-111",
+     "mindwtr-ai-key_anthropic": "sk-ant-222"
+    },
+    "queues": {
+     "analyzeReview": [
+      {
+       "value": {
+        "suggestions": [
+         {
+          "id": "t-stale",
+          "action": "someday",
+          "reason": "Untouched for weeks"
+         },
+         {
+          "id": "t-stale-2",
+          "action": "archive",
+          "reason": "Vendor went quiet"
+         },
+         {
+          "id": "project:p-stale",
+          "action": "archive",
+          "reason": "Old project"
+         },
+         {
+          "id": "t-dentist",
+          "action": "someday",
+          "reason": "Not a stale item"
+         },
+         {
+          "id": "unknown",
+          "action": "keep",
+          "reason": "Not offered"
+         }
+        ]
+       }
+      },
+      {
+       "error": "Anthropic API error: 529 overloaded"
+      }
+     ]
+    }
+   },
+   "actions": [
+    [
+     "run"
+    ],
+    [
+     "toggle",
+     "t-stale-2"
+    ],
+    [
+     "toggle",
+     "t-stale-2"
+    ],
+    [
+     "toggle",
+     "t-stale-2"
+    ],
+    [
+     "apply"
+    ],
+    [
+     "run"
+    ]
+   ]
+  },
+  {
+   "name": "review: a missing key",
+   "screen": "review",
+   "settings": "gemini",
+   "device": {},
+   "actions": [
+    [
+     "run"
+    ]
+   ]
+  }
+ ],
+ "observations": {
+  "editor: copilot suggestions, one part and then all": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [
+     {
+      "kind": "context",
+      "value": "@calls"
+     },
+     {
+      "kind": "timeEstimate",
+      "value": "30min"
+     },
+     {
+      "kind": "tag",
+      "value": "#health"
+     },
+     {
+      "kind": "tag",
+      "value": "#errand"
+     }
+    ],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6-luna",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book the dentist",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "tags": [
+        "#health",
+        "#money"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [
+     {
+      "kind": "timeEstimate",
+      "value": "30min"
+     },
+     {
+      "kind": "tag",
+      "value": "#health"
+     },
+     {
+      "kind": "tag",
+      "value": "#errand"
+     }
+    ],
+    "applied": {
+     "context": "@calls",
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone, @calls",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6-luna",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book the dentist\nAsk about the cleaning",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone",
+        "@calls"
+       ],
+       "tags": [
+        "#health",
+        "#money",
+        "#errand"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Bo",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Bo",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6-luna",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Bo\nAsk about the cleaning",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone",
+        "@calls"
+       ],
+       "tags": [
+        "#health",
+        "#money",
+        "#errand"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Book the dentist again",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@calls",
+     "estimate": "30min",
+     "tags": [
+      "#health",
+      "#errand"
+     ]
+    },
+    "draft": {
+     "title": "Book the dentist again",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6-luna",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book the dentist again\nAsk about the cleaning",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone",
+        "@calls"
+       ],
+       "tags": [
+        "#health",
+        "#money",
+        "#errand"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist again",
+     "contexts": "@phone, @calls",
+     "tags": "#health, #errand",
+     "timeEstimate": "30min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: copilot with time estimates off": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the bank",
+     "contexts": "@phone, @errands",
+     "tags": "#money",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the bank",
+     "contexts": "@phone, @errands",
+     "tags": "#money",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6-luna",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 30000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Call the bank",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "tags": [
+        "#health",
+        "#money"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the bank today",
+     "contexts": "@phone, @errands",
+     "tags": "#money",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [
+     {
+      "kind": "context",
+      "value": "@phone"
+     }
+    ],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the bank today",
+     "contexts": "@phone, @errands",
+     "tags": "#money",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6-luna",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 30000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Call the bank today",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "tags": [
+        "#health",
+        "#money"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": "@phone",
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the bank today",
+     "contexts": "@phone, @errands",
+     "tags": "#money",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: a provider that needs a key it lacks asks nothing": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [
+     [
+      "API key required",
+      "Add your API key in Settings → AI assistant."
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [
+     [
+      "API key required",
+      "Add your API key in Settings → AI assistant."
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: a custom endpoint needs no key": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [
+     {
+      "kind": "tag",
+      "value": "#health"
+     }
+    ],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "predictMetadata",
+      {
+       "provider": "openai",
+       "apiKey": "",
+       "model": "qwen3:1.7b",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 30000,
+       "endpoint": "http://10.0.0.5:11434/v1/chat/completions",
+       "extraBodyParams": {
+        "thinking": {
+         "type": "disabled"
+        }
+       },
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book the dentist",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "tags": [
+        "#health",
+        "#money"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "What is the very next step?",
+     "message": null,
+     "actions": [
+      [
+       "Call",
+       null
+      ],
+      [
+       "Online",
+       null
+      ],
+      [
+       "Ask",
+       null
+      ],
+      [
+       "Use suggestion",
+       "primary"
+      ],
+      [
+       "Cancel",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [
+     {
+      "kind": "tag",
+      "value": "#health"
+     }
+    ],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "",
+       "model": "qwen3:8b",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 30000,
+       "endpoint": "http://10.0.0.5:11434/v1/chat/completions",
+       "extraBodyParams": {
+        "thinking": {
+         "type": "disabled"
+        }
+       },
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book the dentist",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "startTime": "<undefined>",
+       "dueDate": "2026-09-30",
+       "reviewAt": "2026-09-26"
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [
+     {
+      "kind": "tag",
+      "value": "#health"
+     }
+    ],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: AI off": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [
+     [
+      "AI assistant is off",
+      "Enable AI in Settings to use this feature."
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [
+     [
+      "AI assistant is off",
+      "Enable AI in Settings to use this feature."
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: Clarify offers three options and the suggestion": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "What is the very next step?",
+     "message": null,
+     "actions": [
+      [
+       "Call",
+       null
+      ],
+      [
+       "Online",
+       null
+      ],
+      [
+       "Ask",
+       null
+      ],
+      [
+       "Use suggestion",
+       "primary"
+      ],
+      [
+       "Cancel",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book the dentist",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book the dentist",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "startTime": "<undefined>",
+       "dueDate": "2026-09-30",
+       "reviewAt": "2026-09-26"
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book a cleaning on the dentist website",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "What is the very next step?",
+     "message": null,
+     "actions": [
+      [
+       "Call",
+       null
+      ],
+      [
+       "Online",
+       null
+      ],
+      [
+       "Ask",
+       null
+      ],
+      [
+       "Use suggestion",
+       "primary"
+      ],
+      [
+       "Cancel",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Book a cleaning on the dentist website",
+     "contexts": "@phone",
+     "tags": "#health",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Book a cleaning on the dentist website",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "startTime": "<undefined>",
+       "dueDate": "2026-09-30",
+       "reviewAt": "2026-09-26"
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the dentist on Monday",
+     "contexts": "@phone, @calls",
+     "tags": "#health",
+     "timeEstimate": "15min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "AI clarify",
+     "message": null,
+     "actions": [
+      [
+       "Cancel",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the dentist on Monday",
+     "contexts": "@phone, @calls",
+     "tags": "#health",
+     "timeEstimate": "15min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Call the dentist on Monday",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone",
+        "@calls"
+       ],
+       "startTime": "<undefined>",
+       "dueDate": "2026-09-30",
+       "reviewAt": "2026-09-26"
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the dentist on Monday",
+     "contexts": "@phone, @calls",
+     "tags": "#health",
+     "timeEstimate": "15min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the dentist on Monday",
+     "contexts": "@phone, @calls",
+     "tags": "#health",
+     "timeEstimate": "15min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Call the dentist on Monday",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone",
+        "@calls"
+       ],
+       "startTime": "<undefined>",
+       "dueDate": "2026-09-30",
+       "reviewAt": "2026-09-26"
+      }
+     ]
+    ],
+    "alerts": [
+     [
+      "AI request failed",
+      "Please try again.\n\nOpenAI API error: 401 Incorrect API key provided: [redacted]"
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: Clarify in a project sends the project context": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Plan the launch party",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "What is the very next step?",
+     "message": null,
+     "actions": [
+      [
+       "Call",
+       null
+      ],
+      [
+       "Online",
+       null
+      ],
+      [
+       "Ask",
+       null
+      ],
+      [
+       "Vorschläge benutzen",
+       "primary"
+      ],
+      [
+       "Abbrechen",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Plan the launch party",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "anthropic",
+       "apiKey": "sk-ant-222",
+       "model": "claude-sonnet-5",
+       "reasoningEffort": "low",
+       "thinkingBudget": 2048,
+       "timeoutMs": 30000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "de",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Plan the launch party",
+       "contexts": [
+        "@errands",
+        "@home",
+        "@phone"
+       ],
+       "startTime": "2026-09-24T09:00",
+       "dueDate": "<undefined>",
+       "reviewAt": "<undefined>",
+       "projectTitle": "Launch",
+       "projectTasks": [
+        "Print flyers (waiting)"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Call the dentist on Monday",
+     "contexts": "@calls",
+     "tags": "",
+     "timeEstimate": "15min",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: Break down adds at most eight steps": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ]
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "Suggested steps",
+     "message": "1. Buy adapter\n2. Charge phone\n3. Print tickets\n4. Pack shoes\n5. Pack shirts\n6. Water plants\n7. Lock windows\n8. Take out trash",
+     "actions": [
+      [
+       "Cancel",
+       "secondary"
+      ],
+      [
+       "Add steps",
+       "primary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ]
+    ],
+    "calls": [
+     [
+      "ai",
+      "breakDownTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Pack for the trip",
+       "description": ""
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ],
+     [
+      "Buy adapter",
+      false
+     ],
+     [
+      "Charge phone",
+      false
+     ],
+     [
+      "Print tickets",
+      false
+     ],
+     [
+      "Pack shoes",
+      false
+     ],
+     [
+      "Pack shirts",
+      false
+     ],
+     [
+      "Water plants",
+      false
+     ],
+     [
+      "Lock windows",
+      false
+     ],
+     [
+      "Take out trash",
+      false
+     ]
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ],
+     [
+      "Buy adapter",
+      false
+     ],
+     [
+      "Charge phone",
+      false
+     ],
+     [
+      "Print tickets",
+      false
+     ],
+     [
+      "Pack shoes",
+      false
+     ],
+     [
+      "Pack shirts",
+      false
+     ],
+     [
+      "Water plants",
+      false
+     ],
+     [
+      "Lock windows",
+      false
+     ],
+     [
+      "Take out trash",
+      false
+     ]
+    ],
+    "calls": [
+     [
+      "ai",
+      "breakDownTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Pack for the trip",
+       "description": ""
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "Suggested steps",
+     "message": "1. Book taxi",
+     "actions": [
+      [
+       "Cancel",
+       "secondary"
+      ],
+      [
+       "Add steps",
+       "primary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ],
+     [
+      "Buy adapter",
+      false
+     ],
+     [
+      "Charge phone",
+      false
+     ],
+     [
+      "Print tickets",
+      false
+     ],
+     [
+      "Pack shoes",
+      false
+     ],
+     [
+      "Pack shirts",
+      false
+     ],
+     [
+      "Water plants",
+      false
+     ],
+     [
+      "Lock windows",
+      false
+     ],
+     [
+      "Take out trash",
+      false
+     ]
+    ],
+    "calls": [
+     [
+      "ai",
+      "breakDownTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Pack for the trip",
+       "description": ""
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ],
+     [
+      "Buy adapter",
+      false
+     ],
+     [
+      "Charge phone",
+      false
+     ],
+     [
+      "Print tickets",
+      false
+     ],
+     [
+      "Pack shoes",
+      false
+     ],
+     [
+      "Pack shirts",
+      false
+     ],
+     [
+      "Water plants",
+      false
+     ],
+     [
+      "Lock windows",
+      false
+     ],
+     [
+      "Take out trash",
+      false
+     ]
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Pack for the trip",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Passport",
+      false
+     ],
+     [
+      "Buy adapter",
+      false
+     ],
+     [
+      "Charge phone",
+      false
+     ],
+     [
+      "Print tickets",
+      false
+     ],
+     [
+      "Pack shoes",
+      false
+     ],
+     [
+      "Pack shirts",
+      false
+     ],
+     [
+      "Water plants",
+      false
+     ],
+     [
+      "Lock windows",
+      false
+     ],
+     [
+      "Take out trash",
+      false
+     ]
+    ],
+    "calls": [
+     [
+      "ai",
+      "breakDownTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Pack for the trip",
+       "description": ""
+      }
+     ]
+    ],
+    "alerts": [
+     [
+      "AI request failed",
+      "Please try again.\n\ntimeout"
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "editor: Break down in a project with notes": [
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Plan the launch party",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": {
+     "title": "Suggested steps",
+     "message": "1. Pick a venue\n2. Order food",
+     "actions": [
+      [
+       "Cancel",
+       "secondary"
+      ],
+      [
+       "Add steps",
+       "primary"
+      ]
+     ]
+    },
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Plan the launch party",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [],
+    "calls": [
+     [
+      "ai",
+      "breakDownTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Plan the launch party",
+       "description": "Venue, food and invites",
+       "projectTitle": "Launch",
+       "projectTasks": [
+        "Print flyers (waiting)"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "modal": null,
+    "working": false,
+    "parts": [],
+    "applied": {
+     "context": null,
+     "estimate": null,
+     "tags": []
+    },
+    "draft": {
+     "title": "Plan the launch party",
+     "contexts": "",
+     "tags": "",
+     "timeEstimate": "",
+     "status": "next"
+    },
+    "checklist": [
+     [
+      "Pick a venue",
+      false
+     ],
+     [
+      "Order food",
+      false
+     ]
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "inbox: Clarify, then an option and the suggestion": [
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Birthday gift for Sam",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": {
+     "title": "What is the very next step?",
+     "message": null,
+     "actions": [
+      [
+       "Call",
+       null
+      ],
+      [
+       "Online",
+       null
+      ],
+      [
+       "Ask",
+       null
+      ],
+      [
+       "Use suggestion",
+       "primary"
+      ],
+      [
+       "Cancel",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "title": "Birthday gift for Sam",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Birthday gift for Sam",
+       "contexts": [
+        "@phone",
+        "@errands",
+        "@home"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Ask Sam for a dentist recommendation",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Gift for Sam",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": {
+     "title": "What is the very next step?",
+     "message": null,
+     "actions": [
+      [
+       "Call",
+       null
+      ],
+      [
+       "Online",
+       null
+      ],
+      [
+       "Ask",
+       null
+      ],
+      [
+       "Use suggestion",
+       "primary"
+      ],
+      [
+       "Cancel",
+       "secondary"
+      ]
+     ]
+    },
+    "working": false,
+    "title": "Gift for Sam",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Gift for Sam",
+       "contexts": [
+        "@phone",
+        "@errands",
+        "@home"
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Call the dentist on Monday",
+    "contexts": [
+     "@home",
+     "@calls"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Call the dentist on Monday",
+    "contexts": [
+     "@home",
+     "@calls"
+    ],
+    "calls": [
+     [
+      "ai",
+      "clarifyTask",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "title": "Call the dentist on Monday",
+       "contexts": [
+        "@phone",
+        "@errands",
+        "@home",
+        "@calls"
+       ]
+      }
+     ]
+    ],
+    "alerts": [
+     [
+      "AI request failed",
+      "Please try again.\n\nNetwork request failed"
+     ]
+    ],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "inbox: a missing key opens a toast": [
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Birthday gift for Sam",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "taskId": "i-idea",
+    "modal": null,
+    "working": false,
+    "title": "Birthday gift for Sam",
+    "contexts": [
+     "@home"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [
+     [
+      "warning",
+      "AI request failed",
+      "Add your API key in Settings → AI assistant.",
+      "Open",
+      5200
+     ]
+    ],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "review: analysis, choices and apply": [
+   {
+    "error": null,
+    "loading": false,
+    "ran": false,
+    "suggestions": [],
+    "selected": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "error": null,
+    "loading": false,
+    "ran": true,
+    "suggestions": [
+     [
+      "t-stale",
+      "someday",
+      "Untouched for weeks",
+      "Fix bike"
+     ],
+     [
+      "t-stale-2",
+      "archive",
+      "Vendor went quiet",
+      "Hear back from vendor"
+     ],
+     [
+      "project:p-stale",
+      "archive",
+      "Old project",
+      "Old project"
+     ]
+    ],
+    "selected": [
+     "t-stale",
+     "t-stale-2"
+    ],
+    "calls": [
+     [
+      "ai",
+      "analyzeReview",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "items": [
+        {
+         "id": "project:p-stale",
+         "title": "Old project",
+         "daysStale": 85,
+         "status": "project",
+         "dueDate": "<undefined>",
+         "reviewAt": "<undefined>"
+        },
+        {
+         "id": "t-stale",
+         "title": "Fix bike",
+         "daysStale": 23,
+         "status": "next",
+         "startTime": "<undefined>",
+         "dueDate": "<undefined>",
+         "reviewAt": "<undefined>"
+        },
+        {
+         "id": "t-stale-2",
+         "title": "Hear back from vendor",
+         "daysStale": 23,
+         "status": "waiting",
+         "startTime": "<undefined>",
+         "dueDate": "<undefined>",
+         "reviewAt": "<undefined>"
+        }
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "error": null,
+    "loading": false,
+    "ran": true,
+    "suggestions": [
+     [
+      "t-stale",
+      "someday",
+      "Untouched for weeks",
+      "Fix bike"
+     ],
+     [
+      "t-stale-2",
+      "archive",
+      "Vendor went quiet",
+      "Hear back from vendor"
+     ],
+     [
+      "project:p-stale",
+      "archive",
+      "Old project",
+      "Old project"
+     ]
+    ],
+    "selected": [
+     "t-stale"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "error": null,
+    "loading": false,
+    "ran": true,
+    "suggestions": [
+     [
+      "t-stale",
+      "someday",
+      "Untouched for weeks",
+      "Fix bike"
+     ],
+     [
+      "t-stale-2",
+      "archive",
+      "Vendor went quiet",
+      "Hear back from vendor"
+     ],
+     [
+      "project:p-stale",
+      "archive",
+      "Old project",
+      "Old project"
+     ]
+    ],
+    "selected": [
+     "t-stale",
+     "t-stale-2"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "error": null,
+    "loading": false,
+    "ran": true,
+    "suggestions": [
+     [
+      "t-stale",
+      "someday",
+      "Untouched for weeks",
+      "Fix bike"
+     ],
+     [
+      "t-stale-2",
+      "archive",
+      "Vendor went quiet",
+      "Hear back from vendor"
+     ],
+     [
+      "project:p-stale",
+      "archive",
+      "Old project",
+      "Old project"
+     ]
+    ],
+    "selected": [
+     "t-stale"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "error": null,
+    "loading": false,
+    "ran": true,
+    "suggestions": [
+     [
+      "t-stale",
+      "someday",
+      "Untouched for weeks",
+      "Fix bike"
+     ],
+     [
+      "t-stale-2",
+      "archive",
+      "Vendor went quiet",
+      "Hear back from vendor"
+     ],
+     [
+      "project:p-stale",
+      "archive",
+      "Old project",
+      "Old project"
+     ]
+    ],
+    "selected": [
+     "t-stale"
+    ],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [
+     [
+      "batchUpdateTasks",
+      [
+       {
+        "id": "t-stale",
+        "updates": {
+         "status": "someday"
+        }
+       }
+      ]
+     ]
+    ],
+    "routes": []
+   },
+   {
+    "error": "Anthropic API error: 529 overloaded",
+    "loading": false,
+    "ran": true,
+    "suggestions": [
+     [
+      "t-stale",
+      "someday",
+      "Untouched for weeks",
+      "Fix bike"
+     ],
+     [
+      "t-stale-2",
+      "archive",
+      "Vendor went quiet",
+      "Hear back from vendor"
+     ],
+     [
+      "project:p-stale",
+      "archive",
+      "Old project",
+      "Old project"
+     ]
+    ],
+    "selected": [
+     "t-stale"
+    ],
+    "calls": [
+     [
+      "ai",
+      "analyzeReview",
+      {
+       "provider": "openai",
+       "apiKey": "sk-open-111",
+       "model": "gpt-5.6",
+       "reasoningEffort": "low",
+       "thinkingBudget": "<undefined>",
+       "timeoutMs": 60000,
+       "endpoint": "<undefined>",
+       "extraBodyParams": "<undefined>",
+       "language": "en",
+       "onRequestStop": "function"
+      },
+      {
+       "items": [
+        {
+         "id": "project:p-stale",
+         "title": "Old project",
+         "daysStale": 85,
+         "status": "project",
+         "dueDate": "<undefined>",
+         "reviewAt": "<undefined>"
+        },
+        {
+         "id": "t-stale-2",
+         "title": "Hear back from vendor",
+         "daysStale": 23,
+         "status": "waiting",
+         "startTime": "<undefined>",
+         "dueDate": "<undefined>",
+         "reviewAt": "<undefined>"
+        }
+       ]
+      }
+     ]
+    ],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ],
+  "review: a missing key": [
+   {
+    "error": null,
+    "loading": false,
+    "ran": false,
+    "suggestions": [],
+    "selected": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   },
+   {
+    "error": "Add your API key in Settings → AI assistant.",
+    "loading": false,
+    "ran": true,
+    "suggestions": [],
+    "selected": [],
+    "calls": [],
+    "alerts": [],
+    "toasts": [],
+    "writes": [],
+    "routes": []
+   }
+  ]
+ }
+}

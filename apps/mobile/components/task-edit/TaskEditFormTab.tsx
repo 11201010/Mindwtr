@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Type } from 'lucide-react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { countTaskEditorFilledFields, parseRRuleString, tFallback, type Attachment, type Task, type TaskEditorFieldId, type TaskEditorSectionId, type TimeEstimate, type ViewSectionDefinition } from '@mindwtr/core';
+import { formatTaskCopilotApplied } from '@mindwtr/core/ai-task-actions';
 import type { TaskDraft } from '@mindwtr/core/task-draft';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { CollapsibleSection } from './CollapsibleSection';
@@ -487,10 +488,7 @@ function TaskEditFormTabComponent({
                                     accessible={false}
                                 />
                                 <Text style={[styles.copilotText, { color: tc.text, flexShrink: 1 }]}>
-                                    {t('copilot.applied')}{' '}
-                                    {copilotContext ? `${copilotContext} ` : ''}
-                                    {timeEstimatesEnabled && copilotEstimate ? `${copilotEstimate}` : ''}
-                                    {copilotTags.length ? copilotTags.join(' ') : ''}
+                                    {formatTaskCopilotApplied(t, { context: copilotContext, timeEstimate: copilotEstimate, tags: copilotTags }, timeEstimatesEnabled)}
                                 </Text>
                             </View>
                         </View>

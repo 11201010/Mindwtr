@@ -6,7 +6,6 @@ import {
     buildReviewSteps,
     buildReviewSuggestionUpdates,
     createAIProvider,
-    filterReviewSuggestions,
     getExternalCalendarDaySummaries,
     getReviewCalendarRange,
     getReviewStepRail,
@@ -32,6 +31,7 @@ import {
     type WeeklyReviewStepId,
     useTaskStore,
 } from '@mindwtr/core';
+import { getWeeklyReviewAnalysisError, readWeeklyReviewAnalysis } from '@mindwtr/core/ai-task-actions';
 import {
     Calendar as CalendarIcon,
     CheckCircle2,
@@ -342,12 +342,19 @@ export function useReviewModalController({
         setAiError(null);
         setAiRan(true);
         if (!aiEnabled) {
-            setAiError('AI is disabled. Enable it in Settings.');
+            setAiError(t('ai.disabledBody'));
             return;
         }
-        const apiKey = await loadAIKey(aiProvider);
+        let apiKey: string;
+        try {
+            apiKey = await loadAIKey(aiProvider);
+        } catch (error) {
+            // An unreadable keystore fails like a request, never as an unhandled rejection.
+            setAiError(getWeeklyReviewAnalysisError(error, t, '', settings));
+            return;
+        }
         if (isAIKeyRequired(settings) && !apiKey) {
-            setAiError('Missing API key. Add it in Settings.');
+            setAiError(t('ai.missingKeyBody'));
             return;
         }
         if (staleItems.length === 0) {
@@ -359,21 +366,15 @@ export function useReviewModalController({
         try {
             const provider = createAIProvider(buildAIConfig(settings, apiKey, language));
             const response = await provider.analyzeReview({ items: staleItems });
-            // Filter here, not in the apply path, so what is displayed and what
-            // can be written never diverge.
-            const suggestions = filterReviewSuggestions(response.suggestions || [], staleItems);
-            setAiSuggestions(suggestions);
-            const defaultSelected = new Set(
-                suggestions.filter(isActionableReviewSuggestion).map((suggestion) => suggestion.id),
-            );
-            setAiSelectedIds(defaultSelected);
+            const analysis = readWeeklyReviewAnalysis(response, staleItems);
+            setAiSuggestions(analysis.suggestions);
+            setAiSelectedIds(new Set(analysis.selectedIds));
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            setAiError(message || 'AI request failed.');
+            setAiError(getWeeklyReviewAnalysisError(error, t, apiKey, settings));
         } finally {
             setAiLoading(false);
         }
-    }, [aiEnabled, aiProvider, language, settings, staleItems]);
+    }, [aiEnabled, aiProvider, language, settings, staleItems, t]);
 
     const applyAiSuggestions = useCallback(async () => {
         const updates = buildReviewSuggestionUpdates(aiSuggestions, aiSelectedIds, new Date());

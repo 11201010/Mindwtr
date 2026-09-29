@@ -230,6 +230,8 @@ export * from './ai/types';
 export * from './ai/catalog';
 export * from './ai/model-list';
 export * from './ai-config';
+export * from './ai-settings-model';
+export * from './ai-task-actions';
 export * from './sqlite-schema';
 export * from './task-sync-schema';
 export * from './project-sync-schema';

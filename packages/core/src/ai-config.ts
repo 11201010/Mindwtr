@@ -1,6 +1,7 @@
 import type { AppData } from './types';
 import type { AIProviderConfig, AIProviderId, AIRequestExtraBodyParams } from './ai/types';
 import { isSandboxMode } from './sandbox';
+import type { SyncSecretStoragePort, SyncSecretVault } from './sync-secret-storage';
 import { COPILOT_REASONING_EFFORT, DEFAULT_ANTHROPIC_THINKING_BUDGET, DEFAULT_GEMINI_THINKING_BUDGET, DEFAULT_REASONING_EFFORT, getDefaultAIConfig, getDefaultCopilotModel } from './ai/catalog';
 
 const AI_KEY_PREFIX = 'mindwtr-ai-key';
@@ -55,6 +56,82 @@ export async function saveAIKeyToStorage(storage: KeyValueStorageAsync, provider
         return;
     }
     await storage.setItem(key, value);
+}
+
+/** A provider's key in the keystore: the storage key with only [A-Za-z0-9._-] (`mindwtr-ai-key_<provider>`). */
+export const getAIKeySecretName = (provider: AIProviderId): string => getAIKeyStorageKey(provider).replace(/[^A-Za-z0-9._-]/g, '_');
+
+export type AIKeyStore = {
+    load(provider: AIProviderId): Promise<string>;
+    save(provider: AIProviderId, value: string): Promise<void>;
+};
+
+/**
+ * The mobile apps' AI keys (React Native's ai-config.ts, and the native host): the platform
+ * keystore under getAIKeySecretName, written `when-unlocked`. A key found in the old plaintext
+ * key-value slot (getAIKeyStorageKey) moves into the keystore on first read, and the plaintext
+ * copy is removed. When the keystore is unsupported a key lives in memory for this process only
+ * (the vault), and is never written in plaintext. Sandbox mode reads and writes nothing.
+ */
+export function createAIKeyStore({ storage, secrets, vault }: {
+    storage: KeyValueStorageAsync;
+    secrets: Pick<SyncSecretStoragePort, 'getItem' | 'setItem' | 'deleteItem'>;
+    vault: Pick<SyncSecretVault, 'isSecureStoreAvailable' | 'getSessionSecret' | 'setSessionSecret' | 'deleteSessionSecret' | 'evacuateLegacySecretToSession'>;
+}): AIKeyStore {
+    return {
+        load: async (provider) => {
+            if (isSandboxMode()) return '';
+            const key = getAIKeySecretName(provider);
+            if (await vault.isSecureStoreAvailable()) {
+                const value = await secrets.getItem(key);
+                if (value) {
+                    await saveAIKeyToStorage(storage, provider, '');
+                    return value;
+                }
+
+                const legacyValue = await loadAIKeyFromStorage(storage, provider);
+                if (legacyValue) {
+                    await secrets.setItem(key, legacyValue, 'when-unlocked');
+                    await saveAIKeyToStorage(storage, provider, '');
+                }
+                return legacyValue;
+            }
+
+            const sessionValue = vault.getSessionSecret(key);
+            if (sessionValue !== null) return sessionValue;
+
+            const legacyValue = await loadAIKeyFromStorage(storage, provider);
+            if (legacyValue) {
+                await vault.evacuateLegacySecretToSession(
+                    key,
+                    legacyValue,
+                    () => saveAIKeyToStorage(storage, provider, ''),
+                );
+            }
+            return legacyValue;
+        },
+        save: async (provider, value) => {
+            if (isSandboxMode()) return;
+            const key = getAIKeySecretName(provider);
+            if (await vault.isSecureStoreAvailable()) {
+                if (!value) {
+                    await secrets.deleteItem(key);
+                } else {
+                    await secrets.setItem(key, value, 'when-unlocked');
+                }
+                await saveAIKeyToStorage(storage, provider, '');
+                vault.deleteSessionSecret(key);
+                return;
+            }
+
+            await saveAIKeyToStorage(storage, provider, '');
+            if (value) {
+                vault.setSessionSecret(key, value);
+            } else {
+                vault.deleteSessionSecret(key);
+            }
+        },
+    };
 }
 
 const resolveOpenAIEndpoint = (baseUrl?: string): string | undefined => {

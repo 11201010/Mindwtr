@@ -1,75 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store';
 import type { AIProviderConfig, AIProviderId, AppData, Language } from '@mindwtr/core';
-import { buildAIConfig as buildCoreAIConfig, buildCopilotConfig as buildCoreCopilotConfig, getAIKeyStorageKey, isAIKeyRequired as isCoreAIKeyRequired, isSandboxMode, loadAIKeyFromStorage, saveAIKeyToStorage } from '@mindwtr/core';
+import { buildAIConfig as buildCoreAIConfig, buildCopilotConfig as buildCoreCopilotConfig, isAIKeyRequired as isCoreAIKeyRequired, isSandboxMode } from '@mindwtr/core';
+import { createAIKeyStore, type AIKeyStore } from '@mindwtr/core/ai-config';
 import { logInfo } from './app-log';
 
-import {
-    deleteSessionSecret,
-    evacuateLegacySecretToSession,
-    getSessionSecret,
-    isSecureStoreAvailable,
-    setSessionSecret,
-} from './secure-secret-store';
+import { secureSecretStorage, secureSecretVault } from './secure-secret-store';
 
-const getSecureKey = (provider: AIProviderId) => {
-    return getAIKeyStorageKey(provider).replace(/[^A-Za-z0-9._-]/g, '_');
+// The key rules are core's (createAIKeyStore), over this app's AsyncStorage and keystore.
+let keyStore: AIKeyStore | null = null;
+const aiKeys = (): AIKeyStore => {
+    keyStore ??= createAIKeyStore({ storage: AsyncStorage, secrets: secureSecretStorage, vault: secureSecretVault });
+    return keyStore;
 };
 
-export async function loadAIKey(provider: AIProviderId): Promise<string> {
-    if (isSandboxMode()) return '';
-    const key = getSecureKey(provider);
-    if (await isSecureStoreAvailable()) {
-        const value = await SecureStore.getItemAsync(key);
-        if (value) {
-            await saveAIKeyToStorage(AsyncStorage, provider, '');
-            return value;
-        }
-
-        const legacyValue = await loadAIKeyFromStorage(AsyncStorage, provider);
-        if (legacyValue) {
-            await SecureStore.setItemAsync(key, legacyValue, {
-                keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-            });
-            await saveAIKeyToStorage(AsyncStorage, provider, '');
-        }
-        return legacyValue;
-    }
-
-    const sessionValue = getSessionSecret(key);
-    if (sessionValue !== null) return sessionValue;
-
-    const legacyValue = await loadAIKeyFromStorage(AsyncStorage, provider);
-    if (legacyValue) {
-        await evacuateLegacySecretToSession(
-            key,
-            legacyValue,
-            () => saveAIKeyToStorage(AsyncStorage, provider, ''),
-        );
-    }
-    return legacyValue;
+export function loadAIKey(provider: AIProviderId): Promise<string> {
+    return aiKeys().load(provider);
 }
 
-export async function saveAIKey(provider: AIProviderId, value: string): Promise<void> {
-    if (isSandboxMode()) return;
-    const key = getSecureKey(provider);
-    if (await isSecureStoreAvailable()) {
-        if (!value) {
-            await SecureStore.deleteItemAsync(key);
-        } else {
-            await SecureStore.setItemAsync(key, value, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY });
-        }
-        await saveAIKeyToStorage(AsyncStorage, provider, '');
-        deleteSessionSecret(key);
-        return;
-    }
-
-    await saveAIKeyToStorage(AsyncStorage, provider, '');
-    if (value) {
-        setSessionSecret(key, value);
-    } else {
-        deleteSessionSecret(key);
-    }
+export function saveAIKey(provider: AIProviderId, value: string): Promise<void> {
+    return aiKeys().save(provider, value);
 }
 
 /** The rule is core's (the native host asks the AI by it too). */

@@ -67,6 +67,7 @@ import {
   type TimeEstimate,
 } from '@mindwtr/core';
 
+import { buildInboxClarifyInput, getAIClarifyDialog, getAIErrorAlert, redactAIError } from '@mindwtr/core/ai-task-actions';
 import type { AIResponseAction } from '../ai-response-modal';
 import { useLanguage } from '../../contexts/language-context';
 import { useTheme } from '../../contexts/theme-context';
@@ -1080,7 +1081,19 @@ export function useInboxProcessingController({
       });
       return;
     }
-    const apiKey = await loadAIKey(aiProvider);
+    let apiKey: string;
+    try {
+      apiKey = await loadAIKey(aiProvider);
+    } catch (error) {
+      // An unreadable keystore fails like a request, never as an unhandled rejection.
+      void logWarn('Inbox processing failed', {
+        scope: 'inbox',
+        extra: { error: redactAIError(error, '', settings).message },
+      });
+      const alert = getAIErrorAlert(error, t, '', settings);
+      Alert.alert(alert.title, alert.message);
+      return;
+    }
     if (isAIKeyRequired(settings) && !apiKey) {
       showToast({
         title: t('ai.errorTitle'),
@@ -1097,53 +1110,45 @@ export function useInboxProcessingController({
     setIsAIWorking(true);
     try {
       const provider = createAIProvider(buildAIConfig(settings ?? {}, apiKey, language));
-      const contextOptions = Array.from(new Set([
-        ...contextSuggestionPool,
-        ...selectedContexts,
-        ...(currentTask.contexts ?? []),
-      ]));
-      const response = await provider.clarifyTask({
-        title: processingTitle || currentTask.title,
-        contexts: contextOptions,
-      });
-      const actions: AIResponseAction[] = [];
-      response.options.slice(0, 3).forEach((option) => {
-        actions.push({
-          label: option.label,
-          onPress: () => {
-            setProcessingTitle(option.action);
-            closeAIModal();
-          },
-        });
-      });
-      if (response.suggestedAction?.title) {
-        actions.push({
-          label: t('ai.applySuggestion'),
-          variant: 'primary',
-          onPress: () => {
-            setProcessingTitle(response.suggestedAction!.title);
-            if (response.suggestedAction?.context) {
-              setSelectedContexts((prev) => Array.from(new Set([...prev, response.suggestedAction!.context!])));
+      const response = await provider.clarifyTask(buildInboxClarifyInput({
+        title: processingTitle,
+        task: currentTask,
+        contextPool: contextSuggestionPool,
+        selectedContexts,
+      }));
+      const dialog = getAIClarifyDialog(response, t);
+      const actions: AIResponseAction[] = dialog.choices.map((choice) => {
+        const { apply } = choice;
+        return {
+          label: choice.label,
+          ...(choice.variant ? { variant: choice.variant } : {}),
+          onPress: apply.type === 'title'
+            ? () => {
+              setProcessingTitle(apply.title);
+              closeAIModal();
             }
-            closeAIModal();
-          },
-        });
-      }
-      actions.push({
-        label: t('common.cancel'),
-        variant: 'secondary',
-        onPress: closeAIModal,
+            : apply.type === 'suggestion'
+              ? () => {
+                setProcessingTitle(apply.suggestion.title);
+                if (apply.suggestion.context) {
+                  setSelectedContexts((prev) => Array.from(new Set([...prev, apply.suggestion.context!])));
+                }
+                closeAIModal();
+              }
+              : closeAIModal,
+        };
       });
       setAiModal({
-        title: response.question || t('taskEdit.aiClarify'),
+        title: dialog.title,
         actions,
       });
     } catch (error) {
       void logWarn('Inbox processing failed', {
         scope: 'inbox',
-        extra: { error: error instanceof Error ? error.message : String(error) },
+        extra: { error: redactAIError(error, apiKey, settings).message },
       });
-      Alert.alert(t('ai.errorTitle'), formatAIErrorAlertBody(t('ai.errorBody'), error));
+      const alert = getAIErrorAlert(error, t, apiKey, settings);
+      Alert.alert(alert.title, alert.message);
     } finally {
       setIsAIWorking(false);
     }

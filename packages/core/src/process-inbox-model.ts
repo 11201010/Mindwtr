@@ -1096,6 +1096,8 @@ export type ProcessInboxDraftEdit =
     | { type: 'setArea'; value: string | null }
     | { type: 'selectProject'; value: string | null }
     | { type: 'toggleContext'; value: string }
+    /** Adds a context unless the draft has it (Clarify's suggestion). */
+    | { type: 'addContext'; value: string }
     | { type: 'toggleTag'; value: string }
     | { type: 'addToken'; kind?: 'context' | 'tag' }
     | { type: 'applyTokenSuggestion'; value: string }
@@ -1140,6 +1142,8 @@ export function applyProcessInboxDraftEdit(
         }
         case 'toggleContext':
             return { ...draft, contexts: toggleProcessInboxToken(draft.contexts, edit.value) };
+        case 'addContext':
+            return draft.contexts.includes(edit.value) ? draft : { ...draft, contexts: [...draft.contexts, edit.value] };
         case 'toggleTag':
             return { ...draft, tags: toggleProcessInboxToken(draft.tags, edit.value) };
         case 'addToken': {
