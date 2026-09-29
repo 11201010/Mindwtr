@@ -183,7 +183,7 @@ jobs:
       - name: Select release Xcode 27.0
         run: |
           # Match the toolchain already validated by the hosted and Mac CI lanes.
-          source scripts/ci/select-apple-sdk.sh 27
+          source scripts/ci/select-apple-sdk.sh 27.0
           EXPECTED_XCODE=$'Xcode 27.0\nBuild version 27A266a'
           if [ "$(xcodebuild -version)" != "$EXPECTED_XCODE" ]; then
             echo "::error::Release requires Xcode 27.0 (27A266a); review runner/toolchain changes before uploading."

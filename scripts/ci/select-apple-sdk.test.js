@@ -43,6 +43,14 @@ test('the requested SDK is recorded for subsequent native build steps', () => {
   expect(readFileSync(join(testCase.root, 'env'), 'utf8')).toContain('MINDWTR_VALIDATED_IOS_SDK=27.0');
 });
 
+test('an exact release SDK does not drift to a newer installed minor', () => {
+  const testCase = fixture({ installed: ['26.4', '27.0', '27.2'] });
+  const result = testCase.run('27.0');
+  expect(result.status).toBe(0);
+  expect(readFileSync(join(testCase.root, 'env'), 'utf8')).toContain('Xcode_27.0.app/Contents/Developer');
+  expect(readFileSync(join(testCase.root, 'env'), 'utf8')).not.toContain('Xcode_27.2.app');
+});
+
 test('an unavailable requested Xcode fails instead of falling back to another SDK', () => {
   const result = fixture({ installed: ['26.4'], sdk: '26.4' }).run('27');
   expect(result.status).not.toBe(0);
@@ -80,12 +88,12 @@ test('release preflight accepts the validated Xcode and rejects changed builds o
   const job = release.jobs['ios-appstore'];
   expect(job['runs-on']).toBe('xcode-27');
   const step = job.steps.find((step) => step.name === 'Select release Xcode 27.0');
-  expect(fixture().run('27', step.run).status).toBe(0);
+  expect(fixture({ installed: ['26.4', '27.0', '27.2'] }).run('27', step.run).status).toBe(0);
   for (const xcodeVersion of ['Xcode 27.1\nBuild version unexpected', 'Xcode 27.0\nBuild version beta']) {
     const changed = fixture({ xcodeVersion }).run('27', step.run);
     expect(changed.status).not.toBe(0);
     expect(changed.stdout).toContain('Release requires Xcode 27.0');
   }
   expect(fixture({ sdk: '26.4' }).run('27', step.run).status).not.toBe(0);
-  expect(fixture({ installed: ['26.4'] }).run('27', step.run).status).not.toBe(0);
+  expect(fixture({ installed: ['26.4', '27.2'] }).run('27', step.run).status).not.toBe(0);
 });
