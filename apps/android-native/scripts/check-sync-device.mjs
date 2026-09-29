@@ -29,7 +29,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, mainList, Stopped, tab, tabSelected, tagged, taskRow, withDescription } from './device.mjs';
+import { box, button, check, connect, evidenced, fail, inboxCount, inEditor, mainList, Stopped, switchOn, tab, tabSelected, tagged, taskRow, withDescription } from './device.mjs';
 import { cleanupOnExit } from './check-net-device.mjs';
 import { hostDevice, serveWebdav, startCloud, webdavDocument } from './sync-harness.mjs';
 
@@ -183,8 +183,10 @@ const statusLine = async () => {
 };
 /** The Allow insecure HTTP switch of the open form, turned on. */
 const insecureOn = async () => {
-    const node = await reveal((current) => withDescription(current, en['settings.allowInsecureHttp']), 'Allow insecure HTTP');
-    if (node.checked !== 'true') await tapExpecting(node, (current) => withDescription(current, en['settings.allowInsecureHttp'])?.checked === 'true', 'insecure HTTP on');
+    const label = en['settings.allowInsecureHttp'];
+    await hideKeyboard();
+    const node = await reveal((current) => withDescription(current, label), 'Allow insecure HTTP');
+    if (!switchOn(await screen(), label)) await tapExpecting(node, (current) => switchOn(current, label), 'insecure HTTP on');
 };
 /** A capture saved from the Inbox's capture popup. */
 const capture = async (text) => {
@@ -321,7 +323,14 @@ try {
     await until('the second device\'s task on the phone', () => phoneTasks()[titles.host] === 'inbox', 30_000);
     check(true, `(3) Sync now brought "${titles.host}" to the phone exactly (${secondTitles.length} tasks on the second device)`);
     await toInbox();
-    const shown = await device.reveal(titles.host);
+    let shown = await device.reveal(titles.host);
+    for (let attempt = 0; attempt < 3 && !taskRow(shown, titles.host); attempt += 1) {
+        await sleep(5_000);
+        shown = await device.reveal(titles.host);
+    }
+    if (!taskRow(shown, titles.host)) {
+        console.log(`evidence - app log:\n${logs().split('\n').filter((line) => /sync state|Core action failed|background|refresh/i.test(line)).slice(-30).join('\n')}`);
+    }
     check(Boolean(taskRow(shown, titles.host)), '(3) the Inbox shows the emoji title as the second device wrote it');
     await device.completeUntil(titles.host, 'the second device\'s task done', (current) => !taskRow(current, titles.host));
     await capture(titles.phone);

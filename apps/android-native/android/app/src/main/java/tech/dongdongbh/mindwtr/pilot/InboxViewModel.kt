@@ -262,7 +262,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 val cycles = event.optInt("cycles")
                 if (cycles != syncCycles) {
                     syncCycles = cycles
-                    if (writable) refreshAll()
+                    // A read refused while a user action runs would leave the lists stale until the next resume: wait for idle.
+                    menu.whenIdle { if (writable) refreshAll() }
                 } else if (menu.list == "settings") menu.settings.refresh()
             }
             "toast" -> showToast(event.optString("title").ifEmpty { null }, event.getString("message"), event.optString("tone", "warning"),
