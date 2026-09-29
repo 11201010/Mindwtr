@@ -1229,6 +1229,24 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._projectsById.get(id))
                     .toEqual(planned.prepared.effect.project.after);
             },
+            commitPreparedProjectTaskSort: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(host.getProjectTaskSortOptions({ projectId: settled.projects[1].id }));
+                const { id, ...expected } = options.project;
+                const request = { requestId: '65b6a58a-e179-42d6-85ab-216da678a940', projectId: id,
+                    sortBy: 'title' as const, expected };
+                const planned = nativeValue(host.prepareProjectTaskSort(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.projects.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.project.after);
+                });
+                expect(nativeValue(await host.commitPreparedProjectTaskSort({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+                expect(useTaskStore.getState()._projectsById.get(id))
+                    .toEqual(planned.prepared.effect.project.after);
+            },
             commitPreparedProjectTagsWrite: async (control) => {
                 const host = await nativeHost(control);
                 const options = nativeValue(host.getProjectTagsEditOptions({ projectId: settled.projects[1].id }));
