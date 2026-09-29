@@ -35,6 +35,7 @@ final class CoreModel: ObservableObject {
     @Published private(set) var mindSweepGuideError: String?
     @Published private(set) var focus: CoreObject = [:]
     @Published private(set) var focusShowDetails = false
+    @Published private(set) var collapsedFocusSections: Set<String> = []
     @Published private(set) var focusCurrent = false
     @Published private(set) var focusLoading = false
     @Published private(set) var focusError: String?
@@ -194,6 +195,9 @@ final class CoreModel: ObservableObject {
     private var initialProjectShowCompleted = false
     private var focusShowDetailsPreference = "nativeFoundation.focus.showDetails"
     private var initialFocusShowDetails = false
+    private var focusExpandedSectionsPreference = "nativeFoundation.focus.expandedSections"
+    private var initialFocusExpandedSections: [String: Bool] = [:]
+    private let focusSectionKeys = ["focus", "schedule", "next", "upcoming", "reviewDue", "reviewProjects"]
     @Published private(set) var projectNotes: CoreObject = [:]
     @Published private(set) var projectNotesExpanded = false
     @Published private(set) var projectNotesCurrent = false
@@ -1175,13 +1179,29 @@ final class CoreModel: ObservableObject {
                     initialProjectShowCompleted = try legacy.value(forKey: "mindwtr:view:project-detail:show-completed:v1") == "true"
                     projectShowCompletedPreference = "nativeRNRehearsal.project.showCompleted"
                     focusShowDetailsPreference = "nativeRNRehearsal.focus.showDetails"
+                    focusExpandedSectionsPreference = "nativeRNRehearsal.focus.expandedSections"
                     initialFocusShowDetails = false
+                    initialFocusExpandedSections = [:]
                     if let raw = try legacy.value(forKey: "mindwtr:view:focus:v1"),
                        let data = raw.data(using: .utf8),
-                       let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                       let value = state["showDetails"] as? NSNumber,
-                       CFGetTypeID(value) == CFBooleanGetTypeID() {
-                        initialFocusShowDetails = value.boolValue
+                       let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                        if let value = state["showDetails"] as? NSNumber,
+                           CFGetTypeID(value) == CFBooleanGetTypeID() {
+                            initialFocusShowDetails = value.boolValue
+                        }
+                        if let expanded = state["expandedSections"] as? [String: Any] {
+                            for key in focusSectionKeys {
+                                if let value = expanded[key] as? NSNumber,
+                                   CFGetTypeID(value) == CFBooleanGetTypeID() {
+                                    initialFocusExpandedSections[key] = value.boolValue
+                                }
+                            }
+                            if initialFocusExpandedSections["next"] == nil,
+                               let value = expanded["nextActions"] as? NSNumber,
+                               CFGetTypeID(value) == CFBooleanGetTypeID() {
+                                initialFocusExpandedSections["next"] = value.boolValue
+                            }
+                        }
                     }
                     host = CoreHost(databaseURL: database, bundleURL: bundle, legacyStorage: legacy)
                 }
@@ -1196,6 +1216,15 @@ final class CoreModel: ObservableObject {
                 ?? initialProjectShowCompleted
             focusShowDetails = (preferenceDefaults.object(forKey: focusShowDetailsPreference) as? Bool)
                 ?? initialFocusShowDetails
+            var expanded = initialFocusExpandedSections
+            if let stored = preferenceDefaults.dictionary(forKey: focusExpandedSectionsPreference) {
+                for key in focusSectionKeys {
+                    if let value = stored[key] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() {
+                        expanded[key] = value.boolValue
+                    }
+                }
+            }
+            collapsedFocusSections = Set(focusSectionKeys.filter { expanded[$0] == false })
             let startup = try decode(await host!.start())
             let recovery = startup.object("recovery")
             if recovery.text("method") == "boardCommit" {
@@ -10444,6 +10473,33 @@ final class CoreModel: ObservableObject {
         guard focusControlsEnabled else { return }
         focusShowDetails.toggle()
         preferenceDefaults.set(focusShowDetails, forKey: focusShowDetailsPreference)
+    }
+
+    func toggleFocusSection(_ key: String) {
+        guard focusControlsEnabled, focusSectionKeys.contains(key) else { return }
+        if !collapsedFocusSections.insert(key).inserted { collapsedFocusSections.remove(key) }
+        saveFocusExpandedSections()
+    }
+
+    func toggleOtherFocusSections() {
+        let otherKeys = focusSectionKeys.filter { $0 != "focus" }
+        let visible = Set(focus.objects("sections").filter { $0.number("total") > 0 }.map { $0.text("key") })
+            .union(focus.objects("reviewProjects").isEmpty ? [] : ["reviewProjects"])
+        let visibleOthers = visible.intersection(Set(otherKeys))
+        guard focusControlsEnabled, !visibleOthers.isEmpty else { return }
+        if visibleOthers.contains(where: { !collapsedFocusSections.contains($0) }) {
+            collapsedFocusSections.formUnion(otherKeys)
+        } else {
+            collapsedFocusSections.subtract(otherKeys)
+        }
+        collapsedFocusSections.remove("focus")
+        saveFocusExpandedSections()
+    }
+
+    private func saveFocusExpandedSections() {
+        preferenceDefaults.set(Dictionary(uniqueKeysWithValues: focusSectionKeys.map {
+            ($0, !collapsedFocusSections.contains($0))
+        }), forKey: focusExpandedSectionsPreference)
     }
 
     func editFocusControl(_ edit: CoreObject) {

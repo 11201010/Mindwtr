@@ -6,15 +6,14 @@ struct InboxScreen: View {
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var collapsedFocusSections: Set<String> = []
     private var palette: AppPalette { AppPalette(theme: model.theme, system: systemScheme) }
     private var focusSections: [CoreObject] { model.focus.objects("sections").filter { $0.number("total") > 0 } }
     private var reviewProjects: [CoreObject] { model.focus.objects("reviewProjects") }
     private var otherFocusKeys: Set<String> {
-        Set(focusSections.map { $0.text("key") }.filter { $0 != "focus" })
+        Set(focusSections.map { $0.text("key") }.filter { ["schedule", "next", "upcoming", "reviewDue"].contains($0) })
             .union(reviewProjects.isEmpty ? [] : ["reviewProjects"])
     }
-    private var otherFocusSectionsOpen: Bool { !otherFocusKeys.subtracting(collapsedFocusSections).isEmpty }
+    private var otherFocusSectionsOpen: Bool { !otherFocusKeys.subtracting(model.collapsedFocusSections).isEmpty }
     private var defaultAreaScope: Bool {
         model.area.objects("options").first(where: { $0.text("id") == "__all__" })?.text("state") == "included"
     }
@@ -292,7 +291,7 @@ struct InboxScreen: View {
                         let section = focusSections[index]
                         let key = section.text("key")
                         focusSectionHeader(key: key, title: section.text("title"), count: section.number("total"), first: index == 0)
-                        if !collapsedFocusSections.contains(key) {
+                        if !model.collapsedFocusSections.contains(key) {
                             let rows = section.objects("rows")
                             ForEach(rows.indices, id: \.self) { rowIndex in
                                 let row = rows[rowIndex]
@@ -337,7 +336,7 @@ struct InboxScreen: View {
                     if !reviewProjects.isEmpty {
                         focusSectionHeader(key: "reviewProjects", title: model.label("agenda.reviewDueProjects"),
                                            count: reviewProjects.count, first: focusSections.isEmpty)
-                        if !collapsedFocusSections.contains("reviewProjects") {
+                        if !model.collapsedFocusSections.contains("reviewProjects") {
                             ForEach(reviewProjects.indices, id: \.self) { index in
                                 focusReviewProject(reviewProjects[index])
                             }
@@ -463,10 +462,7 @@ struct InboxScreen: View {
                 .buttonStyle(.plain).disabled(!model.focusControlsEnabled)
                 .accessibilityLabel(controls.object("filters").text("label"))
                 .accessibilityValue(controls.object("filters").text("badge")).accessibilityIdentifier("focus-filters-open")
-                Button {
-                    if otherFocusSectionsOpen { collapsedFocusSections.formUnion(otherFocusKeys) }
-                    else { collapsedFocusSections.subtract(otherFocusKeys) }
-                } label: {
+                Button { model.toggleOtherFocusSections() } label: {
                     // Lucide ChevronsUp/Down, matching RN's control.
                     Path { path in
                         path.move(to: CGPoint(x: 17, y: 11)); path.addLine(to: CGPoint(x: 12, y: 6)); path.addLine(to: CGPoint(x: 7, y: 11))
@@ -479,7 +475,7 @@ struct InboxScreen: View {
                         .frame(width: 44, height: 44).opacity(otherFocusKeys.isEmpty ? 0.4 : 1)
                         .accessibilityHidden(true)
                 }
-                .buttonStyle(.plain).disabled(otherFocusKeys.isEmpty)
+                .buttonStyle(.plain).disabled(otherFocusKeys.isEmpty || !model.focusControlsEnabled)
                 .accessibilityLabel(model.label(otherFocusSectionsOpen ? "agenda.collapseOtherSections" : "agenda.expandOtherSections"))
                 .accessibilityIdentifier("focus-toggle-sections")
             }
@@ -488,12 +484,9 @@ struct InboxScreen: View {
     }
 
     private func focusSectionHeader(key: String, title: String, count: Int, first: Bool) -> some View {
-        let open = !collapsedFocusSections.contains(key)
+        let open = !model.collapsedFocusSections.contains(key)
         return HStack(spacing: 8) {
-            Button {
-                if open { collapsedFocusSections.insert(key) }
-                else { collapsedFocusSections.remove(key) }
-            } label: {
+            Button { model.toggleFocusSection(key) } label: {
                 HStack(spacing: 10) {
                     Text(open ? "▾" : "▸").rnFont(12).frame(width: 14)
                     Text(title.uppercased()).rnFont(12, .bold).tracking(1).lineLimit(2)
@@ -502,7 +495,7 @@ struct InboxScreen: View {
                 }
                 .foregroundStyle(palette.secondary).frame(minHeight: 44).contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plain).disabled(!model.focusControlsEnabled)
             .accessibilityLabel(title + " · \(count)")
             .accessibilityValue(model.label(open ? "markdown.collapse" : "markdown.expand"))
             .accessibilityAddTraits(.isHeader)

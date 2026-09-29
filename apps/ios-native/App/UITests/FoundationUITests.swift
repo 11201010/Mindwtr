@@ -2029,6 +2029,70 @@ final class FoundationUITests: XCTestCase {
         XCTAssertFalse(app.buttons[title + " changed"].exists)
     }
 
+    func testFocusSectionFoldsSurviveRestart() { focusFoldFlow(library: "12882f08-9ccf-4f12-aa89-509367d413b8") }
+    func testFocusSectionFoldsLargestText() { focusFoldFlow(library: "306952c5-378a-45ce-bcbd-f3ad3ad0c6bb") }
+
+    private func focusFoldFlow(library: String) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-ui-test-library", library]
+        func focus() {
+            boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+            boardEnabled(app.buttons["focus-view-options"])
+        }
+        func section(_ key: String, open: Bool) {
+            let button = app.buttons["focus-section-" + key]
+            revealPagedElement(app, button, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            XCTAssertEqual(button.value as? String, open ? "Collapse" : "Expand")
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+        }
+        func toggle(_ id: String) {
+            let button = app.buttons[id]
+            revealPagedElement(app, button, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            boardEnabled(button); button.tap()
+        }
+        func restart() { app.terminate(); app.launch(); focus() }
+        app.launch(); focus(); section("focus", open: true); section("next", open: true)
+        toggle("focus-section-focus"); section("focus", open: false)
+        boardTap(app, "tab-inbox"); focus(); section("focus", open: false); restart(); section("focus", open: false)
+        toggle("focus-toggle-sections"); section("focus", open: true); section("next", open: false)
+        restart(); section("focus", open: true); section("next", open: false)
+        toggle("focus-toggle-sections"); section("next", open: true)
+        restart(); section("focus", open: true); section("next", open: true)
+        toggle("focus-section-next"); section("next", open: false)
+        restart(); section("focus", open: true); section("next", open: false)
+        toggle("focus-section-next"); toggle("focus-toggle-sections")
+        section("focus", open: true); section("next", open: false)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Focus persisted section folds"
+        shot.lifetime = .keepAlways; add(shot); app.terminate()
+    }
+
+    func testFocusLegacyFoldAliasAndStrictBooleans() { focusLegacyFolds(focusOpen: false, nextOpen: false) }
+    func testFocusLegacyFoldNativeOverrideAndNextPrecedence() { focusLegacyFolds(focusOpen: true, nextOpen: true) }
+    func testFocusLegacyMalformedFoldsDefaultExpanded() { focusLegacyFolds(focusOpen: true, nextOpen: true, details: false) }
+
+    private func focusLegacyFolds(focusOpen: Bool, nextOpen: Bool, details: Bool = true) {
+        let app = XCUIApplication(); app.launchArguments = ["--native-rn-rehearsal"]
+        func focus() {
+            boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+            boardEnabled(app.buttons["focus-view-options"])
+        }
+        func section(_ key: String, open: Bool) {
+            let button = app.buttons["focus-section-" + key]
+            revealPagedElement(app, button, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+            XCTAssertEqual(button.value as? String, open ? "Collapse" : "Expand")
+        }
+        app.launch(); focus(); section("focus", open: focusOpen); section("next", open: nextOpen)
+        section("focus", open: focusOpen); app.buttons["focus-section-focus"].tap()
+        app.terminate(); app.launch(); focus()
+        section("focus", open: !focusOpen); section("next", open: nextOpen)
+        let view = app.buttons["focus-view-options"]
+        revealPagedElement(app, view, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        view.tap()
+        let toggle = app.buttons["focus-details"]
+        revealPagedElement(app, toggle, in: app.scrollViews.containing(.button, identifier: "focus-details").firstMatch)
+        XCTAssertEqual(toggle.isSelected, details, "Section changes preserve Show details")
+        boardTap(app, "focus-controls-close"); app.terminate()
+    }
+
     func testFocusShowDetailsAndRestart() { focusDetailsFlow(library: "102a6841-a77e-456e-8fa6-2db0e1e38fb0") }
     func testFocusShowDetailsLargestTextAndRestart() { focusDetailsFlow(library: "ddd588d0-4618-4628-83ee-9d682b487b78") }
 
