@@ -2507,6 +2507,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(model, /"open" -> \{\s+keepCapture\(null\)\s+openSavedTask\(reply\.getString\("taskId"\), reply\.menuText\("projectId"\)\)/);
     assert.match(modalKt, /shell\.openSavedTask\(reply\.getString\("taskId"\), reply\.menuText\("projectId"\)\)/);
     assert.doesNotMatch(code(model + modalKt), /openEditor\(id, "task"\)/, 'Save & edit never opens the editor over the screen it was on');
+    // An owed failure (the screen's own save's, or any other command's) shows the app's failure banner with its exact retry, as
+    // every screen's does: without it every control stayed disabled with no Try again.
+    assert.match(captureModalUi, /if \(model\.failedAction != null\) Box\(Modifier\.statusBarsPadding\(\)\) \{ FailureBanner\(model\.error\.orEmpty\(\)\) \{ OwedRetry\(model\) \} \}/);
     // RN's Save is its fixed blue (capture-modal.tsx styles.save), in every theme.
     assert.match(themeKt, /val captureSave = rgb\("#3B82F6"\)/);
     assert.match(captureModalUi, /background\(theme\.captureSave\)/);

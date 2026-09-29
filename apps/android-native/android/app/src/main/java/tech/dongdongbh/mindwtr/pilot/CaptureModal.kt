@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -99,65 +100,69 @@ fun CaptureModalScreen(model: InboxViewModel, modal: CaptureModal) = with(model.
     // Edge to edge, as RN's screen: the card is centered in the whole window, and while the keyboard is up in the space above
     // it, so Cancel and Save stay reachable (RN's KeyboardAvoidingView, 'height' on Android).
     Box(Modifier.fillMaxSize().background(c.bg).imePadding().semantics { testTagsAsResourceId = true }.testTag("capture-modal")) {
-        // RN's ScrollView: the card centered while it fits, scrolled once it does not (the keyboard up, a long description).
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            Column(Modifier.verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(16.dp), verticalArrangement = Arrangement.Center) {
-                val card = RoundedCornerShape(12.dp)
-                // RN's border sits outside its padding; a Compose border is drawn over the padding, so each bordered box here pads 1 dp more.
-                Column(Modifier.fillMaxWidth().clip(card).background(c.cardBg).border(1.dp, c.border, card).padding(17.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(view.getString("title"), style = rnText(20, 600), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (WindowInsets.isImeVisible) {
-                                Box(Modifier.clip(CircleShape).background(c.inputBg).border(1.dp, c.border, CircleShape)
-                                    .control(view.getString("hideKeyboard"), "capture-modal-hide-keyboard", true) { keyboard?.hide() }
-                                    .padding(horizontal = 11.dp, vertical = 7.dp)) {
-                                    Icon(Lucide.ChevronDown, null, tint = c.text, modifier = Modifier.size(16.dp))
+        Column(Modifier.fillMaxSize()) {
+            // An owed failure (this screen's save, or any other command) shows the app's failure banner with its exact retry.
+            if (model.failedAction != null) Box(Modifier.statusBarsPadding()) { FailureBanner(model.error.orEmpty()) { OwedRetry(model) } }
+            // RN's ScrollView: the card centered while it fits, scrolled once it does not (the keyboard up, a long description).
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(16.dp), verticalArrangement = Arrangement.Center) {
+                    val card = RoundedCornerShape(12.dp)
+                    // RN's border sits outside its padding; a Compose border is drawn over the padding, so each bordered box here pads 1 dp more.
+                    Column(Modifier.fillMaxWidth().clip(card).background(c.cardBg).border(1.dp, c.border, card).padding(17.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(view.getString("title"), style = rnText(20, 600), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (WindowInsets.isImeVisible) {
+                                    Box(Modifier.clip(CircleShape).background(c.inputBg).border(1.dp, c.border, CircleShape)
+                                        .control(view.getString("hideKeyboard"), "capture-modal-hide-keyboard", true) { keyboard?.hide() }
+                                        .padding(horizontal = 11.dp, vertical = 7.dp)) {
+                                        Icon(Lucide.ChevronDown, null, tint = c.text, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                val help = view.getJSONObject("help")
+                                Box(Modifier.size(28.dp).clip(CircleShape).background(c.inputBg).border(1.dp, c.border, CircleShape)
+                                    .control(help.getString("toggle"), "capture-modal-help", !locked) { edit(help.getJSONObject("edit")) },
+                                    contentAlignment = Alignment.Center) {
+                                    Text(help.getString("toggle"), style = rnText(14, 700), color = c.secondaryText)
                                 }
                             }
-                            val help = view.getJSONObject("help")
-                            Box(Modifier.size(28.dp).clip(CircleShape).background(c.inputBg).border(1.dp, c.border, CircleShape)
-                                .control(help.getString("toggle"), "capture-modal-help", !locked) { edit(help.getJSONObject("edit")) },
-                                contentAlignment = Alignment.Center) {
-                                Text(help.getString("toggle"), style = rnText(14, 700), color = c.secondaryText)
+                        }
+                        val input = view.getJSONObject("input")
+                        ModalField(modal.draft.getString("text"), input.getString("placeholder"), "capture-modal-title", !locked, 16, 80.dp,
+                            Modifier.focusRequester(titleFocus)) { type(it) }
+                        val preview = view.items("preview")
+                        if (preview.isNotEmpty()) PreviewStrip(preview, Modifier)
+                        // Shown while the entry brought a description or the field holds one.
+                        view.optJSONObject("description")?.let { description ->
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(description.getString("label"), style = rnText(12, 600, 16), color = c.secondaryText)
+                                ModalField(modal.draft.getString("description"), description.getString("placeholder"), "capture-modal-description", !locked, 15, 70.dp,
+                                    Modifier) { describe(it) }
                             }
                         }
-                    }
-                    val input = view.getJSONObject("input")
-                    ModalField(modal.draft.getString("text"), input.getString("placeholder"), "capture-modal-title", !locked, 16, 80.dp,
-                        Modifier.focusRequester(titleFocus)) { type(it) }
-                    val preview = view.items("preview")
-                    if (preview.isNotEmpty()) PreviewStrip(preview, Modifier)
-                    // Shown while the entry brought a description or the field holds one.
-                    view.optJSONObject("description")?.let { description ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(description.getString("label"), style = rnText(12, 600, 16), color = c.secondaryText)
-                            ModalField(modal.draft.getString("description"), description.getString("placeholder"), "capture-modal-description", !locked, 15, 70.dp,
-                                Modifier) { describe(it) }
-                        }
-                    }
-                    view.getJSONObject("help").text("text")?.let { Text(it, style = rnText(12, 400), color = c.secondaryText) }
-                    // RN's failure line, until the next save starts; TalkBack hears it at once.
-                    if (modal.failed) Text(t("task.addFailed"), style = rnText(13, 400, 18), color = c.danger,
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
-                    val actions = view.getJSONObject("actions")
-                    // RN's row stretches its buttons to the bordered Save & edit's height; RN's Android text line (font padding) is 19.
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                        val button = RoundedCornerShape(8.dp)
-                        Box(Modifier.clip(button).background(c.inputBg).control(actions.getString("cancel"), "capture-modal-cancel", !locked) { cancel() }
-                            .padding(horizontal = 14.dp, vertical = 11.dp)) {
-                            Text(actions.getString("cancel"), style = rnText(14, 400, 19), color = c.text)
-                        }
-                        Box(Modifier.clip(button).border(1.dp, c.border, button)
-                            .control(actions.getString("saveAndEdit"), "capture-modal-save-edit", canSave) { keyboard?.hide(); save(openAfterSave = true) }
-                            .padding(horizontal = 15.dp, vertical = 11.dp)) {
-                            Text(actions.getString("saveAndEdit"), style = rnText(14, 400, 19), color = c.text)
-                        }
-                        Box(Modifier.clip(button).background(theme.captureSave)
-                            .control(actions.getString("save"), "capture-modal-save", canSave) { save(openAfterSave = false) }
-                            .padding(horizontal = 14.dp, vertical = 11.dp)) {
-                            Text(actions.getString("save"), style = rnText(14, 600, 19), color = theme.onAction)
+                        view.getJSONObject("help").text("text")?.let { Text(it, style = rnText(12, 400), color = c.secondaryText) }
+                        // RN's failure line, until the next save starts; TalkBack hears it at once.
+                        if (modal.failed) Text(t("task.addFailed"), style = rnText(13, 400, 18), color = c.danger,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
+                        val actions = view.getJSONObject("actions")
+                        // RN's row stretches its buttons to the bordered Save & edit's height; RN's Android text line (font padding) is 19.
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                            val button = RoundedCornerShape(8.dp)
+                            Box(Modifier.clip(button).background(c.inputBg).control(actions.getString("cancel"), "capture-modal-cancel", !locked) { cancel() }
+                                .padding(horizontal = 14.dp, vertical = 11.dp)) {
+                                Text(actions.getString("cancel"), style = rnText(14, 400, 19), color = c.text)
+                            }
+                            Box(Modifier.clip(button).border(1.dp, c.border, button)
+                                .control(actions.getString("saveAndEdit"), "capture-modal-save-edit", canSave) { keyboard?.hide(); save(openAfterSave = true) }
+                                .padding(horizontal = 15.dp, vertical = 11.dp)) {
+                                Text(actions.getString("saveAndEdit"), style = rnText(14, 400, 19), color = c.text)
+                            }
+                            Box(Modifier.clip(button).background(theme.captureSave)
+                                .control(actions.getString("save"), "capture-modal-save", canSave) { save(openAfterSave = false) }
+                                .padding(horizontal = 14.dp, vertical = 11.dp)) {
+                                Text(actions.getString("save"), style = rnText(14, 600, 19), color = theme.onAction)
+                            }
                         }
                     }
                 }
