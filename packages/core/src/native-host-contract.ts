@@ -287,6 +287,17 @@ import {
 import { createSettingsMethods } from './native-host-contract-settings';
 import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 export { NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
+import { createCalendarSettingsMethods, type NativeCalendarHost } from './native-host-contract-settings-calendar';
+export {
+    NATIVE_CALENDAR_FEED_SLOTS,
+    type NativeCalendarAreaChoice,
+    type NativeCalendarCommandResult,
+    type NativeCalendarFeedSlot,
+    type NativeCalendarHost,
+    type NativeCalendarSettings,
+    type NativeCalendarSettingsEdit,
+    type NativeCalendarToast,
+} from './native-host-contract-settings-calendar';
 import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
@@ -843,11 +854,17 @@ const applyNativeTaskDraftEdit = (
 
 /**
  * One instance per serial native JS host. All reads and commands use the shared store.
- * `syncSettings` binds the host's device for Settings › Sync (native-host-contract-settings-sync.ts).
+ * `syncSettings` binds the host's device for Settings › Sync (native-host-contract-settings-sync.ts);
+ * `calendar` binds it for the external calendars and Settings › Calendar
+ * (native-host-contract-settings-calendar.ts).
  * `replayTokens` (NativeReplayTokens, native-request-receipts.ts): 'required' for a host that
  * journals its writes; the default, 'optional', lets a write leave its replay tokens out.
  */
-export function createNativeHostContract(options: { syncSettings?: NativeSyncSettingsHost; replayTokens?: NativeReplayTokens } = {}) {
+export function createNativeHostContract(options: {
+    syncSettings?: NativeSyncSettingsHost;
+    calendar?: NativeCalendarHost;
+    replayTokens?: NativeReplayTokens;
+} = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
     startNativeRequestSession();
     setNativeReplayTokens(options.replayTokens ?? 'optional');
@@ -1545,6 +1562,15 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             dataRevision: () => `${revision()}:${settingsRevision()}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
             host: () => options.syncSettings ?? null,
+        }),
+        // External calendars and Settings › Calendar: native-host-contract-settings-calendar.ts.
+        ...createCalendarSettingsMethods({
+            readiness,
+            save,
+            t: () => translate,
+            language: () => language,
+            requestIdPattern: CAPTURE_ID_PATTERN,
+            host: () => options.calendar ?? null,
         }),
 
         // The editor's View tab and checklist: native-host-contract-task-view.ts.
