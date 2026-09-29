@@ -11,6 +11,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
     buildCalendarPushEventFields,
+    generateUUID,
     getTaskCalendarOccurrenceDate,
     hasTimeComponent,
     isSandboxMode,
@@ -44,6 +45,7 @@ import {
 
 const CALENDAR_PUSH_ENABLED_KEY = 'mindwtr:calendar-push-sync:enabled';
 const CALENDAR_ID_KEY = 'mindwtr:calendar-push-sync:calendar-id';
+const CALENDAR_CREATION_INTENT_KEY = 'mindwtr:calendar-push-sync:creation-intent';
 const CALENDAR_TARGET_ID_KEY = 'mindwtr:calendar-push-sync:target-calendar-id';
 const CALENDAR_COLOR_KEY = 'mindwtr:calendar-push-sync:color';
 const PLATFORM = Platform.OS;
@@ -51,6 +53,28 @@ const MANAGED_CALENDAR_TITLE = 'Mindwtr';
 const MANAGED_CALENDAR_NAME = 'mindwtr';
 const DEFAULT_MANAGED_CALENDAR_COLOR = '#3B82F6';
 const PROJECTED_RECURRENCE_EVENT_DATE_FORMAT = 'PP';
+const CREATION_TITLE_PATTERN = /^Mindwtr \([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\)$/;
+
+type CalendarCreationIntent = { title: string; calendarId?: string };
+
+async function getCalendarCreationIntent(): Promise<CalendarCreationIntent | null> {
+    const raw = await AsyncStorage.getItem(CALENDAR_CREATION_INTENT_KEY);
+    if (raw === null) return null;
+    let value: CalendarCreationIntent;
+    try {
+        value = JSON.parse(raw) as CalendarCreationIntent;
+    } catch {
+        throw new Error('Invalid Mindwtr calendar creation intent');
+    }
+    if (!value || typeof value.title !== 'string' || !CREATION_TITLE_PATTERN.test(value.title)
+        || (value.calendarId !== undefined && (typeof value.calendarId !== 'string' || !value.calendarId.trim()))) {
+        throw new Error('Invalid Mindwtr calendar creation intent');
+    }
+    return value;
+}
+
+const setCalendarCreationIntent = (intent: CalendarCreationIntent): Promise<void> =>
+    AsyncStorage.setItem(CALENDAR_CREATION_INTENT_KEY, JSON.stringify(intent));
 
 export const CALENDAR_PUSH_COLOR_OPTIONS = [
     '#3B82F6',
@@ -327,14 +351,58 @@ function getAndroidManagedCalendarSeed(
  * Returns the ID of the managed "Mindwtr" calendar, creating it if needed.
  * Returns null if the calendar cannot be created (e.g. no permission, no source).
  */
-export const ensureMindwtrCalendar = async (): Promise<string | null> => {
-    if (isSandboxMode()) return null;
+let pendingCalendarEnsure: Promise<string | null> | null = null;
+let pendingCalendarDelete: Promise<void> | null = null;
+let pendingCalendarColorUpdate: Promise<boolean> | null = null;
+
+export const ensureMindwtrCalendar = (): Promise<string | null> => {
+    if (isSandboxMode()) return Promise.resolve(null);
+    if (pendingCalendarDelete) return Promise.resolve(null);
+    if (pendingCalendarEnsure) return pendingCalendarEnsure;
+    const run = ensureMindwtrCalendarUnsafe();
+    pendingCalendarEnsure = run;
+    void run.then(() => { pendingCalendarEnsure = null; }, () => { pendingCalendarEnsure = null; });
+    return run;
+};
+
+const ensureMindwtrCalendarUnsafe = async (): Promise<string | null> => {
     try {
         const storedId = await getStoredCalendarId();
+        const intent = Platform.OS === 'ios'
+            ? await getCalendarCreationIntent()
+            : null;
         const allCalendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-        if (storedId) {
-            if (allCalendars.some((c) => c.id === storedId)) return storedId;
-            // Calendar was deleted externally — fall through to recreate
+        const storedCalendar = allCalendars.find((calendar) => calendar.id === storedId);
+        if (intent) {
+            const matches = allCalendars.filter((calendar) => calendar.title === intent.title);
+            if (matches.length > 1) return null;
+            if (intent.calendarId && matches.some((calendar) => calendar.id !== intent.calendarId)) return null;
+            if (storedCalendar && storedCalendar.id !== intent.calendarId) return null;
+            const recovered = intent.calendarId
+                ? allCalendars.find((calendar) => calendar.id === intent.calendarId)
+                : matches[0];
+            if (recovered) {
+                if (recovered.title !== intent.title && recovered.title !== MANAGED_CALENDAR_TITLE) return null;
+                if (!intent.calendarId) {
+                    await setCalendarCreationIntent({ ...intent, calendarId: recovered.id });
+                }
+                await setStoredCalendarId(recovered.id);
+                if (recovered.title === intent.title) {
+                    await Calendar.updateCalendarAsync(recovered.id, {
+                        title: MANAGED_CALENDAR_TITLE,
+                        color: recovered.color ?? await getCalendarPushColor(),
+                    });
+                }
+                await AsyncStorage.removeItem(CALENDAR_CREATION_INTENT_KEY);
+                void logInfo('Recovered Mindwtr calendar creation', {
+                    scope: 'calendar-push',
+                    extra: { releaseCheck: 'v1.3.4/ios-calendar-create-recovery' },
+                });
+                return recovered.id;
+            }
+            if (intent.calendarId) return null;
+        } else if (storedCalendar) {
+            return storedCalendar.id;
         }
 
         const color = await getCalendarPushColor();
@@ -368,7 +436,7 @@ export const ensureMindwtrCalendar = async (): Promise<string | null> => {
             }
 
             calendarDetails = {
-                title: MANAGED_CALENDAR_TITLE,
+                title: intent?.title ?? `Mindwtr (${generateUUID()})`,
                 color,
                 entityType: Calendar.EntityTypes.EVENT,
                 sourceId: source.id,
@@ -376,9 +444,20 @@ export const ensureMindwtrCalendar = async (): Promise<string | null> => {
             };
         }
 
+        if (Platform.OS === 'ios' && !intent) {
+            await setCalendarCreationIntent({ title: calendarDetails.title! });
+        }
+
         const newId = await Calendar.createCalendarAsync(calendarDetails);
 
+        if (Platform.OS === 'ios') {
+            await setCalendarCreationIntent({ title: calendarDetails.title!, calendarId: newId });
+        }
         await setStoredCalendarId(newId);
+        if (Platform.OS === 'ios') {
+            await Calendar.updateCalendarAsync(newId, { title: MANAGED_CALENDAR_TITLE, color });
+            await AsyncStorage.removeItem(CALENDAR_CREATION_INTENT_KEY);
+        }
         void logInfo('Created Mindwtr calendar', {
             scope: 'calendar-push',
             extra: { calendarId: newId },
@@ -390,15 +469,35 @@ export const ensureMindwtrCalendar = async (): Promise<string | null> => {
     }
 };
 
-export const updateMindwtrCalendarColor = async (color: string): Promise<boolean> => {
-    if (isSandboxMode()) return false;
+export const updateMindwtrCalendarColor = (color: string): Promise<boolean> => {
+    if (isSandboxMode()) return Promise.resolve(false);
+    if (Platform.OS === 'ios') {
+        const previous = pendingCalendarColorUpdate;
+        const run = (async () => {
+            if (previous) await previous;
+            return updateMindwtrCalendarColorUnsafe(color);
+        })();
+        pendingCalendarColorUpdate = run;
+        void run.then(
+            () => { if (pendingCalendarColorUpdate === run) pendingCalendarColorUpdate = null; },
+            () => { if (pendingCalendarColorUpdate === run) pendingCalendarColorUpdate = null; },
+        );
+        return run;
+    }
+    return updateMindwtrCalendarColorUnsafe(color);
+};
+
+const updateMindwtrCalendarColorUnsafe = async (color: string): Promise<boolean> => {
     const normalized = await setCalendarPushColor(color);
     try {
+        if (pendingCalendarDelete) return false;
+        if (pendingCalendarEnsure) await pendingCalendarEnsure;
+        if (pendingCalendarDelete) return false;
         if (typeof Calendar.updateCalendarAsync !== 'function') return false;
         const storedCalendarId = await getStoredCalendarId();
         const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
         const target = calendars.find((calendar) => storedCalendarId && calendar.id === storedCalendarId)
-            ?? calendars.find(isAppCreatedMindwtrCalendar);
+            ?? (Platform.OS === 'android' ? calendars.find(isAppCreatedMindwtrCalendar) : undefined);
         if (!target || !isWritableCalendar(target)) return false;
 
         // Android's CalendarProvider only stores a calendar's color at creation
@@ -409,7 +508,15 @@ export const updateMindwtrCalendarColor = async (color: string): Promise<boolean
             return await recreateManagedMindwtrCalendar();
         }
 
-        await Calendar.updateCalendarAsync(target.id, { color: normalized });
+        const finalizePending = Platform.OS === 'ios' && await getCalendarCreationIntent();
+        if (pendingCalendarDelete) return false;
+        if (finalizePending) {
+            if (await ensureMindwtrCalendar() !== target.id) return false;
+        }
+        await Calendar.updateCalendarAsync(target.id, {
+            title: finalizePending ? MANAGED_CALENDAR_TITLE : getCalendarDisplayName(target),
+            color: normalized,
+        });
         return true;
     } catch (error) {
         void logWarn('Failed to update Mindwtr calendar color', {
@@ -467,31 +574,76 @@ async function resolveCalendarPushTarget(): Promise<CalendarPushTarget | null> {
  * Deletes the managed Mindwtr calendar and removes the stored ID.
  * Called when the user disables calendar push sync and chooses to clean up.
  */
-export const deleteMindwtrCalendar = async (): Promise<void> => {
-    if (isSandboxMode()) return;
+export const deleteMindwtrCalendar = (): Promise<void> => {
+    if (isSandboxMode()) return Promise.resolve();
+    if (pendingCalendarDelete) return pendingCalendarDelete;
+    const run = deleteMindwtrCalendarUnsafe();
+    pendingCalendarDelete = run;
+    void run.then(() => { pendingCalendarDelete = null; }, () => { pendingCalendarDelete = null; });
+    return run;
+};
+
+const deleteMindwtrCalendarUnsafe = async (): Promise<void> => {
+    if (pendingCalendarEnsure) await pendingCalendarEnsure;
+    if (pendingCalendarColorUpdate) await pendingCalendarColorUpdate;
     const storedId = await getStoredCalendarId();
+    const intent = Platform.OS === 'ios'
+        ? await getCalendarCreationIntent()
+        : null;
     const selectedTargetId = await getCalendarPushTargetCalendarId();
     const calendarIdsToDelete = new Set<string>();
+    const deletedIds = new Set<string>();
+    let deleteFailed = false;
+    let clearCreationIntent = false;
+    let pendingCalendarId: string | null = null;
+    let pendingInspectionFailed = false;
     if (storedId) {
         calendarIdsToDelete.add(storedId);
     }
 
     try {
         const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+        if (intent?.calendarId && storedId && storedId !== intent.calendarId
+            && calendars.some((calendar) => calendar.id === storedId)) {
+            pendingInspectionFailed = true;
+        }
+        if (storedId && !calendars.some((calendar) => calendar.id === storedId)) {
+            deletedIds.add(storedId);
+        }
         calendars.forEach((calendar) => {
-            if (isAppCreatedMindwtrCalendar(calendar)) {
+            if (Platform.OS === 'android' && isAppCreatedMindwtrCalendar(calendar)) {
                 calendarIdsToDelete.add(calendar.id);
             }
         });
+        if (intent) {
+            const matches = calendars.filter((calendar) => calendar.title === intent.title);
+            if (matches.length > 1) pendingInspectionFailed = true;
+            if (intent.calendarId) {
+                if (matches.some((calendar) => calendar.id !== intent.calendarId)) pendingInspectionFailed = true;
+                const bound = calendars.find((calendar) => calendar.id === intent.calendarId);
+                if (bound) pendingCalendarId = bound.id;
+                else if (matches.length === 0) clearCreationIntent = true;
+            } else if (matches.length === 1) {
+                pendingCalendarId = matches[0].id;
+            } else if (matches.length === 0) {
+                clearCreationIntent = true;
+            }
+            if (pendingCalendarId) {
+                calendarIdsToDelete.add(pendingCalendarId);
+            }
+        }
     } catch (error) {
+        if (intent) pendingInspectionFailed = true;
         void logWarn('Failed to inspect calendars before deleting Mindwtr calendar', {
             scope: 'calendar-push',
             extra: { error: String(error) },
         });
     }
+    if (pendingInspectionFailed) throw new Error('Cannot identify pending Mindwtr calendar');
 
     if (calendarIdsToDelete.size === 0) {
         await AsyncStorage.removeItem(CALENDAR_ID_KEY);
+        if (clearCreationIntent) await AsyncStorage.removeItem(CALENDAR_CREATION_INTENT_KEY);
         if (selectedTargetId) {
             const targets = await getCalendarPushTargetCalendars();
             if (!targets.some((target) => target.id === selectedTargetId)) {
@@ -505,22 +657,25 @@ export const deleteMindwtrCalendar = async (): Promise<void> => {
         return;
     }
 
-    try {
-        await Promise.allSettled(
-            Array.from(calendarIdsToDelete).map((calendarId) => Calendar.deleteCalendarAsync(calendarId))
-        );
-    } catch {
-        // Already deleted or not found — ignore
+    const ids = Array.from(calendarIdsToDelete);
+    const outcomes = await Promise.allSettled(ids.map((calendarId) => Calendar.deleteCalendarAsync(calendarId)));
+    outcomes.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') deletedIds.add(ids[index]);
+        else if (!deletedIds.has(ids[index])) deleteFailed = true;
+    });
+    if (pendingCalendarId) {
+        clearCreationIntent = deletedIds.has(pendingCalendarId);
     }
 
-    await AsyncStorage.removeItem(CALENDAR_ID_KEY);
-    if (selectedTargetId && calendarIdsToDelete.has(selectedTargetId)) {
+    if (!storedId || deletedIds.has(storedId)) await AsyncStorage.removeItem(CALENDAR_ID_KEY);
+    if (clearCreationIntent) await AsyncStorage.removeItem(CALENDAR_CREATION_INTENT_KEY);
+    if (selectedTargetId && deletedIds.has(selectedTargetId)) {
         await setCalendarPushTargetCalendarId(null);
     }
 
     try {
         const syncedEntries = await getAllCalendarSyncEntries(PLATFORM);
-        const deletedEntries = syncedEntries.filter((entry) => calendarIdsToDelete.has(entry.calendarId));
+        const deletedEntries = syncedEntries.filter((entry) => deletedIds.has(entry.calendarId));
         await Promise.allSettled(
             deletedEntries.map((entry) => deleteCalendarSyncEntry(entry.taskId, PLATFORM))
         );
@@ -531,9 +686,11 @@ export const deleteMindwtrCalendar = async (): Promise<void> => {
         });
     }
 
+    if (deleteFailed) throw new Error('Failed to delete Mindwtr calendar');
+
     void logInfo('Deleted Mindwtr calendar', {
         scope: 'calendar-push',
-        extra: { deletedCalendars: String(calendarIdsToDelete.size) },
+        extra: { deletedCalendars: String(deletedIds.size) },
     });
 };
 
