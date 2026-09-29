@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ProjectsScreen: View {
     @ObservedObject var model: CoreModel
@@ -891,6 +892,18 @@ struct ProjectDetailScreen: View {
             .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
             if !model.projectDetail.isEmpty {
                 HStack {
+                    if model.projectTaskOrderPresented {
+                        Text(model.projectTaskOrderView.text("label").isEmpty ? model.label("projects.reorderTasks")
+                             : model.projectTaskOrderView.text("label")).rnFont(14, .semibold)
+                        Spacer(minLength: 0)
+                        Button { Task { await model.closeProjectTaskOrder() } } label: {
+                            Text(model.label("common.done")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                            .buttonStyle(.plain)
+                            .disabled(model.busy || model.retryNeeded || model.projectTaskOrderPending)
+                            .accessibilityIdentifier("project-task-order-done")
+                    } else {
                     Button { resignProjectNotesInput(); Task { await model.openProjectViewOptions() } } label: {
                         Image(systemName: "ellipsis").font(.system(size: 20))
                             .foregroundStyle(model.projectTaskViewActive ? palette.tint : palette.secondary)
@@ -913,6 +926,7 @@ struct ProjectDetailScreen: View {
                         .accessibilityIdentifier("project-filter-button")
                     }
                     Spacer(minLength: 0)
+                    }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8).background(palette.card)
                 .overlay(alignment: .bottom) { palette.border.frame(height: 1) }
@@ -950,6 +964,9 @@ struct ProjectDetailScreen: View {
                     .padding(.horizontal, 12).padding(.bottom, 8).background(palette.card)
                 }
             }
+            if model.projectTaskOrderPresented {
+                projectTaskOrderList
+            } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if let error = model.projectError {
@@ -1047,6 +1064,7 @@ struct ProjectDetailScreen: View {
             .accessibilityIdentifier("project-detail-scroll")
             .refreshable { resignProjectNotesInput(); await model.refresh() }
             .allowsHitTesting(!model.projectRenameEditing)
+            }
         }
         .onChange(of: model.projectRenameEditing) { renameFocused = $0 }
         .onChange(of: model.projectRenameInputEnabled) { if $0 { renameFocused = true } }
@@ -1242,6 +1260,25 @@ struct ProjectDetailScreen: View {
                         .accessibilityAddTraits(model.projectTaskSortOptions.text("effectiveSortBy") != "default" ? .isSelected : [])
                         .accessibilityHint(model.projectTaskSortOptions.flag("canEdit") ? "" : model.label("projects.reactivate"))
                         .accessibilityIdentifier("project-view-sort-option")
+                        if !model.projectDetail.flag("readOnly") && model.projectDetail.object("controls").flag("hasReorderTargets") {
+                            Button { Task { await model.openProjectTaskOrder() } } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "line.3.horizontal").accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(model.label("projects.reorderTasks")).rnFont(16)
+                                        if model.projectTaskSortOptions.text("effectiveSortBy") != "default" {
+                                            Text(model.label("projects.reorderNeedsDefaultSort"))
+                                                .rnFont(13).foregroundStyle(palette.secondary)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundStyle(palette.text)
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(!model.projectTaskOrderOpenEnabled)
+                            .accessibilityIdentifier("project-view-order-option")
+                        }
                         if model.projectDetail.object("controls").flag("canToggleCompleted") {
                             Button { Task { await model.toggleProjectShowCompleted() } } label: {
                                 HStack(spacing: 12) {
@@ -1270,6 +1307,30 @@ struct ProjectDetailScreen: View {
         .padding(16).background(palette.card).tint(palette.tint)
         .accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
         .accessibilityIdentifier(model.projectTaskSortPresented ? "project-sort-sheet" : "project-view-options-sheet")
+    }
+
+    private var projectTaskOrderList: some View {
+        VStack(spacing: 0) {
+            if let error = model.projectTaskOrderError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
+                    .padding(.horizontal, 12).accessibilityIdentifier("project-task-order-error")
+                Button {
+                    Task {
+                        if model.projectTaskOrderPending { await model.retry() }
+                        else { await model.retryProjectTaskOrderRead() }
+                    }
+                } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.busy)
+                .accessibilityIdentifier("project-task-order-retry")
+            }
+            if model.busy { ProgressView().padding(12) }
+            ProjectTaskOrderTable(model: model, palette: palette)
+                .accessibilityIdentifier("project-task-order-list")
+        }
+        .background(palette.bg)
     }
 
     private var projectFiltersSheet: some View {
@@ -1386,20 +1447,7 @@ struct ProjectDetailScreen: View {
 
     @ViewBuilder
     private var statusReadErrorView: some View {
-        if let message = model.projectStatusReadError {
-            Text(message).rnFont(13).foregroundStyle(palette.danger)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("project-status-read-error")
-            Button {
-                Task { await model.retryProjectStatusRead() }
-            } label: {
-                Text(model.label("common.retry"))
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("project-status-read-retry")
-        }
+        ProjectStatusReadError(model: model, palette: palette)
     }
 
     private func detailsPanel(_ metadata: CoreObject) -> some View {
@@ -1439,78 +1487,8 @@ struct ProjectDetailScreen: View {
             }
             if detailsExpanded {
                 VStack(alignment: .leading, spacing: 16) {
-                    if model.projectDetail.flag("readOnly") {
-                        metadataRow("projects.statusLabel", value: metadata.text("statusLabel"), id: "status")
-                    } else {
-                        metadataRow("projects.statusLabel", value: metadata.text("statusLabel"), id: "status")
-                            .padding(.trailing, 32)
-                            .frame(minHeight: 44)
-                            .padding(8)
-                            .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
-                            .contentShape(Rectangle())
-                            .overlay(alignment: .trailing) {
-                                AppIcon(name: "chevron", size: 16)
-                                    .rotationEffect(.degrees(model.projectStatusOpen ? 0 : -90))
-                                    .foregroundStyle(palette.secondary).accessibilityHidden(true)
-                            }
-                            .overlay {
-                                Button {
-                                    resignProjectNotesInput()
-                                    Task { await model.openProjectStatus() }
-                                } label: {
-                                    Color.clear.frame(maxWidth: .infinity, minHeight: 44)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain).disabled(!model.projectStatusOpenTapEnabled)
-                                .accessibilityLabel(model.label("projects.statusLabel") + ": " + metadata.text("statusLabel"))
-                                .accessibilityValue(model.label(model.projectStatusOpen ? "markdown.collapse" : "markdown.expand"))
-                                .accessibilityIdentifier("project-status-open")
-                            }
-                        if model.projectStatusOpen {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(["active", "waiting", "someday"], id: \.self) { status in
-                                    Button {
-                                        resignProjectNotesInput()
-                                        Task { await model.changeProjectStatus(status) }
-                                    } label: {
-                                        HStack {
-                                            Text(model.label("status." + status)).rnFont(14)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                            Spacer(minLength: 8)
-                                            if model.projectStatusSelectedStatus == status {
-                                                Image(systemName: "checkmark").accessibilityHidden(true)
-                                            }
-                                        }
-                                        .foregroundStyle(palette.text)
-                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain).disabled(!model.projectStatusPickTapEnabled)
-                                    .accessibilityAddTraits(model.projectStatusSelectedStatus == status ? .isSelected : [])
-                                    .accessibilityIdentifier("project-status-" + status)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                        }
-                        if let message = model.projectStatusError {
-                            Text(message).rnFont(13).foregroundStyle(palette.danger)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("project-status-error")
-                            Button {
-                                Task {
-                                    if model.projectStatusPending { await model.retry() }
-                                    else { await model.retryProjectStatusRead() }
-                                }
-                            } label: {
-                                Text(model.label("common.retry"))
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("project-status-retry")
-                        }
-                        statusReadErrorView
+                    ProjectStatusMetadata(model: model, palette: palette, metadata: metadata) {
+                        resignProjectNotesInput()
                     }
                     if model.projectDetail.flag("readOnly") {
                         metadataRow("projects.projectTypeLabel", value: metadata.text("typeLabel"), id: "type")
@@ -1948,6 +1926,122 @@ struct ProjectDetailScreen: View {
 
 // Keep this concrete View boundary: expanding Details exceeded the iOS 17
 // main-thread stack while resolving the former nested SwiftUI generic type.
+private struct ProjectStatusMetadata: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let metadata: CoreObject
+    let onInteraction: () -> Void
+
+    var body: some View {
+        Group {
+            if model.projectDetail.flag("readOnly") {
+                statusRow
+            } else {
+                statusRow
+                    .padding(.trailing, 32)
+                    .frame(minHeight: 44)
+                    .padding(8)
+                    .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .trailing) {
+                        AppIcon(name: "chevron", size: 16)
+                            .rotationEffect(.degrees(model.projectStatusOpen ? 0 : -90))
+                            .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                    }
+                    .overlay {
+                        Button {
+                            onInteraction()
+                            Task { await model.openProjectStatus() }
+                        } label: {
+                            Color.clear.frame(maxWidth: .infinity, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(!model.projectStatusOpenTapEnabled)
+                        .accessibilityLabel(model.label("projects.statusLabel") + ": " + metadata.text("statusLabel"))
+                        .accessibilityValue(model.label(model.projectStatusOpen ? "markdown.collapse" : "markdown.expand"))
+                        .accessibilityIdentifier("project-status-open")
+                    }
+                if model.projectStatusOpen {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(["active", "waiting", "someday"], id: \.self) { status in
+                            Button {
+                                onInteraction()
+                                Task { await model.changeProjectStatus(status) }
+                            } label: {
+                                HStack {
+                                    Text(model.label("status." + status)).rnFont(14)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 8)
+                                    if model.projectStatusSelectedStatus == status {
+                                        Image(systemName: "checkmark").accessibilityHidden(true)
+                                    }
+                                }
+                                .foregroundStyle(palette.text)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).disabled(!model.projectStatusPickTapEnabled)
+                            .accessibilityAddTraits(model.projectStatusSelectedStatus == status ? .isSelected : [])
+                            .accessibilityIdentifier("project-status-" + status)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+                if let message = model.projectStatusError {
+                    Text(message).rnFont(13).foregroundStyle(palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("project-status-error")
+                    Button {
+                        Task {
+                            if model.projectStatusPending { await model.retry() }
+                            else { await model.retryProjectStatusRead() }
+                        }
+                    } label: {
+                        Text(model.label("common.retry"))
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("project-status-retry")
+                }
+                ProjectStatusReadError(model: model, palette: palette)
+            }
+        }
+    }
+
+    private var statusRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.label("projects.statusLabel")).rnFont(12, .semibold).foregroundStyle(palette.secondary)
+            Text(metadata.text("statusLabel")).rnFont(14).foregroundStyle(palette.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-detail-meta-status")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ProjectStatusReadError: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    var body: some View {
+        if let message = model.projectStatusReadError {
+            Text(message).rnFont(13).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("project-status-read-error")
+            Button {
+                Task { await model.retryProjectStatusRead() }
+            } label: {
+                Text(model.label("common.retry"))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("project-status-read-retry")
+        }
+    }
+}
+
 private struct ProjectSectionsMetadata: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
@@ -2514,5 +2608,109 @@ private struct ProjectAreaCreateForm: View {
         nameFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         Task { await model.addArea() }
+    }
+}
+
+/// UIKit keeps section headings fixed as drag sources while allowing tasks to cross them.
+private struct ProjectTaskOrderTable: UIViewRepresentable {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITableView {
+        let table = UITableView(frame: .zero, style: .plain)
+        table.dataSource = context.coordinator
+        table.delegate = context.coordinator
+        table.separatorStyle = .none
+        table.rowHeight = UITableView.automaticDimension
+        table.estimatedRowHeight = 90
+        table.allowsSelection = false
+        table.setEditing(true, animated: false)
+        table.accessibilityIdentifier = "project-task-order-list"
+        return table
+    }
+
+    func updateUIView(_ table: UITableView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.parent = self
+        table.backgroundColor = UIColor(palette.bg)
+        table.isUserInteractionEnabled = model.projectTaskOrderInputEnabled
+        // Keep UIKit's drag preview until the durable result or failure is known.
+        if !model.busy && (coordinator.revision != model.projectTaskOrderView.text("revision") || coordinator.moving) {
+            coordinator.rows = model.projectTaskOrderView.objects("items")
+            coordinator.revision = model.projectTaskOrderView.text("revision")
+            coordinator.moving = false
+            table.reloadData()
+        }
+    }
+
+    final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
+        var parent: ProjectTaskOrderTable
+        var rows: [CoreObject] = []
+        var revision = ""
+        var moving = false
+
+        init(_ parent: ProjectTaskOrderTable) { self.parent = parent }
+
+        func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { rows.count }
+
+        func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "order") ?? UITableViewCell(style: .default, reuseIdentifier: "order")
+            let item = rows[indexPath.row]
+            let model = parent.model
+            let palette = parent.palette
+            cell.backgroundColor = UIColor(palette.bg)
+            cell.selectionStyle = .none
+            cell.showsReorderControl = item.text("type") == "task"
+            cell.contentConfiguration = UIHostingConfiguration {
+                Group {
+                    if item.text("type") == "section" {
+                        Text(item.text("title")).rnFont(13, .bold)
+                            .foregroundStyle(item.flag("muted") ? palette.secondary : palette.text)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier("project-task-order-section-" + item.text("id"))
+                    } else {
+                        TaskCard(row: item.object("row"), model: model, palette: palette)
+                            .allowsHitTesting(false)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(item.object("row").text("title"))
+                            .accessibilityIdentifier("project-task-order-row-" + item.object("row").text("id"))
+                    }
+                }
+            }.margins(.horizontal, 12).margins(.vertical, 4)
+            return cell
+        }
+
+        func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
+            parent.model.projectTaskOrderInputEnabled && rows[indexPath.row].text("type") == "task"
+        }
+
+        func tableView(_ tableView: UITableView, editingStyleForRowAt indexPath: IndexPath) -> UITableViewCell.EditingStyle { .none }
+        func tableView(_ tableView: UITableView, shouldIndentWhileEditingRowAt indexPath: IndexPath) -> Bool { false }
+        func tableView(_ tableView: UITableView, targetIndexPathForMoveFromRowAt source: IndexPath,
+                       toProposedIndexPath proposed: IndexPath) -> IndexPath { proposed }
+
+        func tableView(_ tableView: UITableView, moveRowAt source: IndexPath, to destination: IndexPath) {
+            let model = parent.model
+            guard model.projectTaskOrderInputEnabled, rows.indices.contains(source.row),
+                  rows.indices.contains(destination.row), rows[source.row].text("type") == "task",
+                  rows.map(model.projectTaskOrderItemID) == model.projectTaskOrderView.objects("items").map(model.projectTaskOrderItemID) else {
+                tableView.reloadData()
+                return
+            }
+            moving = true
+            rows.insert(rows.remove(at: source.row), at: destination.row)
+            let insertion = destination.row > source.row ? destination.row + 1 : destination.row
+            Task { @MainActor in
+                await model.moveProjectTask(from: IndexSet(integer: source.row), to: insertion)
+                // A rejected/no-op callback may not publish a state change.
+                rows = model.projectTaskOrderView.objects("items")
+                revision = model.projectTaskOrderView.text("revision")
+                moving = false
+                tableView.reloadData()
+            }
+        }
     }
 }

@@ -1382,6 +1382,29 @@ describe('canonical local reads contract', () => {
                     expect(useTaskStore.getState()._sectionsById.get(after.id)).toEqual(after);
                 }
             },
+            commitPreparedProjectTaskOrder: async (control) => {
+                const host = await nativeHost(control);
+                const projectId = settled.projects[1].id;
+                const view = nativeValue(host.getProjectTaskOrderView({ projectId, offset: 0, limit: 100,
+                    showCompleted: true, filters: {} }));
+                const moved = view.items.find((item) => item.type === 'task');
+                const target = view.items.find((item) => item.type === 'section'
+                    && item.sectionId && item.sectionId !== (moved?.type === 'task' ? moved.sectionId : null));
+                if (!moved || moved.type !== 'task' || !target || target.type !== 'section' || !view.orderToken)
+                    throw new Error('fixture needs a task and another live Project Section');
+                const request = { requestId: 'ed1be6f1-6652-40a5-9053-d045c460cbf9', projectId,
+                    taskId: moved.row.id, after: { type: 'section' as const, id: target.id },
+                    showCompleted: true, filters: {}, expectedOrder: view.orderToken };
+                const planned = nativeValue(host.prepareProjectTaskOrder(request));
+                if (planned.kind !== 'prepared') throw new Error('fixture move must change Project task order');
+                control.expectPersisted((written) => {
+                    for (const { after } of planned.prepared.effect.tasks) {
+                        expect(written.tasks.find((entry) => entry.id === after.id)).toEqual(after);
+                    }
+                });
+                expect(nativeValue(await host.commitPreparedProjectTaskOrder({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             commitPreparedProjectSectionDelete: async (control) => {
                 const host = await nativeHost(control);
                 const projectId = settled.projects[1].id;

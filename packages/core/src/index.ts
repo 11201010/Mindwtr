@@ -146,6 +146,7 @@ export * from './project-utils';
 export * from './project-details-presentation';
 export * from './project-row-meta';
 export * from './project-task-list-model';
+export * from './project-task-reorder';
 export * from './task-row-meta';
 export * from './list-filter-state';
 export * from './list-count';

@@ -316,6 +316,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
     projects: (input) => contract.getFilteredProjects(input),
     projectDetailView: (input) => contract.getProjectDetailView(input),
+    projectTaskOrderView: (input) => contract.getProjectTaskOrderView(input),
     projectDetailFilterView: (input) => contract.getProjectDetailFilterView(input),
     projectDetailFilterOptions: (input) => contract.getProjectDetailFilterOptions(input),
     waiting: (input) => contract.getWaitingView(input),
@@ -957,6 +958,28 @@ globalThis.MindwtrHost = {
     },
     projectTaskSortCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectTaskSort(JSON.parse(json))));
+    },
+    projectTaskOrderWrite(_json: string): string {
+        return submit(async () => { throw new Error('INVALID_INPUT: Project task order writes require a durable host journal'); });
+    },
+    projectTaskOrderRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeProjectTaskOrderOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    projectTaskOrderPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareProjectTaskOrder(JSON.parse(json)));
+        });
+    },
+    projectTaskOrderValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedProjectTaskOrder(JSON.parse(json))));
+    },
+    projectTaskOrderCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedProjectTaskOrder(JSON.parse(json))));
     },
     projectNotesEditOptions(json: string): string {
         return submit(async () => {

@@ -87,6 +87,27 @@ describe('project task list model', () => {
         expect(model.sections.map(({ id }) => id)).toEqual(['sec-a', 'sec-empty', 'sec-b']);
     });
 
+    it('allocates synthetic IDs around real stored section IDs without changing those IDs', () => {
+        const base = buildLikeMobile(scenario('live-default'));
+        const project = fixture.projects.find(({ id }) => id === 'p-live')!;
+        const collisions = ['no-section', 'project-completed-tasks', 'project-reference-tasks'];
+        const sections = collisions.map((id, order): Section => ({ ...visibleSections[0], id, projectId: project.id, order }));
+        const real = fixture.tasks.find((row) => row.projectId === project.id && !row.deletedAt)!;
+        const loose = { ...real, id: 'collision-loose', sectionId: undefined, status: 'next' as const };
+        const done = { ...real, id: 'collision-done', sectionId: undefined, status: 'done' as const };
+        const ref = { ...real, id: 'collision-ref', sectionId: undefined, status: 'reference' as const };
+        const model = buildLikeMobile(scenario('live-default'), {
+            sections, allSections: sections,
+            tasks: [{ ...real, id: 'collision-real', sectionId: 'no-section', status: 'next' }, loose, done],
+            visibleTasks: [ref], groupCompletedTasksLast: true, completedCollapsed: false,
+        }).model;
+        expect(base.model.items.length).toBeGreaterThan(0);
+        expect(model.sections.map((row) => row.id)).toEqual(collisions);
+        expect(model.items.flatMap((item) => item.type === 'section' ? [[item.id, item.synthetic ?? 'real']] : []))
+            .toEqual([['no-section', 'real'], ['no-section:1', 'none'],
+                ['project-completed-tasks:1', 'completed'], ['project-reference-tasks:1', 'reference']]);
+    });
+
     it('applies the search box to the list and the Reference pile alike', () => {
         const { model } = buildLikeMobile(scenario('live-default'), { searchQuery: 'guide' });
         expect(model.items.map((item) => (item.type === 'section' ? `#${item.id}` : item.task.id)))

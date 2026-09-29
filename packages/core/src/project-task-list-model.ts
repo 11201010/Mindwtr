@@ -19,8 +19,26 @@ export const PROJECT_COMPLETED_SECTION_ID = 'project-completed-tasks';
 /** The project References pile below the task list, matching desktop's ProjectWorkspace (#1000). */
 export const PROJECT_REFERENCE_SECTION_ID = 'project-reference-tasks';
 
+export type ProjectSyntheticSection = 'none' | 'completed' | 'reference';
+
+/** Screen-only header IDs must never claim a stored Section's ID. */
+export function getProjectSyntheticSectionIds(sections: readonly Pick<Section, 'id'>[]): Record<ProjectSyntheticSection, string> {
+    const used = new Set(sections.map(({ id }) => id));
+    const allocate = (base: string) => {
+        let id = base;
+        for (let suffix = 1; used.has(id); suffix++) id = `${base}:${suffix}`;
+        used.add(id);
+        return id;
+    };
+    return {
+        none: allocate(PROJECT_NO_SECTION_ID),
+        completed: allocate(PROJECT_COMPLETED_SECTION_ID),
+        reference: allocate(PROJECT_REFERENCE_SECTION_ID),
+    };
+}
+
 export type ProjectTaskListItem =
-    | { type: 'section'; id: string; title: string; count: number; muted?: boolean; collapsible?: boolean; collapsed?: boolean }
+    | { type: 'section'; id: string; title: string; count: number; muted?: boolean; collapsible?: boolean; collapsed?: boolean; synthetic?: ProjectSyntheticSection }
     /** `reorderSectionId`: the section a drag lands the task in (null = no section; undefined = not reorderable). */
     | { type: 'task'; task: Task; reorderSectionId?: string | null };
 
@@ -152,12 +170,14 @@ export function buildProjectTaskListModel(input: ProjectTaskListModelInput): Pro
     }
 
     const sections = getProjectSectionsForView(project, input.sections, input.allSections);
+    const syntheticIds = getProjectSyntheticSectionIds(sections);
 
     const appendPiles = (items: ProjectTaskListItem[]): ProjectTaskListItem[] => {
         if (groupCompleted && completedTasks.length > 0) {
             items.push({
                 type: 'section',
-                id: PROJECT_COMPLETED_SECTION_ID,
+                id: syntheticIds.completed,
+                synthetic: 'completed',
                 title: tFallback(t, 'list.done', tFallback(t, 'status.done', 'Completed')),
                 count: completedTasks.length,
                 muted: true,
@@ -171,7 +191,8 @@ export function buildProjectTaskListModel(input: ProjectTaskListModelInput): Pro
         if (!reorderMode && referenceTasks.length > 0) {
             items.push({
                 type: 'section',
-                id: PROJECT_REFERENCE_SECTION_ID,
+                id: syntheticIds.reference,
+                synthetic: 'reference',
                 title: tFallback(t, 'status.reference', 'Reference'),
                 count: referenceTasks.length,
                 muted: true,
@@ -213,7 +234,8 @@ export function buildProjectTaskListModel(input: ProjectTaskListModelInput): Pro
         const reorderSectionId = sections.length > 0 ? null : undefined;
         items.push({
             type: 'section',
-            id: PROJECT_NO_SECTION_ID,
+            id: syntheticIds.none,
+            synthetic: 'none',
             title: t('projects.noSection'),
             count: unsectioned.length,
             muted: true,

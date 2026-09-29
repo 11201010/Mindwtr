@@ -5697,6 +5697,123 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    func testProjectTaskOrderPreservesHiddenRowsAndRelaunches() {
+        projectTaskOrderFlow(library: "ead8d6f2-f4c3-4cef-abdc-56e6ec2fb5a5")
+    }
+
+    func testProjectTaskOrderLargestText() {
+        projectTaskOrderFlow(library: "6a3cfb27-3fb6-4f24-b32c-af97cd9e1d61")
+    }
+
+    private func projectTaskOrderFlow(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openProjectTaskSortTest(app)
+        projectFilterTap(app, "project-task-view-options-button")
+        projectFilterTap(app, "project-view-filters-option")
+        let search = app.textFields["project-filter-search"]
+        boardEnabled(search); search.tap(); search.typeText("Order action\n")
+        projectFilterTap(app, "project-filters-close")
+        projectSortTap(app, "project-task-view-options-button")
+        projectSortTap(app, "project-view-order-option")
+        let list = app.tables["project-task-order-list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        let aID = "acc031d9-9cac-4296-8420-840bcd17a562"
+        let cID = "a007e3b4-2789-43b0-8e79-86617f91c5c5"
+        func row(_ id: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: "project-task-order-row-" + id).firstMatch
+        }
+        let a = row(aID); let c = row(cID)
+        XCTAssertTrue(a.waitForExistence(timeout: 15)); XCTAssertTrue(c.exists)
+        XCTAssertFalse(row("d55f6859-cf8e-4643-a1ad-eff6db59262e").exists)
+        XCTAssertFalse(row("8da3e93c-4ddc-4092-9713-54ba386b6873").exists)
+        let done = app.buttons["project-task-order-done"]
+        boardEnabled(done)
+        func drag(_ source: XCUIElement, below destination: XCUIElement) {
+            let start = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: list.frame.maxX - 22, dy: source.frame.midY))
+            let end = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: list.frame.maxX - 22, dy: min(list.frame.maxY - 8, destination.elementType == .staticText
+                    ? destination.frame.maxY + source.frame.height / 2 : destination.frame.minY + 8)))
+            start.press(forDuration: 0.8, thenDragTo: end)
+            boardEnabled(done)
+        }
+        XCTAssertLessThan(a.frame.minY, c.frame.minY)
+        drag(a, below: c)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in a.frame.minY > c.frame.minY }, object: nil)], timeout: 10), .completed)
+        let empty = app.staticTexts["project-task-order-section-order-empty-section"]
+        XCTAssertTrue(empty.exists)
+        XCTAssertLessThan(a.frame.maxY, empty.frame.minY)
+        drag(a, below: empty)
+        XCTAssertGreaterThan(a.frame.minY, empty.frame.minY)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Project task order after filtered cross-section move"; shot.lifetime = .keepAlways; add(shot)
+        done.tap(); boardEnabled(app.buttons["project-task-view-options-button"])
+        app.terminate(); app.launch(); openProjectTaskSortTest(app)
+        projectSortTap(app, "project-task-view-options-button")
+        projectSortTap(app, "project-view-order-option")
+        boardEnabled(done)
+        XCTAssertTrue(row("d55f6859-cf8e-4643-a1ad-eff6db59262e").exists)
+        XCTAssertGreaterThan(a.frame.minY, empty.frame.minY)
+        done.tap(); boardTap(app, "project-back")
+        app.terminate()
+    }
+
+    func testProjectDetailsExpansionWithTaskOrder() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "ead8d6f2-f4c3-4cef-abdc-56e6ec2fb5a5"]
+        app.launch(); openProjectTaskSortTest(app)
+        for _ in 0..<2 {
+            projectSortTap(app, "project-details-toggle")
+            XCTAssertTrue(app.buttons["project-status-open"].waitForExistence(timeout: 10))
+            projectSortTap(app, "project-details-toggle")
+            XCTAssertFalse(app.buttons["project-status-open"].exists)
+        }
+        app.terminate()
+    }
+
+    func testProjectTaskOrderFailureRetainsExactMove() { projectTaskOrderRecovery(failed: true) }
+    func testProjectTaskOrderColdRecovery() { projectTaskOrderRecovery(failed: false) }
+
+    private func projectTaskOrderRecovery(failed: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "8e2a95e9-6e94-4050-b346-e9e61b8a37b0"]
+        app.launch(); openProjectTaskSortTest(app, recovered: !failed)
+        projectSortTap(app, "project-task-view-options-button")
+        projectSortTap(app, "project-view-order-option")
+        let list = app.tables["project-task-order-list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 15))
+        let a = app.descendants(matching: .any).matching(identifier:
+            "project-task-order-row-acc031d9-9cac-4296-8420-840bcd17a562").firstMatch
+        let c = app.descendants(matching: .any).matching(identifier:
+            "project-task-order-row-a007e3b4-2789-43b0-8e79-86617f91c5c5").firstMatch
+        XCTAssertTrue(a.waitForExistence(timeout: 15)); XCTAssertTrue(c.exists)
+        let done = app.buttons["project-task-order-done"]
+        if failed {
+            boardEnabled(done)
+            let start = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: list.frame.maxX - 22, dy: a.frame.midY))
+            let end = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: list.frame.maxX - 22, dy: c.frame.minY + 8))
+            start.press(forDuration: 0.8, thenDragTo: end)
+            XCTAssertTrue(app.staticTexts["project-task-order-error"].waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                XCTAssertFalse(done.isEnabled)
+                projectSortTap(app, "project-task-order-retry")
+                boardEnabled(app.buttons["project-task-order-retry"])
+            }
+        } else {
+            boardEnabled(done)
+            XCTAssertGreaterThan(a.frame.minY, c.frame.minY)
+            done.tap()
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = failed ? "Project task order exact retry" : "Project task order cold recovery"
+        shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
     func testProjectTaskSortAndNotes() { projectTaskSortFlow(library: "13d4bc99-20dd-49b5-a395-835b78de7ebb") }
     func testProjectTaskSortLargestText() { projectTaskSortFlow(library: "43017675-b987-4402-b220-f097fea28b70") }
 

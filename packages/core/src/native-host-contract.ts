@@ -12,6 +12,7 @@ import {
     selectProjectTaskListTasks,
     type ProjectTaskListItem,
 } from './project-task-list-model';
+import { buildProjectTaskReorderModel, projectTaskOrderIdentities, projectTaskOrderToken } from './project-task-reorder';
 import { buildProjectGroups, type ProjectAreaGroup, type ProjectTagFilter } from './project-grouping';
 import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { isCustomTimeEstimate, TIME_ESTIMATE_OPTIONS } from './calendar-scheduling';
@@ -243,6 +244,7 @@ import { createProjectSectionMethods } from './native-host-contract-project-sect
 import { createProjectSectionRenameMethods } from './native-host-contract-project-section-rename';
 import { createProjectSectionDeleteMethods } from './native-host-contract-project-section-delete';
 import { createProjectSectionOrderMethods } from './native-host-contract-project-section-order';
+import { createProjectTaskOrderMethods } from './native-host-contract-project-task-order';
 import { createAreaCreateMethods } from './native-host-contract-area-create';
 import { createAreaColorMethods } from './native-host-contract-area-color';
 import { createAreaRenameMethods } from './native-host-contract-area-rename';
@@ -482,6 +484,7 @@ export type NativeProjectDetailView = Omit<NativeProjectDetail, 'items'> & {
         completedCollapsed: boolean;
         canToggleCompleted: boolean;
         groupCompletedTasksLast: boolean;
+        hasReorderTargets: boolean;
         label: string;
     };
 };
@@ -495,6 +498,24 @@ export type NativeProjectDetailFilterView = NativeProjectDetailView & {
         actionLabel: string | null;
         action: { filterEdit: { type: 'clear' } } | null;
     };
+};
+export type NativeProjectTaskOrderView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    projectId: string;
+    readOnly: boolean;
+    canReorder: boolean;
+    sortBy: TaskSortBy;
+    filters: ListFilterState;
+    label: string;
+    doneLabel: string;
+    unavailableLabel: string;
+    orderToken: string | null;
+    total: number;
+    items: (
+        | { type: 'section'; id: string; sectionId: string | null; title: string; muted: boolean }
+        | { type: 'task'; row: NativeTaskRow; sectionId: string | null; sequenceCue: ProjectSequenceTaskCue | null }
+    )[];
 };
 export type NativeProjectDetailFilterOptions = {
     revision: string;
@@ -519,6 +540,7 @@ export type NativeProjectNotes = {
 type ProjectDetailCache = {
     readOnly: boolean;
     groupCompletedTasksLast: boolean;
+    hasReorderTargets: boolean;
     metadata: ProjectDetailsMetadata;
     items: ProjectTaskListItem[];
     cues: Map<string, ProjectSequenceTaskCue>;
@@ -1178,6 +1200,9 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
         cachedProjectDetail = {
             readOnly: options.readOnly,
             groupCompletedTasksLast: options.groupCompletedTasksLast,
+            hasReorderTargets: model.sections.length > 1 || model.items.some((item) => item.type === 'task'
+                    && item.task.status !== 'reference'
+                    && !(options.groupCompletedTasksLast && item.task.status === 'done')),
             metadata: getProjectDetailsPresentation(project, {
                 isArchivedProject: project.status === 'archived',
                 areaName: area?.name || tFallback(translate, 'projects.noArea', 'No Area'),
@@ -1246,6 +1271,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             completedCollapsed,
             canToggleCompleted: !cache.readOnly,
             groupCompletedTasksLast: cache.groupCompletedTasksLast,
+            hasReorderTargets: cache.hasReorderTargets,
             label: showCompleted
                 ? tFallback(translate, 'common.hideCompleted', 'Hide completed')
                 : tFallback(translate, 'common.showCompleted', 'Show completed'),
@@ -1278,6 +1304,33 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             projectId, showCompleted, completedCollapsed, resolved.state, sheetOpen, revision(), displayRevision(now),
         ]);
         return { resolved, options, tokens, viewRevision };
+    };
+
+    const projectTaskOrderSnapshot = (projectId: string, showCompleted: boolean,
+        filters: ListFilterState, now: Date) => {
+        const data = projectFilterData(projectId, showCompleted, false, filters, undefined, false, now);
+        const sources = projectTaskSources(projectId, showCompleted);
+        if (!data || !sources) return null;
+        const { state, project, options, projectTasks, filterableTasks } = sources;
+        const projectSortBy = resolveTaskSortByForFeatures(project.taskSortBy ?? 'default', state.settings);
+        const sortBy = resolveNonDoneTaskSortBy(projectSortBy, state.settings);
+        const model = buildProjectTaskReorderModel({
+            project, tasks: filterableTasks, visibleTasks: state.tasks,
+            sections: state.sections, allSections: state._allSections,
+            statusFilter: 'all', criteria: data.resolved.criteria, searchQuery: data.resolved.searchQuery,
+            sortBy, projectOrder: options.enableProjectReorder, reorderMode: true,
+            groupCompletedTasksLast: options.groupCompletedTasksLast, completedCollapsed: false, t: translate,
+        });
+        const sections = getProjectSectionsForView(project, state.sections, state._allSections);
+        const tasks = state._allTasks.filter((task) => task.projectId === projectId && !task.deletedAt)
+            .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+        const items = projectTaskOrderIdentities(model.items);
+        const token = projectTaskOrderToken({ project, sections, tasks, sortBy, items });
+        const canReorder = !options.readOnly && sortBy === 'default'
+            && (model.groups.some((group) => group.tasks.length > 0) || sections.length > 1)
+            && isNativeJsonWithinBytes(token);
+        return { data, state, project, projectTasks, model, sections, tasks, items,
+            sortBy, canReorder, token: canReorder ? token : null };
     };
 
     const save = async (): Promise<NativeHostResult<null>> => {
@@ -1527,6 +1580,15 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             revision: projectMutationRevision }),
         ...createProjectSectionOrderMethods({ readiness, save,
             revision: projectMutationRevision }),
+        ...createProjectTaskOrderMethods({ readiness, save,
+            snapshot: (projectId, showCompleted, filters) => {
+                const resolved = readFilterState(filters);
+                if (!resolved || resolved.projects.length || resolved.timeEstimates.length) return null;
+                const current = projectTaskOrderSnapshot(projectId, showCompleted, resolved, new Date());
+                return current ? { canReorder: current.canReorder, token: current.token,
+                    scope: { project: current.project, tasks: current.tasks, sections: current.sections,
+                        settings: current.state.settings, items: current.items } } : null;
+            } }),
 
         ...createAreaCreateMethods({ readiness, save,
             revision: () => `${revision()}:${settingsRevision()}:${language}`,
@@ -1964,6 +2026,73 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             if (!result.ok) return result;
             const { value, cache } = result.value;
             return { ok: true, value: projectDetailView(value, cache, input.offset, input.showCompleted, input.completedCollapsed) };
+        },
+
+        getProjectTaskOrderView(input: {
+            projectId: string; offset: number; limit: number; revision?: string;
+            showCompleted: boolean; filters: Partial<ListFilterState>;
+        }): NativeHostResult<NativeProjectTaskOrderView> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || !isNativeJsonWithinBytes(input)
+                || !['projectId', 'offset', 'limit', 'showCompleted', 'filters'].every((key) => Object.prototype.hasOwnProperty.call(input, key))
+                || Object.keys(input).some((key) => !['projectId', 'offset', 'limit', 'revision', 'showCompleted', 'filters'].includes(key))
+                || typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 500
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || (input.offset > 0 && typeof input.revision !== 'string')
+                || (input.revision !== undefined && typeof input.revision !== 'string')
+                || typeof input.showCompleted !== 'boolean' || !isObjectRecord(input.filters)) {
+                return fail('INVALID_INPUT', 'A bounded Project order view and revision for later pages are required');
+            }
+            const filters = readFilterState(input.filters);
+            if (!filters || filters.projects.length || filters.timeEstimates.length) {
+                return fail('INVALID_INPUT', 'Project and Time Estimate filters are not offered by this list');
+            }
+            const now = new Date();
+            const snapshot = projectTaskOrderSnapshot(input.projectId, input.showCompleted, filters, now);
+            if (!snapshot) return fail('TASK_NOT_FOUND', 'Project not found');
+            if (input.revision !== undefined && input.revision !== snapshot.data.viewRevision) {
+                return fail('STALE_REVISION', 'Project order changed; restart paging from offset zero');
+            }
+            const { data, state, project, projectTasks, model, sortBy, canReorder } = snapshot;
+            const sectionByTaskId = new Map(model.groups.flatMap((group) => group.tasks.map((task) => [task.id, group.sectionId ?? null] as const)));
+            const cues = sortBy === 'default'
+                ? getSequentialProjectTaskCues(project, projectTasks, snapshot.sections)
+                : new Map<string, ProjectSequenceTaskCue>();
+            const titles = new Map(state.projects.map((candidate) => [candidate.id, candidate.title]));
+            const value: NativeProjectTaskOrderView = {
+                version: NATIVE_HOST_CONTRACT_VERSION, revision: data.viewRevision, projectId: input.projectId,
+                readOnly: project.status === 'archived', canReorder,
+                orderToken: input.offset === 0 ? snapshot.token : null,
+                sortBy, filters: data.resolved.state,
+                label: tFallback(translate, 'projects.reorderTasks', 'Order'),
+                doneLabel: tFallback(translate, 'common.done', 'Done'),
+                unavailableLabel: tFallback(translate, 'projects.reorderNeedsDefaultSort', 'Available when Sort is Default'),
+                total: model.items.length,
+                items: model.items.slice(input.offset, input.offset + input.limit).map((item) => {
+                    if (item.type === 'header') return {
+                        type: 'section' as const, id: item.group.id, sectionId: item.group.sectionId ?? null,
+                        title: item.group.title!, muted: item.group.muted === true,
+                    };
+                    const cue = cues.get(item.task.id) ?? null;
+                    return {
+                        type: 'task' as const, sectionId: sectionByTaskId.get(item.task.id) ?? null, sequenceCue: cue,
+                        row: toNativeTaskRow(item.task, titles, rowMeta(item.task, now, {
+                            hideProjectMeta: true, sequenceCue: cue ?? undefined,
+                            sequenceLabel: tFallback(translate, 'projects.availableNextAction', 'Available next action'),
+                        })),
+                    };
+                }),
+            };
+            if (value.orderToken && !isNativeJsonWithinBytes(value)) {
+                value.orderToken = null;
+                value.canReorder = false;
+            }
+            if (!isNativeJsonWithinBytes(value)) {
+                return fail('INVALID_INPUT', 'Project order rows exceed the bounded native response');
+            }
+            return { ok: true, value };
         },
 
         getProjectDetailFilterView(input: {

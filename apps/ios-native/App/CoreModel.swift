@@ -101,6 +101,11 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectRenameReadError: String?
     @Published private(set) var projectFlowError: String?
     @Published private(set) var projectFlowReadError: String?
+    @Published private(set) var projectTaskOrderPresented = false
+    @Published private(set) var projectTaskOrderView: CoreObject = [:]
+    @Published private(set) var projectTaskOrderError: String?
+    private var projectTaskOrderRequest: String?
+    private var projectTaskOrderCurrent = false
     @Published private(set) var projectTaskSortOptions: CoreObject = [:]
     @Published private(set) var projectTaskSortPresented = false
     @Published private(set) var projectTaskSortError: String?
@@ -654,7 +659,7 @@ final class CoreModel: ObservableObject {
     }
     var projectActionsEnabled: Bool {
         ready && selectedSurface == .project && projectCurrent && !busy && !retryNeeded && !taskPresented
-            && !projectRenameEditing
+            && !projectRenameEditing && !projectTaskOrderPresented
     }
     var projectViewOpenEnabled: Bool {
         projectActionsEnabled && pendingProjectView == nil && projectFilterPendingEdit == nil
@@ -674,6 +679,22 @@ final class CoreModel: ObservableObject {
             && projectFilterPickerCurrent
             && projectFilterPicker.text("query").utf8.elementsEqual(projectFilterPickerQuery.utf8)
             && projectFilterPicker.text("viewRevision") == projectDetail.text("revision")
+    }
+    var projectTaskOrderPending: Bool { projectTaskOrderRequest != nil }
+    var projectTaskOrderOpenEnabled: Bool {
+        projectViewOpenEnabled && !projectDetail.flag("readOnly")
+            && projectDetail.object("controls").flag("hasReorderTargets")
+            && projectTaskSortOptions.text("effectiveSortBy") == "default"
+    }
+    var projectTaskOrderInputEnabled: Bool {
+        ready && selectedSurface == .project && projectCurrent && projectTaskOrderPresented
+            && projectTaskOrderCurrent && projectTaskOrderView.flag("canReorder")
+            && !projectTaskOrderView.text("orderToken").isEmpty
+            && !busy && !retryNeeded && !projectTaskOrderPending
+    }
+    func projectTaskOrderItemID(_ item: CoreObject) -> Data {
+        Data((item.text("type") + ":" + (item.text("type") == "task"
+            ? item.object("row").text("id") : item.text("id"))).utf8)
     }
     var projectTaskSortPending: Bool { projectTaskSortRequest != nil }
     var projectTaskSortInputEnabled: Bool {
@@ -1234,7 +1255,7 @@ final class CoreModel: ObservableObject {
                 calendarComposerRecoveredResult = recovery.object("result")
             } else if recovery.text("method") == "mindSweepCommit" {
                 mindSweepRecoveredResult = recovery.object("result")
-            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
+            } else if ["projectCreateCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit", "projectTagsWriteCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "areaCreateCommit", "areaColorCommit", "areaOrderCommit", "areaRenameCommit",
                        "areaDeleteCommit"].contains(recovery.text("method")) {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
@@ -1324,6 +1345,8 @@ final class CoreModel: ObservableObject {
               !projectRenameEditing else { return }
         morePresented = false
         guard selectedSurface != surface else { return }
+        projectTaskOrderPresented = false
+        projectTaskOrderCurrent = false
         selectedSurface = surface
         await refresh()
     }
@@ -1931,6 +1954,149 @@ final class CoreModel: ObservableObject {
             projectFlowReadError = nil
             error = nil
         } catch { projectFlowReadError = error.localizedDescription }
+    }
+
+    func openProjectTaskOrder() async {
+        guard await flushProjectNotesEdit(), projectViewOptionsPresented, projectTaskOrderOpenEnabled else { return }
+        projectViewOptionsPresented = false
+        projectTaskOrderPresented = true
+        busy = true
+        defer { finishOperation() }
+        await readProjectTaskOrder()
+    }
+
+    func closeProjectTaskOrder() async {
+        guard await flushProjectNotesEdit(), !busy, !retryNeeded, !projectTaskOrderPending else { return }
+        projectTaskOrderPresented = false
+        projectTaskOrderCurrent = false
+        projectTaskOrderView = [:]
+        projectTaskOrderError = nil
+        await refresh()
+    }
+
+    func retryProjectTaskOrderRead() async {
+        guard ready, selectedSurface == .project, projectTaskOrderPresented,
+              !busy, !retryNeeded, !projectTaskOrderPending else { return }
+        busy = true
+        defer { finishOperation() }
+        await readProjectDetail()
+        await readProjectTaskOrder()
+    }
+
+    private func readProjectTaskOrder() async {
+        projectTaskOrderCurrent = false
+        let id = projectHeader.text("id")
+        let session = projectFilterSession
+        let filters = projectDetail.object("filters").object("state")
+        for attempt in 0..<2 {
+            do {
+                func page(_ offset: Int, revision: String? = nil) async throws -> CoreObject {
+                    var input: CoreObject = ["projectId": id, "offset": offset, "limit": pageSize,
+                                            "showCompleted": projectShowCompleted, "filters": filters]
+                    if let revision { input["revision"] = revision }
+                    return try await query("menuRead", ["projectTaskOrderView", json(input)])
+                }
+                var first = try await page(0)
+                guard first.text("projectId").utf8.elementsEqual(id.utf8), !first.text("revision").isEmpty,
+                      first.number("total") >= 0, first["items"] is [CoreObject],
+                      first.objects("items").count == min(pageSize, first.number("total")),
+                      !first.text("label").isEmpty, !first.text("doneLabel").isEmpty,
+                      !first.flag("canReorder") || !first.text("orderToken").isEmpty else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                var items = first.objects("items")
+                while items.count < first.number("total") {
+                    let next = try await page(items.count, revision: first.text("revision"))
+                    guard next.text("revision") == first.text("revision"),
+                          next.text("projectId").utf8.elementsEqual(id.utf8),
+                          next.number("total") == first.number("total"),
+                          next.objects("items").count == min(pageSize, first.number("total") - items.count),
+                          next["orderToken"] is NSNull else { throw CocoaError(.coderReadCorrupt) }
+                    items += next.objects("items")
+                }
+                guard Set(items.map(projectTaskOrderItemID)).count == items.count,
+                      items.allSatisfy({ item in
+                          if item.text("type") == "task" { return !item.object("row").text("id").isEmpty }
+                          return item.text("type") == "section" && !item.text("id").isEmpty
+                              && (item["sectionId"] is String || item["sectionId"] is NSNull)
+                      }) else { throw CocoaError(.coderReadCorrupt) }
+                guard projectTaskOrderPresented, selectedSurface == .project, session == projectFilterSession,
+                      projectHeader.text("id").utf8.elementsEqual(id.utf8) else { return }
+                first["items"] = items
+                projectTaskOrderView = first
+                projectTaskOrderCurrent = true
+                projectTaskOrderError = nil
+                return
+            } catch {
+                guard projectTaskOrderPresented, selectedSurface == .project, session == projectFilterSession,
+                      projectHeader.text("id").utf8.elementsEqual(id.utf8) else { return }
+                if attempt == 1 { projectTaskOrderError = error.localizedDescription }
+            }
+        }
+    }
+
+    func moveProjectTask(from source: IndexSet, to destination: Int) async {
+        guard source.count == 1, let from = source.first, projectTaskOrderInputEnabled,
+              await flushProjectNotesEdit() else { return }
+        let items = projectTaskOrderView.objects("items")
+        guard items.indices.contains(from), items[from].text("type") == "task",
+              (0...items.count).contains(destination) else { return }
+        var remaining = items
+        let moved = remaining.remove(at: from)
+        let target = destination > from ? destination - 1 : destination
+        guard target != from else { return }
+        let predecessor: Any
+        if target == 0 { predecessor = NSNull() }
+        else {
+            let item = remaining[target - 1]
+            predecessor = ["type": item.text("type"), "id": item.text("type") == "task"
+                ? item.object("row").text("id") : item.text("id")]
+        }
+        busy = true
+        projectTaskOrderError = nil
+        defer { finishOperation() }
+        do {
+            projectTaskOrderRequest = try json(["requestId": UUID().uuidString.lowercased(),
+                "projectId": projectHeader.text("id"), "taskId": moved.object("row").text("id"),
+                "after": predecessor, "showCompleted": projectShowCompleted,
+                "filters": projectTaskOrderView.object("filters"),
+                "expectedOrder": projectTaskOrderView.text("orderToken")])
+            let result = try await query("projectTaskOrderWrite", [projectTaskOrderRequest!])
+            try acknowledgeProjectTaskOrder(result)
+            await readProjectDetail()
+            await readProjectTaskOrder()
+        } catch { await handleProjectTaskOrderError(error) }
+    }
+
+    private func acknowledgeProjectTaskOrder(_ result: CoreObject) throws {
+        guard let encoded = projectTaskOrderRequest, let data = encoded.data(using: .utf8),
+              let request = try JSONSerialization.jsonObject(with: data) as? CoreObject,
+              result.count == 3,
+              result.text("projectId").utf8.elementsEqual(request.text("projectId").utf8),
+              result.text("taskId").utf8.elementsEqual(request.text("taskId").utf8),
+              result["sectionId"] is NSNull || result["sectionId"] is String else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        projectTaskOrderRequest = nil
+        projectTaskOrderCurrent = false
+        projectTaskOrderError = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleProjectTaskOrderError(_ failure: Error) async {
+        if projectTaskOrderRequest != nil && isDefiniteRejection(failure) {
+            projectTaskOrderRequest = nil
+            retryNeeded = false
+            await readProjectDetail()
+            await readProjectTaskOrder()
+            projectTaskOrderError = failure.localizedDescription
+            error = nil
+        } else {
+            retryNeeded = projectTaskOrderRequest != nil
+            projectTaskOrderError = failure.localizedDescription
+            error = failure.localizedDescription
+        }
     }
 
     func openProjectTaskSort() async {
@@ -6962,6 +7128,10 @@ final class CoreModel: ObservableObject {
                   searchView.objects("projects").contains(where: { $0.text("id") == row.text("id") }) else { return }
             invalidateSearch()
         }
+        projectTaskOrderPresented = false
+        projectTaskOrderView = [:]
+        projectTaskOrderError = nil
+        projectTaskOrderCurrent = false
         projectCaller = selectedSurface
         projectFilterSession += 1
         projectFilterReadTask?.cancel()
@@ -7124,6 +7294,8 @@ final class CoreModel: ObservableObject {
         projectTagsDraft = ""
         projectTagsError = nil
         projectTagsReadError = nil
+        projectTaskOrderPresented = false
+        projectTaskOrderCurrent = false
         selectedSurface = projectCaller
         projectCurrent = false
         projectError = nil
@@ -10033,6 +10205,15 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = projectTaskOrderRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("projectTaskOrderRetryOutcome", [request]) }
+                try acknowledgeProjectTaskOrder(result)
+                await readProjectDetail()
+                await readProjectTaskOrder()
+                return
+            }
             if let request = projectTaskSortRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -10308,6 +10489,10 @@ final class CoreModel: ObservableObject {
         } catch {
             if projectRenameRequest != nil {
                 await handleProjectRenameWriteError(error)
+                return
+            }
+            if projectTaskOrderRequest != nil {
+                await handleProjectTaskOrderError(error)
                 return
             }
             if projectTaskSortRequest != nil {
@@ -10796,6 +10981,7 @@ final class CoreModel: ObservableObject {
         case .projects: try await readProjectsWithCreateOptions()
         case .project:
             await readProjectDetail()
+            if projectTaskOrderPresented { await readProjectTaskOrder() }
             if projectNotesExpanded && projectCurrent {
                 if projectNotesEditMode {
                     do { try await readProjectNotesEditOptions() }

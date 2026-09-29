@@ -21,7 +21,6 @@ import {
   getTaskMetadataFilterVisibility,
   buildProjectTaskListModel,
   selectProjectTaskListTasks,
-  PROJECT_COMPLETED_SECTION_ID,
   taskMatchesAreaFilterSelection,
   DONE_TASK_LIST_SORT_OPTIONS,
   TASK_LIST_SORT_OPTIONS,
@@ -749,7 +748,7 @@ function TaskListComponent({
   const projectSections = projectTaskList?.sections ?? NO_SECTIONS;
 
   type ListItem =
-    | { type: 'section'; id: string; title: string; count: number; muted?: boolean; collapsible?: boolean; collapsed?: boolean }
+    | { type: 'section'; id: string; title: string; count: number; muted?: boolean; collapsible?: boolean; collapsed?: boolean; synthetic?: 'none' | 'completed' | 'reference' }
     | { type: 'task'; task: Task; reorderSectionId?: string | null; groupId?: string };
 
   const listItems = useMemo<ListItem[]>(() => {
@@ -847,7 +846,7 @@ function TaskListComponent({
   const projectReorderGroups = useMemo<ProjectTaskReorderGroup<Task>[]>(() => {
     if (!canUseProjectReorder) return [];
     const reorderItems = shouldGroupCompletedTasks
-      ? listItems.filter((item) => (item.type === 'section' ? item.id !== PROJECT_COMPLETED_SECTION_ID : item.task.status !== 'done'))
+      ? listItems.filter((item) => (item.type === 'section' ? item.synthetic !== 'completed' : item.task.status !== 'done'))
       : listItems;
     return buildProjectTaskReorderGroups<Task>(reorderItems, { includeEmptySections: projectSections.length > 0 });
   }, [canUseProjectReorder, listItems, projectSections.length, shouldGroupCompletedTasks]);
@@ -1483,14 +1482,14 @@ function TaskListComponent({
     themeColors.text,
   ]);
 
-  const toggleSection = useCallback((sectionId: string) => {
+  const toggleSection = useCallback((section: Extract<ListItem, { type: 'section' }>) => {
     // The project Completed pile is a fixed part of that screen with its own
     // single boolean; every other collapsible header is a grouping heading.
-    if (sectionId === PROJECT_COMPLETED_SECTION_ID) {
+    if (section.synthetic === 'completed') {
       setCompletedTasksCollapsed((value) => !value);
       return;
     }
-    toggleGroup(sectionId);
+    toggleGroup(section.id);
   }, [toggleGroup]);
 
   const renderListItem = useCallback(({ item }: { item: ListItem }) => {
@@ -1500,7 +1499,7 @@ function TaskListComponent({
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityState={{ expanded: item.collapsed !== true }}
-            onPress={() => toggleSection(item.id)}
+            onPress={() => toggleSection(item)}
             style={styles.sectionHeader}
           >
             <View style={styles.sectionHeaderTitleBlock}>

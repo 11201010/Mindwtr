@@ -6,6 +6,7 @@ import type { TaskDateCoherenceIssue } from './task-date-coherence';
 import type { TaskTokenUsage } from './task-token-usage';
 import type { ProcessInboxPlan } from './process-inbox-plan';
 import type { AreaOrderIntent } from './area-ordering';
+import type { ProjectTaskOrderAnchor, ProjectTaskOrderIdentity } from './project-task-reorder';
 
 export type StoreActionResult = {
     success: boolean;
@@ -159,6 +160,18 @@ export type PreparedProjectSectionOrder = {
     deviceIdToInitialize: string | null;
     preparedAt: string;
     result: { projectId: string; orderedIds: string[] };
+};
+
+export type PreparedProjectTaskOrder = {
+    request: { requestId: string; projectId: string; taskId: string; after: ProjectTaskOrderAnchor;
+        showCompleted: boolean; filters: Partial<import('./list-filter-state').ListFilterState>; expectedOrder: string };
+    scope: { project: Project; tasks: Task[]; sections: Section[]; settings: AppData['settings'];
+        items: ProjectTaskOrderIdentity[] };
+    effect: { tasks: Array<{ before: Task; after: Task }> };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    preparedAt: string;
+    result: { projectId: string; taskId: string; sectionId: string | null };
 };
 
 /** Frozen final rows for a native Area create or legacy tombstone restoration. */
@@ -464,6 +477,7 @@ export interface TaskStore {
     commitPreparedProjectSectionDelete: (input: PreparedProjectSectionDelete & { request: {
         projectId: string; sectionId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionOrder: (input: PreparedProjectSectionOrder) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectTaskOrder: (input: PreparedProjectTaskOrder) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaCreate: (input: PreparedAreaCreate & { request: { requestId: string; name: string; color: string; expectedAreaId: string } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaColor: (input: PreparedAreaColor & { request: { requestId: string; areaId: string; color: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedAreaRename: (input: PreparedAreaRename & { request: { requestId: string; areaId: string; name: string };

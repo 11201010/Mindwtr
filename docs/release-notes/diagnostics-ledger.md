@@ -19,6 +19,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 - `Linux desktop notification submitted` / `Linux desktop notification delivery failed` (`notification-service.tsx`), with backend, bounded outcome, and a safe error category on failure.
 - `Android widget list rendered within parcel budget` (`widget-service.ts`), with aggregate collection, item, eligible-item, and parcel-byte counts.
 
+## v1.3.4 (add before tagging, trim in the release after)
+
+- **`v1.3.4/ios-project-task-order`** — `apps/ios-native/Sources/MindwtrNativeCore/CoreHost.swift`. `Native iOS Project task order saved` with `outcome=applied` confirms the prepared move was durably saved and its journal cleared. In Project Order mode, drag a filtered task past another task or into a different Section, then relaunch and verify its placement and hidden tasks. Failed saves retain the exact request for Retry; no-op drops emit no applied marker. No task or Project content or identifiers are logged.
+
 ## v1.3.3 (add before tagging, trim in the release after)
 
 - **`v1.3.3/layout-lock-delete-pending`** — `apps/desktop/src-tauri/src/storage_layout.rs`, `MigrationLock::acquire`, on Windows when creating the migration lock fails with access denied because another process is deleting it ("delete pending"). Message: `Storage layout lock was being released; waiting`. Start two Mindwtr processes at once on a standard Windows install; a log with this marker must end on the subfolder layout, not the flat root. Contains no paths or profile data.

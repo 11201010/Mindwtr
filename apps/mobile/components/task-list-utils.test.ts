@@ -29,7 +29,7 @@ describe('buildProjectTaskReorderGroups', () => {
             { type: 'section' as const, id: 'section-b', title: 'Second' },
             { type: 'task' as const, task: { id: 'b1' } },
             { type: 'section' as const, id: 'empty', title: 'Empty' },
-            { type: 'section' as const, id: 'no-section', title: 'No Section', muted: true },
+            { type: 'section' as const, id: 'no-section', title: 'No Section', muted: true, synthetic: 'none' as const },
             { type: 'task' as const, task: { id: 'u1' } },
         ]);
 
@@ -55,6 +55,18 @@ describe('buildProjectTaskReorderGroups', () => {
         expect(groups).toHaveLength(1);
         expect(groups[0]?.sectionId).toBeUndefined();
         expect(groups[0]?.tasks.map((task) => task.id)).toEqual(['first', 'second']);
+    });
+
+    it('distinguishes a real no-section header from the synthetic unsectioned header', () => {
+        const groups = buildProjectTaskReorderGroups([
+            { type: 'section', id: 'no-section', title: 'Stored' },
+            { type: 'task', task: { id: 'real' } },
+            { type: 'section', id: 'no-section:1', title: 'Unsectioned', synthetic: 'none' },
+            { type: 'task', task: { id: 'loose' } },
+        ]);
+        expect(groups.map((group) => [group.id, group.sectionId])).toEqual([
+            ['no-section', 'no-section'], ['no-section:1', null],
+        ]);
     });
 
     it('can keep empty sections for section reordering', () => {
@@ -86,7 +98,7 @@ describe('flattenProjectReorderGroups + resolveProjectReorderDropPlan', () => {
   it('flattens titled groups into header rows followed by their tasks', () => {
     const items = flattenProjectReorderGroups(makeGroups());
     expect(items.map((item) => item.key)).toEqual([
-      'header-sec-a', 't1', 'header-sec-b', 't2', 't3', 'header-sec-empty',
+      'section:sec-a', 'task:t1', 'section:sec-b', 'task:t2', 'task:t3', 'section:sec-empty',
     ]);
   });
 
@@ -95,8 +107,8 @@ describe('flattenProjectReorderGroups + resolveProjectReorderDropPlan', () => {
       { id: 'project', sectionId: null, tasks: [{ id: 't0' }] },
       ...makeGroups(),
     ]);
-    expect(items[0]).toEqual({ type: 'task', key: 't0', task: { id: 't0' } });
-    expect(items[1]).toEqual(expect.objectContaining({ key: 'header-sec-a' }));
+    expect(items[0]).toEqual({ type: 'task', key: 'task:t0', task: { id: 't0' } });
+    expect(items[1]).toEqual(expect.objectContaining({ key: 'section:sec-a' }));
   });
 
   const header = (id: string): ProjectReorderFlatItem<TestTask> => ({
