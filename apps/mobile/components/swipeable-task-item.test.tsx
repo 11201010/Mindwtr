@@ -1202,6 +1202,9 @@ it('can keep the focus star without adding a redundant focus outline', () => {
 
     const waiting = renderRow(true, true);
     expect(hasText(waiting, 'Sam')).toBe(true);
+    // #1282: the waiting name reads at full contrast and weight, not as grey meta.
+    const name = waiting.root.findAll((node) => node.props.children === 'Sam' && Array.isArray(node.props.style))[0];
+    expect(Object.assign({}, ...name.props.style.flat())).toMatchObject({ color: '#ffffff', fontWeight: '600' });
     expect(waiting.root.findAll((node) => String(node.type) === 'UserRound')).toHaveLength(1);
   });
 

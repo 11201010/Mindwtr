@@ -229,8 +229,9 @@ export function SwipeableTaskItemContent({
                     children: (
                         <>
                             <UserRound size={12} color={tc.secondaryText} strokeWidth={2} />
+                            {/* The person is what a Waiting row is read for, so the name stands out (#1282). */}
                             <CompactText
-                                style={[styles.metaText, { color: tc.secondaryText }]}
+                                style={[styles.metaText, { color: tc.text, fontWeight: '600' }]}
                                 numberOfLines={2}
                             >
                                 {part.text}
