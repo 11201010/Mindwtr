@@ -232,6 +232,13 @@ function isStoredMindwtrManagedCalendar(calendar: DeviceCalendar, storedCalendar
 /** The internal name of a Mindwtr calendar this install made (Android): its ownership marker. */
 const managedCalendarName = (marker: string): string => `${MANAGED_CALENDAR_NAME}:${marker}`;
 
+/**
+ * The diagnostics line (docs/release-notes/diagnostics-ledger.md) proving the app acts only
+ * on its own calendar: a marked calendar adopted, a delete finished or refused, a color
+ * kept for the next calendar. Never a title or a URL.
+ */
+const OWNED_ONLY_CHECK = 'v1.3.4/calendar-push-owned-only';
+
 function getAndroidManagedCalendarSeed(
     calendars: DeviceCalendar[],
     color: string
@@ -423,7 +430,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
         await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
         void log.info('Recovered Mindwtr calendar', {
             scope: 'calendar-push',
-            extra: { calendarId: made.id, releaseCheck: 'v1.3.4/calendar-push-create-marker', marked: 'true', outcome: 'recovered' },
+            extra: { releaseCheck: OWNED_ONLY_CHECK, outcome: 'adopted' },
         });
         return made.id;
     };
@@ -548,7 +555,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             if (marked) await storage.removeItem(CALENDAR_PUSH_PENDING_KEY);
             void log.info('Created Mindwtr calendar', {
                 scope: 'calendar-push',
-                extra: { calendarId: newId, releaseCheck: 'v1.3.4/calendar-push-create-marker', marked: String(marked), outcome: 'created' },
+                extra: { calendarId: newId },
             });
             return newId;
         } catch (error) {
@@ -611,7 +618,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
                 if (stillThere) {
                     void log.warn('Failed to delete Mindwtr calendar; keeping it for a retry', {
                         scope: 'calendar-push',
-                        extra: { releaseCheck: 'v1.3.4/calendar-push-owned-delete', error: getCalendarErrorMessage(error) },
+                        extra: { releaseCheck: OWNED_ONLY_CHECK, outcome: 'refused', error: getCalendarErrorMessage(error) },
                     });
                     throw error;
                 }
@@ -642,7 +649,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
 
         void log.info('Deleted Mindwtr calendar', {
             scope: 'calendar-push',
-            extra: { releaseCheck: 'v1.3.4/calendar-push-owned-delete', deletedCalendars: ownedId ? '1' : '0' },
+            extra: { releaseCheck: OWNED_ONLY_CHECK, outcome: ownedId ? 'deleted' : 'none-owned' },
         });
     };
 
@@ -860,10 +867,6 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             recreatedId = await ensureMindwtrCalendar(color);
             if (!recreatedId) return;
             await setCalendarPushColor(color);
-            void log.info('Mindwtr calendar color changed', {
-                scope: 'calendar-push',
-                extra: { releaseCheck: 'v1.3.4/calendar-push-color-order', outcome: 'recreated' },
-            });
             await runFullCalendarSyncUnsafe();
         });
         return recreatedId !== null;
@@ -880,13 +883,15 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
     const updateMindwtrCalendarColor = async (color: string): Promise<boolean> => {
         if (isSandboxMode()) return false;
         const normalized = normalizeCalendarPushColor(color);
-        const stored = async (outcome: 'updated' | 'recreated' | 'already' | 'stored'): Promise<boolean> => {
+        const stored = async (outcome: 'updated' | 'already' | 'deferred'): Promise<boolean> => {
             await setCalendarPushColor(normalized);
-            void log.info('Mindwtr calendar color changed', {
-                scope: 'calendar-push',
-                extra: { releaseCheck: 'v1.3.4/calendar-push-color-order', outcome },
-            });
-            return outcome !== 'stored';
+            if (outcome === 'deferred') {
+                void log.info('Mindwtr calendar color kept for the next calendar', {
+                    scope: 'calendar-push',
+                    extra: { releaseCheck: OWNED_ONLY_CHECK, outcome },
+                });
+            }
+            return outcome !== 'deferred';
         };
         try {
             const storedCalendarId = await getStoredCalendarId();
@@ -894,7 +899,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             // Only the calendar the app saved (or one it made with its marker) is its own, never one found by its title.
             const ownId = await resolveOwnedCalendar(calendars, storedCalendarId);
             const target = calendars.find((calendar) => ownId && calendar.id === ownId);
-            if (!target) return await stored('stored');
+            if (!target) return await stored('deferred');
             if ((target.color ?? '').trim().toUpperCase() === normalized) return await stored('already');
             if (!isWritableCalendar(target)) throw new Error('The Mindwtr calendar cannot be changed on this device');
 
@@ -905,7 +910,7 @@ export function createCalendarPushService(host: CalendarPushServiceHost) {
             if (host.os() === 'android') {
                 if (await recreateManagedMindwtrCalendar(normalized)) return true;
                 // Deleted, but the new one could not be made: the next calendar takes the color.
-                return await stored('stored');
+                return await stored('deferred');
             }
 
             if (typeof device.updateCalendar !== 'function') throw new Error('This device cannot change a calendar color');

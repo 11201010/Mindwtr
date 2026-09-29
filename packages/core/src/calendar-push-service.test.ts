@@ -411,9 +411,14 @@ describe('calendar push behind the host ports', () => {
         service.stopCalendarPushSync();
     });
 
-    it('logs the v1.3.4 calendar push lines a tester confirms, with no titles', async () => {
-        const phone = device({ storage: { [CALENDAR_PUSH_ENABLED_KEY]: '1' }, tasks: [task('t1', { title: 'Secret task', dueDate: '2026-09-10' })] });
-        const lines: unknown[][] = [];
+    it('logs one v1.3.4/calendar-push-owned-only line per proving point, with no titles', async () => {
+        const marker = '11111111-1111-4111-8111-111111111111';
+        const phone = device({
+            calendars: [PRIMARY, { id: 'made', title: 'Mindwtr', name: `mindwtr:${marker}`, accessLevel: 'owner', allowsModifications: true, source: google }],
+            storage: { [CALENDAR_PUSH_PENDING_KEY]: marker, [CALENDAR_PUSH_COLOR_KEY]: '#3B82F6' },
+            tasks: [task('t1', { title: 'Secret task', dueDate: '2026-09-10' })],
+        });
+        const lines: [string, string, Record<string, string> | undefined][] = [];
         phone.host.log = {
             info: (message, context) => { lines.push(['info', message, context.extra]); },
             warn: (message, context) => { lines.push(['warn', message, context.extra]); },
@@ -421,17 +426,18 @@ describe('calendar push behind the host ports', () => {
         };
         const service = createCalendarPushService(phone.host);
         await service.ensureMindwtrCalendar();
-        await service.updateMindwtrCalendarColor('#059669');
+        phone.life.failDelete = true;
+        await service.deleteMindwtrCalendar().catch(() => undefined);
+        phone.life.failDelete = false;
         await service.deleteMindwtrCalendar();
-        const tagged = lines.filter(([, , extra]) => typeof (extra as Record<string, string>)?.releaseCheck === 'string' && (extra as Record<string, string>).releaseCheck.startsWith('v1.3.4/'));
-        expect(tagged.map(([level, message, extra]) => [level, message, (extra as Record<string, string>).releaseCheck, (extra as Record<string, string>).outcome ?? (extra as Record<string, string>).deletedCalendars])).toEqual([
-            ['info', 'Created Mindwtr calendar', 'v1.3.4/calendar-push-create-marker', 'created'],
-            // Android recolors by deleting the calendar and making it again.
-            ['info', 'Deleted Mindwtr calendar', 'v1.3.4/calendar-push-owned-delete', '1'],
-            ['info', 'Created Mindwtr calendar', 'v1.3.4/calendar-push-create-marker', 'created'],
-            ['info', 'Mindwtr calendar color changed', 'v1.3.4/calendar-push-color-order', 'recreated'],
-            ['info', 'Deleted Mindwtr calendar', 'v1.3.4/calendar-push-owned-delete', '1'],
+        await service.updateMindwtrCalendarColor('#059669');
+        const tagged = lines.filter(([, , extra]) => extra?.releaseCheck?.startsWith('v1.3.4/'));
+        expect(tagged.map(([level, message, extra]) => [level, message, extra!.releaseCheck, extra!.outcome])).toEqual([
+            ['info', 'Recovered Mindwtr calendar', 'v1.3.4/calendar-push-owned-only', 'adopted'],
+            ['warn', 'Failed to delete Mindwtr calendar; keeping it for a retry', 'v1.3.4/calendar-push-owned-only', 'refused'],
+            ['info', 'Deleted Mindwtr calendar', 'v1.3.4/calendar-push-owned-only', 'deleted'],
+            ['info', 'Mindwtr calendar color kept for the next calendar', 'v1.3.4/calendar-push-owned-only', 'deferred'],
         ]);
-        expect(JSON.stringify(lines)).not.toContain('Secret task');
+        expect(JSON.stringify(tagged.map(([, , extra]) => extra))).not.toMatch(/Secret task|alex@gmail|Mindwtr/);
     });
 });
