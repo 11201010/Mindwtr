@@ -40,6 +40,7 @@ export * from './store';
 export * from './native-host-contract';
 export * from './native-host-contract-area-rename';
 export * from './native-host-contract-project-focus';
+export * from './native-host-contract-task-focus';
 export * from './native-host-contract-project-rename';
 export * from './native-host-contract-project-flow';
 export * from './native-host-contract-project-notes';

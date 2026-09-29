@@ -5697,6 +5697,125 @@ final class FoundationUITests: XCTestCase {
         app.terminate()
     }
 
+    private func openTaskFocusTest(_ app: XCUIApplication) {
+        boardEnabled(app.buttons["tab-focus"], timeout: 30); boardTap(app, "tab-focus")
+        boardEnabled(app.buttons["focus-view-options"])
+        let next = app.buttons["focus-section-next"]
+        revealPagedElement(app, next, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        if next.value as? String == "Expand" { next.tap() }
+    }
+
+    func testTaskFocusStarAndLimit() { taskFocusStarFlow(library: "163d398f-1da1-4310-aa97-17ef3f25ce5e") }
+    func testTaskFocusStarLargestText() { taskFocusStarFlow(library: "9c637945-abf8-407b-8153-b10f63d805d9") }
+
+    private func taskFocusStarFlow(library: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", library]
+        app.launch(); openTaskFocusTest(app)
+        let aID = "acc031d9-9cac-4296-8420-840bcd17a562"
+        let bID = "d55f6859-cf8e-4643-a1ad-eff6db59262e"
+        let star = app.buttons["task-focus-" + aID].firstMatch
+        let focusScroll = app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch
+        func expectStar(_ label: String) {
+            revealPagedElement(app, star, in: focusScroll)
+            boardEnabled(star)
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", label), object: star)], timeout: 15), .completed)
+        }
+        expectStar("Add to today's focus")
+        XCTAssertGreaterThanOrEqual(star.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(star.frame.height, 44)
+        star.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: star.frame.width - 3, dy: 3)).tap()
+        expectStar("Remove from focus")
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        let blocked = app.buttons["task-focus-" + bID]
+        revealPagedElement(app, blocked, in: focusScroll)
+        boardEnabled(blocked); blocked.tap()
+        XCTAssertTrue(app.staticTexts["task-focus-blocked"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["task-focus-blocked"].label.contains("1"))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task Focus star and shared limit"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate(); app.launch(); openTaskFocusTest(app)
+        expectStar("Remove from focus")
+        let focusStar = app.buttons["task-focus-" + aID].firstMatch
+        boardEnabled(focusStar); XCTAssertEqual(focusStar.label, "Remove from focus")
+        focusStar.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !focusStar.exists || focusStar.label != "Remove from focus" }, object: nil)], timeout: 15), .completed)
+        boardEnabled(app.buttons["tab-menu"])
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        app.terminate(); app.launch(); openTaskFocusTest(app)
+        expectStar("Add to today's focus")
+        app.buttons["task-title-" + aID].firstMatch.tap()
+        boardEnabled(app.buttons["task-view-close"]); boardTap(app, "task-view-close")
+        app.terminate()
+    }
+
+    func testDailyReviewTaskFocusStar() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "e331ca00-fa05-40cc-8ef0-be82a1bd4d41"]
+        app.launch(); boardEnabled(app.buttons["tab-menu"], timeout: 30)
+        if app.buttons["tab-review"].exists { boardTap(app, "tab-review") }
+        else { boardTap(app, "tab-menu"); boardTap(app, "menu-review") }
+        boardTap(app, "review-start"); boardTap(app, "review-start-daily")
+        boardEnabled(app.buttons["review-guide-close"])
+        let scroll = app.scrollViews["review-guide-content-focus"]
+        for _ in 0..<6 where !scroll.exists {
+            boardTap(app, "review-guide-next")
+            boardEnabled(app.buttons["review-guide-close"])
+        }
+        XCTAssertTrue(scroll.waitForExistence(timeout: 15))
+        let star = app.buttons["task-focus-acc031d9-9cac-4296-8420-840bcd17a562"]
+        revealPagedElement(app, star, in: scroll, more: "review-guide-more", ready: app.buttons["review-guide-close"])
+        boardEnabled(star); XCTAssertEqual(star.label, "Add to today's focus"); star.tap()
+        boardEnabled(app.buttons["review-guide-close"])
+        revealPagedElement(app, star, in: scroll, more: "review-guide-more", ready: app.buttons["review-guide-close"])
+        boardEnabled(star); XCTAssertEqual(star.label, "Remove from focus")
+        let blocked = app.buttons["task-focus-d55f6859-cf8e-4643-a1ad-eff6db59262e"]
+        revealPagedElement(app, blocked, in: scroll, more: "review-guide-more", ready: app.buttons["review-guide-close"])
+        boardEnabled(blocked); blocked.tap()
+        let notice = app.staticTexts["task-focus-blocked"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15)); XCTAssertTrue(notice.isHittable)
+        XCTAssertTrue(notice.label.contains("1"))
+        revealPagedElement(app, star, in: scroll)
+        boardEnabled(star); star.tap(); boardEnabled(app.buttons["review-guide-close"])
+        revealPagedElement(app, star, in: scroll)
+        boardEnabled(star); XCTAssertEqual(star.label, "Add to today's focus")
+        XCTAssertFalse(app.buttons["task-view-close"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Daily Review task Focus star"; shot.lifetime = .keepAlways; add(shot)
+        boardTap(app, "review-guide-close"); app.terminate()
+    }
+
+    func testTaskFocusStarFailureKeepsExactRequest() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "53675bda-dd8f-4c63-88e0-0e44de40eb52"]
+        app.launch(); openTaskFocusTest(app)
+        let star = app.buttons["task-focus-acc031d9-9cac-4296-8420-840bcd17a562"]
+        revealPagedElement(app, star, in: app.scrollViews.containing(.button, identifier: "focus-view-options").firstMatch)
+        boardEnabled(star); star.tap()
+        XCTAssertTrue(app.staticTexts["persistence-error"].waitForExistence(timeout: 15))
+        for _ in 0..<2 {
+            XCTAssertFalse(star.isEnabled)
+            let retry = app.buttons["persistence-retry"]
+            boardEnabled(retry); XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            retry.tap(); boardEnabled(retry)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Task Focus exact retry"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTaskFocusStarColdRecovery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-ui-test-library", "53675bda-dd8f-4c63-88e0-0e44de40eb52"]
+        app.launch()
+        let star = app.buttons["task-focus-acc031d9-9cac-4296-8420-840bcd17a562"].firstMatch
+        boardEnabled(star, timeout: 30); XCTAssertEqual(star.label, "Remove from focus")
+        XCTAssertFalse(app.staticTexts["persistence-error"].exists)
+        app.terminate()
+    }
+
     func testProjectTaskOrderPreservesHiddenRowsAndRelaunches() {
         projectTaskOrderFlow(library: "ead8d6f2-f4c3-4cef-abdc-56e6ec2fb5a5")
     }

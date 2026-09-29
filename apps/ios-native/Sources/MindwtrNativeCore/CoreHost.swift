@@ -112,6 +112,7 @@ private final class Engine: @unchecked Sendable {
     private var startupAreaOrderResult: String?
     private var startupAreaDeleteResult: String?
     private var startupProjectFocusResult: String?
+    private var startupTaskFocusResult: String?
     private var startupProjectRenameResult: String?
     private var startupProjectFlowResult: String?
     private var startupProjectTaskSortResult: String?
@@ -142,6 +143,7 @@ private final class Engine: @unchecked Sendable {
         "areaOrderOptions": 0, "areaOrder": 1, "areaOrderRetryOutcome": 1,
         "areaDeleteOptions": 0, "areaDelete": 1, "areaDeleteRetryOutcome": 1,
         "projectFocusOptions": 1, "projectFocusWrite": 1, "projectFocusRetryOutcome": 1,
+        "taskFocusOptions": 1, "taskFocusWrite": 1, "taskFocusRetryOutcome": 1,
         "projectRenameOptions": 1, "projectRenameWrite": 1, "projectRenameRetryOutcome": 1,
         "projectFlowOptions": 1, "projectFlowWrite": 1, "projectFlowRetryOutcome": 1,
         "projectTaskSortOptions": 1, "projectTaskSortWrite": 1, "projectTaskSortRetryOutcome": 1,
@@ -158,7 +160,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "areaColor", "areaRename", "areaOrder", "areaDelete", "projectFocusWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarPreference", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "areaColor", "areaRename", "areaOrder", "areaDelete", "projectFocusWrite", "taskFocusWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -271,6 +273,10 @@ private final class Engine: @unchecked Sendable {
                 _ = try invoke("projectFocusValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateProjectFocusAcknowledgment(command, value: value) }
             }
+            if let command = pending, command.method == "taskFocusCommit" {
+                _ = try invoke("taskFocusValidate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validateTaskFocusAcknowledgment(command, value: value) }
+            }
             if let command = pending, command.method == "projectRenameCommit" {
                 _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
                 if case .success(let value) = command.terminal { try validateProjectRenameAcknowledgment(command, value: value) }
@@ -355,6 +361,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringAreaOrder = pending?.method == "areaOrderCommit"
         let recoveringAreaDelete = pending?.method == "areaDeleteCommit"
         let recoveringProjectFocus = pending?.method == "projectFocusCommit"
+        let recoveringTaskFocus = pending?.method == "taskFocusCommit"
         let recoveringProjectRename = pending?.method == "projectRenameCommit"
         let recoveringProjectFlow = pending?.method == "projectFlowCommit"
         let recoveringProjectTaskSort = pending?.method == "projectTaskSortCommit"
@@ -381,6 +388,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringAreaOrder, let terminal, case .success(let value) = terminal { startupAreaOrderResult = value }
         if recoveringAreaDelete, let terminal, case .success(let value) = terminal { startupAreaDeleteResult = value }
         if recoveringProjectFocus, let terminal, case .success(let value) = terminal { startupProjectFocusResult = value }
+        if recoveringTaskFocus, let terminal, case .success(let value) = terminal { startupTaskFocusResult = value }
         if recoveringProjectRename, let terminal, case .success(let value) = terminal { startupProjectRenameResult = value }
         if recoveringProjectFlow, let terminal, case .success(let value) = terminal { startupProjectFlowResult = value }
         if recoveringProjectTaskSort, let terminal, case .success(let value) = terminal { startupProjectTaskSortResult = value }
@@ -403,7 +411,7 @@ private final class Engine: @unchecked Sendable {
             ?? recoveredAreas ?? startupProjectFocusResult
             ?? startupProjectRenameResult ?? recoveredProjectMetadata
         guard let recovered = startupBoardResult ?? startupCalendarResult ?? startupMindSweepResult
-            ?? recoveredProjects ?? startupInboxResult ?? startupChecklistResult else { return value }
+            ?? recoveredProjects ?? startupTaskFocusResult ?? startupInboxResult ?? startupChecklistResult else { return value }
         guard var window = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
             throw HostFailure("Malformed startup window")
         }
@@ -432,7 +440,8 @@ private final class Engine: @unchecked Sendable {
         window["recovery"] = ["method": startupBoardResult != nil ? "boardCommit"
             : startupCalendarResult != nil ? (recoveringCalendarMethod ?? "calendarComposerCommit")
             : startupMindSweepResult != nil ? "mindSweepCommit"
-            : projectRecoveryMethod ?? (startupInboxResult != nil ? "inboxPreparedCommit" : "checklistPreparedCommit"),
+            : projectRecoveryMethod ?? (startupTaskFocusResult != nil ? "taskFocusCommit"
+                : startupInboxResult != nil ? "inboxPreparedCommit" : "checklistPreparedCommit"),
                               "result": try NativeJSON.jsonObject(with: Data(recovered.utf8))]
         let encoded = String(decoding: try JSONSerialization.data(withJSONObject: window, options: [.sortedKeys]), as: UTF8.self)
         startupBoardResult = nil
@@ -449,6 +458,7 @@ private final class Engine: @unchecked Sendable {
         startupAreaOrderResult = nil
         startupAreaDeleteResult = nil
         startupProjectFocusResult = nil
+        startupTaskFocusResult = nil
         startupProjectRenameResult = nil
         startupProjectFlowResult = nil
         startupProjectTaskSortResult = nil
@@ -471,12 +481,12 @@ private final class Engine: @unchecked Sendable {
             // Mind Sweep has no journal or write before argument validation.
             // Its UI may release an oversized draft only on a definite refusal.
             // With an older command still owed, keep every error uncertain.
-            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "areaCreateResolve", "areaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
+            if ["mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "areaCreateResolve", "areaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method), pending == nil { throw CoreHostRejection(message: error.localizedDescription) }
             throw error
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
         guard Self.mutations.contains(method) else {
-            if ["projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "projectFocusRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
+            if ["projectCreateRetryOutcome", "projectSectionCreateRetryOutcome", "projectSectionRenameRetryOutcome", "projectSectionDeleteRetryOutcome", "projectSectionOrderRetryOutcome", "areaCreateRetryOutcome", "areaColorRetryOutcome", "areaRenameRetryOutcome", "areaOrderRetryOutcome", "areaDeleteRetryOutcome", "projectFocusRetryOutcome", "taskFocusRetryOutcome", "projectRenameRetryOutcome", "projectFlowRetryOutcome", "projectTaskSortRetryOutcome", "projectTaskOrderRetryOutcome", "projectNotesWriteRetryOutcome", "projectTagsWriteRetryOutcome", "projectStatusRetryOutcome", "projectDateRetryOutcome", "projectAreaRetryOutcome"].contains(method) {
                 do { return try invoke(method, arguments: args) }
                 catch let failure as HostFailure {
                     guard failure.message.hasPrefix("STALE_REVISION:") || failure.message.hasPrefix("INVALID_INPUT:") else { throw failure }
@@ -559,6 +569,47 @@ private final class Engine: @unchecked Sendable {
                 command = PendingCommand(version: 2, method: "projectFocusCommit", argumentsJSON: encoded)
                 _ = try journalArguments(command)
                 _ = try invoke("projectFocusValidate", arguments: journalArguments(command))
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "taskFocusWrite" {
+            do {
+                let value = try invoke("taskFocusPrepare", arguments: args)
+                guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+                      let kind = response["kind"] as? String,
+                      let original = args.first as? String,
+                      let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
+                    throw HostFailure("Malformed Task Focus preparation")
+                }
+                if kind == "noop" || kind == "blocked" {
+                    guard Set(response.keys) == Set(["kind", "result"]),
+                          let result = response["result"] as? [String: Any] else {
+                        throw HostFailure("Malformed no-write Task Focus result")
+                    }
+                    if kind == "noop" {
+                        try validateTaskFocusResult(result, request: submitted)
+                    } else {
+                        guard Set(result.keys) == Set(["blocked", "blockedTitle"]),
+                              let blocked = result["blocked"] as? String, blocked.utf16.count <= 100_000,
+                              let title = result["blockedTitle"] as? String, title.utf16.count <= 100_000 else {
+                            throw HostFailure("Malformed blocked Task Focus result")
+                        }
+                    }
+                    return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+                }
+                guard kind == "prepared", Set(response.keys) == Set(["kind", "prepared"]),
+                      let prepared = response["prepared"] as? [String: Any],
+                      let request = prepared["request"] as? [String: Any],
+                      let result = prepared["result"] as? [String: Any],
+                      Self.equalJSON(request, submitted) else {
+                    throw HostFailure("Malformed prepared Task Focus")
+                }
+                try validateTaskFocusResult(result, request: request)
+                let commit = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+                guard commit.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Task Focus is too large") }
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [commit]), as: UTF8.self)
+                guard encoded.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Prepared Task Focus journal is too large") }
+                command = PendingCommand(version: 2, method: "taskFocusCommit", argumentsJSON: encoded)
+                _ = try journalArguments(command)
+                _ = try invoke("taskFocusValidate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "projectRenameWrite" {
             do {
@@ -1471,6 +1522,10 @@ private final class Engine: @unchecked Sendable {
             _ = try invoke("projectFocusValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateProjectFocusAcknowledgment(command, value: value) }
         }
+        if command.method == "taskFocusCommit" {
+            _ = try invoke("taskFocusValidate", arguments: journalArguments(command))
+            if case .success(let value) = terminal { try validateTaskFocusAcknowledgment(command, value: value) }
+        }
         if command.method == "projectRenameCommit" {
             _ = try invoke("projectRenameValidate", arguments: journalArguments(command))
             if case .success(let value) = terminal { try validateProjectRenameAcknowledgment(command, value: value) }
@@ -1615,6 +1670,12 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Project Focus saved releaseCheck=v1.3.3/native-ios-project-focus outcome=applied")
         }
+        if command.method == "taskFocusCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("taskFocusApplied")
+#endif
+            NSLog("Native iOS Task Focus saved releaseCheck=v1.3.4/ios-task-focus outcome=applied")
+        }
         if command.method == "projectRenameCommit", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("projectRenameApplied")
@@ -1679,7 +1740,7 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["saveDraft", "draftCommit", "calendarPreference", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "areaColorCommit", "areaRenameCommit", "areaOrderCommit", "areaDeleteCommit", "projectFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["saveDraft", "draftCommit", "calendarPreference", "boardCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "areaColorCommit", "areaRenameCommit", "areaOrderCommit", "areaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
     }
 
     private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -1977,6 +2038,30 @@ private final class Engine: @unchecked Sendable {
                 == JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]) else {
             throw HostFailure("Malformed Project Focus acknowledgment")
         }
+    }
+
+    private func validateTaskFocusResult(_ result: [String: Any], request: [String: Any]) throws {
+        guard Set(result.keys) == Set(["id", "focused"]),
+              let taskID = request["taskId"] as? String,
+              let resultID = result["id"] as? String, resultID.utf8.elementsEqual(taskID.utf8),
+              Self.isBoolean(result["focused"]),
+              result["focused"] as? Bool == request["focused"] as? Bool else {
+            throw HostFailure("Malformed Task Focus result")
+        }
+    }
+
+    private func validateTaskFocusAcknowledgment(_ command: PendingCommand, value: String) throws {
+        let args = try journalArguments(command)
+        guard let encoded = args.first as? String,
+              let envelope = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              let prepared = envelope["prepared"] as? [String: Any],
+              let expected = prepared["result"] as? [String: Any],
+              let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Self.equalJSON(result, expected) else {
+            throw HostFailure("Malformed Task Focus acknowledgment")
+        }
+        try validateTaskFocusResult(result, request: request)
     }
 
     private func validateProjectRenameAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -2618,6 +2703,23 @@ private final class Engine: @unchecked Sendable {
             _ = try arguments("projectFocusWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
             return args
         }
+        if command.method == "taskFocusCommit" {
+            guard command.argumentsJSON.utf8.count <= 12_000_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+                  args[0].utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["request", "prepared"]),
+                  let request = input["request"] as? [String: Any],
+                  let prepared = input["prepared"] as? [String: Any],
+                  Self.isInteger(prepared["version"], equalTo: 1),
+                  let original = prepared["request"] as? [String: Any],
+                  Self.equalJSON(request, original) else {
+                throw HostFailure("Malformed prepared Task Focus journal")
+            }
+            let requestJSON = String(decoding: try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
+            _ = try arguments("taskFocusWrite", String(decoding: try JSONSerialization.data(withJSONObject: [requestJSON]), as: UTF8.self))
+            return args
+        }
         if command.method == "areaRenameCommit" {
             guard command.argumentsJSON.utf8.count <= 12_000_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
@@ -2898,13 +3000,14 @@ private final class Engine: @unchecked Sendable {
         if method == "projectNotes" && json.utf8.count > 2_000_000 {
             throw HostFailure("INVALID_INPUT: Project Notes read is too large")
         }
-        if ["projectCreate", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "areaCreate", "areaCreateResolve", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) && json.utf8.count > 12_000_000 {
+        if ["projectCreate", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome", "projectSectionOrderOptions", "projectSectionOrder", "projectSectionOrderRetryOutcome", "areaCreate", "areaCreateResolve", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsEditOptions", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaOptions", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) && json.utf8.count > 12_000_000 {
             throw HostFailure(method == "projectCreate" ? "INVALID_INPUT: Project creation transport is too large"
                 : ["areaColor", "areaColorRetryOutcome"].contains(method) ? "INVALID_INPUT: Area color transport is too large"
                 : ["areaRename", "areaRenameRetryOutcome"].contains(method) ? "INVALID_INPUT: Area rename transport is too large"
                 : ["areaOrder", "areaOrderRetryOutcome"].contains(method) ? "INVALID_INPUT: Area order transport is too large"
                 : ["areaDelete", "areaDeleteRetryOutcome"].contains(method) ? "INVALID_INPUT: Area deletion transport is too large"
                 : ["projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome"].contains(method) ? "INVALID_INPUT: Project Focus transport is too large"
+                : ["taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome"].contains(method) ? "INVALID_INPUT: Task Focus transport is too large"
                 : ["projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome"].contains(method) ? "INVALID_INPUT: Project rename transport is too large"
                 : ["projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome"].contains(method) ? "INVALID_INPUT: Project flow transport is too large"
                 : ["projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome"].contains(method) ? "INVALID_INPUT: Project task sort transport is too large"
@@ -3001,7 +3104,7 @@ private final class Engine: @unchecked Sendable {
         }
         if ["inboxView", "captureView", "captureEdit", "captureSubmit", "setAreaFilter", "taskView", "editDraft", "destinationPicker", "search", "mindSweepGuide", "mindSweepAdd",
             "calendarComposerOpen", "calendarComposerEdit", "calendarComposerSave", "projectCreate", "projectCreateRetryOutcome", "projectSectionOptions", "projectSectionCreate", "projectSectionCreateRetryOutcome", "projectSectionRenameOptions", "projectSectionRename", "projectSectionRenameRetryOutcome", "projectSectionDeleteOptions", "projectSectionDelete", "projectSectionDeleteRetryOutcome",
-            "areaCreateResolve", "areaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
+            "areaCreateResolve", "areaCreate", "areaCreateRetryOutcome", "areaColor", "areaColorRetryOutcome", "areaRename", "areaRenameRetryOutcome", "areaOrder", "areaOrderRetryOutcome", "areaDelete", "areaDeleteRetryOutcome", "projectFocusOptions", "projectFocusWrite", "projectFocusRetryOutcome", "taskFocusOptions", "taskFocusWrite", "taskFocusRetryOutcome", "projectRenameOptions", "projectRenameWrite", "projectRenameRetryOutcome", "projectFlowOptions", "projectFlowWrite", "projectFlowRetryOutcome", "projectTaskSortOptions", "projectTaskSortWrite", "projectTaskSortRetryOutcome", "projectTaskOrderWrite", "projectTaskOrderRetryOutcome", "projectNotesEditOptions", "projectNotesDraftDirection", "projectNotesWrite", "projectNotesWriteRetryOutcome", "projectTagsWrite", "projectTagsWriteRetryOutcome", "projectStatusOptions", "projectStatusWrite", "projectStatusRetryOutcome", "projectDateOptions", "projectDateWrite", "projectDateRetryOutcome", "projectAreaWrite", "projectAreaRetryOutcome"].contains(method) {
             guard let json = args.first as? String,
                   (try NativeJSON.jsonObject(with: Data(json.utf8))) is [String: Any] else {
                 throw HostFailure("Core input must be a JSON object")
@@ -3144,6 +3247,35 @@ private final class Engine: @unchecked Sendable {
                   expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
                   let updated = expected["updatedAt"] as? String, updated.utf16.count <= 100 else {
                 throw HostFailure("INVALID_INPUT: Project Focus needs a bounded row token and lowercase UUID")
+            }
+        }
+        if method == "taskFocusOptions" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["taskId"]),
+                  let taskID = input["taskId"] as? String, !taskID.isEmpty,
+                  taskID.utf16.count <= 500 else {
+                throw HostFailure("INVALID_INPUT: Task Focus options need one bounded Task ID")
+            }
+        }
+        if ["taskFocusWrite", "taskFocusRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let input = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(input.keys) == Set(["requestId", "taskId", "focused", "expected"]),
+                  let id = input["requestId"] as? String, id == UUID(uuidString: id)?.uuidString.lowercased(),
+                  let taskID = input["taskId"] as? String, !taskID.isEmpty, taskID.utf16.count <= 500,
+                  Self.isBoolean(input["focused"]),
+                  let expected = input["expected"] as? [String: Any],
+                  Set(expected.keys) == Set(["title", "status", "isFocusedToday", "rev", "revBy", "updatedAt"]),
+                  let title = expected["title"] as? String, title.utf16.count <= 100_000,
+                  let status = expected["status"] as? String,
+                  ["inbox", "next", "waiting", "someday", "reference", "done", "archived"].contains(status),
+                  Self.isBoolean(expected["isFocusedToday"]),
+                  expected["rev"] is NSNull || (Self.isInteger(expected["rev"])
+                      && (expected["rev"] as? NSNumber).map({ $0.doubleValue >= 0 && $0.doubleValue <= 9_007_199_254_740_991 }) == true),
+                  expected["revBy"] is NSNull || (expected["revBy"] as? String).map({ $0.utf16.count <= 500 }) == true,
+                  let updated = expected["updatedAt"] as? String, !updated.isEmpty, updated.utf16.count <= 100 else {
+                throw HostFailure("INVALID_INPUT: Task Focus needs a bounded row token and lowercase UUID")
             }
         }
         if method == "projectRenameOptions" {

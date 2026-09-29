@@ -7451,6 +7451,40 @@ final class CoreHostTests: XCTestCase {
                 "expected": project.filter { $0.key != "id" }]
     }
 
+    private func seedTaskFocusRows() async throws {
+        try await seedProjectFocusRows()
+        let at = recentAreaTestTime()
+        let sqlite = try SQLiteBridge(url: database)
+        for (id, status, project, focused) in [
+            ("task-focus-target", "next", "focus-target", 0),
+            ("task-focus-sibling", "next", "focus-target", 0),
+            ("task-focus-unrelated", "next", "focus-other-0", 0),
+        ] {
+            _ = try sqlite.execute("INSERT INTO tasks (id, title, status, projectId, tags, contexts, isFocusedToday, showFutureRecurrence, suppressMindwtrReminders, pushCount, createdAt, updatedAt, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   parametersJSON: json([id, id, status, project, "[]", "[]", focused, 0, 0, 0, at, at, 1]))
+        }
+        sqlite.close()
+        let normalizer = host()
+        _ = try await normalizer.start()
+        _ = try await normalizer.call("projectCreate", argumentsJSON: json([json(projectCreateRequest(title: "Task Focus sibling"))]))
+        await normalizer.close()
+    }
+
+    private func taskFocusRequest(_ core: CoreHost, focused: Bool,
+                                  taskID: String = "task-focus-target") async throws -> [String: Any] {
+        let options = try object(await core.call("taskFocusOptions", argumentsJSON: json([json(["taskId": taskID])])))
+        let task = try XCTUnwrap(options["task"] as? [String: Any])
+        return ["requestId": UUID().uuidString.lowercased(), "taskId": taskID, "focused": focused,
+                "expected": task.filter { $0.key != "id" }]
+    }
+
+    private func taskFocusEnvelope() throws -> [String: Any] {
+        let saved = try object(String(contentsOf: journal))
+        XCTAssertEqual(saved["method"] as? String, "taskFocusCommit")
+        let args = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(XCTUnwrap(saved["argumentsJSON"] as? String).utf8)) as? [String])
+        return try object(XCTUnwrap(args.first))
+    }
+
     private func recentAreaTestTime(daysAgo: Int = 1) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -14866,6 +14900,257 @@ final class CoreHostTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: database), databaseBytes, kind)
             XCTAssertEqual(try Data(contentsOf: journal), bytes, kind)
             await retry.close()
+        }
+    }
+
+    func testTaskFocusReadWriteNoopAndExactTaskFields() async throws {
+        try await seedTaskFocusRows()
+        let faults = HostIOFaults()
+        var applied = 0
+        faults.commandDiagnostic = { if $0 == "taskFocusApplied" { applied += 1 } }
+        let core = host(faults)
+        _ = try await core.start()
+        let options = try object(await core.call("taskFocusOptions", argumentsJSON: json([json(["taskId": "task-focus-target"])])))
+        XCTAssertEqual((options["task"] as? [String: Any])?["id"] as? String, "task-focus-target")
+        XCTAssertEqual(options["canChange"] as? Bool, true)
+        let before = try storedTask("task-focus-target")
+        let sibling = try json(storedTask("task-focus-sibling"))
+        let unrelated = try json(storedTask("task-focus-unrelated"))
+        let beforeDB = try SQLiteBridge(url: database)
+        let tables = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        let request = try await taskFocusRequest(core, focused: true)
+        await expectFailure("STALE_REVISION") {
+            _ = try await core.call("taskFocusRetryOutcome", argumentsJSON: json([json(request)]))
+        }
+        let result = try object(await core.call("taskFocusWrite", argumentsJSON: json([json(request)])))
+        XCTAssertEqual(result["id"] as? String, "task-focus-target")
+        XCTAssertEqual(result["focused"] as? Bool, true)
+        let after = try storedTask("task-focus-target")
+        XCTAssertEqual(after["isFocusedToday"] as? Int, 1)
+        XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+        for (field, value) in before where !["isFocusedToday", "rev", "revBy", "updatedAt"].contains(field) {
+            XCTAssertEqual(try json([after[field] ?? NSNull()]), try json([value]), field)
+        }
+        XCTAssertEqual(try json(storedTask("task-focus-sibling")), sibling)
+        XCTAssertEqual(try json(storedTask("task-focus-unrelated")), unrelated)
+        let afterDB = try SQLiteBridge(url: database)
+        let saved = try nineTableSnapshot(afterDB)
+        afterDB.close()
+        for index in 1..<tables.count { XCTAssertEqual(saved[index], tables[index]) }
+        var writes = 0, journals = 0
+        faults.beforeSQL = { sql in if sql.hasPrefix("UPDATE") || sql.hasPrefix("INSERT") { writes += 1 } }
+        faults.journalWrite = { journals += 1 }
+        let noOp = try await taskFocusRequest(core, focused: true)
+        let unchanged = try object(await core.call("taskFocusWrite", argumentsJSON: json([json(noOp)])))
+        XCTAssertEqual(unchanged["focused"] as? Bool, true)
+        XCTAssertEqual(writes, 0); XCTAssertEqual(journals, 0); XCTAssertEqual(applied, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+        let edit = try SQLiteBridge(url: database)
+        _ = try edit.execute("UPDATE tasks SET status = 'archived', rev = rev + 1 WHERE id = 'task-focus-target'")
+        edit.close()
+        let archived = host()
+        _ = try await archived.start()
+        let archivedOptions = try object(await archived.call("taskFocusOptions", argumentsJSON: json([json(["taskId": "task-focus-target"])])))
+        XCTAssertEqual(archivedOptions["canChange"] as? Bool, false)
+        let blockedRequest = try await taskFocusRequest(archived, focused: false)
+        let archivedBefore = try json(storedTask("task-focus-target"))
+        await expectFailure("INVALID_INPUT") {
+            _ = try await archived.call("taskFocusWrite", argumentsJSON: json([json(blockedRequest)]))
+        }
+        XCTAssertEqual(try json(storedTask("task-focus-target")), archivedBefore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await archived.close()
+    }
+
+    func testTaskFocusFailedSaveExactRetryAndColdReceipt() async throws {
+        for kind in ["same-host", "cold-first", "lost-reply", "terminal"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedTaskFocusRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await taskFocusRequest(writer, focused: true)
+            let baselineDB = try SQLiteBridge(url: database)
+            let baseline = try nineTableSnapshot(baselineDB)
+            baselineDB.close()
+            let baselineTask = try storedTask("task-focus-target")
+            if kind == "same-host" || kind == "cold-first" {
+                faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected Task Focus COMMIT failure") } }
+                await expectFailure("SAVE_FAILED") { _ = try await writer.call("taskFocusWrite", argumentsJSON: json([json(request)])) }
+                let rolled = try SQLiteBridge(url: database)
+                XCTAssertEqual(try nineTableSnapshot(rolled), baseline)
+                rolled.close()
+            } else if kind == "lost-reply" {
+                var journalWrites = 0
+                faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Task Focus lost reply") } }
+                await expectFailure("lost reply") { _ = try await writer.call("taskFocusWrite", argumentsJSON: json([json(request)])) }
+            } else {
+                faults.journalRemove = { throw HostFailure("Injected Task Focus terminal cleanup failure") }
+                await expectFailure("terminal cleanup") { _ = try await writer.call("taskFocusWrite", argumentsJSON: json([json(request)])) }
+            }
+            let envelope = try taskFocusEnvelope()
+            XCTAssertEqual((envelope["request"] as? [String: Any])?["requestId"] as? String, request["requestId"] as? String)
+            if kind == "same-host" {
+                faults.beforeSQL = nil
+                let retry = try await writer.retryPending()
+                let result = try object(XCTUnwrap(retry))
+                XCTAssertEqual(result["focused"] as? Bool, true)
+                XCTAssertEqual(try storedTask("task-focus-target")["rev"] as? Int,
+                               (baselineTask["rev"] as? Int ?? 0) + 1)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+                await writer.close()
+                directory = parent
+                continue
+            }
+            await writer.close()
+            if kind == "lost-reply" || kind == "terminal" {
+                let edit = try SQLiteBridge(url: database)
+                _ = try edit.execute("UPDATE projects SET title = 'Later parent rename', rev = rev + 1 WHERE id = 'focus-target'")
+                _ = try edit.execute("UPDATE tasks SET title = 'Later unrelated rename', rev = rev + 1 WHERE id = 'task-focus-unrelated'")
+                edit.close()
+            }
+            let before = try storedTask("task-focus-target")
+            let replayFaults = HostIOFaults()
+            var taskWrites = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#,
+                             options: .regularExpression) != nil { taskWrites += 1 }
+            }
+            let reopened = host(replayFaults)
+            let startup = try object(await reopened.start())
+            let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
+            XCTAssertEqual(recovery["method"] as? String, "taskFocusCommit")
+            XCTAssertEqual((recovery["result"] as? [String: Any])?["focused"] as? Bool, true)
+            let after = try storedTask("task-focus-target")
+            XCTAssertEqual(after["isFocusedToday"] as? Int, 1)
+            if kind == "cold-first" {
+                XCTAssertEqual(after["rev"] as? Int, (before["rev"] as? Int ?? 0) + 1)
+            } else {
+                XCTAssertEqual(taskWrites, 0)
+                XCTAssertEqual(try json(after), try json(before))
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+            await reopened.close()
+            directory = parent
+        }
+    }
+
+    func testTaskFocusMalformedPublicAndForgedJournalsRefuseBeforeSQLite() async throws {
+        try await seedTaskFocusRows()
+        let faults = HostIOFaults()
+        let writer = host(faults)
+        _ = try await writer.start()
+        let request = try await taskFocusRequest(writer, focused: true)
+        let beforeDB = try SQLiteBridge(url: database)
+        let before = try nineTableSnapshot(beforeDB)
+        beforeDB.close()
+        var journals = 0
+        faults.journalWrite = { journals += 1 }
+        for kind in ["bool", "token", "uuid", "options"] {
+            if kind == "options" {
+                await expectFailure("INVALID_INPUT") {
+                    _ = try await writer.call("taskFocusOptions", argumentsJSON: json([json(["taskId": "task-focus-target", "extra": true])]))
+                }
+                continue
+            }
+            var changed = request
+            if kind == "bool" { changed["focused"] = 1 }
+            if kind == "token" {
+                var expected = try XCTUnwrap(changed["expected"] as? [String: Any])
+                expected.removeValue(forKey: "title"); changed["expected"] = expected
+            }
+            if kind == "uuid" { changed["requestId"] = UUID().uuidString.uppercased() }
+            await expectFailure("INVALID_INPUT") { _ = try await writer.call("taskFocusWrite", argumentsJSON: json([json(changed)])) }
+        }
+        let check = try SQLiteBridge(url: database)
+        XCTAssertEqual(try nineTableSnapshot(check), before)
+        check.close()
+        XCTAssertEqual(journals, 0)
+        faults.journalWrite = nil
+        faults.beforeSQL = { if $0 == "COMMIT" { throw HostFailure("Injected pending Task Focus") } }
+        await expectFailure("SAVE_FAILED") { _ = try await writer.call("taskFocusWrite", argumentsJSON: json([json(request)])) }
+        let original = try taskFocusEnvelope()
+        let saved = try object(String(contentsOf: journal))
+        await writer.close()
+        let databaseBytes = try Data(contentsOf: database)
+        for kind in ["request", "effect", "result", "terminal", "malformed", "oversized", "raw"] {
+            var envelope = original
+            var forged = saved
+            if kind == "request" {
+                var changed = try XCTUnwrap(envelope["request"] as? [String: Any])
+                changed["taskId"] = "task-focus-sibling"; envelope["request"] = changed
+            } else if kind == "effect" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                var effect = try XCTUnwrap(prepared["effect"] as? [String: Any])
+                effect["tasks"] = []; prepared["effect"] = effect; envelope["prepared"] = prepared
+            } else if kind == "result" {
+                var prepared = try XCTUnwrap(envelope["prepared"] as? [String: Any])
+                prepared["result"] = ["id": "task-focus-target", "focused": false]
+                envelope["prepared"] = prepared
+            } else if kind == "terminal" {
+                forged["terminal"] = ["success": ["_0": try json(["id": "task-focus-target", "focused": false])]]
+            } else if kind == "raw" {
+                forged["method"] = "taskFocusWrite"
+            }
+            forged["argumentsJSON"] = kind == "malformed" ? "[]"
+                : kind == "oversized" ? try json([String(repeating: "x", count: 2_000_001)])
+                : kind == "raw" ? try json([json(request)]) : try json([json(envelope)])
+            let bytes = Data(try json(forged).utf8)
+            try bytes.write(to: journal)
+            let blockedFaults = HostIOFaults()
+            var sql = 0, removals = 0
+            blockedFaults.beforeSQL = { _ in sql += 1 }
+            blockedFaults.journalRemove = { removals += 1 }
+            let blocked = host(blockedFaults)
+            await expectFailure { _ = try await blocked.start() }
+            XCTAssertEqual(sql, 0, kind); XCTAssertEqual(removals, 0, kind)
+            XCTAssertEqual(try Data(contentsOf: database), databaseBytes, kind)
+            XCTAssertEqual(try Data(contentsOf: journal), bytes, kind)
+            await blocked.close()
+        }
+    }
+
+    func testTaskFocusAffectedLaterEditRejectsColdReceipt() async throws {
+        for kind in ["renamed", "deleted"] {
+            let parent = directory!
+            directory = parent.appendingPathComponent(kind)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await seedTaskFocusRows()
+            let faults = HostIOFaults()
+            let writer = host(faults)
+            _ = try await writer.start()
+            let request = try await taskFocusRequest(writer, focused: true)
+            var journalWrites = 0
+            faults.journalWrite = { journalWrites += 1; if journalWrites == 2 { throw HostFailure("Injected Task Focus lost reply") } }
+            await expectFailure("lost reply") { _ = try await writer.call("taskFocusWrite", argumentsJSON: json([json(request)])) }
+            await writer.close()
+            let edit = try SQLiteBridge(url: database)
+            if kind == "renamed" {
+                _ = try edit.execute("UPDATE tasks SET title = 'Later target rename', rev = rev + 1 WHERE id = 'task-focus-target'")
+            } else {
+                _ = try edit.execute("UPDATE tasks SET deletedAt = ?, rev = rev + 1 WHERE id = 'task-focus-target'", parametersJSON: json([recentAreaTestTime()]))
+            }
+            let before = try nineTableSnapshot(edit)
+            edit.close()
+            let replayFaults = HostIOFaults()
+            var writes = 0
+            replayFaults.beforeSQL = { sql in
+                if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+tasks\b"#,
+                             options: .regularExpression) != nil { writes += 1 }
+            }
+            let replay = host(replayFaults)
+            await expectFailure("STALE_REVISION") { _ = try await replay.start() }
+            XCTAssertEqual(writes, 0)
+            let check = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(check), before)
+            check.close()
+            XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+            await replay.close()
+            directory = parent
         }
     }
 }

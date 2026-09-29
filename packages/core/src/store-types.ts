@@ -27,6 +27,28 @@ export type PreparedTaskEditResult = StoreActionResult & {
     reason?: 'missing' | 'conflict' | 'invalid';
 };
 
+/** Compact fields consulted by the shared Focus eligibility and cap policy. */
+export type TaskFocusWitnessRow = Pick<Task, 'id' | 'status' | 'createdAt'> & {
+    projectId: string | null; sectionId: string | null; startTime: string | null;
+    dueDate: string | null; reviewAt: string | null; order: number | null; orderNum: number | null;
+    isFocusedToday: boolean; recurrence: Task['recurrence'] | null;
+};
+
+/** One frozen native task star; the complete changed Task is its durable receipt. */
+export type PreparedTaskFocus = {
+    scope: { task: Task; project: Project | null; sections: Section[]; area: Area | null;
+        peers: TaskFocusWitnessRow[]; focused: TaskFocusWitnessRow[]; focusLimit: number };
+    effect: { task: { before: Task; after: Task } };
+    deviceIdBefore: string | null;
+    deviceIdToInitialize: string | null;
+    preparedAt: string;
+    preparedLocalDay: string;
+    preparedOffsetMinutes: number;
+    boundaryOffsetMinutes: number;
+    futureBoundary: string;
+    dates: import('./task-utils').FocusDateProjection[];
+};
+
 /** One frozen project-only creation. The full project row is its durable receipt. */
 export type PreparedProjectCreate = {
     project: Project;
@@ -402,6 +424,7 @@ export interface TaskStore {
     }) => Promise<StoreActionResult>;
     /** Internal prepared edit; native validates the journal before this atomic guarded overlay. */
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
+    commitPreparedTaskFocus: (input: PreparedTaskFocus & { request: { taskId: string; focused: boolean } }) => Promise<PreparedTaskEditResult>;
     /** Native validates the action-specific envelope before this atomic guarded write. */
     commitPreparedBoardTask: (input: PreparedBoardTask) => Promise<PreparedTaskEditResult>;
     commitPreparedCalendarTask: (input: PreparedCalendarTask) => Promise<PreparedTaskEditResult>;

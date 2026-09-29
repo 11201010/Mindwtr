@@ -1461,6 +1461,25 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._tasksById.get(taskId)?.title).toBe('Contract prepared edit');
                 expect(useTaskStore.getState()._tasksById.get(taskId)?.dueDate).toBe(request.patch.dueDate);
             },
+            commitPreparedTaskFocus: async (control) => {
+                const host = await nativeHost(control);
+                const options = liveTasks.map((entry) => host.getTaskFocusOptions({ taskId: entry.id }))
+                    .find((entry) => entry.ok && entry.value.canChange && entry.value.action.canToggle);
+                expect(options?.ok).toBe(true);
+                if (!options?.ok) return;
+                const { id, ...expected } = options.value.task;
+                const request = { requestId: 'e82c7810-84f4-4555-bbd2-4871927cac4f', taskId: id,
+                    focused: !expected.isFocusedToday, expected };
+                const planned = nativeValue(host.prepareTaskFocus(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === id))
+                        .toEqual(planned.prepared.effect.task.after);
+                });
+                expect(nativeValue(await host.commitPreparedTaskFocus({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
+            },
             convertTaskToSection: () => call('convertTaskToSection', projectTaskIds[0]),
             deleteArea: () => call('deleteArea', areaId),
             deleteContext: () => call('deleteContext', '@home'),

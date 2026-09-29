@@ -881,6 +881,34 @@ globalThis.MindwtrHost = {
     projectFocusCommit(json: string): string {
         return submit(async () => unwrap(await contract.commitPreparedProjectFocus(JSON.parse(json))));
     },
+    taskFocusOptions(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.getTaskFocusOptions(JSON.parse(json)));
+        });
+    },
+    taskFocusWrite(_json: string): string {
+        return submit(async () => { throw new Error('INVALID_INPUT: Task Focus writes require a durable host journal'); });
+    },
+    taskFocusRetryOutcome(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.probeTaskFocusOutcome(JSON.parse(json)));
+        });
+    },
+    /** Private iOS preparation and commit; Swift owns the durable journal. */
+    taskFocusPrepare(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            return unwrap(contract.prepareTaskFocus(JSON.parse(json)));
+        });
+    },
+    taskFocusValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedTaskFocus(JSON.parse(json))));
+    },
+    taskFocusCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedTaskFocus(JSON.parse(json))));
+    },
     projectRenameOptions(json: string): string {
         return submit(async () => {
             requireSaved();

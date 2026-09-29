@@ -76,6 +76,9 @@ struct InboxScreen: View {
                                 Spacer()
                             }
                         }
+                        if !model.taskFocusNotice.isEmpty && !model.reviewGuidePresented {
+                            TaskFocusNotice(model: model, palette: palette)
+                        }
                         if model.error != nil && !model.capturePresented && !model.areaPickerPresented && !model.morePresented && !model.mindSweepPresented && !model.processInboxPresented {
                             FailureBanner(model: model, palette: palette)
                         }
@@ -310,7 +313,7 @@ struct InboxScreen: View {
                                     }
                                     TaskCard(row: row, model: model, palette: palette,
                                              footer: row.text("revealLabel").isEmpty ? row.text("laterTodayLabel") : row.text("revealLabel"),
-                                             showDetails: model.focusShowDetails,
+                                             showDetails: model.focusShowDetails, showFocusToggle: true,
                                              onProject: { project in Task { await model.openProject(project) } })
                                         .padding(.leading, section.objects("groups").isEmpty ? 0 : 25)
                                         .overlay(alignment: .leading) {
@@ -875,6 +878,7 @@ struct TaskCard: View {
     var readOnly: Bool = false
     var hideStatusBadge: Bool = false
     var showDetails: Bool = false
+    var showFocusToggle: Bool = false
     var onProject: ((CoreObject) -> Void)? = nil
     var onToken: ((String) -> Void)? = nil
     var beforeAction: (() -> Void)? = nil
@@ -887,10 +891,7 @@ struct TaskCard: View {
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                if onProject != nil || onToken != nil {
-                    titleContent.frame(minHeight: 44).contentShape(Rectangle())
-                        .onTapGesture { openTask() }
-                } else { titleContent }
+                titleContent
                 if showDetails && !meta.text("descriptionPreview").isEmpty {
                     Text(NativeMarkdownInline.attributedText(meta.object("description").objects("inline"),
                          labels: meta.object("description").object("labels"), palette: palette, referenceLinks: true)).rnFont(14)
@@ -934,10 +935,14 @@ struct TaskCard: View {
                                 }
                             }
                         }
-                    } else { Text(metadata(parts)).rnFont(12, .medium).fixedSize(horizontal: false, vertical: true) }
+                    } else {
+                        Text(metadata(parts)).rnFont(12, .medium).fixedSize(horizontal: false, vertical: true)
+                            .contentShape(Rectangle()).onTapGesture { openTask() }
+                    }
                 }
                 if !footer.isEmpty {
                     Text(footer).rnFont(12, .semibold).foregroundStyle(palette.secondary).padding(.top, 4)
+                        .contentShape(Rectangle()).onTapGesture { openTask() }
                 }
                 if showDetails && !meta.text("ageLabel").isEmpty {
                     HStack(spacing: 4) {
@@ -948,14 +953,11 @@ struct TaskCard: View {
                     .accessibilityLabel(meta.text("ageLabel"))
                     .accessibilityIdentifier("task-age-" + row.text("id"))
                     .foregroundStyle(palette.secondary)
-                    .simultaneousGesture(TapGesture().onEnded { _ in
-                        if onProject != nil || onToken != nil { openTask() }
-                    })
+                    .onTapGesture { openTask() }
                     .accessibilityAction { openTask() }
                 }
             }
             .frame(minHeight: 44).contentShape(Rectangle())
-            .onTapGesture { if onProject == nil && onToken == nil { openTask() } }
             if !hideStatusBadge && !meta.text("statusLabel").isEmpty {
                 Button { beforeAction?(); statusMenu = true } label: {
                     AppIcon(name: "status", size: 20).foregroundStyle(statusColor).frame(width: 44, height: 44)
@@ -1016,11 +1018,20 @@ struct TaskCard: View {
             Text(row.text("title")).rnFont(15, .medium)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
+                .frame(minHeight: 44).contentShape(Rectangle()).onTapGesture { openTask() }
                 .accessibilityIdentifier("task-title-" + row.text("id"))
                 .accessibilityAction { openTask() }
-            if meta.flag("canFocus") {
-                AppFocusStar(focused: row.flag("isFocusedToday"), inactiveColor: palette.secondary, size: 20)
-                    .frame(width: 44, height: 44).accessibilityHidden(true)
+            if showFocusToggle, meta.flag("canFocus"), !readOnly, !row.flag("readOnly") {
+                Button {
+                    beforeAction?()
+                    Task { await model.setTaskFocus(row) }
+                } label: {
+                    AppFocusStar(focused: row.flag("isFocusedToday"), inactiveColor: palette.secondary, size: 20)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(!model.taskFocusInputEnabled(row))
+                .accessibilityLabel(model.label(row.flag("isFocusedToday") ? "agenda.removeFromFocus" : "agenda.addToFocus"))
+                .accessibilityIdentifier("task-focus-" + row.text("id"))
             }
         }
     }
@@ -1046,6 +1057,28 @@ struct TaskCard: View {
     }
 }
 
+struct TaskFocusNotice: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.taskFocusNotice.text("title")).rnFont(14, .semibold)
+                Text(model.taskFocusNotice.text("message")).rnFont(13)
+                    .accessibilityIdentifier("task-focus-blocked")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button { model.dismissTaskFocusNotice() } label: {
+                Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityLabel(model.label("common.close"))
+        }
+        .foregroundStyle(palette.warning).padding(.horizontal, 16).padding(.vertical, 8)
+        .background(palette.card)
+    }
+}
+
 struct FailureBanner: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
@@ -1054,10 +1087,11 @@ struct FailureBanner: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(model.error ?? "").rnFont(13).foregroundStyle(palette.danger).textSelection(.enabled)
                 .accessibilityIdentifier("persistence-error")
-            Button(model.label("common.retry").isEmpty ? "Retry" : model.label("common.retry")) {
-                Task { await model.retry() }
+            Button { Task { await model.retry() } } label: {
+                Text(model.label("common.retry").isEmpty ? "Retry" : model.label("common.retry"))
+                    .rnFont(14, .semibold).frame(minHeight: 44).contentShape(Rectangle())
             }
-            .rnFont(14, .semibold).frame(minHeight: 44).disabled(model.busy)
+            .disabled(model.busy)
             .accessibilityIdentifier("persistence-retry")
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(16)

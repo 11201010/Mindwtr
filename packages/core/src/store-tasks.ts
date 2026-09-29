@@ -12,7 +12,7 @@ import {
 import type { AppData, PendingRemoteAttachmentDelete, Section, Task, TaskStatus } from './types';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
-import type { PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, StoreActionResult, TaskStore } from './store-types';
+import type { PreparedCalendarCreate, PreparedCalendarTask, PreparedChecklistEffect, PreparedInboxEffect, PreparedTaskEdit, PreparedTaskEditResult, PreparedTaskFocus, StoreActionResult, TaskFocusWitnessRow, TaskStore } from './store-types';
 import {
     applyTaskProjectReactivationTransition,
     applyTaskUpdates,
@@ -47,7 +47,9 @@ import { generateUUID as uuidv4 } from './uuid';
 import { canSkipRecurringTaskOccurrence, createNextRecurringTask, normalizeRecurrenceForLoad, type RecurrenceProjection } from './recurrence';
 import { normalizeFocusTaskLimit } from './focus-utils';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
-import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate } from './task-utils';
+import { boardOrderForDuplicate, countFocusedTasksBeforeBoundary, isTaskFutureFocusCandidate,
+    type FocusDateLookup } from './task-utils';
+import { sameTaskSqliteRow, sameSectionDeleteJson } from './store-projects/section-actions';
 import {
     buildTaskContainerMovePatch,
     normalizeOptionalContainerId,
@@ -124,6 +126,7 @@ type TaskActions = Pick<
     | 'addTasks'
     | 'commitPreparedCapture'
     | 'commitPreparedTaskEdit'
+    | 'commitPreparedTaskFocus'
     | 'commitPreparedBoardTask'
     | 'commitPreparedCalendarTask'
     | 'commitPreparedCalendarCreate'
@@ -327,6 +330,7 @@ export const prepareTaskUpdatesForStore = ({
     allAreas,
     settings,
     futureBoundary,
+    futureDates,
     nowMs,
     reserveProjectOrder,
     projectOrderReserver,
@@ -340,6 +344,7 @@ export const prepareTaskUpdatesForStore = ({
     settings?: AppData['settings'];
     /** Frozen end of the preparation process's local day, for prepared replay validation. */
     futureBoundary?: string;
+    futureDates?: FocusDateLookup;
     /** Frozen preparation clock; ordinary RN callers retain the ambient default. */
     nowMs?: number;
     reserveProjectOrder?: boolean;
@@ -364,7 +369,7 @@ export const prepareTaskUpdatesForStore = ({
     const adjustedUpdates = normalizeTaskUpdate(task, {
         ...updates,
         ...containerPatch.updates,
-    }, { settings, futureBoundary, nowMs });
+    }, { settings, futureBoundary, futureDates, nowMs });
 
     return {
         ok: true,
@@ -438,6 +443,71 @@ export const planTaskUpdateEffects = ({
     );
     return { updatedTask, recurringFollowUpTask, recurringCandidateTask: stampedNextRecurringTask,
         recurringDuplicateTask, ...projectReactivation };
+};
+
+/** The bounded Focus witness contains only columns consulted by eligibility and the cap. */
+export const taskFocusWitnessRow = (task: Task): TaskFocusWitnessRow => ({
+    id: task.id, status: task.status, createdAt: task.createdAt,
+    projectId: task.projectId ?? null, sectionId: task.sectionId ?? null,
+    startTime: task.startTime ?? null, dueDate: task.dueDate ?? null, reviewAt: task.reviewAt ?? null,
+    order: task.order ?? null, orderNum: task.orderNum ?? null,
+    isFocusedToday: task.isFocusedToday === true, recurrence: task.recurrence ?? null,
+});
+
+const asFocusTask = (row: TaskFocusWitnessRow): Task => ({
+    id: row.id, title: '', status: row.status, createdAt: row.createdAt, updatedAt: row.createdAt,
+    tags: [], contexts: [], projectId: row.projectId ?? undefined, sectionId: row.sectionId ?? undefined,
+    startTime: row.startTime ?? undefined, dueDate: row.dueDate ?? undefined,
+    reviewAt: row.reviewAt ?? undefined, order: row.order ?? undefined, orderNum: row.orderNum ?? undefined,
+    isFocusedToday: row.isFocusedToday, recurrence: row.recurrence ?? undefined,
+});
+
+export const taskFocusScope = (state: TaskStore, task: Task): PreparedTaskFocus['scope'] => {
+    const byId = <T extends { id: string }>(rows: T[]) => rows.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const project = task.projectId ? state._allProjects.find((row) => row.id === task.projectId) ?? null : null;
+    return {
+        task, project,
+        sections: byId(state._allSections.filter((row) => !row.deletedAt && row.projectId === task.projectId)),
+        area: !task.projectId && task.areaId
+            ? state._allAreas.find((row) => row.id === task.areaId) ?? null : null,
+        peers: byId(state._allTasks.filter((row) => project && !row.deletedAt && row.projectId === task.projectId
+            && ['inbox', 'next', 'waiting', 'someday'].includes(row.status)).map(taskFocusWitnessRow)),
+        focused: byId(state._allTasks.filter((row) => !row.deletedAt && row.isFocusedToday === true)
+            .map(taskFocusWitnessRow)),
+        focusLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
+    };
+};
+
+/** Re-evaluate the RN star policy against the frozen local day and compact rows. */
+export const taskFocusAction = (scope: PreparedTaskFocus['scope'], preparedAt: string,
+    futureBoundary: string, dates: FocusDateLookup): FocusStarAction => resolveFocusStarAction(scope.task, {
+    tasks: scope.peers.map(asFocusTask), projects: scope.project ? [scope.project] : [],
+    sections: scope.sections,
+    focusedCount: countFocusedTasksBeforeBoundary(scope.focused.map(asFocusTask), futureBoundary, dates),
+    focusTaskLimit: scope.focusLimit, now: new Date(preparedAt),
+    endOfTodayIso: futureBoundary, frozenDates: dates,
+});
+
+/** Derive the complete Task receipt through the same normalizer/effect planner as RN updateTask. */
+export const taskFocusEffect = (scope: PreparedTaskFocus['scope'], focused: boolean,
+    deviceId: string, preparedAt: string, futureBoundary: string, dates: FocusDateLookup): PreparedTaskFocus['effect'] | null => {
+    const action = taskFocusAction(scope, preparedAt, futureBoundary, dates);
+    if (!action.canToggle || action.patch.isFocusedToday !== focused || !isTaskActionable(scope.task)
+        || scope.task.deletedAt || scope.task.purgedAt
+        || isStatusListTaskReadOnly(scope.task, scope.project ? [scope.project] : [])) return null;
+    const normalized = prepareTaskUpdatesForStore({ task: scope.task, updates: action.patch,
+        allProjects: scope.project ? [scope.project] : [], allSections: scope.sections,
+        allAreas: scope.area ? [scope.area] : [], futureBoundary,
+        futureDates: dates, nowMs: Date.parse(preparedAt), reserveProjectOrder: false });
+    if (!normalized.ok) return null;
+    const planned = planTaskUpdateEffects({ task: scope.task, preparedUpdates: normalized.updates,
+        allTasks: [scope.task], allProjects: scope.project ? [scope.project] : [],
+        allSections: scope.sections, now: preparedAt, deviceId });
+    if (planned.recurringFollowUpTask || planned.reactivatedProjectIds.length
+        || !sameSectionDeleteJson(planned.projects, scope.project ? [scope.project] : [])
+        || !sameSectionDeleteJson(planned.sections, scope.sections)
+        || sameTaskSqliteRow(planned.updatedTask, scope.task)) return null;
+    return { task: { before: scope.task, after: planned.updatedTask } };
 };
 
 /** RN Reset's exact one-row field change, including the already-open write. */
@@ -1165,6 +1235,37 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             persist(set, debouncedSave, state, { tasks, ...(device.updated ? { settings: device.settings } : {}) });
             result = { success: true, id: current.id, outcome: 'applied' };
             return { _allTasks: tasks, ...(device.updated ? { settings: device.settings } : {}), lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
+        });
+        return result;
+    },
+
+    commitPreparedTaskFocus: async (input): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict',
+            error: 'Prepared task Focus conflicts with current data' };
+        set((state) => {
+            const current = state._allTasks.find((row) => row.id === input.request.taskId);
+            // A full durable Task receipt wins before mutable eligibility, parent or clock checks.
+            if (current && sameTaskSqliteRow(current, input.effect.task.after)) {
+                result = { success: true, id: current.id, outcome: 'replayed' };
+                return state;
+            }
+            if (!current || !sameTaskSqliteRow(current, input.scope.task)
+                || (state.settings.deviceId ?? null) !== input.deviceIdBefore
+                || (input.deviceIdBefore === null ? !input.deviceIdToInitialize : input.deviceIdToInitialize !== null)
+                || !sameSectionDeleteJson(taskFocusScope(state, current), input.scope)) return state;
+            const planned = taskFocusEffect(input.scope, input.request.focused,
+                input.deviceIdBefore ?? input.deviceIdToInitialize!, input.preparedAt,
+                input.futureBoundary, new Map(input.dates.map((row) => [row.value, row])));
+            if (!planned || !sameTaskSqliteRow(planned.task.before, input.effect.task.before)
+                || !sameTaskSqliteRow(planned.task.after, input.effect.task.after)) return state;
+            const tasks = replaceEntityInArray(state._allTasks, current.id, planned.task.after);
+            const settings = input.deviceIdToInitialize
+                ? { ...state.settings, deviceId: input.deviceIdToInitialize } : state.settings;
+            persist(set, debouncedSave, state, { tasks,
+                ...(settings !== state.settings ? { settings } : {}) });
+            result = { success: true, id: current.id, outcome: 'applied' };
+            return { _allTasks: tasks, settings,
+                lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
         });
         return result;
     },

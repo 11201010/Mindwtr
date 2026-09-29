@@ -93,6 +93,10 @@ final class CoreModel: ObservableObject {
     @Published private(set) var projectCreateAreaID: String?
     @Published private(set) var projectCreateError: String?
     @Published private(set) var projectCreateReadError: String?
+    @Published private(set) var taskFocusNotice: CoreObject = [:]
+    private var taskFocusRequest: String?
+    private var taskFocusExpectedID: String?
+    private var taskFocusDesired: Bool?
     @Published private(set) var projectFocusError: String?
     @Published private(set) var projectFocusReadError: String?
     @Published private(set) var projectRenameEditing = false
@@ -1260,6 +1264,8 @@ final class CoreModel: ObservableObject {
                 // The host already verified the durable row. Reopen the list;
                 // there is no project-detail navigation for quick add.
                 selectedSurface = .projects
+            } else if recovery.text("method") == "taskFocusCommit" {
+                selectedSurface = .focus
             } else if recovery.text("method") == "inboxPreparedCommit" {
                 // The durable data recovered, but the in-memory queue did not.
                 selectedSurface = .inbox
@@ -1269,6 +1275,7 @@ final class CoreModel: ObservableObject {
                         "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading",
                         "task.aria.changeStatus", "task.aria.changeStatusHint", "quickAdd.audioRecord",
                         "common.more", "agenda.reviewDueProjects", "agenda.laterToday",
+                        "agenda.addToFocus", "agenda.removeFromFocus",
                         "agenda.collapseOtherSections", "agenda.expandOtherSections", "markdown.expand", "markdown.collapse",
                         "projects.areaFilter", "filters.excluded", "taskEdit.tab.view", "common.notSet", "status.active", "status.waiting", "status.someday",
                         "common.save", "common.edit", "common.rename", "common.discard", "taskEdit.discardChanges", "taskEdit.discardChangesDesc",
@@ -1538,6 +1545,118 @@ final class CoreModel: ObservableObject {
             projectCreateReadError = error.localizedDescription
             throw error
         }
+    }
+
+    func dismissTaskFocusNotice() { taskFocusNotice = [:] }
+
+    func taskFocusInputEnabled(_ row: CoreObject, checkingCurrentRow: Bool = false) -> Bool {
+        guard ready, !busy, !retryNeeded, taskFocusRequest == nil, !taskPresented,
+              !capturePresented, !areaPickerPresented, !morePresented, !projectRenameEditing,
+              !row.flag("readOnly"), row.object("meta").flag("canFocus") else { return false }
+        let rows: [CoreObject]
+        switch selectedSurface {
+        case .focus:
+            guard focusActionsEnabled else { return false }
+            rows = checkingCurrentRow ? focus.objects("sections").flatMap { $0.objects("rows") } : []
+        case .review:
+            guard reviewActionsEnabled, reviewGuidePresented, reviewKind == "daily",
+                  reviewGuide.object("content").text("step") == "focus" else { return false }
+            rows = checkingCurrentRow ? reviewRows : []
+        default: return false
+        }
+        guard checkingCurrentRow else { return true }
+        return rows.contains {
+            $0.text("id").utf8.elementsEqual(row.text("id").utf8) && !$0.flag("readOnly")
+                && $0.text("title").utf8.elementsEqual(row.text("title").utf8)
+                && $0.text("status") == row.text("status")
+                && $0.flag("isFocusedToday") == row.flag("isFocusedToday")
+        }
+    }
+
+    func setTaskFocus(_ displayed: CoreObject) async {
+        guard taskFocusInputEnabled(displayed, checkingCurrentRow: true) else { return }
+        busy = true
+        taskFocusNotice = [:]
+        error = nil
+        defer { finishOperation() }
+        do {
+            let id = displayed.text("id")
+            let options = try await query("taskFocusOptions", [try json(["taskId": id])])
+            let task = options.object("task")
+            let action = options.object("action")
+            let strictBool: (Any?) -> Bool = { value in
+                guard let number = value as? NSNumber else { return false }
+                return CFGetTypeID(number) == CFBooleanGetTypeID()
+            }
+            guard options.count == 4, !options.text("revision").isEmpty, strictBool(options["canChange"]),
+                  task.count == 7, task.text("id").utf8.elementsEqual(id.utf8),
+                  task["title"] is String, !task.text("status").isEmpty, strictBool(task["isFocusedToday"]),
+                  task["rev"] is NSNull || (task["rev"] is Int && !strictBool(task["rev"])),
+                  task["revBy"] is String || task["revBy"] is NSNull,
+                  !task.text("updatedAt").isEmpty, action.count == 5, strictBool(action["canToggle"]),
+                  action["blockedReason"] is String || action["blockedReason"] is NSNull,
+                  action["blocked"] is String || action["blocked"] is NSNull,
+                  action["label"] is String, action["blockedTitle"] is String else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            guard options.flag("canChange"),
+                  task.text("title").utf8.elementsEqual(displayed.text("title").utf8),
+                  task.text("status") == displayed.text("status"),
+                  task.flag("isFocusedToday") == displayed.flag("isFocusedToday") else {
+                try await readSelectedSurface()
+                return
+            }
+            guard action.flag("canToggle") else {
+                taskFocusNotice = ["title": action.text("blockedTitle"), "message": action.text("blocked")]
+                return
+            }
+            let desired = !task.flag("isFocusedToday")
+            var expected = task
+            expected.removeValue(forKey: "id")
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskId": id,
+                                    "focused": desired, "expected": expected])
+            taskFocusRequest = request
+            taskFocusExpectedID = id
+            taskFocusDesired = desired
+            let result = try await query("taskFocusWrite", [request])
+            try acknowledgeTaskFocus(result)
+            try await readSelectedSurface()
+        } catch { await handleTaskFocusWriteError(error) }
+    }
+
+    private func acknowledgeTaskFocus(_ result: CoreObject) throws {
+        guard taskFocusRequest != nil, let id = taskFocusExpectedID, let desired = taskFocusDesired else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        if result.count == 2, let blocked = result["blocked"] as? String,
+           let title = result["blockedTitle"] as? String {
+            taskFocusNotice = ["title": title, "message": blocked]
+        } else {
+            guard result.count == 2, result.text("id").utf8.elementsEqual(id.utf8),
+                  let focused = result["focused"] as? NSNumber,
+                  CFGetTypeID(focused) == CFBooleanGetTypeID(), focused.boolValue == desired else {
+                throw CocoaError(.coderReadCorrupt)
+            }
+            focusCurrent = false
+            focusNeedsRead = true
+        }
+        taskFocusRequest = nil
+        taskFocusExpectedID = nil
+        taskFocusDesired = nil
+        retryNeeded = false
+        error = nil
+    }
+
+    private func handleTaskFocusWriteError(_ failure: Error) async {
+        if taskFocusRequest != nil && isDefiniteRejection(failure) {
+            taskFocusRequest = nil
+            taskFocusExpectedID = nil
+            taskFocusDesired = nil
+            retryNeeded = false
+            do { try await readSelectedSurface() }
+            catch { self.error = error.localizedDescription; return }
+        } else { retryNeeded = taskFocusRequest != nil }
+        error = failure.localizedDescription
     }
 
     func setProjectFocus(_ displayed: CoreObject) async {
@@ -10352,6 +10471,14 @@ final class CoreModel: ObservableObject {
                 }
                 return
             }
+            if let request = taskFocusRequest {
+                let result: CoreObject
+                if let acknowledgment { result = try decode(acknowledgment) }
+                else { result = try await query("taskFocusRetryOutcome", [request]) }
+                try acknowledgeTaskFocus(result)
+                try await readSelectedSurface()
+                return
+            }
             if let request = projectFocusRequest {
                 let result: CoreObject
                 if let acknowledgment { result = try decode(acknowledgment) }
@@ -10537,6 +10664,10 @@ final class CoreModel: ObservableObject {
             }
             if projectNotesWriteRequest != nil {
                 await handleProjectNotesWriteError(error)
+                return
+            }
+            if taskFocusRequest != nil {
+                await handleTaskFocusWriteError(error)
                 return
             }
             if projectFocusRequest != nil {

@@ -113,6 +113,29 @@ type FocusSequentialOptions = {
     now?: Date;
     sectionScopedProjectIds?: ReadonlySet<string>;
     sections?: readonly SequentialSection[];
+    frozenLocalDay?: { endOfTodayIso: string; dates: FocusDateLookup };
+};
+
+/** A native journal freezes each parsed value, including its own DST offset. */
+export type FocusDateProjection = { value: string; parsedAt: number | null; parsedOffsetMinutes: number | null;
+    sourceOffsetMinutes: number | null;
+    dueAt: number | null; dueOffsetMinutes: number | null };
+export type FocusDateLookup = ReadonlyMap<string, FocusDateProjection>;
+
+export const projectFocusDateValues = (values: readonly string[]): FocusDateProjection[] => {
+    return [...new Set(values)].sort().map((value) => {
+        const parsed = safeParseDate(value);
+        const due = safeParseDueDate(value);
+        const parts = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2})?/.exec(value);
+        // The preceding local minute retains the pre-transition offset when
+        // the supplied date begins in a midnight DST gap.
+        const midnight = parts ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]) - 1, 23, 59) : null;
+        return { value, parsedAt: parsed?.getTime() ?? null,
+            parsedOffsetMinutes: parsed?.getTimezoneOffset() ?? null,
+            sourceOffsetMinutes: parsed && midnight && Number.isFinite(midnight.getTime())
+                ? midnight.getTimezoneOffset() : null,
+            dueAt: due?.getTime() ?? null, dueOffsetMinutes: due?.getTimezoneOffset() ?? null };
+    });
 };
 
 export type TaskFocusEligibilityReason = 'eligible' | 'deferred' | 'sequential' | 'clarify';
@@ -127,6 +150,8 @@ export type TaskFocusEligibilityOptions = {
     projects: readonly Project[] | Map<string, Project>;
     now?: Date;
     endOfTodayIso?: string;
+    /** Prepared native writes use each value's frozen date parse, including DST. */
+    frozenDates?: FocusDateLookup;
     sequentialProjectIds?: ReadonlySet<string>;
     sectionScopedProjectIds?: ReadonlySet<string>;
     sections?: readonly SequentialSection[];
@@ -508,16 +533,29 @@ function earliestDate(a: Date | null, b: Date | null): Date | null {
     return a <= b ? a : b;
 }
 
+const parseFrozenFocusDate = (value: string | undefined, dates: FocusDateLookup, endOfDay = false): Date | null => {
+    const epoch = value ? (endOfDay ? dates.get(value)?.dueAt : dates.get(value)?.parsedAt) : null;
+    return epoch === null || epoch === undefined ? null : new Date(epoch);
+};
+
+const isReviewDueFrozen = (reviewAt: string | undefined, now: Date, dates: FocusDateLookup): boolean => {
+    const date = parseFrozenFocusDate(reviewAt, dates);
+    return Boolean(date && date <= now);
+};
+
 export function getTaskDeferUntil(
     task: Pick<Task, 'startTime'> & Partial<Pick<Task, 'dueDate' | 'recurrence' | 'reviewAt'>>,
+    frozenDates?: FocusDateLookup,
 ): Date | null {
-    const start = safeParseDate(task.startTime);
+    const parse = (value?: string) => frozenDates === undefined
+        ? safeParseDate(value) : parseFrozenFocusDate(value, frozenDates);
+    const start = parse(task.startTime);
     // A recurring task without a start date defers on its next remaining
     // schedule field (the earlier of due/review); otherwise the next instance
     // spawned on completion reappears in Next/Focus immediately,
     // indistinguishable from the instance just completed (#843).
     return start ?? (hasRecurrenceRule(task.recurrence)
-        ? earliestDate(safeParseDate(task.dueDate), safeParseDate(task.reviewAt))
+        ? earliestDate(parse(task.dueDate), parse(task.reviewAt))
         : null);
 }
 
@@ -544,23 +582,24 @@ export function isTaskFutureStart(
 export function isTaskFutureStartBeforeBoundary(
     task: Pick<Task, 'startTime'> & Partial<Pick<Task, 'dueDate' | 'recurrence' | 'reviewAt'>>,
     endOfTodayIso: string,
+    frozenDates?: FocusDateLookup,
 ): boolean {
-    const deferUntil = getTaskDeferUntil(task);
+    const deferUntil = getTaskDeferUntil(task, frozenDates);
     const boundary = safeParseDate(endOfTodayIso);
     return Boolean(deferUntil && boundary && deferUntil > boundary);
 }
 
-export function isTaskFutureFocusCandidateBeforeBoundary(task: Task, endOfTodayIso: string): boolean {
-    return task.status === 'next' && Boolean(task.startTime) && isTaskFutureStartBeforeBoundary(task, endOfTodayIso);
+export function isTaskFutureFocusCandidateBeforeBoundary(task: Task, endOfTodayIso: string, frozenDates?: FocusDateLookup): boolean {
+    return task.status === 'next' && Boolean(task.startTime) && isTaskFutureStartBeforeBoundary(task, endOfTodayIso, frozenDates);
 }
 
 /** The store's visible Focus cap evaluated at a frozen local-day boundary for a prepared native write. */
-export function countFocusedTasksBeforeBoundary(tasks: readonly Task[], endOfTodayIso: string): number {
+export function countFocusedTasksBeforeBoundary(tasks: readonly Task[], endOfTodayIso: string, frozenDates?: FocusDateLookup): number {
     let count = 0;
     for (const task of tasks) {
         if (!task.deletedAt && task.isFocusedToday === true
             && task.status !== 'done' && task.status !== 'reference' && task.status !== 'archived'
-            && !isTaskFutureStartBeforeBoundary(task, endOfTodayIso)) count += 1;
+            && !isTaskFutureStartBeforeBoundary(task, endOfTodayIso, frozenDates)) count += 1;
     }
     return count;
 }
@@ -728,21 +767,28 @@ export function isFocusSequentialCandidate(
 ): boolean {
     if (task.isFocusedToday === true) return true;
     if (isSequentialChainStatus(task.status)) return true;
-    return isDueForReview(task.reviewAt, options.now);
+    return options.frozenLocalDay
+        ? isReviewDueFrozen(task.reviewAt, options.now ?? new Date(), options.frozenLocalDay.dates)
+        : isDueForReview(task.reviewAt, options.now);
 }
 
 function getFocusSequentialScheduleKey(
     task: Pick<Task, 'dueDate' | 'isFocusedToday' | 'reviewAt' | 'status'>,
     now: Date,
+    frozenLocalDay?: FocusSequentialOptions['frozenLocalDay'],
 ): { rank: number; time: number } {
     if (task.isFocusedToday === true) {
         return { rank: 0, time: 0 };
     }
 
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const endOfTodayMs = endOfToday.getTime();
-    const dueMs = safeDueTime(task.dueDate, Number.NaN);
-    const reviewMs = safeParseDate(task.reviewAt)?.getTime() ?? Number.NaN;
+    const endOfTodayMs = frozenLocalDay ? Date.parse(frozenLocalDay.endOfTodayIso) : endOfToday.getTime();
+    const dueMs = frozenLocalDay
+        ? parseFrozenFocusDate(task.dueDate, frozenLocalDay.dates, true)?.getTime() ?? Number.NaN
+        : safeDueTime(task.dueDate, Number.NaN);
+    const reviewMs = frozenLocalDay
+        ? parseFrozenFocusDate(task.reviewAt, frozenLocalDay.dates)?.getTime() ?? Number.NaN
+        : safeParseDate(task.reviewAt)?.getTime() ?? Number.NaN;
     let scheduledTime = Number.POSITIVE_INFINITY;
 
     // A due date or due review earns the project's one Focus slot; a start
@@ -757,7 +803,8 @@ function getFocusSequentialScheduleKey(
     if (Number.isFinite(dueMs) && dueMs <= endOfTodayMs && task.status !== 'waiting') {
         scheduledTime = Math.min(scheduledTime, dueMs);
     }
-    if (isDueForReview(task.reviewAt, now) && Number.isFinite(reviewMs)) {
+    if ((frozenLocalDay ? isReviewDueFrozen(task.reviewAt, now, frozenLocalDay.dates)
+        : isDueForReview(task.reviewAt, now)) && Number.isFinite(reviewMs)) {
         scheduledTime = Math.min(scheduledTime, reviewMs);
     }
 
@@ -780,7 +827,7 @@ export function getFocusSequentialFirstTaskIds<
         const groupKey = getSequentialTaskGroupKey(task, options.sectionScopedProjectIds, sectionOrder);
         if (!groupKey || !task.projectId) continue;
         if (!sequentialProjectIds.has(task.projectId)) continue;
-        if (!isFocusSequentialCandidate(task, { now })) continue;
+        if (!isFocusSequentialCandidate(task, { now, frozenLocalDay: options.frozenLocalDay })) continue;
         const list = tasksByGroup.get(groupKey) ?? [];
         list.push(task);
         tasksByGroup.set(groupKey, list);
@@ -795,7 +842,7 @@ export function getFocusSequentialFirstTaskIds<
         let bestScheduleTime = Number.POSITIVE_INFINITY;
 
         tasksForProject.forEach((task) => {
-            const scheduleKey = getFocusSequentialScheduleKey(task, now);
+            const scheduleKey = getFocusSequentialScheduleKey(task, now, options.frozenLocalDay);
             const isBetter = !firstTaskId
                 || scheduleKey.rank < bestScheduleRank
                 || (
@@ -902,16 +949,24 @@ export function getTaskFocusEligibility(
                 && isTaskInActiveProject(candidate, projectMap)
             )),
             sequentialProjectIds,
-            { now, sectionScopedProjectIds, sections: options.sections },
+            { now, sectionScopedProjectIds, sections: options.sections,
+                ...(options.endOfTodayIso !== undefined && options.frozenDates !== undefined
+                    ? { frozenLocalDay: { endOfTodayIso: options.endOfTodayIso,
+                        dates: options.frozenDates } } : {}) },
         );
     const isSequentialBlocked = Boolean(
         task.projectId
         && sequentialProjectIds.has(task.projectId)
         && !sequentialFirstTaskIds.has(task.id),
     );
-    const isVisibleForStart = options.allowFutureStart === true || shouldShowTaskForStart(task, { now, endOfTodayIso: options.endOfTodayIso });
+    const isVisibleForStart = options.allowFutureStart === true
+        || (options.endOfTodayIso && options.frozenDates !== undefined
+            ? !isTaskFutureStartBeforeBoundary(task, options.endOfTodayIso, options.frozenDates)
+            : shouldShowTaskForStart(task, { now, endOfTodayIso: options.endOfTodayIso }));
     const isVisibleActiveTask = isTaskInActiveProject(task, projectMap) && isVisibleForStart;
-    const isReviewDueEligible = task.status !== 'inbox' && isDueForReview(task.reviewAt, now);
+    const isReviewDueEligible = task.status !== 'inbox' && (options.frozenDates !== undefined
+        ? isReviewDueFrozen(task.reviewAt, now, options.frozenDates)
+        : isDueForReview(task.reviewAt, now));
     const eligible = isVisibleActiveTask
         && !isSequentialBlocked
         && (task.status === 'next' || isReviewDueEligible);

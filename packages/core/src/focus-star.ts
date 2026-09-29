@@ -4,6 +4,7 @@ import {
     getTaskFocusEligibility,
     isTaskFutureFocusCandidate,
     isTaskFutureFocusCandidateBeforeBoundary,
+    type FocusDateLookup,
 } from './task-utils';
 import { formatFocusTaskLimitText } from './focus-utils';
 import { tFallback } from './i18n';
@@ -28,6 +29,8 @@ export type FocusStarContext = {
     sequentialProjectIds?: Set<string>;
     sectionScopedProjectIds?: Set<string>;
     now?: Date;
+    endOfTodayIso?: string;
+    frozenDates?: FocusDateLookup;
     /** The task editor is a clarifying surface: it may star unclarified tasks. */
     allowUnclarified?: boolean;
 };
@@ -67,11 +70,15 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
         };
     }
 
-    const queued = isTaskFutureFocusCandidate(task, context.now);
+    const queued = context.endOfTodayIso && context.frozenDates !== undefined
+        ? isTaskFutureFocusCandidateBeforeBoundary(task, context.endOfTodayIso, context.frozenDates)
+        : isTaskFutureFocusCandidate(task, context.now);
     const eligibility = getTaskFocusEligibility(task, {
         tasks: context.tasks,
         projects: context.projects,
         now: context.now,
+        endOfTodayIso: context.endOfTodayIso,
+        frozenDates: context.frozenDates,
         sequentialProjectIds: context.sequentialProjectIds,
         sectionScopedProjectIds: context.sectionScopedProjectIds,
         sections: context.sections,

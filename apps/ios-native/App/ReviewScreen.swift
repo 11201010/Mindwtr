@@ -227,12 +227,13 @@ struct ReviewGuideScreen: View {
                         if !daily { completedMindSweepNudge }
                     }
                     if model.busy { ProgressView().frame(maxWidth: .infinity).padding(12) }
-                    if model.error != nil { FailureBanner(model: model, palette: palette) }
                 }
                 .padding(16)
             }
             .accessibilityIdentifier("review-guide-content-" + content.text("step"))
             .refreshable { await model.refresh() }
+            if !model.taskFocusNotice.isEmpty { TaskFocusNotice(model: model, palette: palette) }
+            if model.error != nil { FailureBanner(model: model, palette: palette) }
             footer
         }
         .foregroundStyle(palette.text).background(palette.bg.ignoresSafeArea())
@@ -351,7 +352,7 @@ struct ReviewGuideScreen: View {
         if !item.object("row").isEmpty {
             TaskCard(row: item.object("row"), model: model, palette: palette,
                 footer: daily ? item.object("followUp").text("label") : "", hideStatusBadge: item.flag("hideStatusBadge"),
-                onProject: { project in Task { await model.openProject(project) } })
+                showFocusToggle: daily && content.text("step") == "focus", onProject: { project in Task { await model.openProject(project) } })
                 .disabled(!model.reviewActionsEnabled)
         } else if item.text("type") == "project" {
             Button { Task { await model.expandWeeklyReviewProject(item.text("id")) } } label: {

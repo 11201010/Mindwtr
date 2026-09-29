@@ -230,6 +230,7 @@ import { createQuickCaptureMethods } from './native-host-contract-quick-capture'
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
 import { createTaskDraftSaveMethods, getNativeTaskScheduleBase, getNativeTaskRecurrenceBase, type NativeTaskScheduleBase, type NativeTaskRecurrenceBase } from './native-host-contract-task-save';
 import { createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
+import { createTaskFocusMethods } from './native-host-contract-task-focus';
 import { createProjectCreateMethods } from './native-host-contract-project-create';
 import { createProjectFocusMethods } from './native-host-contract-project-focus';
 import { createProjectRenameMethods } from './native-host-contract-project-rename';
@@ -1431,6 +1432,7 @@ export function createNativeHostContract(options: { syncSettings?: NativeSyncSet
             readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
             revision: (now) => `${revision()}:${displayRevision(now)}`,
         }),
+        ...createTaskFocusMethods({ readiness, save, revision, t: () => translate }),
         ...createListViewMethods({
             readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
             revision: (now) => `${revision()}:${displayRevision(now)}`,

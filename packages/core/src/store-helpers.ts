@@ -284,7 +284,8 @@ export const normalizeTaskUpdate = (
      * Settings enable the rules that depend on them; without them the update is
      * normalized exactly as before (the cloud PATCH path passes none).
      */
-    context?: { settings?: AppData['settings']; nowMs?: number; futureBoundary?: string },
+    context?: { settings?: AppData['settings']; nowMs?: number; futureBoundary?: string;
+        futureDates?: import('./task-utils').FocusDateLookup },
 ): Partial<Task> => {
     let adjustedUpdates = updates;
     if (hasOwnField(updates, 'cancelledAt')) {
@@ -386,9 +387,9 @@ export const normalizeTaskUpdate = (
     // a Next action. Other deferred statuses still lose their stars.
     const scheduledTask = { ...task, ...adjustedUpdates };
     const futureStart = (candidate: Task) => context?.futureBoundary
-        ? isTaskFutureStartBeforeBoundary(candidate, context.futureBoundary) : isTaskFutureStart(candidate);
+        ? isTaskFutureStartBeforeBoundary(candidate, context.futureBoundary, context.futureDates) : isTaskFutureStart(candidate);
     const futureFocusCandidate = (candidate: Task) => context?.futureBoundary
-        ? isTaskFutureFocusCandidateBeforeBoundary(candidate, context.futureBoundary) : isTaskFutureFocusCandidate(candidate);
+        ? isTaskFutureFocusCandidateBeforeBoundary(candidate, context.futureBoundary, context.futureDates) : isTaskFutureFocusCandidate(candidate);
     if ((editsSchedule || hasOwnField(updates, 'status'))
         && futureStart(scheduledTask)
         && !futureFocusCandidate(scheduledTask)) {
