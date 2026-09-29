@@ -420,6 +420,8 @@ describe('fetchWithTimeout', () => {
         ['https://dav.example.com/dav/data.json', 'https://dav.example.com/dav/data.json/'],
         ['https://dav.example.com/dav/data.json', 'https://dav.example.com/login?next=%2Fdav'],
         ['https://bücher.example/dav/data.json', 'https://dav.example.com/dav/data.json'],
+        ['https://[2001:db8::1]/dav/data.json', 'https://[2001:db8::2]/dav/data.json'],
+        ['https://dav.example.com/dav/data.json', 'https://dav.example.com:80/dav/data.json'],
     ])('refuses a write to %s that iOS followed to %s', async (requested, answered) => {
         // React Native on iOS follows a write redirect (a 303 as a GET) and hands back
         // the final answer; only the URL it came from tells.
@@ -454,6 +456,11 @@ describe('fetchWithTimeout', () => {
         ['https://dav.example.com/dav/data.json?', 'https://dav.example.com/dav/data.json'],
         ['https://bücher.example/dav/data.json', 'https://xn--bcher-kva.example/dav/data.json'],
         ['https://[fd00::1]:443/dav/data.json', 'https://[FD00::1]/dav/data.json'],
+        ['https://[2001:0db8:0:0:0:0:0:1]/dav/data.json', 'https://[2001:db8::1]/dav/data.json'],
+        ['https://[::ffff:192.168.1.5]:8443/dav/data.json', 'https://[::ffff:c0a8:105]:8443/dav/data.json'],
+        ['https://[fe80::1%25en0]/dav/data.json', 'https://[FE80:0:0:0:0:0:0:1%25en0]/dav/data.json'],
+        ['https://dav.example.com:0443/dav/data.json', 'https://dav.example.com/dav/data.json'],
+        ['http://nas.local:08080/dav/data.json', 'http://nas.local:8080/dav/data.json'],
         ['https://dav.example.com/dav/data.json', ''],
     ])('accepts a write to %s answered from %s, the same URL', async (requested, answered) => {
         // OkHttp (Android) and NSURL (iOS) report a URL they did not redirect in their

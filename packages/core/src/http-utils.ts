@@ -482,6 +482,42 @@ const removeDotSegments = (path: string): string => {
     return kept.join('/') || '/';
 };
 
+/** The 16-bit groups of one side of an IPv6 literal's `::`; the last group may be IPv4. */
+const parseIpv6Groups = (text: string): number[] | null => {
+    if (!text) return [];
+    const groups: number[] = [];
+    const pieces = text.split(':');
+    for (const [index, piece] of pieces.entries()) {
+        const ipv4 = index === pieces.length - 1 && piece.includes('.') ? parseIpv4Host(piece) : null;
+        if (ipv4) {
+            groups.push(ipv4[0] * 256 + ipv4[1], ipv4[2] * 256 + ipv4[3]);
+        } else if (/^[0-9a-f]{1,4}$/i.test(piece)) {
+            groups.push(parseInt(piece, 16));
+        } else {
+            return null;
+        }
+    }
+    return groups;
+};
+
+/** An IPv6 literal (without brackets) as eight groups in shortest hex, so every spelling of one
+ *  address (`2001:0db8:0:0::1`, `2001:db8::1`, an embedded IPv4 tail) compares equal. The zone
+ *  after `%` is kept as written. Anything that does not parse is compared as written. */
+const canonicalIpv6 = (literal: string): string => {
+    const zoneAt = literal.indexOf('%');
+    const address = zoneAt < 0 ? literal : literal.slice(0, zoneAt);
+    const zone = zoneAt < 0 ? '' : literal.slice(zoneAt);
+    const halves = address.split('::');
+    if (halves.length > 2) return literal;
+    const head = parseIpv6Groups(halves[0]);
+    const tail = halves.length === 2 ? parseIpv6Groups(halves[1]) : [];
+    if (!head || !tail) return literal;
+    const missing = 8 - head.length - tail.length;
+    if (halves.length === 2 ? missing < 1 : missing !== 0) return literal;
+    const groups = [...head, ...new Array<number>(missing).fill(0), ...tail];
+    return `${groups.map((group) => group.toString(16)).join(':')}${zone}`;
+};
+
 /** An http(s) URL cut down to what a redirect changes: scheme, host, port, path and query.
  *  A native client reports a URL it did not redirect in its own spelling (host case, default
  *  port, userinfo, fragment, percent-encoding, dot segments, punycode), and each of those is
@@ -494,9 +530,12 @@ const comparableHttpUrl = (rawUrl: string): string | null => {
     const authority = match[2].slice(match[2].lastIndexOf('@') + 1).toLowerCase();
     const portMatch = authority.match(/:(\d*)$/);
     const host = portMatch ? authority.slice(0, -portMatch[0].length) : authority;
-    const port = portMatch?.[1] ?? '';
-    const comparableHost = /[^\x20-\x7e]|(?:^|\.)xn--/.test(host) ? '' : host;
-    const comparablePort = port === (scheme === 'https' ? '443' : '80') ? '' : port;
+    const ipv6 = host.match(/^\[(.*)\]$/);
+    const comparableHost = ipv6
+        ? `[${canonicalIpv6(ipv6[1])}]`
+        : /[^\x20-\x7e]|(?:^|\.)xn--/.test(host) ? '' : host;
+    const port = portMatch?.[1] ? Number(portMatch[1]) : null;
+    const comparablePort = port === null || port === (scheme === 'https' ? 443 : 80) ? '' : String(port);
     const path = removeDotSegments(decodePercentEscapes(match[3] || '/'));
     const query = decodePercentEscapes(match[4] ?? '');
     return `${scheme}://${comparableHost}:${comparablePort}${path}?${query}`;
