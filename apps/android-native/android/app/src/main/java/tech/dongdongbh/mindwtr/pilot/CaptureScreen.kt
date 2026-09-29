@@ -302,14 +302,15 @@ fun CapturePopup(model: InboxViewModel, draft: CaptureDraft) = with(model) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
                         val pill = RoundedCornerShape(999.dp)
                         val saveAndEdit = copy.getString("saveAndEdit")
-                        Box(Modifier.widthIn(min = 112.dp).heightIn(min = 48.dp).clip(pill).border(1.dp, c.border, pill)
+                        // RN fades each button whole (opacity 0.5) while the text is blank: the layer comes before the pill's border and fill.
+                        Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 112.dp).heightIn(min = 48.dp).clip(pill).border(1.dp, c.border, pill)
                             .clickable(enabled = canSave, role = Role.Button) { focusManager.clearFocus(); saveCapture(openAfterSave = true) }
-                            .fade(if (canSave) 1f else 0.5f).padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                             Text(saveAndEdit, style = rnText(13, 700), color = c.text, maxLines = 1)
                         }
-                        Box(Modifier.widthIn(min = 104.dp).heightIn(min = 48.dp).clip(pill).background(theme.filledBg)
+                        Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 104.dp).heightIn(min = 48.dp).clip(pill).background(theme.filledBg)
                             .clickable(enabled = canSave, role = Role.Button) { saveCapture(openAfterSave = false) }
-                            .fade(if (canSave) 1f else 0.5f).padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                             Text(copy.getString("save"), style = rnText(13, 700), color = theme.filledText, maxLines = 1)
                         }
                     }

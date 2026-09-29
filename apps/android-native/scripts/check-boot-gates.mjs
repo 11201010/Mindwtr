@@ -2405,6 +2405,18 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(menuUi), /fun RnSwitch\(/, 'one switch drawing');
 }
 
+// RN dims the capture popup's Save and Save and edit to half, the whole button, and makes them inert while the text is
+// blank. The fade is a layer over the whole pill, so it comes before the pill's background and border, not after them.
+{
+    const rnSheet = readFileSync(resolve(app, '../../apps/mobile/components/quick-capture-sheet/QuickCaptureSheetBody.tsx'), 'utf8');
+    assert.equal(rnSheet.match(/opacity: value\.trim\(\) && !saving \? 1 : 0\.5/g)?.length, 2);
+    assert.equal(rnSheet.match(/disabled=\{saving \|\| !value\.trim\(\)\}/g)?.length, 2);
+    const buttons = code(captureUi).match(/Box\(Modifier\.fade\(if \(canSave\) 1f else 0\.5f\)\.widthIn\(min = 1(12|04)\.dp\)[^\n]*/g) ?? [];
+    assert.equal(buttons.length, 2, 'Save and edit and Save fade as a whole');
+    assert.doesNotMatch(code(captureUi), /\.clickable\(enabled = canSave[^\n]*\n[^\n]*\.fade\(/, 'no fade after a pill\'s background');
+    assert.match(readFileSync(resolve(app, '../../packages/core/src/quick-capture-model.ts'), 'utf8'), /canSave: Boolean\(text\.trim\(\)\)/);
+}
+
 const fakeCore = `
 export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
 export function setLogger(logger) { globalThis.coreLogger = logger; }
