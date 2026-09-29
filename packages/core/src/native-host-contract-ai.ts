@@ -27,11 +27,12 @@
  *   from the one last asked, send loadAIModels with it `delayMs` after it last changed; the
  *   pickers then offer the provider's own list (a failure keeps the built-in one).
  *
- * Consent, as on React Native: this device asks before its user turns the assistant on here, and
- * before a provider change while it is on, until the device recorded that provider
- * (`mindwtr-ai-provider-consent-v1`). A synced `ai.enabled` turned on on another device does not
- * ask again here. The AI actions send task text only while `ai.enabled` is on, and only with a key
- * when the provider needs one. Their answers are dialogs whose buttons carry what they change; the host
+ * Consent, as on React Native: it is given once, where AI is first turned on (and for a provider
+ * chosen while it is on), and it travels with the synced `ai.enabled`. A device asks only when its
+ * user turns the assistant on or picks a provider there, and only for a provider it has not
+ * recorded (`mindwtr-ai-provider-consent-v1`); a synced `ai.enabled` does not ask again on other
+ * devices. The AI actions send task text only while `ai.enabled` is on, and only with a key when
+ * the provider needs one. Their answers are dialogs whose buttons carry what they change; the host
  * applies that through the screen's normal edits (editTaskDraft, getInboxProcessingStep) and
  * saves through its normal commands (saveTaskDraft, commitInboxProcessingStep, runReviewAction's
  * applySuggestions), so an AI answer writes nothing by itself.
