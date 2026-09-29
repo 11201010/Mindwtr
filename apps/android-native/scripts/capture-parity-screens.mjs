@@ -27,7 +27,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, tab, tabSelected, withDescription } from './device.mjs';
+import { button, check, chipOn, connect, evidenced, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -216,6 +216,13 @@ const shootPopup = async (prefix, suffix) => {
     await tap(nodes.find((node) => node['content-desc'] === 'Add Task'));
     const field = (current) => current.find((node) => node.class === 'android.widget.EditText');
     await shoot(`${prefix}-popup-empty-${suffix}`, (current) => Boolean(field(current)));
+    // Add another switched on (a switch on shows where its track starts), its bounds printed, then off again (it is remembered).
+    const another = 'Add another';
+    await tap(withDescription(await device.screen(), another));
+    await shoot(`${prefix}-popup-another-${suffix}`, (current) => switchOn(current, another));
+    console.log(`bounds ${prefix}-popup-another-${suffix} ${withDescription(await device.screen(), another)?.bounds}`);
+    await tap(withDescription(await device.screen(), another));
+    await waitFor('Add another off', (current) => !switchOn(current, another), 15_000);
     requireAppFront();
     sh(`input text '${CAPTURE_TEXT.replace(/ /g, '%s')}'`);
     await shoot(`${prefix}-popup-text-${suffix}`, (current) => field(current)?.text === CAPTURE_TEXT && hasText(current, '@phone'));
