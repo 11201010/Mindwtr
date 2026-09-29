@@ -2,7 +2,7 @@
 // encryption is on (#1056), staging and installing downloads through the native installer,
 // immutable upload snapshots, the adapter onto core's transfer lifecycle, the bespoke Cloud and
 // Dropbox content checks, the local-migration and remote-presence pre-passes, abort-aware
-// delays and the streamed WebDAV/cloud PUT. It moved here from React Native's
+// delays and the streamed WebDAV PUT. It moved here from React Native's
 // `apps/mobile/lib/attachment-sync-backends/common.ts` so the native apps run the same rules;
 // each host binds it to its file IO, crypto, native installer, timers and upload tasks.
 //
@@ -25,7 +25,7 @@ import {
   type AttachmentTransferResult,
 } from './attachment-transfer';
 import { bytesToBase64 } from './base64-bytes';
-import { MAX_DOWNLOAD_BYTES, refuseWriteRedirect, ResponseTooLargeError } from './http-utils';
+import { MAX_DOWNLOAD_BYTES, ResponseTooLargeError } from './http-utils';
 import { encryptSyncArtifact, inspectSyncArtifact, SyncCryptoUnsupportedError, type SyncCryptoPrimitives, type SyncKeyMaterial } from './sync-crypto';
 import { buildSyncEncryptionRemoteReadExtra, SYNC_ENCRYPTION_LOG_EVENTS, type SyncEncryptionRemoteReadLogInput } from './sync-encryption-diagnostics';
 import { decryptRemoteArtifactOrThrow, SyncEncryptionTerminalError } from './sync-encryption';
@@ -37,10 +37,6 @@ import type { MobileSyncEncryptionPort } from './mobile-sync-service';
 
 const DOWNLOAD_READ_CHUNK_BYTES = 64 * 1024;
 const WEBDAV_STREAM_UPLOAD_TIMEOUT_MS = 30_000;
-const CLOUD_STREAM_UPLOAD_TIMEOUT_MS = 30_000;
-/** A refused upload's response body is kept only to classify the refusal, so a short
- *  prefix is enough and a huge error page cannot be held in memory. */
-const MAX_UPLOAD_REFUSAL_TEXT_CHARS = 2_000;
 
 /** One request per attachment is the fallback shape, so the pass is bounded. See the
  *  ceiling note on `repairMissingRemoteAttachments`'s `maxChecks` in core. */
@@ -74,11 +70,6 @@ const encodeBase64Utf8 = (value: string): string => {
 const buildBasicAuthHeader = (username?: string, password?: string): string | null => {
   if (!username && !password) return null;
   return `Basic ${encodeBase64Utf8(`${username || ''}:${password || ''}`)}`;
-};
-
-const buildBearerAuthHeader = (token?: string): string | null => {
-  if (!token) return null;
-  return `Bearer ${token}`;
 };
 
 export const createAttachmentAbortError = (
@@ -173,16 +164,6 @@ export class StreamedUploadCancellationUnconfirmedError extends Error {
     (this as Error & { cause?: unknown }).cause = cause;
   }
 }
-
-const isCloudUploadAcknowledged = (result: unknown): boolean => {
-  const body = (result as { body?: unknown } | null)?.body;
-  if (typeof body !== 'string') return false;
-  try {
-    return (JSON.parse(body) as { ok?: unknown } | null)?.ok === true;
-  } catch {
-    return false;
-  }
-};
 
 const cancelUploadTask = async (task: unknown): Promise<void> => {
   const cancelAsync = (task as { cancelAsync?: unknown } | null)?.cancelAsync;
@@ -1053,59 +1034,6 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
     return true;
   };
 
-  const uploadCloudFileWithFileSystem = async (
-    url: string,
-    fileUri: string,
-    contentType: string,
-    token: string,
-    onProgress?: (sent: number, total: number) => void,
-    totalBytes?: number,
-    signal?: AbortSignal,
-    timeoutMs = CLOUD_STREAM_UPLOAD_TIMEOUT_MS,
-  ): Promise<boolean> => {
-    assertUploadNotAborted(signal);
-    if (!fileUri.startsWith('file://')) return false;
-
-    const authHeader = buildBearerAuthHeader(token);
-    const headers: Record<string, string> = {
-      'Content-Type': contentType || DEFAULT_ATTACHMENT_CONTENT_TYPE,
-    };
-    if (authHeader) headers.Authorization = authHeader;
-
-    // No cancellable upload task: fall back to core's bounded byte PUT rather than start a
-    // request that can occupy the singleton sync indefinitely.
-    const task = host.uploads.createUploadTask(
-      url,
-      fileUri,
-      { httpMethod: 'PUT', headers },
-      createProgressListener(onProgress, totalBytes),
-    );
-    if (!task || typeof task.uploadAsync !== 'function') return false;
-    const result = await runUploadTask(task, signal, timeoutMs, 'Cloud streamed upload timed out');
-    const status = Number((result as { status?: number } | null)?.status ?? 0);
-    if (status && (status < 200 || status >= 300)) {
-      const error = new Error(`Cloud File PUT failed (${status})`);
-      (error as { status?: number }).status = status;
-      // Only a 400 needs its words, and only so the caller can tell a refusal of these bytes
-      // from one about the server's storage folder (core's isBlockedAttachmentContentRefusal
-      // reads it). Remote text: it never joins the message, so it cannot reach a log.
-      if (status === 400) {
-        const body = (result as { body?: unknown } | null)?.body;
-        if (typeof body === 'string') {
-          (error as { refusalText?: string }).refusalText = body.slice(0, MAX_UPLOAD_REFUSAL_TEXT_CHARS);
-        }
-      }
-      throw error;
-    }
-    // The native uploader follows a redirect by itself and can turn the PUT into a GET (a 303
-    // on iOS, a 301-303 on Android), which answers 200 with the file and stores nothing. The
-    // server answers every stored upload with {"ok":true}.
-    if (!isCloudUploadAcknowledged(result)) {
-      refuseWriteRedirect({ releaseCheck: 'v1.3.4/fetch-redirect-refused-upload', method: 'PUT', status });
-    }
-    return true;
-  };
-
   return {
     sealAttachmentBytesForUpload,
     openAttachmentBytesFromDownload,
@@ -1127,7 +1055,6 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
     reconcileRemoteAttachmentPresence,
     waitForAttachmentSyncDelay,
     uploadWebdavFileWithFileSystem,
-    uploadCloudFileWithFileSystem,
   };
 };
 

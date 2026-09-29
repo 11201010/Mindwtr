@@ -141,6 +141,3 @@ export const waitForAttachmentSyncDelay: Common['waitForAttachmentSyncDelay'] = 
 export const uploadWebdavFileWithFileSystem: Common['uploadWebdavFileWithFileSystem'] = (...args) => (
   mobileAttachmentCommon().uploadWebdavFileWithFileSystem(...args)
 );
-export const uploadCloudFileWithFileSystem: Common['uploadCloudFileWithFileSystem'] = (...args) => (
-  mobileAttachmentCommon().uploadCloudFileWithFileSystem(...args)
-);

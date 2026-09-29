@@ -956,36 +956,28 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
             shouldPropagateError = true;
             throw error;
           }
-          const uploadedWithFileSystem = await common.uploadCloudFileWithFileSystem(
-            uploadUrl,
-            snapshot.sourcePath,
-            attachment.mimeType || DEFAULT_ATTACHMENT_CONTENT_TYPE,
-            cloudConfig.token,
-            (loaded, total) => reportProgress(attachment.id, 'upload', loaded, total, 'active'),
-            totalBytes,
-            options.signal
-          );
-          if (!uploadedWithFileSystem) {
-            assertCloudNotAborted(options.signal);
-            const readResult = await files.readAttachmentBytesForUpload(snapshot.sourcePath);
-            if (readResult.readFailed) throw readResult.error;
-            const uploadBytes = readResult.data;
-            const buffer = toAttachmentArrayBuffer(uploadBytes);
-            try {
-              await options.assertRemoteMutationFenceHeld?.(CLOUD_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-            } catch (error) {
-              shouldPropagateError = true;
-              throw error;
-            }
-            await core.cloudPutFile(
-              uploadUrl,
-              buffer,
-              attachment.mimeType || DEFAULT_ATTACHMENT_CONTENT_TYPE,
-              options.signal
-                ? { ...cloudRequestOptions, token: cloudConfig.token, signal: options.signal }
-                : { ...cloudRequestOptions, token: cloudConfig.token }
-            );
+          // Always the buffered PUT (bounded by the attachment size cap), never the native
+          // streamed uploader: that one follows a redirect by itself (a 303 to /health answers
+          // the same {"ok":true}), and servers before 1.2.7 have no HEAD to prove where the file
+          // landed. Core refuses a redirected buffered PUT.
+          assertCloudNotAborted(options.signal);
+          const readResult = await files.readAttachmentBytesForUpload(snapshot.sourcePath);
+          if (readResult.readFailed) throw readResult.error;
+          const buffer = toAttachmentArrayBuffer(readResult.data);
+          try {
+            await options.assertRemoteMutationFenceHeld?.(CLOUD_REMOTE_MUTATION_REQUEST_HORIZON_MS);
+          } catch (error) {
+            shouldPropagateError = true;
+            throw error;
           }
+          await core.cloudPutFile(
+            uploadUrl,
+            buffer,
+            attachment.mimeType || DEFAULT_ATTACHMENT_CONTENT_TYPE,
+            options.signal
+              ? { ...cloudRequestOptions, token: cloudConfig.token, signal: options.signal }
+              : { ...cloudRequestOptions, token: cloudConfig.token }
+          );
           try {
             options.assertCurrent?.();
           } catch (error) {
@@ -1012,8 +1004,8 @@ export const createMobileAttachmentBackends = (host: MobileAttachmentBackendsHos
           // its limit (413), or content it refuses by name (400 `Blocked …`). Every other 400
           // is about the server, not the file — `Invalid attachment path` answers a storage
           // folder that became a symbolic link or moved, and it hits every upload at once — so
-          // it stays an ordinary retryable failure. Both upload transports carry the body:
-          // core's cloudPutFile and the native uploader in ./common both set `refusalText`.
+          // it stays an ordinary retryable failure. Core's cloudPutFile carries the body as
+          // `refusalText`.
           // Bounded like desktop's client-side refusals: a first upload becomes terminal;
           // a replacement stays pending but this content identity is no longer retried.
           const refusesTheseBytes = status === 413

@@ -258,6 +258,27 @@ describe('WebDAV attachment pass', () => {
 describe('self-hosted cloud attachment pass', () => {
   const cloudConfig = { url: 'https://cloud.example.com/v1/data', token: 'secret' };
 
+  it('sends every upload through the checked byte PUT, never the native uploader', async () => {
+    // The native uploader follows a redirect by itself (a 303 to /health answers the same
+    // {"ok":true}), and servers before 1.2.7 have no HEAD to prove where the file landed.
+    const task = { uploadAsync: vi.fn(async () => ({ status: 200, body: '{"ok":true}' })), cancelAsync: vi.fn(async () => undefined) };
+    const createUploadTask = vi.fn(() => task);
+    const cloudPutFile = vi.fn(async () => undefined);
+    const { backends, memory } = setup({ createUploadTask, core: { cloudPutFile } });
+    memory.put(LOCAL_URI, LOCAL);
+
+    const result = await backends.syncCloudAttachments(withAttachment(fileAttachment()), cloudConfig, BASE_URL, { phase: 'post-merge' });
+
+    expect(createUploadTask).not.toHaveBeenCalled();
+    expect(cloudPutFile).toHaveBeenCalledWith(
+      `${BASE_URL}/attachments/att-1.txt`,
+      expect.any(ArrayBuffer),
+      'application/octet-stream',
+      expect.objectContaining({ token: 'secret' }),
+    );
+    expect(attachmentOf(result)?.cloudKey).toBe('attachments/att-1.txt');
+  });
+
   it('clears pendingContentUpload only after the edited bytes are on the server', async () => {
     const cloudPutFile = vi.fn(async () => { throw httpError(500); });
     const { backends, memory } = setup({ core: { cloudPutFile, cloudAttachmentExists: vi.fn(async () => true) } });

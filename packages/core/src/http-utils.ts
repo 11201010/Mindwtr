@@ -446,7 +446,7 @@ export const createProgressStream = (bytes: Uint8Array, onProgress: (loaded: num
  * GET that can answer 200, and a 301, 302, 307 or 308 re-sends it to the new URL. So the
  * check also refuses a write answered from another URL. Known ceiling: a redirect back to
  * the same URL cannot be seen there. expo-file-system's streamed uploads use their own clients;
- * see `uploadWebdavFileWithFileSystem` and `uploadCloudFileWithFileSystem`.
+ * see `uploadWebdavFileWithFileSystem`; self-hosted uploads always take the buffered PUT.
  */
 const NO_REDIRECT_METHODS = new Set(['PUT', 'POST', 'PATCH', 'DELETE']);
 /** The statuses undici refuses under `redirect: 'error'`. */

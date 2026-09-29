@@ -2268,9 +2268,8 @@ describe('attachment sync', () => {
         uri === localUri ? { exists: true, size: 3 } : { exists: false }
       ));
       fileSystemMock.readAsStringAsync.mockResolvedValue('AQID');
-      // The streamed uploader reports unsupported after the first fence check;
-      // the buffered fallback must revalidate instead of inheriting that check.
-      fileSystemMock.createUploadTask.mockReturnValue(undefined);
+      // The buffered PUT must revalidate the fence right before it is sent, instead
+      // of inheriting the check made before the file was read.
       const core = await import('@mindwtr/core');
       const lost = new SyncRemoteMutationFenceLostError();
       const assertRemoteMutationFenceHeld = vi.fn()
@@ -2298,13 +2297,13 @@ describe('attachment sync', () => {
 
       expect(assertRemoteMutationFenceHeld).toHaveBeenNthCalledWith(1, 35_000);
       expect(assertRemoteMutationFenceHeld).toHaveBeenNthCalledWith(2, 35_000);
-      expect(fileSystemMock.createUploadTask).toHaveBeenCalledTimes(1);
+      expect(fileSystemMock.createUploadTask).not.toHaveBeenCalled();
       expect(core.cloudPutFile).not.toHaveBeenCalled();
     },
   );
 
   it.each([false, true])(
-    'does not start a mobile self-hosted Cloud streamed upload after fence loss (activation=%s)',
+    'does not start a mobile self-hosted Cloud upload after fence loss (activation=%s)',
     async (activationProbe) => {
       const localUri = 'file://document/attachments/cloud-stream-lease.txt';
       fileSystemMock.getInfoAsync.mockImplementation(async (uri: string) => (
@@ -5175,44 +5174,6 @@ describe('attachment sync', () => {
       expect(uploadAsync).toHaveBeenCalledTimes(1);
     });
 
-    it('bounds a cloud streamed upload and allows the next upload after it terminates', async () => {
-      const upload = deferred<{ status: number }>();
-      const cancelAsync = vi.fn(async () => undefined);
-      const nextUploadAsync = vi.fn().mockResolvedValue({ status: 200, body: '{"ok":true}' });
-      fileSystemMock.createUploadTask
-        .mockReturnValueOnce({ uploadAsync: () => upload.promise, cancelAsync })
-        .mockReturnValueOnce({ uploadAsync: nextUploadAsync, cancelAsync: vi.fn() });
-      const { uploadCloudFileWithFileSystem } = await import('./attachment-sync-backends/common');
-
-      const pending = uploadCloudFileWithFileSystem(
-        'https://sync.example/attachments/a.bin',
-        'file://document/attachments/a.bin',
-        'application/octet-stream',
-        'token',
-        undefined,
-        3,
-        undefined,
-        1,
-      );
-
-      await vi.waitFor(() => expect(cancelAsync).toHaveBeenCalledOnce());
-      await Promise.resolve();
-      upload.reject(new Error('native upload cancelled'));
-      await expect(pending).rejects.toThrow('Cloud streamed upload timed out');
-
-      await expect(uploadCloudFileWithFileSystem(
-        'https://sync.example/attachments/b.bin',
-        'file://document/attachments/b.bin',
-        'application/octet-stream',
-        'token',
-        undefined,
-        3,
-        undefined,
-        100,
-      )).resolves.toBe(true);
-      expect(nextUploadAsync).toHaveBeenCalledOnce();
-    });
-
     it('sends a defined uploadType to the native uploader (#1136)', async () => {
       // Android's FileSystemUploadOptions.uploadType has no native default and expo's
       // UploadTask spreads our options over its own, so an undefined value here reached
@@ -5221,15 +5182,8 @@ describe('attachment sync', () => {
         uploadAsync: vi.fn().mockResolvedValue({ status: 200, body: '{"ok":true}' }),
         cancelAsync: vi.fn(),
       });
-      const { uploadCloudFileWithFileSystem, uploadWebdavFileWithFileSystem } =
-        await import('./attachment-sync-backends/common');
+      const { uploadWebdavFileWithFileSystem } = await import('./attachment-sync-backends/common');
 
-      await expect(uploadCloudFileWithFileSystem(
-        'https://sync.example/attachments/a.bin',
-        'file://document/attachments/a.bin',
-        'application/octet-stream',
-        'token',
-      )).resolves.toBe(true);
       await expect(uploadWebdavFileWithFileSystem(
         'https://example.com/attachments/a.bin',
         'file://document/attachments/a.bin',
@@ -5243,7 +5197,7 @@ describe('attachment sync', () => {
         null,
       )).resolves.toBe(true);
 
-      expect(fileSystemMock.createUploadTask).toHaveBeenCalledTimes(2);
+      expect(fileSystemMock.createUploadTask).toHaveBeenCalledTimes(1);
       for (const call of fileSystemMock.createUploadTask.mock.calls) {
         expect(call[2]).toMatchObject({ uploadType: fileSystemMock.FileSystemUploadType.BINARY_CONTENT });
         expect(call[2].uploadType).toBeDefined();
