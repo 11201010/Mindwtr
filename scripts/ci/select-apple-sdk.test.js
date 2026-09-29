@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { parse } from 'yaml';
@@ -15,7 +15,10 @@ function fixture({ installed = ['26.4', '27.0'], sdk = '27.0', xcodeVersion = 'X
   const bin = join(root, 'bin');
   mkdirSync(applications);
   mkdirSync(bin);
-  for (const version of installed) mkdirSync(join(applications, `Xcode_${version}.app`, 'Contents', 'Developer'), { recursive: true });
+  for (const version of installed) {
+    const app = version === 'default' ? 'Xcode.app' : `Xcode_${version}.app`;
+    mkdirSync(join(applications, app, 'Contents', 'Developer'), { recursive: true });
+  }
   writeFileSync(join(bin, 'xcodebuild'), '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_XCODE_VERSION"\n', { mode: 0o755 });
   writeFileSync(join(bin, 'xcrun'), '#!/bin/sh\nif [ "$1" = "swiftc" ]; then echo "Swift fixture"; else echo "$FIXTURE_SDK"; fi\n', { mode: 0o755 });
   return {
@@ -80,7 +83,14 @@ test('release preflight accepts validated Xcode 27.x and rejects other SDKs', ()
   const job = release.jobs['ios-appstore'];
   expect(job['runs-on']).toBe('xcode-27');
   const step = job.steps.find((step) => step.name === 'Select release Xcode 27.x');
-  expect(fixture({ installed: ['26.4', '27.2'], sdk: '27.2', xcodeVersion: 'Xcode 27.2\nBuild version 27B5019j' }).run('27', step.run).status).toBe(0);
-  expect(fixture({ sdk: '26.4' }).run('27', step.run).status).not.toBe(0);
+  const supported = fixture({ installed: ['default', '27.2_beta'], sdk: '27.0' });
+  expect(supported.run('27', step.run).status).toBe(0);
+  expect(readFileSync(join(supported.root, 'env'), 'utf8')).toContain('Xcode.app/Contents/Developer');
+  expect(fixture({ installed: ['default'], sdk: '26.4' }).run('27', step.run).status).not.toBe(0);
   expect(fixture({ installed: ['26.4'] }).run('27', step.run).status).not.toBe(0);
+  const betaOnly = fixture({ installed: ['27.2_beta'], sdk: '27.2' });
+  const betaApp = join(betaOnly.root, 'Applications', 'Xcode_27.2_beta.app');
+  rmSync(join(betaOnly.root, 'Applications', 'Xcode.app'), { recursive: true, force: true });
+  symlinkSync(betaApp, join(betaOnly.root, 'Applications', 'Xcode.app'));
+  expect(betaOnly.run('27', step.run).status).not.toBe(0);
 });
