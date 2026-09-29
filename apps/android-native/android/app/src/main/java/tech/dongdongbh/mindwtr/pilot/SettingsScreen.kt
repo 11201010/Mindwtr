@@ -422,9 +422,9 @@ private fun Swatch(color: String) {
 @Composable
 private fun AddButton(label: String, spoken: String, enabled: Boolean, tag: String, onClick: () -> Unit) {
     val theme = LocalTheme.current
-    Row(Modifier.widthIn(min = 86.dp).heightIn(min = 42.dp).clip(RoundedCornerShape(10.dp)).background(theme.manageButton)
+    Row(Modifier.fade(if (enabled) 1f else 0.5f).widthIn(min = 86.dp).heightIn(min = 42.dp).clip(RoundedCornerShape(10.dp)).background(theme.manageButton)
         .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = tag; if (enabled) onClick { onClick(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = onClick).fade(if (enabled) 1f else 0.5f).padding(horizontal = 14.dp),
+        .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         Icon(SettingsIonicons.Add, null, tint = theme.onAction, modifier = Modifier.size(17.dp))
         Text(label, style = rnText(14, 600), color = theme.onAction, modifier = Modifier.padding(start = 6.dp))
@@ -1003,9 +1003,9 @@ private fun ManageEditor(model: InboxViewModel, view: JSONObject, open: JSONObje
                     Text(cancel, style = rnText(14, 600), color = c.secondaryText)
                 }
                 val save = text.getString("saveLabel")
-                Box(Modifier.widthIn(min = 92.dp).heightIn(min = 42.dp).clip(button).background(theme.manageButton)
+                Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 92.dp).heightIn(min = 42.dp).clip(button).background(theme.manageButton)
                     .clearAndSetSemantics { contentDescription = save; role = Role.Button; testTag = "manage-editor-save"; if (canSave) onClick { settings.saveEditor(action); true } else disabled() }
-                    .clickable(enabled = canSave) { settings.saveEditor(action) }.fade(if (canSave) 1f else 0.5f).padding(horizontal = 14.dp),
+                    .clickable(enabled = canSave) { settings.saveEditor(action) }.padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center) {
                     Text(save, style = rnText(14, 600), color = theme.onAction)
                 }
@@ -1062,9 +1062,9 @@ private fun FieldSheet(model: InboxViewModel, field: JSONObject) = with(model.me
                         val can = !move.getBoolean("disabled") && edit != null && model.menu.idle
                         val label = move.getString("label")
                         val button = RoundedCornerShape(12.dp)
-                        Row(Modifier.weight(1f).heightIn(min = 44.dp).clip(button).background(c.filterBg).border(1.dp, c.border, button)
+                        Row(Modifier.fade(if (!move.getBoolean("disabled")) 1f else 0.45f).weight(1f).heightIn(min = 44.dp).clip(button).background(c.filterBg).border(1.dp, c.border, button)
                             .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (can) onClick { gtd(edit!!); true } else disabled() }
-                            .clickable(enabled = can) { gtd(edit!!) }.fade(if (!move.getBoolean("disabled")) 1f else 0.45f).padding(horizontal = 12.dp),
+                            .clickable(enabled = can) { gtd(edit!!) }.padding(horizontal = 12.dp),
                             horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             val tint = if (move.getBoolean("disabled")) c.secondaryText else c.text
                             Icon(icon, null, tint = tint, modifier = Modifier.size(16.dp))

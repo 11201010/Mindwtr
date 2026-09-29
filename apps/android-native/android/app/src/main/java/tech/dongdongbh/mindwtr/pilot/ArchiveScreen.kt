@@ -292,8 +292,8 @@ fun CompletedAtPicker(model: InboxViewModel, open: JSONObject) = with(model.menu
 @Composable
 fun BulkButton(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
-    Text(label, style = rnText(12, 600), color = color, modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.taskItemBg)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).fade(if (enabled) 1f else 0.5f).padding(horizontal = 10.dp, vertical = 7.dp))
+    Text(label, style = rnText(12, 600), color = color, modifier = Modifier.fade(if (enabled) 1f else 0.5f).clip(RoundedCornerShape(8.dp)).background(c.taskItemBg)
+        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 10.dp, vertical = 7.dp))
 }
 
 /** RN's small bordered button (Select, Done, Clear Trash). */

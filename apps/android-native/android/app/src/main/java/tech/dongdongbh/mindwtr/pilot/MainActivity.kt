@@ -309,11 +309,11 @@ private fun RowScope.CaptureButton(model: InboxViewModel) {
 fun PillButton(label: String, filled: Boolean = false, onClick: () -> Unit, enabled: Boolean, description: String? = null) {
     val c = LocalTheme.current.colors
     Box(
-        Modifier.widthIn(min = if (filled) 104.dp else 0.dp).heightIn(min = if (filled) 48.dp else 40.dp).clip(CircleShape)
+        Modifier.fade(if (enabled) 1f else 0.5f).widthIn(min = if (filled) 104.dp else 0.dp).heightIn(min = if (filled) 48.dp else 40.dp).clip(CircleShape)
             .then(if (filled) Modifier.background(c.tint) else Modifier.border(1.dp, c.text, CircleShape))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
-            .fade(if (enabled) 1f else 0.5f).padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(label, style = rnText(if (filled) 15 else 13, 700), color = if (filled) c.onTint else c.text)

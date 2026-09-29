@@ -335,10 +335,10 @@ private fun SweepButton(label: String, tag: String, filled: Boolean, enabled: Bo
     val theme = LocalTheme.current
     val c = theme.colors
     val shape = RoundedCornerShape(10.dp)
-    Box(Modifier.then(if (wide) Modifier.padding(top = 16.dp).fillMaxWidth() else Modifier).heightIn(min = 44.dp).clip(shape)
+    Box(Modifier.fade(if (enabled) 1f else 0.5f).then(if (wide) Modifier.padding(top = 16.dp).fillMaxWidth() else Modifier).heightIn(min = 44.dp).clip(shape)
         .then(if (filled) Modifier.background(theme.filledBg) else Modifier.border(1.dp, c.border, shape))
         .clearAndSetSemantics { contentDescription = label; role = Role.Button; testTag = tag; if (enabled) onClick { action(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.5f)
+        .clickable(enabled = enabled, onClick = action)
         .padding(horizontal = if (compact) 16.dp else 24.dp, vertical = if (wide) 12.dp else 10.dp), contentAlignment = Alignment.Center) {
         Text(label, style = rnText(15, if (filled) 700 else 600), color = if (filled) theme.filledText else c.text)
     }

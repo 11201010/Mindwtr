@@ -168,8 +168,8 @@ private fun ContextsBulkBar(model: InboxViewModel, bulk: JSONObject, selected: L
 @Composable
 fun PillChip(label: String, color: Color, enabled: Boolean, onClick: () -> Unit) {
     val c = LocalTheme.current.colors
-    Text(label, style = rnText(13, 600), color = color, modifier = Modifier.clip(CircleShape).background(c.filterBg).border(1.dp, c.border, CircleShape)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).fade(if (enabled) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 8.dp))
+    Text(label, style = rnText(13, 600), color = color, modifier = Modifier.fade(if (enabled) 1f else 0.5f).clip(CircleShape).background(c.filterBg).border(1.dp, c.border, CircleShape)
+        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp))
 }
 
 /** RN's search input on a list (Contexts): 40 high, radius 8, the input background, core's placeholder; the text as typed. */

@@ -132,8 +132,8 @@ fun WeeklyReview(model: InboxViewModel) = with(model.menu) {
             if (finish != null) {
                 // RN's share card is not built: its button keeps RN's look, drawn disabled.
                 val shape = RoundedCornerShape(12.dp)
-                Row(Modifier.padding(end = 12.dp).weight(1f, fill = false).heightIn(min = 48.dp).clip(shape).border(1.dp, c.border, shape)
-                    .semantics { contentDescription = finish.getString("shareLabel"); disabled() }.fade(0.45f).padding(horizontal = 14.dp),
+                Row(Modifier.fade(0.45f).padding(end = 12.dp).weight(1f, fill = false).heightIn(min = 48.dp).clip(shape).border(1.dp, c.border, shape)
+                    .semantics { contentDescription = finish.getString("shareLabel"); disabled() }.padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Lucide.Share2, null, tint = c.text, modifier = Modifier.size(18.dp))
                     Text(finish.getString("shareLabel"), style = rnText(15, 600), color = c.text, textAlign = TextAlign.Center, maxLines = 2)
@@ -163,8 +163,8 @@ fun Rule() = Box(Modifier.fillMaxWidth().height(1.dp).background(LocalTheme.curr
 @Composable
 fun PrimaryButton(label: String, modifier: Modifier, enabled: Boolean, description: String = label, onClick: () -> Unit) {
     val theme = LocalTheme.current
-    Box(modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).background(theme.filledBg).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .semantics { contentDescription = description }.fade(if (enabled) 1f else 0.5f).padding(horizontal = 32.dp, vertical = 14.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fade(if (enabled) 1f else 0.5f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).background(theme.filledBg).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = description }.padding(horizontal = 32.dp, vertical = 14.dp), contentAlignment = Alignment.Center) {
         Text(label, style = rnText(16, 600), color = theme.filledText, textAlign = TextAlign.Center)
     }
 }
@@ -495,10 +495,9 @@ private fun SummaryRow(good: Boolean, text: String) {
 private fun MindSweepLink(label: String, bordered: Boolean = false, enabled: Boolean, action: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(18.dp)
-    Row(Modifier.heightIn(min = if (bordered) 36.dp else 44.dp).then(if (bordered) Modifier.clip(shape).border(1.dp, c.tint, shape) else Modifier)
+    Row(Modifier.fade(if (enabled) 1f else 0.45f).heightIn(min = if (bordered) 36.dp else 44.dp).then(if (bordered) Modifier.clip(shape).border(1.dp, c.tint, shape) else Modifier)
         .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (enabled) onClick { action(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = action).then(if (bordered) Modifier.padding(horizontal = 12.dp) else Modifier)
-        .fade(if (enabled) 1f else 0.45f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (bordered) 6.dp else 8.dp)) {
+        .clickable(enabled = enabled, onClick = action).then(if (bordered) Modifier.padding(horizontal = 12.dp) else Modifier), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (bordered) 6.dp else 8.dp)) {
         Icon(Lucide.Brain, null, tint = c.tint, modifier = Modifier.size(if (bordered) 16.dp else 18.dp))
         Text(label, style = rnText(if (bordered) 13 else 15, if (bordered) 700 else 600), color = c.tint)
         if (!bordered) Icon(Lucide.ChevronRight, null, tint = c.tint, modifier = Modifier.size(16.dp))
@@ -553,9 +552,9 @@ fun ProjectTaskPrompt(model: InboxViewModel, open: JSONObject) = with(model.menu
 private fun PromptButton(label: String, color: Color, enabled: Boolean, filled: Boolean, onClick: () -> Unit) {
     val theme = LocalTheme.current
     val shape = RoundedCornerShape(8.dp)
-    Text(label, style = rnText(14, 600), color = color, modifier = Modifier.heightIn(min = 44.dp).clip(shape)
+    Text(label, style = rnText(14, 600), color = color, modifier = Modifier.fade(if (enabled) 1f else 0.5f).heightIn(min = 44.dp).clip(shape)
         .then(if (filled) Modifier.background(theme.filledBg) else Modifier.border(1.dp, theme.colors.border, shape))
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = label }.fade(if (enabled) 1f else 0.5f)
+        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = label }
         .padding(horizontal = 12.dp, vertical = 12.dp))
 }
 

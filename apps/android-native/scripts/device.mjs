@@ -60,6 +60,11 @@ export const evidenced = (error) => {
     if (!(error instanceof Stopped) && !error?.evidence) saveEvidence();
 };
 export const check = (condition, message) => { if (!condition) fail(message); console.log(`ok - ${message}`); };
+/** True when [dim] is [full] drawn at [alpha] over [under] (#RRGGBB, within 4 a channel): RN's opacity on a disabled button. */
+export const blended = (dim, full, under, alpha = 0.5) => {
+    const rgb = (hex) => [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return dim !== full && rgb(dim).every((value, i) => Math.abs(value - (rgb(full)[i] * alpha + rgb(under)[i] * (1 - alpha))) <= 4);
+};
 
 // uiautomator escapes a line break in a node's text as &#10; (the capture popup's several lines).
 const decode = (value) => value.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code))).replace(/&quot;/g, '"')
@@ -512,5 +517,11 @@ export function connect({ serial, pkg, uiFile, adb = process.env.ADB ?? '/home/d
     };
     /** Exact bytes of one app-private file (run-as, so the app must be debuggable). */
     const pull = (remote, local) => writeFileSync(local, adbRaw('exec-out', 'run-as', pkg, 'cat', remote));
-    return { adbRaw, sh, home, front, requireAppFront, launch, pid, tapExpecting, focusAtEnd, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, settle, reveal, pull, revealAction, swipeDone, completeUntil };
+    /** A screenshot saved to [file], and its #RRGGBB at each [x, y]. */
+    const colors = (file, points) => {
+        writeFileSync(file, adbRaw('exec-out', 'screencap', '-p'));
+        return execFileSync('magick', [file, '-format', points.map(([x, y]) => `%[hex:p{${x},${y}}]`).join(' '), 'info:'], { encoding: 'utf8' })
+            .trim().split(' ').map((hex) => hex.slice(0, 6).toUpperCase());
+    };
+    return { adbRaw, sh, home, front, requireAppFront, launch, pid, tapExpecting, focusAtEnd, logs, screen, waitFor, tap, openCapture, type, swipe, signature, toTop, settle, reveal, pull, colors, revealAction, swipeDone, completeUntil };
 }

@@ -103,9 +103,9 @@ fun DailyReview(model: InboxViewModel) = with(model.menu) {
 @Composable
 private fun FooterButton(label: String, filled: Boolean, modifier: Modifier, enabled: Boolean, onClick: () -> Unit) {
     val theme = LocalTheme.current
-    Box(modifier.clip(RoundedCornerShape(12.dp)).background(if (filled) theme.filledBg else theme.colors.filterBg)
+    Box(modifier.fade(if (enabled || filled) 1f else 0.5f).clip(RoundedCornerShape(12.dp)).background(if (filled) theme.filledBg else theme.colors.filterBg)
         .clickable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = label; if (!enabled) disabled() }
-        .fade(if (enabled || filled) 1f else 0.5f).padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+        .padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
         Text(label, style = rnText(14, 700), color = if (filled) theme.filledText else theme.colors.text)
     }
 }
@@ -182,9 +182,9 @@ private fun FollowUpButton(menu: MenuModel, row: TaskRow, followUp: JSONObject) 
     val c = LocalTheme.current.colors
     val due = followUp.getBoolean("due")
     val enabled = !due && menu.idle
-    Row(Modifier.padding(top = 4.dp).heightIn(min = 32.dp).clip(RoundedCornerShape(8.dp)).background(c.filterBg)
+    Row(Modifier.fade(if (due) 0.7f else 1f).padding(top = 4.dp).heightIn(min = 32.dp).clip(RoundedCornerShape(8.dp)).background(c.filterBg)
         .clickable(enabled = enabled, role = Role.Button) { menu.act("reviewAction", followUpToday(row.id, row.taskRevision)) }
-        .semantics { contentDescription = followUp.getString("accessibilityLabel"); if (due) disabled() }.fade(if (due) 0.7f else 1f)
+        .semantics { contentDescription = followUp.getString("accessibilityLabel"); if (due) disabled() }
         .padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Icon(Lucide.Clock, null, tint = if (due) c.secondaryText else c.tint, modifier = Modifier.size(13.dp))
         Text(followUp.getString("label"), style = rnText(11, 700), color = if (due) c.secondaryText else c.tint)

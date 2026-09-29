@@ -200,9 +200,9 @@ private fun StatusPill(status: String, label: String, enabled: Boolean, open: ()
     val colors = LocalTheme.current.status(status)
     val shape = RoundedCornerShape(8.dp)
     val spoken = t("task.aria.changeStatus").replace("{{status}}", label)
-    Row(Modifier.heightIn(min = 32.dp).clip(shape).background(colors.bg).border(1.dp, colors.border, shape)
+    Row(Modifier.fade(if (enabled) 1f else 0.6f).heightIn(min = 32.dp).clip(shape).background(colors.bg).border(1.dp, colors.border, shape)
         .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; if (enabled) onClick { open(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = open).fade(if (enabled) 1f else 0.6f).padding(horizontal = 12.dp, vertical = 6.dp),
+        .clickable(enabled = enabled, onClick = open).padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = rnText(12, 600), color = colors.text)
         Icon(Lucide.ChevronDown, null, tint = colors.text, modifier = Modifier.padding(start = 4.dp).size(12.dp))
@@ -371,11 +371,10 @@ fun ChecklistField(model: InboxViewModel, editor: TaskEditor, locked: Boolean) =
                         val can = item.getBoolean(if (up) "canMoveUp" else "canMoveDown") && !locked
                         val label = item.getString(if (up) "moveUpLabel" else "moveDownLabel")
                         val box = RoundedCornerShape(8.dp)
-                        Box(Modifier.size(36.dp).clip(box).background(c.filterBg).border(1.dp, c.border, box)
+                        Box(Modifier.fade(if (can) 1f else 0.35f).size(36.dp).clip(box).background(c.filterBg).border(1.dp, c.border, box)
                             .clearAndSetSemantics { contentDescription = label; role = Role.Button
                                 if (can) onClick { editChecklist(JSONObject().put("kind", "move").put("itemId", id).put("step", if (up) -1 else 1)); true } else disabled() }
-                            .clickable(enabled = can) { editChecklist(JSONObject().put("kind", "move").put("itemId", id).put("step", if (up) -1 else 1)) }
-                            .fade(if (can) 1f else 0.35f), contentAlignment = Alignment.Center) {
+                            .clickable(enabled = can) { editChecklist(JSONObject().put("kind", "move").put("itemId", id).put("step", if (up) -1 else 1)) }, contentAlignment = Alignment.Center) {
                             Icon(icon, null, tint = if (can) c.tint else c.secondaryText, modifier = Modifier.size(18.dp))
                         }
                     }
@@ -396,10 +395,10 @@ fun ChecklistField(model: InboxViewModel, editor: TaskEditor, locked: Boolean) =
                     val reset = labels.getString("reset")
                     val box = RoundedCornerShape(12.dp)
                     val canReset = !locked && writable && failedAction == null
-                    Box(Modifier.heightIn(min = 44.dp).clip(box).background(c.cardBg).border(1.dp, c.border, box)
+                    Box(Modifier.fade(if (canReset) 1f else 0.5f).heightIn(min = 44.dp).clip(box).background(c.cardBg).border(1.dp, c.border, box)
                         .clearAndSetSemantics { contentDescription = reset; role = Role.Button; testTag = "checklist-reset"; if (canReset) onClick { resetChecklist(); true } else disabled() }
                         .clickable(enabled = canReset) { resetChecklist() }
-                        .fade(if (canReset) 1f else 0.5f).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                        .padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                         Text(reset, style = rnText(12, 500), color = c.secondaryText)
                     }
                 }

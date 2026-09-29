@@ -1449,7 +1449,8 @@ for (const [name, text] of Object.entries({ menuModel, ...menuScreens })) {
 }
 // The More sheet: core's destinations (getMoreMenu); a tile this app builds opens, the others are drawn disabled, never a dead tap.
 // One accessibility node holds the label, the role and the state, so TalkBack hears an unbuilt tile as disabled.
-assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
+assert.equal(moreUi.match(/\.clearAndSetSemantics \{\s+contentDescription = label; role = Role\.Button\s+if \(enabled\) onClick \{ model\.menu\.openTile\(id\); true \} else disabled\(\)\s+\}\s+\.clickable\(enabled = enabled\) \{ model\.menu\.openTile\(id\) \}/g)?.length, 2, "an unbuilt tile is disabled and dimmed on its labelled node; a built one is dimmed only while a command runs or a retry is owed");
+assert.equal(moreUi.match(/\.fade\(if \(enabled\) 1f else 0\.45f\)/g)?.length, 2, 'both tile kinds dim at 45% while disabled');
 assert.match(menuModel, /fun opens\(id: String\) = id in setOf\("waiting", "someday", "reference", "history", "projects", "review", "contexts", "trash", "calendar", "board", "settings"\)/);
 assert.match(activity, /if \(menu\.sheet\) MoreSheet\(model\)/);
 assert.match(activity, /else if \(listed != null && writable\) MenuScreenHost\(model, listed\)/);
@@ -2424,6 +2425,30 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const settingsKt = source('SettingsScreen.kt');
     const row = code(settingsKt.slice(settingsKt.indexOf('private fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('private fun SettingRow('))));
     assert.match(row, /\.padding\(16\.dp\),\s+verticalAlignment = Alignment\.Top\)/, 'SettingRow aligns its trailing control to the top, as RN');
+}
+
+// A fade is a layer over what comes after it in a modifier chain. A fade after a background or border leaves them at full
+// strength (the capture popup's Save stayed full blue), while RN's opacity dims the whole button. Every fade comes first.
+{
+    const pilot = resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot');
+    const blank = (text) => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (comment) => comment.replace(/[^\n]/g, ' '));
+    const late = [];
+    for (const name of readdirSync(pilot).filter((file) => file.endsWith('.kt'))) {
+        const text = blank(readFileSync(resolve(pilot, name), 'utf8'));
+        for (const match of text.matchAll(/\.fade\(/g)) {
+            // Walk back to the start of this chain: an open bracket, or a comma, `=` or `;` outside brackets.
+            let depth = 0;
+            let at = match.index;
+            while (--at >= 0) {
+                const char = text[at];
+                if (char === ')' || char === '}') depth++;
+                else if (char === '(' || char === '{') { if (depth === 0) break; depth--; }
+                else if (depth === 0 && /[,=;]/.test(char)) break;
+            }
+            if (/\.(background|border)\(/.test(text.slice(at + 1, match.index))) late.push(`${name}:${text.slice(0, match.index).split('\n').length}`);
+        }
+    }
+    assert.deepEqual(late, [], `a fade after a background or border: ${late.join(', ')}`);
 }
 
 const fakeCore = `

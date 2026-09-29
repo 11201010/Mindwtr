@@ -265,9 +265,9 @@ private fun AddProjectField(model: InboxViewModel) = with(model) {
             )
             val add = t("projects.add")
             Box(
-                Modifier.padding(start = 8.dp).size(46.dp).clip(RoundedCornerShape(8.dp)).background(c.tint)
+                Modifier.fade(if (canAdd) 1f else 0.5f).padding(start = 8.dp).size(46.dp).clip(RoundedCornerShape(8.dp)).background(c.tint)
                     .clickable(enabled = canAdd, role = Role.Button) { createProject(chosen) }
-                    .semantics { contentDescription = add }.fade(if (canAdd) 1f else 0.5f),
+                    .semantics { contentDescription = add },
                 contentAlignment = Alignment.Center,
             ) { Icon(Lucide.PlusMedium, null, tint = c.onTint, modifier = Modifier.size(22.dp)) }
         }

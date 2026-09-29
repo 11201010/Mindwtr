@@ -97,9 +97,9 @@ fun BulkBar(model: InboxViewModel) = with(model.menu) {
             val exit = bar.getJSONObject("exit")
             val exitOn = exit.getBoolean("enabled") && !model.busy
             val exitLabel = exit.getString("accessibilityLabel")
-            Box(Modifier.size(32.dp).clip(CircleShape).background(c.filterBg)
+            Box(Modifier.fade(if (exitOn) 1f else 0.5f).size(32.dp).clip(CircleShape).background(c.filterBg)
                 .clearAndSetSemantics { contentDescription = exitLabel; role = Role.Button; if (exitOn) onClick { endBulk(list ?: ""); true } else disabled() }
-                .clickable(enabled = exitOn) { list?.let(::endBulk) }.fade(if (exitOn) 1f else 0.5f), contentAlignment = Alignment.Center) {
+                .clickable(enabled = exitOn) { list?.let(::endBulk) }, contentAlignment = Alignment.Center) {
                 Icon(Lucide.X, null, tint = c.secondaryText, modifier = Modifier.size(16.dp))
             }
         }
@@ -137,13 +137,13 @@ fun BulkBar(model: InboxViewModel) = with(model.menu) {
 @Composable
 private fun BarButton(label: String, enabled: Boolean, background: Color, color: Color, description: String = label, selected: Boolean? = null,
                       weight: Int = 600, icon: ImageVector? = null, action: () -> Unit) {
-    Row(Modifier.clip(RoundedCornerShape(6.dp)).background(background)
+    Row(Modifier.fade(if (enabled) 1f else 0.5f).clip(RoundedCornerShape(6.dp)).background(background)
         .clearAndSetSemantics {
             contentDescription = description; role = Role.Button
             selected?.let { this.selected = it }
             if (enabled) onClick { action(); true } else disabled()
         }
-        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.5f).padding(horizontal = 10.dp, vertical = 6.dp),
+        .clickable(enabled = enabled, onClick = action).padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         icon?.let { Icon(it, null, tint = color, modifier = Modifier.size(14.dp)) }
         Text(label, style = rnText(12, weight), color = color)
@@ -279,9 +279,9 @@ fun OrganizeDialog(model: InboxViewModel, open: JSONObject) = with(model.menu) {
                 val apply = organize.getString("applyLabel")
                 // The lists' bar counts the selection (Select all included); Review's lists its selected ids.
                 val canApply = !locked && (page?.bulk?.let { it.optInt("selectedCount", it.optJSONArray("selectedIds")?.length() ?: 0) } ?: 0) > 0
-                Row(Modifier.heightIn(min = 40.dp).clip(RoundedCornerShape(8.dp)).background(theme.filledBg)
+                Row(Modifier.fade(if (canApply) 1f else 0.6f).heightIn(min = 40.dp).clip(RoundedCornerShape(8.dp)).background(theme.filledBg)
                     .clearAndSetSemantics { contentDescription = apply; role = Role.Button; if (canApply) onClick { organizeApply(); true } else disabled() }
-                    .clickable(enabled = canApply) { organizeApply() }.fade(if (canApply) 1f else 0.6f).padding(horizontal = 14.dp),
+                    .clickable(enabled = canApply) { organizeApply() }.padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (model.busy && bulkBusy == "organize") CircularProgressIndicator(Modifier.size(16.dp), color = theme.filledText, strokeWidth = 2.dp)
                     Text(apply, style = rnText(14, 700), color = theme.filledText)
@@ -309,9 +309,9 @@ private fun Section(label: String, content: @Composable () -> Unit) = Column(ver
 @Composable
 private fun OrganizeChip(label: String, selected: Boolean, enabled: Boolean, action: () -> Unit) {
     val c = LocalTheme.current.colors
-    Box(Modifier.heightIn(min = 34.dp).clip(CircleShape).background(if (selected) c.tint else c.filterBg).border(1.dp, if (selected) c.tint else c.border, CircleShape)
+    Box(Modifier.fade(if (enabled) 1f else 0.45f).heightIn(min = 34.dp).clip(CircleShape).background(if (selected) c.tint else c.filterBg).border(1.dp, if (selected) c.tint else c.border, CircleShape)
         .clearAndSetSemantics { contentDescription = label; role = Role.Button; this.selected = selected; if (enabled) onClick { action(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.45f).padding(horizontal = 12.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
+        .clickable(enabled = enabled, onClick = action).padding(horizontal = 12.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
         Text(label, style = rnText(12, 700), color = if (selected) c.onTint else c.text)
     }
 }
@@ -321,9 +321,9 @@ private fun OrganizeChip(label: String, selected: Boolean, enabled: Boolean, act
 private fun PickerRow(description: String, value: String, enabled: Boolean, action: () -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(8.dp)
-    Row(Modifier.fillMaxWidth().heightIn(min = 42.dp).clip(shape).background(c.inputBg).border(1.dp, c.border, shape)
+    Row(Modifier.fade(if (enabled) 1f else 0.5f).fillMaxWidth().heightIn(min = 42.dp).clip(shape).background(c.inputBg).border(1.dp, c.border, shape)
         .clearAndSetSemantics { contentDescription = description; role = Role.Button; if (enabled) onClick { action(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.5f).padding(horizontal = 12.dp, vertical = 8.dp),
+        .clickable(enabled = enabled, onClick = action).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(value, style = rnText(14, 600), color = if (enabled) c.text else c.secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Icon(Lucide.ChevronRight, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))

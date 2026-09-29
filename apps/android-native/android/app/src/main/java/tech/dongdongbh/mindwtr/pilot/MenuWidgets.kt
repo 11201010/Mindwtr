@@ -904,8 +904,8 @@ private fun CreateDialog(model: InboxViewModel, open: JSONObject) = with(model.m
                 .clickable(enabled = !owed && !model.busy, role = Role.Button) { backInDialog() }.semantics { contentDescription = cancel }
                 .padding(horizontal = 14.dp), contentAlignment = Alignment.Center) { Text(cancel, style = rnText(15, 400), color = c.secondaryText) }
             val save = if (owed && !section) addText?.getString("retryLabel") ?: t("common.retry") else t("common.save")
-            Box(Modifier.heightIn(min = 44.dp).widthIn(min = 88.dp).clip(shape).background(if (section) theme.restoreAction else c.tint)
-                .clickable(enabled = canSave, role = Role.Button) { saveCreate() }.semantics { contentDescription = save }.fade(if (canSave) 1f else 0.5f)
+            Box(Modifier.fade(if (canSave) 1f else 0.5f).heightIn(min = 44.dp).widthIn(min = 88.dp).clip(shape).background(if (section) theme.restoreAction else c.tint)
+                .clickable(enabled = canSave, role = Role.Button) { saveCreate() }.semantics { contentDescription = save }
                 .padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
                 Text(save, style = rnText(15, if (section) 600 else 400), color = if (section) theme.onAction else c.onTint)
             }

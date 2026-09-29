@@ -1030,8 +1030,8 @@ private fun ItemSheet(model: InboxViewModel, sheet: JSONObject) = with(model.men
                     val fill = when { style == "destructive" -> c.danger; index == primary -> c.tint; else -> c.filterBg }
                     val label = button.getString("label")
                     val enabled = style == "cancel" || button.getString("id") == "ok" || idle
-                    Box(weight.heightIn(min = 44.dp).clip(RoundedCornerShape(12.dp)).background(fill)
-                        .border(1.dp, if (fill == c.filterBg) c.border else fill, RoundedCornerShape(12.dp)).fade(if (enabled) 1f else 0.5f)
+                    Box(weight.fade(if (enabled) 1f else 0.5f).heightIn(min = 44.dp).clip(RoundedCornerShape(12.dp)).background(fill)
+                        .border(1.dp, if (fill == c.filterBg) c.border else fill, RoundedCornerShape(12.dp))
                         .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (enabled) onClick { calendar.press(button.getString("id")); true } else disabled() }
                         .clickable(enabled = enabled) { calendar.press(button.getString("id")) }.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
                         Text(label, style = rnText(14, 700), color = if (fill == c.filterBg) c.text else c.onTint, textAlign = TextAlign.Center)
@@ -1151,7 +1151,7 @@ private fun ComposerSheet(model: InboxViewModel, draft: ComposerDraft) = with(mo
                 }
                 val canSave = !view.getBoolean("saveDisabled") && model.writable && !model.busy && (model.failedAction == null || owed)
                 val save = if (owed) t("common.retry") else text.getString("save")
-                Box(Modifier.widthIn(min = 96.dp).clip(action).background(c.tint).fade(if (canSave) 1f else 0.5f).testTag("calendar-composer-save")
+                Box(Modifier.fade(if (canSave) 1f else 0.5f).widthIn(min = 96.dp).clip(action).background(c.tint).testTag("calendar-composer-save")
                     .clearAndSetSemantics { contentDescription = save; role = Role.Button; if (canSave) onClick { calendar.save(); true } else disabled() }
                     .clickable(enabled = canSave) { calendar.save() }.padding(horizontal = 14.dp, vertical = 11.dp), contentAlignment = Alignment.Center) {
                     Text(save, style = rnText(14, 900), color = c.onTint)

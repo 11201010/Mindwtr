@@ -399,9 +399,9 @@ private fun ChoiceButton(choice: JSONObject, compact: Boolean, enabled: Boolean,
     val c = LocalTheme.current.colors
     val label = choice.getString("label")
     val shape = RoundedCornerShape(14.dp)
-    Row(modifier.heightIn(min = if (compact) 48.dp else 52.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
+    Row(modifier.fade(if (enabled) 1f else 0.5f).heightIn(min = if (compact) 48.dp else 52.dp).clip(shape).background(c.cardBg).border(1.dp, c.border, shape)
         .button(label, enabled, onClick).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .fade(if (enabled) 1f else 0.5f).padding(horizontal = if (compact) 12.dp else 16.dp, vertical = if (compact) 10.dp else 12.dp),
+        .padding(horizontal = if (compact) 12.dp else 16.dp, vertical = if (compact) 10.dp else 12.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         choice.text("icon")?.let(CHOICE_ICONS::get)?.let { Icon(it, null, tint = c.text, modifier = Modifier.padding(end = 8.dp).size(18.dp)) }
         Text(label, style = rnText(16, 600), color = c.text, textAlign = TextAlign.Center)
@@ -412,8 +412,8 @@ private fun ChoiceButton(choice: JSONObject, compact: Boolean, enabled: Boolean,
 @Composable
 private fun FilledButton(label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val theme = LocalTheme.current
-    Box(modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).background(theme.filledBg)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick).fade(if (enabled) 1f else 0.5f)
+    Box(modifier.fade(if (enabled) 1f else 0.5f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp)).background(theme.filledBg)
+        .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .padding(horizontal = 12.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
         Text(label, style = rnText(16, 700), color = theme.filledText)
     }
@@ -621,7 +621,7 @@ private fun TokenSection(flow: InboxProcessing, tokens: JSONObject, locked: Bool
             send(JSONObject().put("type", "set").put("field", "tokenInput").put("value", it))
         }
         val addLabel = add.getString("label")
-        Box(Modifier.padding(start = 8.dp).size(44.dp).clip(RoundedCornerShape(10.dp)).background(c.tint).fade(if (add.getBoolean("enabled")) 1f else 0.5f)
+        Box(Modifier.fade(if (add.getBoolean("enabled")) 1f else 0.5f).padding(start = 8.dp).size(44.dp).clip(RoundedCornerShape(10.dp)).background(c.tint)
             .clickable(enabled = canAdd, role = Role.Button) { send(add.getJSONObject("edit")) }.semantics { contentDescription = addLabel },
             contentAlignment = Alignment.Center) {
             Text("+", style = rnText(18, 700), color = c.onTint)

@@ -144,9 +144,9 @@ private fun DirectControl(icon: ImageVector, label: String, selected: Boolean?, 
 private fun MindSweepPill(mindSweep: JSONObject, enabled: Boolean, action: () -> Unit) {
     val c = LocalTheme.current.colors
     val label = mindSweep.getString("accessibilityLabel")
-    Row(Modifier.heightIn(min = 36.dp).clip(RoundedCornerShape(18.dp)).background(c.filterBg).border(1.dp, c.border, RoundedCornerShape(18.dp))
+    Row(Modifier.fade(if (enabled) 1f else 0.45f).heightIn(min = 36.dp).clip(RoundedCornerShape(18.dp)).background(c.filterBg).border(1.dp, c.border, RoundedCornerShape(18.dp))
         .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (enabled) onClick { action(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = action).fade(if (enabled) 1f else 0.45f).padding(horizontal = 12.dp),
+        .clickable(enabled = enabled, onClick = action).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Icon(Lucide.Brain, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))
         Text(mindSweep.getString("label"), style = rnText(14, 600), color = c.secondaryText, maxLines = 2)
@@ -171,10 +171,10 @@ private fun ActionButton(icon: ImageVector, label: String, enabled: Boolean, des
     val c = theme.colors
     val shape = RoundedCornerShape(12.dp)
     val material = theme.isMaterial
-    Row(Modifier.padding(bottom = 12.dp).fillMaxWidth().heightIn(min = 44.dp).clip(shape).background(if (material) theme.filledBg else theme.processWash)
+    Row(Modifier.fade(if (dimmed) 0.45f else 1f).padding(bottom = 12.dp).fillMaxWidth().heightIn(min = 44.dp).clip(shape).background(if (material) theme.filledBg else theme.processWash)
         .then(if (material) Modifier else Modifier.border(1.dp, c.tint, shape))
         .clearAndSetSemantics { contentDescription = description; role = Role.Button; if (enabled) onClick { action(); true } else disabled() }
-        .clickable(enabled = enabled, onClick = action).fade(if (dimmed) 0.45f else 1f).padding(horizontal = 16.dp),
+        .clickable(enabled = enabled, onClick = action).padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = if (material) theme.filledText else c.tint, modifier = Modifier.size(18.dp))
         Text(label, style = rnText(15, 600), color = if (material) theme.filledText else c.text, textAlign = TextAlign.Center,
