@@ -70,4 +70,13 @@ class EntryQueueTest {
         File(dir, "queue").writeText("broken line\nid-1\t{\"n\":1}\n")
         assertEquals(listOf(EntryQueue.Entry("id-1", """{"n":1}""")), queue().all())
     }
+
+    @Test fun onlyARefusedInputIsDroppedAfterAFailedRead() {
+        // Core refused the input (it can never open): drop it. Anything else (storage not ready, a save owed, a timeout): retry.
+        assertFalse(entryRetryable("INVALID_INPUT: An entry point is a link, a share or a note"))
+        assertTrue(entryRetryable("NOT_READY: Native storage has not been loaded and validated"))
+        assertTrue(entryRetryable("SAVE_FAILED: disk full"))
+        assertTrue(entryRetryable("Core menuRead timed out"))
+        assertTrue(entryRetryable(null))
+    }
 }

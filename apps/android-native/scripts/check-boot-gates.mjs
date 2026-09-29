@@ -1991,6 +1991,13 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(entryKt, /!writable \|\| busy \|\| failedAction != null \|\| editor != null \|\| processing\?\.hidden == false \|\| capture\?\.pending != null\s+\|\| menu\.screen == MenuScreen\.MindSweep/);
     assert.match(entryKt, /val reply = runtime\.menuRead\("entryPoint", entry\.input\)/);
     assert.match(entryKt, /runtime\.openQuickCapture\(\)\s+runtime\.quickCaptureView\(JSONObject\(\)\.put\("text", open\.getString\("text"\)\)\.put\("options", open\.getJSONObject\("options"\)\)\.toString\(\)\)/);
+    // An entry leaves the queue only after it opened, or when core refused its input; a failed read keeps it for a later try.
+    assert.match(entryKt, /if \(opening != null \|\| blocked \|\| SystemClock\.uptimeMillis\(\) < retryAt\) return/);
+    assert.match(entryKt, /\} catch \(failure: Throwable\) \{\s+ui \{ failed\(entry, failure\.message\) \}\s+throw failure\s+\}\s+ui \{ menu\.whenIdle \{ opened\(entry, reply, view\) \} \}/);
+    assert.match(entryKt, /if \(entryRetryable\(message\)\) \{\s+retryAt = SystemClock\.uptimeMillis\(\) \+ RETRY_MS\s+main\.postDelayed\(\{ pump\(\) \}, RETRY_MS\)\s+return\s+\}\s+queue\.remove\(entry\.id\)/);
+    assert.match(entryKt, /opening = null\s+if \(blocked\) return\s+open\(reply, view\)\s+queue\.remove\(entry\.id\)/);
+    assert.equal(code(entryKt).match(/queue\.remove\(/g).length, 2, 'an entry leaves the queue only after it opened, or when core refused its input');
+    assert.match(queueKt, /fun entryRetryable\(message: String\?\): Boolean = message\?\.startsWith\("INVALID_INPUT"\) != true/);
     assert.match(queueKt, /out\.fd\.sync\(\)\s+\}\s+check\(partial\.renameTo\(file\)\)/);
     assert.match(readFileSync(resolve(app, 'android/app/src/test/java/tech/dongdongbh/mindwtr/pilot/EntryQueueTest.kt'), 'utf8'), /fun aSecondEntryNeverReplacesTheFirst\(\)/);
     assert.match(entryKt, /highlight\(id\); menu\.whenIdle \{ openEditor\(id, "view"\) \}/);

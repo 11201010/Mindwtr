@@ -8,7 +8,7 @@ import java.util.UUID
  * The links, shares and assistant notes waiting to open (EntryPoints.kt), oldest first, in a file in the app's no-backup
  * folder: one line per entry, its id, a tab, and the entry's JSON (JSON escapes every line break). Each change goes to a
  * temporary file that is synced and renamed into place, so a process death leaves the queue as it was before or after the
- * change. An entry leaves only when its own id is removed. At most [limit] wait: a later
+ * change. An entry leaves only when its own id is removed, after its screen or popup opened. At most [limit] wait: a later
  * one is refused, so another app cannot grow the file without end.
  */
 class EntryQueue(private val dir: File, private val limit: Int = 20) {
@@ -51,3 +51,8 @@ class EntryQueue(private val dir: File, private val limit: Int = 20) {
     }
 }
 
+/**
+ * Whether an entry stays queued after core's read of it failed: only core's refusal of the input itself (INVALID_INPUT: it can
+ * never open) drops it; storage not ready, a save owed, or a timeout keeps it for another try.
+ */
+fun entryRetryable(message: String?): Boolean = message?.startsWith("INVALID_INPUT") != true
