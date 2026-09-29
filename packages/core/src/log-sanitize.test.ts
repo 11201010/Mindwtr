@@ -75,3 +75,24 @@ describe('log sanitization', () => {
         expect(sanitizeForLog(`${FAKE_KEYS[0][1]} trailing`)).toBe('[redacted] trailing');
     });
 });
+
+describe('a URL the platform cannot parse', () => {
+    // The sanitizer used to call itself on such a URL (sanitizeUrl's fallback redacted the text, whose URL pass called
+    // sanitizeUrl again), so any log line or sync error holding one threw "Maximum call stack size exceeded".
+    it.each(['http://nas.local:99999/dav', 'https://[bad/remote.php/dav', 'webcal://[bad/calendar.ics'])('redacts %s without throwing', (url) => {
+        expect(() => sanitizeForLog(`Sync failed for ${url}`)).not.toThrow();
+        expect(() => sanitizeUrl(url)).not.toThrow();
+        expect(() => sanitizeLogContext({ url, detail: url })).not.toThrow();
+    });
+
+    it('still removes its credentials', () => {
+        const text = sanitizeForLog('GET http://alice:hunter2@nas.local:99999/dav failed');
+        expect(text).not.toContain('hunter2');
+        expect(text).not.toContain('alice');
+        expect(sanitizeUrl('http://alice:hunter2@nas.local:99999/dav')).not.toContain('hunter2');
+    });
+
+    it('still hides a calendar feed', () => {
+        expect(sanitizeForLog('feed webcal://[bad/calendar.ics')).not.toContain('calendar.ics');
+    });
+});

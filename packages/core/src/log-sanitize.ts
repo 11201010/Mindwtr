@@ -67,8 +67,8 @@ const looksLikeUrlKey = (key?: string): boolean => {
     return normalized === 'url' || normalized.endsWith('url');
 };
 
-export function sanitizeUrl(raw?: string): string | undefined {
-    if (!raw) return undefined;
+/** [raw] parsed and stripped of its credentials, or null when the platform's URL cannot parse it. */
+const sanitizeParsedUrl = (raw: string): string | null => {
     try {
         const parsed = new URL(raw);
         const scheme = parsed.protocol.replace(':', '').toLowerCase();
@@ -85,8 +85,21 @@ export function sanitizeUrl(raw?: string): string | undefined {
         }
         return parsed.toString();
     } catch {
-        return redactSensitiveText(raw);
+        return null;
     }
+};
+
+/**
+ * A URL the platform cannot parse (a port out of range, a broken host), redacted as text: a calendar feed whole, anything
+ * else without its user and password. Never through sanitizeUrl again, which would call this text's redaction forever.
+ */
+const redactUnparsedUrl = (raw: string): string => (
+    /^webcals?:/i.test(raw) || /\.ics\b/i.test(raw) ? '[redacted-ics-url]' : raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/i, '$1')
+);
+
+export function sanitizeUrl(raw?: string): string | undefined {
+    if (!raw) return undefined;
+    return sanitizeParsedUrl(raw) ?? redactSensitiveText(raw);
 }
 
 function redactSensitiveText(value: string): string {
@@ -99,7 +112,7 @@ function redactSensitiveText(value: string): string {
     for (const pattern of AI_KEY_PATTERNS) {
         result = result.replace(pattern, '$1[redacted]');
     }
-    result = result.replace(ICS_URL_PATTERN, (match) => sanitizeUrl(match) ?? '[redacted]');
+    result = result.replace(ICS_URL_PATTERN, (match) => sanitizeParsedUrl(match) ?? redactUnparsedUrl(match));
     return result;
 }
 
