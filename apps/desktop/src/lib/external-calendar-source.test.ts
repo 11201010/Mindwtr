@@ -37,10 +37,10 @@ describe('external calendar source helpers', () => {
         expect(isSupportedCalendarSourceUrl('ftp://calendar.example/work.ics')).toBe(false);
     });
 
-    it('lists a subscription URL without its user name and password', () => {
-        expect(maskCalendarSourceUrl('https://alex:s3cret@calendar.example.com/team/basic.ics')).toBe('https://calendar.example.com/...ic.ics');
-        expect(maskCalendarSourceUrl('webcal://alex:s3cret@calendar.example.com')).not.toMatch(/alex|s3cret|cret/);
-        expect(maskCalendarSourceUrl(' https://calendar.example.com/team/basic.ics ')).toBe('https://calendar.example.com/...ic.ics');
+    it('lists a subscription URL as its scheme and host only', () => {
+        expect(maskCalendarSourceUrl('https://alex:s3cret@calendar.example.com/team/basic.ics')).toBe('https://calendar.example.com/...');
+        expect(maskCalendarSourceUrl('webcal://alex:s3cret@calendar.example.com')).toBe('webcal://calendar.example.com');
+        expect(maskCalendarSourceUrl(' https://calendar.example.com/ical/a1b2c3d4e5f6/basic.ics ')).toBe('https://calendar.example.com/...');
         expect(maskCalendarSourceUrl('file:///home/alex/My%20Plan.ics')).toBe('Local file /.../My Plan.ics');
     });
 });

@@ -12,14 +12,17 @@ import { getTranslator } from './i18n';
 import { loadTranslations } from './i18n/i18n-loader';
 
 describe('Settings › Calendar rules', () => {
-    it('never shows the user name or password a subscription URL carries', () => {
-        expect(maskCalendarFeedUrl('https://alex:s3cret@calendar.example.com/team/basic.ics')).toBe('https://calendar.example.com/...ic.ics');
-        expect(maskCalendarFeedUrl('user@calendar.example.com/private/feed')).toBe('calendar.example.com/...feed');
-        expect(maskCalendarFeedUrl(' https://calendar.example.com/team/basic.ics ')).toBe('https://calendar.example.com/...ic.ics');
-        expect(maskCalendarFeedUrl('content://downloads/42')).toBe('content:/...42');
-        // Any scheme, even without a path.
-        expect(maskCalendarFeedUrl('webcal://alex:s3cret@h')).not.toMatch(/alex|s3cret|cret/);
-        expect(maskCalendarFeedUrl('webcal://alex:s3cret@calendar.example.com/team.ics')).toBe('webcal:/...am.ics');
+    it('shows a subscription URL as its scheme and host only: never a user name, a password or the path', () => {
+        expect(maskCalendarFeedUrl('https://alex:s3cret@calendar.example.com/team/basic.ics')).toBe('https://calendar.example.com/...');
+        expect(maskCalendarFeedUrl('user@calendar.example.com/private/feed')).toBe('calendar.example.com/...');
+        expect(maskCalendarFeedUrl(' https://calendar.example.com/team/basic.ics ')).toBe('https://calendar.example.com/...');
+        // A token in the path or the query never shows, not even its end.
+        expect(maskCalendarFeedUrl('https://calendar.example.com/ical/a1b2c3d4e5f6/basic.ics')).not.toMatch(/basic|ics|e5f6/);
+        expect(maskCalendarFeedUrl('https://calendar.example.com?token=abcdef')).toBe('https://calendar.example.com/...');
+        expect(maskCalendarFeedUrl('https://calendar.example.com')).toBe('https://calendar.example.com');
+        expect(maskCalendarFeedUrl('content://com.android.providers.downloads.documents/document/42')).toBe('content://com.android.providers.downloads.documents/...');
+        expect(maskCalendarFeedUrl('webcal://alex:s3cret@h')).toBe('webcal://h');
+        expect(maskCalendarFeedUrl('webcal://alex:s3cret@calendar.example.com/team.ics')).toBe('webcal://calendar.example.com/...');
     });
 
     it('writes nothing when a color is picked again', () => {

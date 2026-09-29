@@ -273,21 +273,18 @@ export const removeCalendarFeed = (feeds: readonly ExternalCalendarSubscription[
     feeds.filter((feed) => feed.id !== id)
 );
 
-/** A subscription's URL as the list shows it: the scheme, the host (without credentials) and the end of the path. */
+/**
+ * A subscription's URL as the list shows it: its scheme and host only, then "/..." when
+ * more follows. Never a user name or password, and never the path or query, which can
+ * hold a private feed's token.
+ */
 export const maskCalendarFeedUrl = (url: string): string => {
-    // A URL's user name and password never show, whatever its scheme (webcal:// too).
-    const trimmed = url.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, '$1');
+    const trimmed = url.trim();
     if (!trimmed) return '';
-    const match = trimmed.match(/^(https?:\/\/)?([^/?#]+)([^?#]*)/i);
-    if (!match) {
-        return trimmed.length <= 8 ? '...' : `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
-    }
-    const protocol = match[1] ?? '';
-    const host = (match[2] ?? '').replace(/^.*@/, '');
-    const path = match[3] ?? '';
-    const lastSegment = path.split('/').filter(Boolean).pop() ?? '';
-    const suffix = lastSegment ? `...${lastSegment.slice(-6)}` : '...';
-    return `${protocol}${host}/${suffix}`;
+    const origin = /^([a-z][a-z0-9+.-]*:\/\/)?([^/?#]*)/i.exec(trimmed)!;
+    const scheme = origin[1] ?? '';
+    const host = (origin[2] ?? '').replace(/^.*@/, '');
+    return trimmed.length > origin[0].length ? `${scheme}${host}/...` : `${scheme}${host}`;
 };
 
 /** A subscription's swatches: Auto, then each pickable color (filled in the theme's stand-in). */
