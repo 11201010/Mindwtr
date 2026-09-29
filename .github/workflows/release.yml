@@ -52,6 +52,11 @@ on:
         required: false
         type: boolean
         default: false
+      ios_private_runner:
+        description: 'Use the validated private Apple runner for iOS release recovery'
+        required: false
+        type: boolean
+        default: false
       force_ios_appstore_upload:
         description: 'Fail instead of silently skipping iOS App Store upload when a corrected Apple build is required'
         required: false
@@ -500,6 +505,7 @@ jobs:
       testflight_only: false
       distribute_testflight: true
       force_appstore_upload: ${{ github.event_name == 'workflow_dispatch' && inputs.force_ios_appstore_upload || false }}
+      private_runner: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_private_runner || false }}
       testflight_group: 'external_testing'
     secrets: inherit
 

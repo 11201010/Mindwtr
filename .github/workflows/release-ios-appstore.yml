@@ -61,6 +61,11 @@ on:
         required: false
         type: boolean
         default: false
+      private_runner:
+        description: Use the validated private Apple release runner
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       phased_release:
@@ -117,6 +122,11 @@ on:
         required: false
         type: boolean
         default: false
+      private_runner:
+        description: Use the validated private Apple release runner
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -130,7 +140,7 @@ concurrency:
 
 jobs:
   ios-appstore:
-    runs-on: xcode-27
+    runs-on: ${{ inputs.private_runner && fromJSON('["self-hosted","macOS","ARM64","mindwtr-apple"]') || 'xcode-27' }}
     timeout-minutes: 90
     outputs:
       app_build_number: ${{ steps.ios-version.outputs.app_build_number }}
@@ -181,9 +191,18 @@ jobs:
           bundle install --jobs 4 --retry 3
 
       - name: Select release Xcode 27.x
+        if: runner.environment != 'self-hosted'
         run: |
           # Accept the installed 27.x toolchain after the hosted native lane validates it.
           source scripts/ci/select-apple-sdk.sh 27
+
+      - name: Validate private release Xcode 27.x
+        if: runner.environment == 'self-hosted'
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          [[ "$IOS_SDK_VERSION" == 27.* ]] || { echo "::error::Private release runner provides iPhoneOS SDK $IOS_SDK_VERSION; expected 27.x."; exit 1; }
 
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0

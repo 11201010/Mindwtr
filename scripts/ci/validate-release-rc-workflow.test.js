@@ -82,6 +82,18 @@ test('stable Watch release keeps the existing iOS recovery selection gate', () =
   }
 });
 
+test('stable iOS recovery can use the validated private Apple runner', () => {
+  const stable = parse(readFileSync('.github/workflows/release.yml', 'utf8'));
+  const ios = readIosRelease();
+  expect(stable.on.workflow_dispatch.inputs.ios_private_runner.default).toBe(false);
+  expect(stable.jobs['ios-appstore'].with.private_runner)
+    .toBe("${{ github.event_name == 'workflow_dispatch' && inputs.ios_private_runner || false }}");
+  expect(ios.on.workflow_call.inputs.private_runner.default).toBe(false);
+  expect(ios.jobs['ios-appstore']['runs-on']).toContain('mindwtr-apple');
+  expect(ios.jobs['ios-appstore'].steps.find((step) => step.name === 'Validate private release Xcode 27.x').run)
+    .toContain('expected 27.x');
+});
+
 test('Watch-enabled App Review waits for a required Watch screenshot', () => {
   const steps = readIosRelease().jobs['ios-appstore'].steps;
   const route = steps.find((step) => step.name === 'Resolve App Store review submission flag');

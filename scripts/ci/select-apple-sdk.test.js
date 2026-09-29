@@ -78,8 +78,9 @@ test('iOS 27 matrix validation includes an unsigned archive and states its limit
 test('release preflight accepts validated Xcode 27.x and rejects other SDKs', () => {
   const release = parse(readFileSync('.github/workflows/release-ios-appstore.yml', 'utf8'));
   const job = release.jobs['ios-appstore'];
-  expect(job['runs-on']).toBe('xcode-27');
+  expect(job['runs-on']).toContain('mindwtr-apple');
   const step = job.steps.find((step) => step.name === 'Select release Xcode 27.x');
+  expect(step.if).toBe("runner.environment != 'self-hosted'");
   expect(fixture({ installed: ['26.4', '27.2'], sdk: '27.2', xcodeVersion: 'Xcode 27.2\nBuild version 27B5019j' }).run('27', step.run).status).toBe(0);
   expect(fixture({ sdk: '26.4' }).run('27', step.run).status).not.toBe(0);
   expect(fixture({ installed: ['26.4'] }).run('27', step.run).status).not.toBe(0);
