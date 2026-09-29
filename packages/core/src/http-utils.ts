@@ -541,10 +541,15 @@ const encodePunycode = (label: string): string => {
 };
 
 /** A lowercase host name in its ASCII (IDNA) form: every non-ASCII label as `xn--` Punycode,
- *  which is how OkHttp, NSURL and the url crate report it. */
+ *  which is how OkHttp, NSURL and the url crate report it. Throws on a label longer than DNS
+ *  allows (63), which no client can resolve. */
 const asciiHostname = (host: string): string => (typeof host.normalize === 'function' ? host.normalize('NFC') : host)
     .split(/[.。．｡]/)
-    .map((label) => (/[\u0080-\uffff]/.test(label) ? `xn--${encodePunycode(label)}` : label))
+    .map((label) => {
+        if (!/[\u0080-\uffff]/.test(label)) return label;
+        if (label.length > 63) throw new RangeError('host label too long');
+        return `xn--${encodePunycode(label)}`;
+    })
     .join('.');
 
 /** RFC 3986 dot-segment removal: OkHttp applies it to every URL it reports. */
@@ -628,6 +633,8 @@ const numericIpv4Host = (host: string): string | null => {
 const comparableHttpUrl = (rawUrl: string): string | null => {
     // In an http(s) URL a `\` before the query is a `/` (WHATWG), as the url crate reports it.
     const trimmed = rawUrl.trim();
+    // Throws on a lone surrogate, which a native client replaces by U+FFFD.
+    encodeURI(trimmed);
     const queryAt = trimmed.search(/[?#]/);
     const url = queryAt < 0
         ? trimmed.replace(/\\/g, '/')
@@ -655,12 +662,18 @@ const comparableHttpUrl = (rawUrl: string): string | null => {
 };
 
 /** Whether a response names a URL other than the one asked for. An answer without a URL
- *  (undici hides none, test doubles and some polyfills report '') is never a redirect. */
+ *  (undici hides none, test doubles and some polyfills report '') is never a redirect, and
+ *  neither is one this check cannot read: it never throws and never refuses on doubt. */
 export const isAnsweredFromAnotherUrl = (requestedUrl: string, answeredUrl: unknown): boolean => {
     if (typeof answeredUrl !== 'string' || !answeredUrl) return false;
-    const requested = comparableHttpUrl(requestedUrl);
-    const answered = comparableHttpUrl(answeredUrl);
-    return requested !== null && answered !== null && requested !== answered;
+    try {
+        const requested = comparableHttpUrl(requestedUrl);
+        const answered = comparableHttpUrl(answeredUrl);
+        return requested !== null && answered !== null && requested !== answered;
+    } catch {
+        logWarn('Write redirect check skipped: a URL could not be compared', { scope: 'http', category: 'network' });
+        return false;
+    }
 };
 
 /** Appended to a timeout message when the timer fired far later than its delay:

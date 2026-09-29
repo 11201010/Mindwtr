@@ -519,6 +519,33 @@ describe('fetchWithTimeout', () => {
         await expect(write(`https://xn--${punycode}x.example/dav/data.json`)).rejects.toThrow('fetch failed: unexpected redirect');
     });
 
+    it.each([
+        ['a 200,000-character host label', `https://${'ü'.repeat(200_000)}.example/dav/data.json`, 'https://other.example/dav/data.json'],
+        ['a lone surrogate the client replaced', 'https://dav.example.com/dav/\uD800.json', 'https://dav.example.com/dav/%EF%BF%BD.json'],
+        ['a lone surrogate in the host', 'https://dav\uDC00.example.com/dav/data.json', 'https://dav\uFFFD.example.com/dav/data.json'],
+    ])('lets a write through when %s leaves the URLs impossible to compare', async (_case, requested, answered) => {
+        // The check must never throw and never refuse on a URL it cannot read.
+        const logs: LogPayload[] = [];
+        setLogger((payload) => { logs.push(payload); });
+        try {
+            await expect(fetchWithTimeoutAndConsume(
+                requested,
+                { method: 'PUT', body: '{}' },
+                1_000,
+                async () => answeredFrom(answered, 201),
+                'Request timed out',
+                () => 'written',
+            )).resolves.toBe('written');
+        } finally {
+            setLogger(consoleLogger);
+        }
+        expect(logs).toEqual([expect.objectContaining({
+            level: 'warn',
+            message: 'Write redirect check skipped: a URL could not be compared',
+        })]);
+        expect(JSON.stringify(logs)).not.toContain('example');
+    });
+
     it('refuses an Android redirect once, with its own line', async () => {
         // Android's interceptor hands the 3xx back from the URL asked for; the answering
         // URL check must neither refuse it a second time nor claim it was followed.
