@@ -39,6 +39,7 @@ import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
+import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
 import { mapSqliteTaskRow } from './sqlite-adapter';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
@@ -1142,6 +1143,47 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._tasksById.get(taskId)).toMatchObject({
                     title: 'Contract checklist edit', checklist: [item], rev: after?.rev,
                 });
+            },
+            commitPreparedFocusOrder: async (control) => {
+                const host = await nativeHost(control);
+                const extra = nextTaskIds.find((id) => !focusIds.includes(id));
+                expect(extra).toBeDefined();
+                expect((await useTaskStore.getState().updateTask(extra!, { isFocusedToday: true })).success).toBe(true);
+                await flushPendingSave();
+                control.resetBaseline();
+                const options = nativeValue(host.getFocusOrderOptions({ controls: DEFAULT_FOCUS_CONTROL_STATE }));
+                const ids = options.rows.map((row) => row.id).reverse();
+                expect(ids.length, 'fixture must supply two or more Focus tasks').toBeGreaterThan(1);
+                const request = { requestId: 'c3a4f0d2-5b8e-4f1a-9d67-2e0b7c1f4a58',
+                    controls: options.controls, ids, expectedOrder: options.expectedOrder };
+                const planned = nativeValue(host.prepareFocusOrder(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    ids.forEach((id, index) => {
+                        expect(written.tasks.find((entry) => entry.id === id)?.focusOrder).toBe(index);
+                    });
+                });
+                expect(nativeValue(await host.commitPreparedFocusOrder({ request, prepared: planned.prepared })))
+                    .toEqual({ ids });
+            },
+            commitPreparedFocusSavedFilter: async (control) => {
+                const host = await nativeHost(control);
+                const operation = { type: 'save' as const };
+                const controls = { ...DEFAULT_FOCUS_CONTROL_STATE,
+                    filters: { ...DEFAULT_FOCUS_CONTROL_STATE.filters, tokens: ['@work'] } };
+                const options = nativeValue(host.getFocusSavedFilterOptions({ controls, operation }));
+                const request = { requestId: '6d1e9b47-0a3c-4e25-8f19-b5c2d7e8a031', controls: options.controls,
+                    operation, name: 'Contract Focus filter', expected: options.expected };
+                const planned = nativeValue(host.prepareFocusSavedFilter(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                control.expectPersisted((written) => {
+                    expect(written.settings.savedFilters?.find((filter) => filter.id === request.requestId))
+                        .toMatchObject({ name: 'Contract Focus filter' });
+                });
+                expect(nativeValue(await host.commitPreparedFocusSavedFilter({ request, prepared: planned.prepared })))
+                    .toEqual(planned.prepared.result);
             },
             commitPreparedProjectCreate: async (control) => {
                 const host = await nativeHost(control);
