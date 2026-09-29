@@ -459,13 +459,93 @@ export const refuseWriteRedirect = (context: { releaseCheck: string; method: str
     throw new TypeError('fetch failed: unexpected redirect');
 };
 
-const decodePercentEscapes = (text: string): string => {
-    try {
-        return decodeURIComponent(text);
-    } catch {
-        return text;
+const UNRESERVED_CHAR = /^[A-Za-z0-9\-._~]$/;
+/** Characters a path or query may carry as written (RFC 3986 pchar, `/` and `?`). */
+const PATH_OR_QUERY_CHAR = /^[A-Za-z0-9\-._~!$&'()*+,;=:@/?]$/;
+
+/** RFC 3986 6.2.2 percent-encoding normalization. An escape of an unreserved character is
+ *  decoded and every other escape keeps its meaning with uppercase hex (`%2F` is not `/`).
+ *  A character a client would escape (space, `|`, non-ASCII, a stray `%`) is escaped as UTF-8,
+ *  so it matches however OkHttp, NSURL or the url crate spelled it. */
+const normalizePercentEncoding = (text: string): string => {
+    let normalized = '';
+    for (let index = 0; index < text.length;) {
+        const escape = text.slice(index, index + 3);
+        if (/^%[0-9A-Fa-f]{2}$/.test(escape)) {
+            const decoded = String.fromCharCode(parseInt(escape.slice(1), 16));
+            normalized += UNRESERVED_CHAR.test(decoded) ? decoded : escape.toUpperCase();
+            index += 3;
+            continue;
+        }
+        const char = String.fromCodePoint(text.codePointAt(index) ?? 0);
+        if (PATH_OR_QUERY_CHAR.test(char)) {
+            normalized += char;
+        } else {
+            try {
+                normalized += encodeURIComponent(char);
+            } catch {
+                normalized += char;
+            }
+        }
+        index += char.length;
     }
+    return normalized;
 };
+
+/** RFC 3492 Punycode for one label; host labels are short, so no overflow guard. */
+const encodePunycode = (label: string): string => {
+    const base = 36;
+    const tMin = 1;
+    const tMax = 26;
+    const digit = (value: number) => String.fromCharCode(value + (value < 26 ? 97 : 22));
+    const adapt = (delta: number, points: number, first: boolean): number => {
+        let scaled = first ? Math.floor(delta / 700) : Math.floor(delta / 2);
+        scaled += Math.floor(scaled / points);
+        let k = 0;
+        for (; scaled > ((base - tMin) * tMax) / 2; k += base) {
+            scaled = Math.floor(scaled / (base - tMin));
+        }
+        return k + Math.floor(((base - tMin + 1) * scaled) / (scaled + 38));
+    };
+    const codePoints = Array.from(label, (char) => char.codePointAt(0) ?? 0);
+    let output = codePoints.filter((point) => point < 0x80).map((point) => String.fromCharCode(point)).join('');
+    const basicCount = output.length;
+    if (basicCount > 0) output += '-';
+    let handled = basicCount;
+    let next = 0x80;
+    let delta = 0;
+    let bias = 72;
+    while (handled < codePoints.length) {
+        const smallest = Math.min(...codePoints.filter((point) => point >= next));
+        delta += (smallest - next) * (handled + 1);
+        next = smallest;
+        for (const point of codePoints) {
+            if (point < next) delta += 1;
+            if (point !== next) continue;
+            let q = delta;
+            for (let k = base; ; k += base) {
+                const t = k <= bias ? tMin : k >= bias + tMax ? tMax : k - bias;
+                if (q < t) break;
+                output += digit(t + ((q - t) % (base - t)));
+                q = Math.floor((q - t) / (base - t));
+            }
+            output += digit(q);
+            bias = adapt(delta, handled + 1, handled === basicCount);
+            delta = 0;
+            handled += 1;
+        }
+        delta += 1;
+        next += 1;
+    }
+    return output;
+};
+
+/** A lowercase host name in its ASCII (IDNA) form: every non-ASCII label as `xn--` Punycode,
+ *  which is how OkHttp, NSURL and the url crate report it. */
+const asciiHostname = (host: string): string => (typeof host.normalize === 'function' ? host.normalize('NFC') : host)
+    .split(/[.。．｡]/)
+    .map((label) => (/[\u0080-\uffff]/.test(label) ? `xn--${encodePunycode(label)}` : label))
+    .join('.');
 
 /** RFC 3986 dot-segment removal: OkHttp applies it to every URL it reports. */
 const removeDotSegments = (path: string): string => {
@@ -520,9 +600,9 @@ const canonicalIpv6 = (literal: string): string => {
 
 /** An http(s) URL cut down to what a redirect changes: scheme, host, port, path and query.
  *  A native client reports a URL it did not redirect in its own spelling (host case, default
- *  port, userinfo, fragment, percent-encoding, dot segments, punycode), and each of those is
- *  evened out here by string, since React Native's URL class normalizes none of them. A
- *  non-ASCII or punycode host is left out: this side cannot punycode it. */
+ *  port, userinfo, fragment, percent-encoding, dot segments, punycode, IPv6 zeros), and each
+ *  of those is evened out here by string, since React Native's URL class normalizes none of
+ *  them. Nothing that a redirect can change is dropped. */
 const comparableHttpUrl = (rawUrl: string): string | null => {
     const match = rawUrl.trim().match(/^(https?):\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?/i);
     if (!match) return null;
@@ -531,13 +611,11 @@ const comparableHttpUrl = (rawUrl: string): string | null => {
     const portMatch = authority.match(/:(\d*)$/);
     const host = portMatch ? authority.slice(0, -portMatch[0].length) : authority;
     const ipv6 = host.match(/^\[(.*)\]$/);
-    const comparableHost = ipv6
-        ? `[${canonicalIpv6(ipv6[1])}]`
-        : /[^\x20-\x7e]|(?:^|\.)xn--/.test(host) ? '' : host;
+    const comparableHost = ipv6 ? `[${canonicalIpv6(ipv6[1])}]` : asciiHostname(host);
     const port = portMatch?.[1] ? Number(portMatch[1]) : null;
     const comparablePort = port === null || port === (scheme === 'https' ? 443 : 80) ? '' : String(port);
-    const path = removeDotSegments(decodePercentEscapes(match[3] || '/'));
-    const query = decodePercentEscapes(match[4] ?? '');
+    const path = removeDotSegments(normalizePercentEncoding(match[3] || '/'));
+    const query = normalizePercentEncoding(match[4] ?? '');
     return `${scheme}://${comparableHost}:${comparablePort}${path}?${query}`;
 };
 

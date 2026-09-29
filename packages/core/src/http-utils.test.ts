@@ -422,6 +422,10 @@ describe('fetchWithTimeout', () => {
         ['https://bücher.example/dav/data.json', 'https://dav.example.com/dav/data.json'],
         ['https://[2001:db8::1]/dav/data.json', 'https://[2001:db8::2]/dav/data.json'],
         ['https://dav.example.com/dav/data.json', 'https://dav.example.com:80/dav/data.json'],
+        ['https://xn--bcher-kva.example/dav/data.json', 'https://xn--mnchen-3ya.example/dav/data.json'],
+        ['https://bücher.example/dav/data.json', 'https://xn--mnchen-3ya.example/dav/data.json'],
+        ['https://dav.example.com/dav/a%2Fb.json', 'https://dav.example.com/dav/a/b.json'],
+        ['https://cloud.example.com/v1/data?a=1%26b=2', 'https://cloud.example.com/v1/data?a=1&b=2'],
     ])('refuses a write to %s that iOS followed to %s', async (requested, answered) => {
         // React Native on iOS follows a write redirect (a 303 as a GET) and hands back
         // the final answer; only the URL it came from tells.
@@ -461,6 +465,11 @@ describe('fetchWithTimeout', () => {
         ['https://[fe80::1%25en0]/dav/data.json', 'https://[FE80:0:0:0:0:0:0:1%25en0]/dav/data.json'],
         ['https://dav.example.com:0443/dav/data.json', 'https://dav.example.com/dav/data.json'],
         ['http://nas.local:08080/dav/data.json', 'http://nas.local:8080/dav/data.json'],
+        ['https://BÜCHER.example/dav/data.json', 'https://xn--bcher-kva.example/dav/data.json'],
+        ['https://dav.example.com/dav/%7euser/data.json', 'https://dav.example.com/dav/~user/data.json'],
+        ['https://dav.example.com/dav/%e6%97%a5.json', 'https://dav.example.com/dav/日.json'],
+        ['https://dav.example.com/dav/50%.json', 'https://dav.example.com/dav/50%25.json'],
+        ['https://dav.example.com/dav/[x] {y}^.json', 'https://dav.example.com/dav/%5Bx%5D%20%7By%7D%5E.json'],
         ['https://dav.example.com/dav/data.json', ''],
     ])('accepts a write to %s answered from %s, the same URL', async (requested, answered) => {
         // OkHttp (Android) and NSURL (iOS) report a URL they did not redirect in their
@@ -473,6 +482,27 @@ describe('fetchWithTimeout', () => {
             'Request timed out',
             () => 'written',
         )).resolves.toBe('written');
+    });
+
+    // RFC 3492 section 7.1 samples B, C, D, K and L, as lowercase host labels.
+    it.each([
+        ['他们为什么不说中文', 'ihqwcrb4cv8a8dqg056pqjye'],
+        ['他們爲什麽不說中文', 'ihqwctvzc91f659drss3x8bo0yb'],
+        ['pročprostěnemluvíčesky', 'proprostnemluvesky-uyb24dma41a'],
+        ['tạisaohọkhôngthểchỉnóitiếngviệt', 'tisaohkhngthchnitingvit-kjcr8268qyxafd2f1b9g'],
+        ['3年b組金八先生', '3b-ww4c5e180e575a65lsy2b'],
+        ['münchen', 'mnchen-3ya'],
+    ])('reads the host %s as its punycode xn--%s', async (label, punycode) => {
+        const write = (answered: string) => fetchWithTimeoutAndConsume(
+            `https://${label}.example/dav/data.json`,
+            { method: 'PUT', body: '{}' },
+            1_000,
+            async () => answeredFrom(answered, 201),
+            'Request timed out',
+            () => 'written',
+        );
+        await expect(write(`https://xn--${punycode}.example/dav/data.json`)).resolves.toBe('written');
+        await expect(write(`https://xn--${punycode}x.example/dav/data.json`)).rejects.toThrow('fetch failed: unexpected redirect');
     });
 
     it('refuses an Android redirect once, with its own line', async () => {
