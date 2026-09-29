@@ -325,6 +325,103 @@ describe('ManageSettingsScreen', () => {
     alertSpy.mockRestore();
   });
 
+  it('requires a fresh confirmation when a Someday section is renamed while its delete alert is open', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ somedaySections: true }));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    const settings = storeState.settings;
+    try {
+      let tree!: renderer.ReactTestRenderer;
+      await renderer.act(async () => {
+        tree = renderer.create(<ManageSettingsScreen />);
+        await flushEffects();
+      });
+      renderer.act(() => {
+        tree.root.findByProps({ accessibilityLabel: 'Delete: Books to read' }).props.onPress();
+      });
+      expect(alertSpy.mock.calls[0]?.[1]).toBe('Delete "Books to read"?');
+
+      storeState.settings = {
+        ...settings,
+        gtd: { viewSections: { someday: [{ id: 'books', title: 'Renamed books', order: 0 }] } },
+      };
+      await renderer.act(async () => {
+        alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress?.();
+        await flushEffects();
+      });
+      expect(storeState.updateSettings).not.toHaveBeenCalled();
+      expect(alertSpy.mock.calls[1]?.[1]).toBe('Delete "Renamed books"?');
+
+      await renderer.act(async () => {
+        alertSpy.mock.calls[1]?.[2]?.find((button) => button.style === 'destructive')?.onPress?.();
+        await flushEffects();
+      });
+      expect(storeState.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+        gtd: expect.objectContaining({ viewSections: expect.objectContaining({ someday: [] }) }),
+      }));
+    } finally {
+      storeState.settings = settings;
+      alertSpy.mockRestore();
+    }
+  });
+
+  it('requires reconfirmation for a changed same-ID Someday row even when its title is unchanged', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ somedaySections: true }));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    const settings = storeState.settings;
+    try {
+      let tree!: renderer.ReactTestRenderer;
+      await renderer.act(async () => {
+        tree = renderer.create(<ManageSettingsScreen />);
+        await flushEffects();
+      });
+      renderer.act(() => {
+        tree.root.findByProps({ accessibilityLabel: 'Delete: Books to read' }).props.onPress();
+      });
+
+      storeState.settings = {
+        ...settings,
+        gtd: { viewSections: { someday: [{ id: 'books', title: 'Books to read', order: 9 }] } },
+      };
+      await renderer.act(async () => {
+        alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress?.();
+        await flushEffects();
+      });
+      expect(storeState.updateSettings).not.toHaveBeenCalled();
+      expect(alertSpy.mock.calls[1]?.[1]).toBe('Delete "Books to read"?');
+    } finally {
+      storeState.settings = settings;
+      alertSpy.mockRestore();
+    }
+  });
+
+  it('does not delete or reconfirm a Someday section already removed while its alert is open', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ somedaySections: true }));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    const settings = storeState.settings;
+    try {
+      let tree!: renderer.ReactTestRenderer;
+      await renderer.act(async () => {
+        tree = renderer.create(<ManageSettingsScreen />);
+        await flushEffects();
+      });
+      renderer.act(() => {
+        tree.root.findByProps({ accessibilityLabel: 'Delete: Books to read' }).props.onPress();
+      });
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+
+      storeState.settings = { ...settings, gtd: { viewSections: { someday: [] } } };
+      await renderer.act(async () => {
+        alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress?.();
+        await flushEffects();
+      });
+      expect(storeState.updateSettings).not.toHaveBeenCalled();
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      storeState.settings = settings;
+      alertSpy.mockRestore();
+    }
+  });
+
   it('edits one Someday section and keeps every other stored entry as it is, in stored order', async () => {
     asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ somedaySections: true }));
     const alertSpy = vi.spyOn(Alert, 'alert');
@@ -354,11 +451,12 @@ describe('ManageSettingsScreen', () => {
       });
       // Sync adds Trips while the confirmation is open: the delete keeps it.
       const trips = { id: 'trips', title: 'Trips', order: 2 };
-      storeState.settings = { ...settings, gtd: { viewSections: { someday: [films, folder, books, trips] as any[] } } };
+      storeState.settings = { ...settings, gtd: { viewSections: { someday: [films, folder, { ...books }, trips] as any[] } } };
       await renderer.act(async () => {
         alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive')?.onPress?.();
         await flushEffects();
       });
+      expect(alertSpy).toHaveBeenCalledTimes(1);
       expect(storeState.updateSettings).toHaveBeenLastCalledWith({
         gtd: { viewSections: { someday: [films, folder, trips] } },
       });

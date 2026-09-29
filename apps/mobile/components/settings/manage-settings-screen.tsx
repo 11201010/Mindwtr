@@ -188,6 +188,28 @@ export function ManageSettingsScreen() {
         );
     };
 
+    const confirmSomedaySectionDelete = (id: string) => {
+        const stored = useTaskStore.getState().settings.gtd?.viewSections?.someday;
+        const section = sortViewSectionDefinitions(stored).find((candidate) => candidate.id === id);
+        if (!section) return;
+        const confirmedRow = JSON.stringify(section);
+        confirmDelete(section.title, () => {
+            const current = useTaskStore.getState().settings;
+            const currentSection = sortViewSectionDefinitions(current.gtd?.viewSections?.someday)
+                .find((candidate) => candidate.id === id);
+            if (!currentSection) return;
+            if (JSON.stringify(currentSection) !== confirmedRow) {
+                // The alert described an older row; ask again for the current one.
+                confirmSomedaySectionDelete(id);
+                return;
+            }
+            void updateSettings(buildSomedaySectionsSettingsUpdate(
+                current,
+                removeSomedaySection(current.gtd?.viewSections?.someday, id),
+            ));
+        });
+    };
+
     const closeEditor = () => {
         setEditorTarget(null);
         setEditorName('');
@@ -486,19 +508,7 @@ export function ManageSettingsScreen() {
                             // The stored list: an edit changes only its section and keeps
                             // every other entry, including ones this build cannot show.
                             definitions={settings.gtd?.viewSections?.someday ?? []}
-                            onDelete={(id) => {
-                                const section = somedaySections.find((candidate) => candidate.id === id);
-                                if (!section) return;
-                                // Built from the settings stored at confirm time: a sync change
-                                // made while the dialog was open is kept.
-                                confirmDelete(section.title, () => {
-                                    const current = useTaskStore.getState().settings;
-                                    void updateSettings(buildSomedaySectionsSettingsUpdate(
-                                        current,
-                                        removeSomedaySection(current.gtd?.viewSections?.someday, id),
-                                    ));
-                                });
-                            }}
+                            onDelete={confirmSomedaySectionDelete}
                             onChange={(definitions) => updateSettings(buildSomedaySectionsSettingsUpdate(settings, definitions))}
                             t={t}
                             themeColors={tc}
