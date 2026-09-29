@@ -346,4 +346,28 @@ describe('calendar push behind the host ports', () => {
         expect(phone.writes.map(([name, id, title]) => [name, id, title])).toEqual([['updateEvent', phone.entries.get('t1')!.calendarEventId, 'Renamed']]);
         service.stopCalendarPushSync();
     });
+
+    it('logs the v1.3.4 calendar push lines a tester confirms, with no titles', async () => {
+        const phone = device({ storage: { [CALENDAR_PUSH_ENABLED_KEY]: '1' }, tasks: [task('t1', { title: 'Secret task', dueDate: '2026-09-10' })] });
+        const lines: unknown[][] = [];
+        phone.host.log = {
+            info: (message, context) => { lines.push(['info', message, context.extra]); },
+            warn: (message, context) => { lines.push(['warn', message, context.extra]); },
+            error: () => undefined,
+        };
+        const service = createCalendarPushService(phone.host);
+        await service.ensureMindwtrCalendar();
+        await service.updateMindwtrCalendarColor('#059669');
+        await service.deleteMindwtrCalendar();
+        const tagged = lines.filter(([, , extra]) => typeof (extra as Record<string, string>)?.releaseCheck === 'string' && (extra as Record<string, string>).releaseCheck.startsWith('v1.3.4/'));
+        expect(tagged.map(([level, message, extra]) => [level, message, (extra as Record<string, string>).releaseCheck, (extra as Record<string, string>).outcome ?? (extra as Record<string, string>).deletedCalendars])).toEqual([
+            ['info', 'Created Mindwtr calendar', 'v1.3.4/calendar-push-create-marker', 'created'],
+            // Android recolors by deleting the calendar and making it again.
+            ['info', 'Deleted Mindwtr calendar', 'v1.3.4/calendar-push-owned-delete', '1'],
+            ['info', 'Created Mindwtr calendar', 'v1.3.4/calendar-push-create-marker', 'created'],
+            ['info', 'Mindwtr calendar color changed', 'v1.3.4/calendar-push-color-order', 'recreated'],
+            ['info', 'Deleted Mindwtr calendar', 'v1.3.4/calendar-push-owned-delete', '1'],
+        ]);
+        expect(JSON.stringify(lines)).not.toContain('Secret task');
+    });
 });

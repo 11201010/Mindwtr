@@ -121,6 +121,10 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'family', 'boldFace',
     // native-android-legacy-json-import reuses releaseCheck, outcome, path, and reason above.
     'rnState', 'backupTasks', 'sqliteTasks', 'mergedTasks', 'tasksFromBackup',
+    // calendar-push-create-marker / calendar-push-owned-delete / calendar-push-color-order (core calendar-push-service.ts)
+    // reuse releaseCheck, outcome and error above: the device calendar's id, whether it carries the install marker,
+    // and how many calendars a delete removed.
+    'calendarId', 'marked', 'deletedCalendars',
     // ios-share-capture (mobile incoming share host and capture form)
     'stage', 'type', 'providerReady', 'dataReady', 'disabled',
     'fileCount', 'candidateCount', 'attachedCount', 'skippedCount',
