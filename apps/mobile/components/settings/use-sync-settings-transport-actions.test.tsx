@@ -1120,6 +1120,76 @@ describe('useSyncSettingsTransportActions', () => {
         expect(mocked.setSecureConfigValue).not.toHaveBeenCalled();
     });
 
+    const savedWebdav = {
+        allowInsecureHttp: false,
+        password: 'persisted-secret',
+        url: 'https://dav.example.com/mindwtr/',
+        username: 'alice',
+    };
+    const seedSavedWebdav = () => {
+        seedStorage([
+            [SYNC_BACKEND_KEY, 'webdav'],
+            [WEBDAV_URL_KEY, savedWebdav.url],
+            [WEBDAV_USERNAME_KEY, savedWebdav.username],
+            [WEBDAV_ALLOW_INSECURE_HTTP_KEY, 'false'],
+        ]);
+        seedSecrets([[WEBDAV_PASSWORD_KEY, savedWebdav.password]]);
+    };
+    const activationLines = async () => {
+        const { logInfo } = await import('@/lib/app-log');
+        return vi.mocked(logInfo).mock.calls.filter(([message]) => /verification sync/.test(String(message)));
+    };
+
+    it("runs one normal sync when a panel's Sync now carries the saved settings", async () => {
+        // Every backend panel's Sync now passes its form, so an unchanged form must not
+        // re-prove and re-commit the backend (a second round trip and a config write per tap).
+        seedSavedWebdav();
+        await renderHarness();
+        const { logInfo } = await import('@/lib/app-log');
+        vi.mocked(logInfo).mockClear();
+        mocked.asyncStorage.setItem.mockClear();
+        mocked.performMobileSync.mockClear();
+
+        await act(async () => {
+            await latestHookResult?.handleSync({ backend: 'webdav', webdav: { ...savedWebdav, url: ' https://dav.example.com/mindwtr/ ' } });
+        });
+
+        expect(mocked.performMobileSync).toHaveBeenCalledTimes(1);
+        expect(mocked.performMobileSync).toHaveBeenCalledWith(undefined, {
+            manual: true,
+            ignorePendingRemoteWriteBackoff: false,
+        });
+        expect(mocked.asyncStorage.setItem).not.toHaveBeenCalled();
+        expect(mocked.asyncStorage.multiSet).not.toHaveBeenCalled();
+        expect(mocked.setSecureConfigValue).not.toHaveBeenCalled();
+        expect(await activationLines()).toEqual([]);
+    });
+
+    it('proves edited panel settings on Sync now, and again after a failed proof', async () => {
+        seedSavedWebdav();
+        await renderHarness();
+        const { logInfo } = await import('@/lib/app-log');
+        vi.mocked(logInfo).mockClear();
+        mocked.performMobileSync.mockClear();
+        mocked.performMobileSync.mockResolvedValueOnce({ success: false, error: 'HTTP 401' });
+        const edited = { ...savedWebdav, password: 'new-secret' };
+
+        await act(async () => {
+            await latestHookResult?.handleSync({ backend: 'webdav', webdav: edited });
+        });
+        expect(mocked.performMobileSync).toHaveBeenCalledTimes(1);
+        expect(mocked.performMobileSync).toHaveBeenLastCalledWith(undefined, expect.objectContaining({ activationProbe: true }));
+        expect(mocked.setSecureConfigValue).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await latestHookResult?.handleSync({ backend: 'webdav', webdav: edited });
+        });
+        expect(mocked.performMobileSync).toHaveBeenNthCalledWith(2, undefined, expect.objectContaining({ activationProbe: true }));
+        expect(mocked.setSecureConfigValue).toHaveBeenCalledWith(WEBDAV_PASSWORD_KEY, 'new-secret');
+        expect(mocked.performMobileSync).toHaveBeenCalledTimes(3);
+        expect(await activationLines()).toHaveLength(2);
+    });
+
     it('shows attachment recovery guidance instead of success for an already proven backend', async () => {
         seedStorage([
             [SYNC_BACKEND_KEY, 'webdav'],

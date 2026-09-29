@@ -1026,18 +1026,6 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
             };
 
             if (effectiveBackend === 'off') return;
-            // Only an activation passes an explicit backend; a manual "Sync now" tap
-            // calls handleSync() with no options and never reaches this line.
-            if (options?.backend) {
-                void logInfo('Sync backend selected; running the verification sync to activate it', {
-                    scope: 'sync',
-                    extra: {
-                        releaseCheck: 'v1.2.7/sync-settings-activation-mobile',
-                        backend: effectiveBackend,
-                        cloudProvider: effectiveCloudProvider,
-                    },
-                });
-            }
             if (effectiveBackend === 'webdav') {
                 const trimmedWebDavUrl = effectiveWebdav.url.trim();
                 if (!trimmedWebDavUrl) {
@@ -1127,8 +1115,27 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 set({ syncPath: effectiveSyncPath, syncPathBookmark: effectiveSyncPathBookmark, syncBackend: 'file' });
             }
 
-            const needsActivationProbe = Boolean(options)
-                || hasPendingSyncConfiguration
+            // Every panel's Sync now passes its form, so options alone are not new settings:
+            // only a form that differs from the settings this call started with (read above,
+            // before the form was written into them) needs proving. It stays pending until
+            // a proof commits it, like a Save.
+            const formChanged = configOverride.webdav
+                ? configOverride.webdav.url !== webdavUrl
+                    || configOverride.webdav.username !== webdavUsername
+                    || configOverride.webdav.password !== webdavPassword
+                    || configOverride.webdav.allowInsecureHttp !== webdavAllowInsecureHttp
+                : configOverride.cloud
+                    ? configOverride.cloud.url !== cloudUrl
+                        || configOverride.cloud.token !== cloudToken
+                        || configOverride.cloud.allowInsecureHttp !== cloudAllowInsecureHttp
+                    : configOverride.syncPath !== undefined && (
+                        configOverride.syncPath !== syncPath
+                        || (configOverride.syncPathBookmark ?? null) !== syncPathBookmark
+                    );
+            if (formChanged || configOverride.dropbox) {
+                hasPendingSyncConfiguration = true;
+            }
+            const needsActivationProbe = hasPendingSyncConfiguration
                 || effectiveBackend !== provenSyncBackend
                 || (
                     effectiveBackend === 'cloud'
@@ -1139,6 +1146,14 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     && provenCloudProvider !== 'cloudkit'
             );
             if (needsActivationProbe) {
+                void logInfo('Sync backend selected; running the verification sync to activate it', {
+                    scope: 'sync',
+                    extra: {
+                        releaseCheck: 'v1.2.7/sync-settings-activation-mobile',
+                        backend: effectiveBackend,
+                        cloudProvider: effectiveCloudProvider,
+                    },
+                });
                 if (configOverride.backend === 'webdav' && configOverride.webdav) {
                     const compatibility = await probeWebdavCompatibilityForCurrentEncryptionPosture(
                         core.normalizeWebdavUrl(configOverride.webdav.url),

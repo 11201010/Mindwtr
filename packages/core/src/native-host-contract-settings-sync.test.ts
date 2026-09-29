@@ -815,7 +815,10 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         value(await restarted.syncNow(input));
         expect(storedConfig(dev)).toEqual(stored);
         expect(since(dev, at).writes).toEqual([]);
-        expect(since(dev, at).calls.filter((call) => call[0] === 'performMobileSync')).toHaveLength(2);
+        // The folder is proven and unchanged: one normal sync, no activation probe.
+        expect(since(dev, at).calls.filter((call) => call[0] === 'performMobileSync')).toEqual([
+            ['performMobileSync', null, { manual: true, ignorePendingRemoteWriteBackoff: false }],
+        ]);
     });
 
     it('testSyncConnection: a replay stores nothing but the same capability proof', async () => {

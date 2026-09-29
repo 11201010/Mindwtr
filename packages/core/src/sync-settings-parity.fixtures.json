@@ -12,6 +12,14 @@
      "webdav: failures, step 9 (Save with an insecure public URL): one \"Insecure HTTP enabled\" warning instead of the same warning twice.",
      "file: pick a folder (step 2), file: stored, lock busy and cleanup deferred (every step), file: a corrupt generation, encryption: enable before the first sync (every step): the File Sync folder line names the Android document (\"data.json\") instead of its percent-encoded document ID."
     ]
+   },
+   {
+    "base": "e37a14ecd",
+    "command": "cd apps/mobile && MINDWTR_DUMP_SYNC_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/sync-settings-screen.parity.test.tsx, with the Sync now fix in place (core sync-settings-transport.ts); only the observations below were replaced, and every other observation matched the frozen one",
+    "observations": [
+     "Every Sync now tap on a stored, already proven backend (webdav: stored and synced, webdav: a slow sync, webdav: failures, webdav: encryption on and a legacy server, self-hosted: stored, file: stored, lock busy and cleanup deferred, dropbox: connect, test and disconnect): one normal sync with ignorePendingRemoteWriteBackoff false instead of the activation probe (the WebDAV probe, the capability proof, the activation log line) followed by a re-commit of the unchanged settings, so no device writes. The frozen run recorded the bug: each tap re-proved and re-wrote the backend. Because the probe no longer takes the first queued sync answer, the later answers in each scenario queue reach later steps, which changes those steps' toasts and, in webdav: failures, the Test connection step's answer.",
+     "ios: iCloud and the file panel, step 1 (iCloud with the account unavailable): no activation log line, since no verification sync runs; the line now prints only when the activation probe starts."
+    ]
    }
   ]
  },
@@ -5694,50 +5702,13 @@
      ]
     ],
     "writes": [],
-    "device": [
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "off"
-     ],
-     [
-      "multiSet",
-      [
-       [
-        "@mindwtr_webdav_url",
-        "https://dav.example.com/mindwtr"
-       ],
-       [
-        "@mindwtr_webdav_username",
-        "alice"
-       ],
-       [
-        "@mindwtr_webdav_allow_insecure_http",
-        "false"
-       ],
-       [
-        "@mindwtr_webdav_allow_weak_fingerprint",
-        "false"
-       ]
-      ]
-     ],
-     [
-      "setSecret",
-      "@mindwtr_webdav_password",
-      "hunter22"
-     ],
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "webdav"
-     ]
-    ],
+    "device": [],
     "toasts": [
      [
       "Success",
-      "Sync completed!\n\nAdjusted 3 future-dated timestamps during sync.",
-      "warning",
-      5200
+      "Sync completed!",
+      "success",
+      3600
      ]
     ],
     "calls": [
@@ -5746,68 +5717,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": false
-      }
-     ],
-     [
-      "rememberWebdavCapabilityProof",
-      {
-       "allowInsecureHttp": false,
-       "password": "hunter22",
-       "url": "https://dav.example.com/mindwtr",
-       "username": "alice"
-      }
-     ],
-     [
-      "performMobileSync",
-      null,
-      {
-       "activationProbe": true,
-       "manual": true,
-       "configOverride": {
-        "backend": "webdav",
-        "webdav": {
-         "allowInsecureHttp": false,
-         "password": "hunter22",
-         "url": "https://dav.example.com/mindwtr",
-         "username": "alice"
-        }
-       }
-      }
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "syncBackgroundRegistration"
-     ],
-     [
       "performMobileSync",
       null,
       {
        "manual": true,
-       "ignorePendingRemoteWriteBackoff": true
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -6499,48 +6413,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": false
-      }
-     ],
-     [
-      "rememberWebdavCapabilityProof",
-      {
-       "allowInsecureHttp": false,
-       "password": "hunter22",
-       "url": "https://dav.example.com/mindwtr",
-       "username": "alice"
-      }
-     ],
-     [
       "performMobileSync",
       null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "webdav",
-        "webdav": {
-         "allowInsecureHttp": false,
-         "password": "hunter22",
-         "url": "https://dav.example.com/mindwtr",
-         "username": "alice"
-        }
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -6704,74 +6581,16 @@
      ]
     ],
     "writes": [],
-    "device": [
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "off"
-     ],
-     [
-      "multiSet",
-      [
-       [
-        "@mindwtr_webdav_url",
-        "https://dav.example.com/mindwtr"
-       ],
-       [
-        "@mindwtr_webdav_username",
-        "alice"
-       ],
-       [
-        "@mindwtr_webdav_allow_insecure_http",
-        "false"
-       ],
-       [
-        "@mindwtr_webdav_allow_weak_fingerprint",
-        "false"
-       ]
-      ]
-     ],
-     [
-      "setSecret",
-      "@mindwtr_webdav_password",
-      "hunter22"
-     ],
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "webdav"
-     ]
-    ],
+    "device": [],
     "toasts": [
      [
-      "Notice",
-      "Your changes are saved on this device. Another device is writing to the sync location right now; Mindwtr will upload them on its own shortly.",
-      "info",
-      null
+      "Success",
+      "Sync completed!",
+      "success",
+      3600
      ]
     ],
-    "calls": [
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "syncBackgroundRegistration"
-     ],
-     [
-      "performMobileSync",
-      null,
-      {
-       "manual": true,
-       "ignorePendingRemoteWriteBackoff": true
-      }
-     ]
-    ]
+    "calls": []
    }
   ],
   "webdav: failures": [
@@ -7124,48 +6943,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": false
-      }
-     ],
-     [
-      "rememberWebdavCapabilityProof",
-      {
-       "allowInsecureHttp": false,
-       "password": "hunter22",
-       "url": "https://dav.example.com/mindwtr",
-       "username": "alice"
-      }
-     ],
-     [
       "performMobileSync",
       null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "webdav",
-        "webdav": {
-         "allowInsecureHttp": false,
-         "password": "hunter22",
-         "url": "https://dav.example.com/mindwtr",
-         "username": "alice"
-        }
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -7348,48 +7130,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": false
-      }
-     ],
-     [
-      "rememberWebdavCapabilityProof",
-      {
-       "allowInsecureHttp": false,
-       "password": "hunter22",
-       "url": "https://dav.example.com/mindwtr",
-       "username": "alice"
-      }
-     ],
-     [
       "performMobileSync",
       null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "webdav",
-        "webdav": {
-         "allowInsecureHttp": false,
-         "password": "hunter22",
-         "url": "https://dav.example.com/mindwtr",
-         "username": "alice"
-        }
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -7572,48 +7317,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": false
-      }
-     ],
-     [
-      "rememberWebdavCapabilityProof",
-      {
-       "allowInsecureHttp": false,
-       "password": "hunter22",
-       "url": "https://dav.example.com/mindwtr",
-       "username": "alice"
-      }
-     ],
-     [
       "performMobileSync",
       null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "webdav",
-        "webdav": {
-         "allowInsecureHttp": false,
-         "password": "hunter22",
-         "url": "https://dav.example.com/mindwtr",
-         "username": "alice"
-        }
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -7784,9 +7492,9 @@
     "device": [],
     "toasts": [
      [
-      "Notice",
-      "Mindwtr found new changes while testing this sync setup. Run Sync Now again.",
-      "warning",
+      "Sync queued",
+      "Local changes arrived during sync. A retry was queued automatically.",
+      "info",
       4200
      ]
     ],
@@ -7796,48 +7504,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": false
-      }
-     ],
-     [
-      "rememberWebdavCapabilityProof",
-      {
-       "allowInsecureHttp": false,
-       "password": "hunter22",
-       "url": "https://dav.example.com/mindwtr",
-       "username": "alice"
-      }
-     ],
-     [
       "performMobileSync",
       null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "webdav",
-        "webdav": {
-         "allowInsecureHttp": false,
-         "password": "hunter22",
-         "url": "https://dav.example.com/mindwtr",
-         "username": "alice"
-        }
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -8008,10 +7679,10 @@
     "device": [],
     "toasts": [
      [
-      "Connection failed",
-      "WebDAV GET failed (500)",
-      "error",
-      5200
+      "Connection OK",
+      "WebDAV endpoint is reachable.",
+      "success",
+      null
      ]
     ],
     "calls": [
@@ -8023,6 +7694,15 @@
        "password": "hunter22",
        "timeoutMs": 10000,
        "requireStrongEtag": false
+      }
+     ],
+     [
+      "rememberWebdavCapabilityProof",
+      {
+       "allowInsecureHttp": false,
+       "password": "hunter22",
+       "url": "https://dav.example.com/mindwtr",
+       "username": "alice"
       }
      ]
     ]
@@ -9358,10 +9038,10 @@
     "device": [],
     "toasts": [
      [
-      "Error",
-      "This WebDAV server does not provide or enforce safe version checks (strong ETags and conditional writes), so Mindwtr cannot safely sync or change encryption. Use a compatible WebDAV provider, File Sync, or Dropbox.",
-      "error",
-      4200
+      "Success",
+      "Sync completed!",
+      "success",
+      3600
      ]
     ],
     "calls": [
@@ -9370,22 +9050,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
+      "performMobileSync",
+      null,
       {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "webdav",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "probeWebdav",
-      "https://dav.example.com/mindwtr/data.json",
-      {
-       "username": "alice",
-       "password": "hunter22",
-       "timeoutMs": 10000,
-       "requireStrongEtag": true
+       "manual": true,
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -11658,10 +11327,10 @@
     "device": [],
     "toasts": [
      [
-      "Error",
-      "Review Settings → Sync and try again.\nSync setup could not be verified",
-      "error",
-      4200
+      "Notice",
+      "Your changes are saved on this device. Another device is writing to the sync location right now; Mindwtr will upload them on its own shortly.",
+      "info",
+      null
      ]
     ],
     "calls": [
@@ -11670,29 +11339,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "cloud",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
       "performMobileSync",
       null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "cloud",
-        "cloudProvider": "selfhosted",
-        "cloud": {
-         "allowInsecureHttp": false,
-         "token": "abcdefghijklmnopqrstuvwxyz012345",
-         "url": "https://cloud.example.com"
-        }
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -11829,47 +11480,13 @@
      ]
     ],
     "writes": [],
-    "device": [
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "off"
-     ],
-     [
-      "multiSet",
-      [
-       [
-        "@mindwtr_cloud_url",
-        "https://cloud.example.com"
-       ],
-       [
-        "@mindwtr_cloud_allow_insecure_http",
-        "false"
-       ]
-      ]
-     ],
-     [
-      "setSecret",
-      "@mindwtr_cloud_token",
-      "abcdefghijklmnopqrstuvwxyz012345"
-     ],
-     [
-      "setItem",
-      "@mindwtr_cloud_provider",
-      "selfhosted"
-     ],
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "cloud"
-     ]
-    ],
+    "device": [],
     "toasts": [
      [
-      "Notice",
-      "Some attachment changes could not finish. Restore any missing local files or remove the affected attachments, then sync again.",
-      "warning",
-      6000
+      "Success",
+      "Sync completed!",
+      "success",
+      3600
      ]
     ],
     "calls": [
@@ -11878,52 +11495,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "cloud",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "performMobileSync",
-      null,
-      {
-       "activationProbe": true,
-       "manual": true,
-       "configOverride": {
-        "backend": "cloud",
-        "cloudProvider": "selfhosted",
-        "cloud": {
-         "allowInsecureHttp": false,
-         "token": "abcdefghijklmnopqrstuvwxyz012345",
-         "url": "https://cloud.example.com"
-        }
-       }
-      }
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "syncBackgroundRegistration"
-     ],
-     [
       "performMobileSync",
       null,
       {
        "manual": true,
-       "ignorePendingRemoteWriteBackoff": true
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -13667,7 +13243,7 @@
     "toasts": [
      [
       "Notice",
-      "Another Mindwtr operation is using File Sync. Wait for it to finish, then try Sync Now again.",
+      "Another Mindwtr operation is using File Sync. Wait for it to finish; Mindwtr will retry automatically.",
       "warning",
       6000
      ]
@@ -13678,25 +13254,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "file",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
       "performMobileSync",
-      "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
+      null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "file",
-        "syncPath": "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-        "syncPathBookmark": null
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -13830,31 +13392,7 @@
      ]
     ],
     "writes": [],
-    "device": [
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "off"
-     ],
-     [
-      "multiSet",
-      [
-       [
-        "@mindwtr_sync_path",
-        "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json"
-       ]
-      ]
-     ],
-     [
-      "removeItem",
-      "@mindwtr_sync_path_bookmark"
-     ],
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "file"
-     ]
-    ],
+    "device": [],
     "toasts": [
      [
       "Notice",
@@ -13869,38 +13407,12 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "file",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
       "performMobileSync",
-      "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
+      null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "file",
-        "syncPath": "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-        "syncPathBookmark": null
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "syncBackgroundRegistration"
      ]
     ]
    },
@@ -14033,31 +13545,160 @@
      ]
     ],
     "writes": [],
-    "device": [
+    "device": [],
+    "toasts": [
      [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "off"
-     ],
-     [
-      "multiSet",
-      [
-       [
-        "@mindwtr_sync_path",
-        "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json"
-       ]
-      ]
-     ],
-     [
-      "removeItem",
-      "@mindwtr_sync_path_bookmark"
-     ],
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "file"
+      "Success",
+      "Sync completed!",
+      "success",
+      3600
      ]
     ],
+    "calls": [
+     [
+      "breadcrumb",
+      "sync:manual"
+     ],
+     [
+      "performMobileSync",
+      null,
+      {
+       "manual": true,
+       "ignorePendingRemoteWriteBackoff": false
+      }
+     ]
+    ]
+   },
+   {
+    "texts": [
+     "Sync",
+     "Sync backend",
+     "File",
+     "Choose one sync method. Turn sync off to keep data local to this device.",
+     "Off",
+     "Dropbox",
+     "File",
+     "WebDAV",
+     "Self-hosted",
+     "Folder / File Sync",
+     "Bring your own local synced folder.",
+     "Data & Sync setup guide",
+     "How to Sync",
+     "1. Choose or create an on-device sync folder. If needed, mirror it with a separate folder-sync app\n2. Tap \"Export Backup\" to save there, then tap \"Select Folder\" and select that same local folder\n3. Tap \"Sync\" to merge data\n\nNote: Do not select the Google Drive cloud location directly. Use its mirrored local folder instead; Dropbox or WebDAV are alternatives",
+     "Tip: For frequent multi-device edits, WebDAV is recommended. If using Syncthing, enable Send & Receive + Watch for Changes and tap Sync before switching devices.",
+     "Sync Settings",
+     "Sync folder",
+     "data.json",
+     "Select Folder",
+     "Sync now",
+     "Read and merge sync folder",
+     "Last sync",
+     "9/24/2026, 10:15:00 AM (failed)",
+     [
+      "danger",
+      "Mindwtr cannot safely lock this File Sync location. Re-select the folder, restart or update Mindwtr, or use WebDAV."
+     ],
+     "Encryption",
+     "Sync encryption guide",
+     "Encrypt the synced files with a passphrase. Devices without the passphrase cannot read them.",
+     "Enable encryption",
+     "Settings sync options",
+     "Choose which preferences stay in sync across devices.",
+     "▸",
+     "Recovery snapshots",
+     "Saved automatically before restore and import operations.",
+     "▸"
+    ],
+    "controls": [
+     [
+      "Off",
+      false,
+      false,
+      false
+     ],
+     [
+      "Dropbox",
+      false,
+      false,
+      false
+     ],
+     [
+      "File",
+      true,
+      false,
+      false
+     ],
+     [
+      "WebDAV",
+      false,
+      false,
+      false
+     ],
+     [
+      "Self-hosted",
+      false,
+      false,
+      false
+     ],
+     [
+      "Data & Sync setup guide. Setup notes for Dropbox, iCloud, WebDAV, File Sync, and recovery.",
+      true,
+      false,
+      false
+     ],
+     [
+      "Select Folder",
+      true,
+      false,
+      false
+     ],
+     [
+      "Sync now|Read and merge sync folder",
+      true,
+      false,
+      false
+     ],
+     [
+      "Sync encryption guide. What it protects, which servers support it, and how the passphrase works.",
+      true,
+      false,
+      false
+     ],
+     [
+      "Enable encryption",
+      true,
+      false,
+      false
+     ],
+     [
+      "Settings sync options|Choose which preferences stay in sync across devices.|▸",
+      false,
+      false,
+      false
+     ],
+     [
+      "Recovery snapshots|Saved automatically before restore and import operations.|▸",
+      false,
+      false,
+      false
+     ]
+    ],
+    "switches": [],
+    "inputs": [],
+    "links": [
+     [
+      "sync-guide-link",
+      "Data & Sync setup guide",
+      "https://docs.mindwtr.app/data-sync/"
+     ],
+     [
+      "sync-encryption-guide-link",
+      "Sync encryption guide",
+      "https://docs.mindwtr.app/data-sync/#sync-encryption"
+     ]
+    ],
+    "writes": [],
+    "device": [],
     "toasts": [
      [
       "Error",
@@ -14072,45 +13713,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "file",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "performMobileSync",
-      "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-      {
-       "activationProbe": true,
-       "manual": true,
-       "configOverride": {
-        "backend": "file",
-        "syncPath": "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-        "syncPathBookmark": null
-       }
-      }
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "syncBackgroundRegistration"
-     ],
-     [
       "performMobileSync",
       null,
       {
        "manual": true,
-       "ignorePendingRemoteWriteBackoff": true
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -14248,7 +13855,7 @@
     "toasts": [
      [
       "Error",
-      "Mindwtr kept the local attachment. File Sync can only sync attachments under 100 MB. Replace it with a smaller file or remove the attachment, then sync again.",
+      "Review Settings → Sync and try again.\ntoo large",
       "error",
       4200
      ]
@@ -14259,192 +13866,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "file",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
       "performMobileSync",
-      "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
+      null,
       {
-       "activationProbe": true,
        "manual": true,
-       "configOverride": {
-        "backend": "file",
-        "syncPath": "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-        "syncPathBookmark": null
-       }
-      }
-     ]
-    ]
-   },
-   {
-    "texts": [
-     "Sync",
-     "Sync backend",
-     "File",
-     "Choose one sync method. Turn sync off to keep data local to this device.",
-     "Off",
-     "Dropbox",
-     "File",
-     "WebDAV",
-     "Self-hosted",
-     "Folder / File Sync",
-     "Bring your own local synced folder.",
-     "Data & Sync setup guide",
-     "How to Sync",
-     "1. Choose or create an on-device sync folder. If needed, mirror it with a separate folder-sync app\n2. Tap \"Export Backup\" to save there, then tap \"Select Folder\" and select that same local folder\n3. Tap \"Sync\" to merge data\n\nNote: Do not select the Google Drive cloud location directly. Use its mirrored local folder instead; Dropbox or WebDAV are alternatives",
-     "Tip: For frequent multi-device edits, WebDAV is recommended. If using Syncthing, enable Send & Receive + Watch for Changes and tap Sync before switching devices.",
-     "Sync Settings",
-     "Sync folder",
-     "data.json",
-     "Select Folder",
-     "Sync now",
-     "Read and merge sync folder",
-     "Last sync",
-     "9/24/2026, 10:15:00 AM (failed)",
-     [
-      "danger",
-      "Mindwtr cannot safely lock this File Sync location. Re-select the folder, restart or update Mindwtr, or use WebDAV."
-     ],
-     "Encryption",
-     "Sync encryption guide",
-     "Encrypt the synced files with a passphrase. Devices without the passphrase cannot read them.",
-     "Enable encryption",
-     "Settings sync options",
-     "Choose which preferences stay in sync across devices.",
-     "▸",
-     "Recovery snapshots",
-     "Saved automatically before restore and import operations.",
-     "▸"
-    ],
-    "controls": [
-     [
-      "Off",
-      false,
-      false,
-      false
-     ],
-     [
-      "Dropbox",
-      false,
-      false,
-      false
-     ],
-     [
-      "File",
-      true,
-      false,
-      false
-     ],
-     [
-      "WebDAV",
-      false,
-      false,
-      false
-     ],
-     [
-      "Self-hosted",
-      false,
-      false,
-      false
-     ],
-     [
-      "Data & Sync setup guide. Setup notes for Dropbox, iCloud, WebDAV, File Sync, and recovery.",
-      true,
-      false,
-      false
-     ],
-     [
-      "Select Folder",
-      true,
-      false,
-      false
-     ],
-     [
-      "Sync now|Read and merge sync folder",
-      true,
-      false,
-      false
-     ],
-     [
-      "Sync encryption guide. What it protects, which servers support it, and how the passphrase works.",
-      true,
-      false,
-      false
-     ],
-     [
-      "Enable encryption",
-      true,
-      false,
-      false
-     ],
-     [
-      "Settings sync options|Choose which preferences stay in sync across devices.|▸",
-      false,
-      false,
-      false
-     ],
-     [
-      "Recovery snapshots|Saved automatically before restore and import operations.|▸",
-      false,
-      false,
-      false
-     ]
-    ],
-    "switches": [],
-    "inputs": [],
-    "links": [
-     [
-      "sync-guide-link",
-      "Data & Sync setup guide",
-      "https://docs.mindwtr.app/data-sync/"
-     ],
-     [
-      "sync-encryption-guide-link",
-      "Sync encryption guide",
-      "https://docs.mindwtr.app/data-sync/#sync-encryption"
-     ]
-    ],
-    "writes": [],
-    "device": [],
-    "toasts": [
-     [
-      "Error",
-      "Mindwtr cannot safely lock this File Sync location. Re-select the folder, restart or update Mindwtr, or use WebDAV.",
-      "error",
-      6000
-     ]
-    ],
-    "calls": [
-     [
-      "breadcrumb",
-      "sync:manual"
-     ],
-     [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "file",
-       "cloudProvider": "selfhosted"
-      }
-     ],
-     [
-      "performMobileSync",
-      "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-      {
-       "activationProbe": true,
-       "manual": true,
-       "configOverride": {
-        "backend": "file",
-        "syncPath": "content://tree/primary%3ASync/document/primary%3ASync%2Fdata.json",
-        "syncPathBookmark": null
-       }
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -15336,23 +14762,7 @@
      ]
     ],
     "writes": [],
-    "device": [
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "off"
-     ],
-     [
-      "setItem",
-      "@mindwtr_cloud_provider",
-      "dropbox"
-     ],
-     [
-      "setItem",
-      "@mindwtr_sync_backend",
-      "cloud"
-     ]
-    ],
+    "device": [],
     "toasts": [
      [
       "Success",
@@ -15367,44 +14777,11 @@
       "sync:manual"
      ],
      [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "cloud",
-       "cloudProvider": "dropbox"
-      }
-     ],
-     [
-      "performMobileSync",
-      null,
-      {
-       "activationProbe": true,
-       "manual": true,
-       "configOverride": {
-        "backend": "cloud",
-        "cloudProvider": "dropbox"
-       }
-      }
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "clearSyncConfigCache"
-     ],
-     [
-      "syncBackgroundRegistration"
-     ],
-     [
       "performMobileSync",
       null,
       {
        "manual": true,
-       "ignorePendingRemoteWriteBackoff": true
+       "ignorePendingRemoteWriteBackoff": false
       }
      ]
     ]
@@ -26685,15 +26062,6 @@
      [
       "breadcrumb",
       "sync:manual"
-     ],
-     [
-      "logInfo",
-      "Sync backend selected; running the verification sync to activate it",
-      {
-       "releaseCheck": "v1.2.7/sync-settings-activation-mobile",
-       "backend": "cloudkit",
-       "cloudProvider": "cloudkit"
-      }
      ],
      [
       "getCloudKitAccountStatus"
